@@ -1,0 +1,12 @@
+{{ define "content" }}
+<h1>Install Stratum</h1>
+<p class="muted">Enter the one-time setup code printed when Stratum started.</p>
+{{ if .Error }}<p class="form-error" role="alert">{{ .Error }}</p>{{ end }}
+<form method="post" class="auth-form">
+  <label>Setup code <input name="setup_code" autocomplete="one-time-code" required></label>
+  <label>Site title <input name="site_title" required></label>
+  <label>Admin email <input name="email" type="email" autocomplete="email" required></label>
+  <label>Admin password <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+  <button type="submit">Install Stratum</button>
+</form>
+{{ end }}

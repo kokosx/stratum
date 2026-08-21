@@ -1,5 +1,13 @@
 * { box-sizing: border-box; }
 body { margin: 0; color: #1d2327; background: #f0f0f1; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.auth-page { display: grid; min-height: 100vh; place-items: center; padding: 20px; }
+.auth-card { width: min(100%, 420px); padding: 32px; background: #fff; border: 1px solid #dcdcde; border-radius: 4px; }
+.auth-brand { display: block; margin-bottom: 28px; color: #1d2327; font-size: 24px; font-weight: 700; text-decoration: none; }
+.auth-form { display: grid; gap: 18px; }
+.auth-form label { display: grid; gap: 6px; font-weight: 600; }
+.auth-form input { width: 100%; padding: 9px 10px; border: 1px solid #8c8f94; border-radius: 3px; font: inherit; }
+.auth-form button { padding: 10px 14px; border: 0; border-radius: 3px; background: #2271b1; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.form-error { padding: 10px 12px; background: #fcf0f1; border-left: 4px solid #d63638; }
 .admin { display: flex; min-height: 100vh; }
 .sidebar { width: 230px; flex: 0 0 230px; padding: 20px 0; background: #1d2327; color: #f0f0f1; }
 .brand { display: block; padding: 0 24px 24px; color: #fff; font-size: 20px; font-weight: 700; text-decoration: none; }
@@ -7,7 +15,9 @@ body { margin: 0; color: #1d2327; background: #f0f0f1; font: 14px/1.5 -apple-sys
 .menu a { display: block; padding: 11px 24px; color: #c3c4c7; text-decoration: none; }
 .menu a:hover, .menu a.active { color: #fff; background: #2271b1; }
 .main { min-width: 0; flex: 1; }
-.topbar { height: 52px; display: flex; align-items: center; padding: 0 32px; background: #fff; border-bottom: 1px solid #dcdcde; color: #50575e; }
+.topbar { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; background: #fff; border-bottom: 1px solid #dcdcde; color: #50575e; }
+.logout-button { padding: 6px 10px; border: 1px solid #8c8f94; border-radius: 3px; background: #fff; color: #1d2327; font: inherit; cursor: pointer; }
+.logout-button:hover { border-color: #2271b1; color: #135e96; }
 .content { max-width: 1200px; padding: 32px; }
 h1 { margin: 0 0 24px; font-size: 28px; font-weight: 600; }
 .panel { padding: 24px; background: #fff; border: 1px solid #dcdcde; border-radius: 3px; }

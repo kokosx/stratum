@@ -1,0 +1,17 @@
+{{ define "auth.html" }}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Title }} · Stratum</title>
+  <link rel="stylesheet" href="/admin/static/admin.css">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <a class="auth-brand" href="/admin">Stratum</a>
+    {{ template "content" . }}
+  </main>
+</body>
+</html>
+{{ end }}

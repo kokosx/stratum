@@ -20,7 +20,12 @@
       </nav>
     </aside>
     <main class="main">
-      <header class="topbar">StratumCMS administration</header>
+      <header class="topbar">
+        <span>StratumCMS administration</span>
+        <form method="post" action="/admin/logout">
+          <button class="logout-button" type="submit">Log out</button>
+        </form>
+      </header>
       <div class="content">{{ template "content" . }}</div>
     </main>
   </div>

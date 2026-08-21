@@ -71,17 +71,16 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 }
 
 func entryStatus(status string, hasPublishedRevision bool) string {
-	if hasPublishedRevision {
-		return "Published"
-	}
 	switch status {
 	case "private":
 		return "Private"
 	case "trash":
 		return "Trash"
-	default:
-		return "Draft"
 	}
+	if hasPublishedRevision {
+		return "Published"
+	}
+	return "Draft"
 }
 
 func stringValue(value sql.NullString) string {

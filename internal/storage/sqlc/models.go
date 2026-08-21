@@ -72,6 +72,13 @@ type Route struct {
 	UpdatedAt      int64          `json:"updated_at"`
 }
 
+type Session struct {
+	TokenHash string `json:"token_hash"`
+	UserID    string `json:"user_id"`
+	CreatedAt int64  `json:"created_at"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
 type SiteSetting struct {
 	ID               int64          `json:"id"`
 	SiteTitle        string         `json:"site_title"`
@@ -86,4 +93,13 @@ type SiteSetting struct {
 	IndexingEnabled  int64          `json:"indexing_enabled"`
 	CreatedAt        int64          `json:"created_at"`
 	UpdatedAt        int64          `json:"updated_at"`
+}
+
+type User struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	Role         string `json:"role"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
 }

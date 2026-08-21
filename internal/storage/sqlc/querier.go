@@ -15,8 +15,11 @@ type Querier interface {
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
 	CreateEntryRevision(ctx context.Context, arg CreateEntryRevisionParams) error
 	CreateRoute(ctx context.Context, arg CreateRouteParams) error
+	CreateSession(ctx context.Context, arg CreateSessionParams) error
+	CreateUser(ctx context.Context, arg CreateUserParams) error
 	DeleteEntry(ctx context.Context, id string) error
 	DeleteRoute(ctx context.Context, id string) error
+	DeleteSession(ctx context.Context, tokenHash string) error
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
 	GetContentType(ctx context.Context, id string) (ContentType, error)
@@ -26,7 +29,10 @@ type Querier interface {
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
 	GetRouteByPath(ctx context.Context, path string) (Route, error)
+	GetSessionUser(ctx context.Context, tokenHash string) (GetSessionUserRow, error)
 	GetSiteSettings(ctx context.Context) (SiteSetting, error)
+	GetUserByEmail(ctx context.Context, email string) (User, error)
+	HasAdmin(ctx context.Context) (bool, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
@@ -43,6 +49,7 @@ type Querier interface {
 	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error
 	UpdateSiteSettings(ctx context.Context, arg UpdateSiteSettingsParams) error
+	UpdateSiteTitle(ctx context.Context, arg UpdateSiteTitleParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"html/template"
+	"io/fs"
 	"log"
 	"net/http"
 
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/document"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	webassets "github.com/kokosx/stratum/internal/web"
 )
 
 type Handler struct {
@@ -29,10 +31,13 @@ type PageData struct {
 func NewHandler(
 	queries *db.Queries,
 	blocks *blocks.Registry,
-	templatePath string,
 ) (*Handler, error) {
 
-	tmpl, err := template.ParseFiles(templatePath)
+	templateFS, err := fs.Sub(webassets.Assets, "templates/public")
+	if err != nil {
+		return nil, err
+	}
+	tmpl, err := template.ParseFS(templateFS, "layout.html")
 	if err != nil {
 		return nil, err
 	}

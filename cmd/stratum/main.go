@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/kokosx/stratum/internal/app"
+	"github.com/kokosx/stratum/internal/auth"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
 )
@@ -47,8 +48,16 @@ func main() {
 }
 
 func serve(application *app.App) {
+	authService, err := auth.NewService(application.Database.DB, application.Queries, os.Getenv("STRATUM_ENV") == "production")
+	if err != nil {
+		log.Fatal(err)
+	}
+	if setupCode := authService.SetupCode(); setupCode != "" {
+		log.Printf("StratumCMS is not configured. Open http://localhost:8080/admin/setup with setup code: %s", setupCode)
+	}
 	adminHandler, err := adminweb.NewHandler(
 		application.Queries,
+		authService,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -57,7 +66,6 @@ func serve(application *app.App) {
 	publicHandler, err := publicweb.NewHandler(
 		application.Queries,
 		application.Blocks,
-		"internal/web/templates/public/layout.html",
 	)
 	if err != nil {
 		log.Fatal(err)
