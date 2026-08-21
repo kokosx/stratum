@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>
+      {{ if .SEOTitle }} {{ .SEOTitle }} {{ else }} {{ .Title }} {{ end }}
+    </title>
+
+    {{ if .SEODescription }}
+    <meta name="description" content="{{ .SEODescription }}" />
+    {{ end }}
+
+    <style>
+      body {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 40px 20px;
+
+        font-family: system-ui, sans-serif;
+        line-height: 1.6;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.2;
+      }
+    </style>
+  </head>
+
+  <body>
+    <main>{{ .Content }}</main>
+  </body>
+</html>
