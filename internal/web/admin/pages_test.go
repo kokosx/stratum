@@ -82,16 +82,19 @@ func TestWritePageKeepsDraftsSeparateFromPublishedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nodeIDs := make(map[string]bool, len(revisions))
+	var nodeID string
 	for _, revision := range revisions {
 		doc, err := document.Decode([]byte(revision.DocumentJson))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if nodeIDs[doc.Nodes[0].ID] {
-			t.Fatalf("node ID %q was reused between revisions", doc.Nodes[0].ID)
+		if nodeID == "" {
+			nodeID = doc.Nodes[0].ID
+			continue
 		}
-		nodeIDs[doc.Nodes[0].ID] = true
+		if doc.Nodes[0].ID != nodeID {
+			t.Fatalf("node ID changed between revisions: got %q, want %q", doc.Nodes[0].ID, nodeID)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@
 <p class="muted">Enter the one-time setup code printed when Stratum started.</p>
 {{ if .Error }}<p class="form-error" role="alert">{{ .Error }}</p>{{ end }}
 <form method="post" class="auth-form">
+  <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
   <label>Setup code <input name="setup_code" autocomplete="one-time-code" required></label>
   <label>Site title <input name="site_title" required></label>
   <label>Admin email <input name="email" type="email" autocomplete="email" required></label>

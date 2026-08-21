@@ -31,7 +31,7 @@ func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) newPost(w http.ResponseWriter, r *http.Request) {
-	setFlash(w, "Post creation is not implemented yet.")
+	h.setFlash(w, "Post creation is not implemented yet.")
 	http.Redirect(w, r, "/admin/posts", http.StatusSeeOther)
 }
 
@@ -66,13 +66,19 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 	data := LayoutData{
 		Title:      heading,
 		ActiveMenu: activeMenu,
-		Flash:      consumeFlash(w, r),
+		Flash:      h.consumeFlash(w, r),
 		Content: EntriesData{
 			Heading: heading,
 			NewURL:  "/admin/" + activeMenu + "/new",
 			Entries: items,
 		},
 	}
+	token, err := h.csrfToken(w)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	data.CSRFToken = token
 	if err := h.entriesTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render admin %s: %v", contentType, err)
 	}

@@ -25,6 +25,13 @@ func Open(path string) (*Database, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	// SQLite foreign-key enforcement is connection-local. Keep this embedded
+	// database on one connection so every query uses the configured pragma.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
 
 	if err := db.Ping(); err != nil {
 		db.Close()

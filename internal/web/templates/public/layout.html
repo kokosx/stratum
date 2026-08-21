@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="pl">
+<html lang="{{ .Language }}">
   <head>
     <meta charset="utf-8" />
 
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>
-      {{ if .SEOTitle }} {{ .SEOTitle }} {{ else }} {{ .Title }} {{ end }}
+      {{ if .SEOTitle }}{{ .SEOTitle }}{{ else }}{{ .Title }}{{ end }} · {{ .SiteTitle }}
     </title>
 
     {{ if .SEODescription }}

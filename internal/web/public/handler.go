@@ -24,6 +24,8 @@ type PageData struct {
 	Title          string
 	SEOTitle       string
 	SEODescription string
+	SiteTitle      string
+	Language       string
 
 	Content template.HTML
 }
@@ -53,6 +55,11 @@ func (h *Handler) ServeHTTP(
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
 	path := r.URL.Path
 
@@ -110,11 +117,19 @@ func (h *Handler) ServeHTTP(
 
 		return
 	}
+	settings, err := h.queries.GetSiteSettings(r.Context())
+	if err != nil {
+		log.Printf("get site settings: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
 	data := PageData{
 		Title:          entry.Title,
 		SEOTitle:       stringValue(entry.SeoTitle),
 		SEODescription: stringValue(entry.SeoDescription),
+		SiteTitle:      settings.SiteTitle,
+		Language:       settings.Language,
 
 		Content: content,
 	}

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"golang.org/x/crypto/bcrypt"
@@ -39,6 +40,7 @@ type Service struct {
 	queries       *db.Queries
 	setupCode     string
 	secureCookies bool
+	dummyHash     []byte
 	setupMu       sync.Mutex
 }
 
@@ -48,7 +50,11 @@ func NewService(database *sql.DB, queries *db.Queries, secureCookies bool) (*Ser
 		return nil, fmt.Errorf("check initial setup: %w", err)
 	}
 
-	service := &Service{database: database, queries: queries, secureCookies: secureCookies}
+	dummyHash, err := bcrypt.GenerateFromPassword([]byte("invalid-password-placeholder"), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("prepare password verification: %w", err)
+	}
+	service := &Service{database: database, queries: queries, secureCookies: secureCookies, dummyHash: dummyHash}
 	if !hasAdmin {
 		code, err := newSetupCode()
 		if err != nil {
@@ -78,8 +84,11 @@ func (s *Service) Setup(ctx context.Context, code, siteTitle, email, password st
 	if strings.TrimSpace(siteTitle) == "" || strings.TrimSpace(email) == "" || password == "" {
 		return "", errors.New("site title, email and password are required")
 	}
-	if len(password) < 12 {
+	if utf8.RuneCountInString(password) < 12 {
 		return "", errors.New("password must contain at least 12 characters")
+	}
+	if len(password) > 72 {
+		return "", errors.New("password must not exceed 72 bytes")
 	}
 
 	hasAdmin, err := s.queries.HasAdmin(ctx)
@@ -129,7 +138,12 @@ func (s *Service) Setup(ctx context.Context, code, siteTitle, email, password st
 
 func (s *Service) Login(ctx context.Context, email, password string) (string, error) {
 	user, err := s.queries.GetUserByEmail(ctx, strings.TrimSpace(strings.ToLower(email)))
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+	passwordHash := s.dummyHash
+	if err == nil {
+		passwordHash = []byte(user.PasswordHash)
+	}
+	passwordErr := bcrypt.CompareHashAndPassword(passwordHash, []byte(password))
+	if err != nil || passwordErr != nil {
 		return "", ErrInvalidCredentials
 	}
 	token, tokenHash, err := newSessionToken()

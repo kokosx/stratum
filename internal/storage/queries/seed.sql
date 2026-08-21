@@ -1,16 +1,3 @@
--- name: SeedBlockDefinition :exec
-INSERT INTO block_definitions (
-    id, namespace, name, version, display_name, description, schema_json,
-    renderer_type, template, source, enabled, created_at, updated_at
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'template', ?, 'core', 1, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    display_name = excluded.display_name,
-    schema_json = excluded.schema_json,
-    renderer_type = excluded.renderer_type,
-    template = excluded.template,
-    updated_at = excluded.updated_at;
-
 -- name: SeedEntry :exec
 INSERT INTO entries (
     id, content_type_id, slug, status, created_at, updated_at, published_at

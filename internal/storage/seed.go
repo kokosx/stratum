@@ -27,20 +27,6 @@ func (d *Database) Seed(ctx context.Context) error {
 	queries := db.New(tx)
 	now := time.Now().Unix()
 
-	for _, block := range []struct {
-		id, name, displayName, schema, template string
-	}{
-		{"seed-core-heading-v1", "heading", "Heading", `{"type":"object","required":["text"],"properties":{"text":{"type":"string"},"level":{"type":"integer","minimum":1,"maximum":6}}}`, `<h2>{{ .Props.text }}</h2>`},
-		{"seed-core-text-v1", "text", "Text", `{"type":"object","required":["text"],"properties":{"text":{"type":"string"}}}`, `<p>{{ .Props.text }}</p>`},
-	} {
-		if err := queries.SeedBlockDefinition(ctx, db.SeedBlockDefinitionParams{
-			ID: block.id, Namespace: "core", Name: block.name, Version: 1,
-			DisplayName: block.displayName, SchemaJson: block.schema, Template: sql.NullString{String: block.template, Valid: true}, CreatedAt: now, UpdatedAt: now,
-		}); err != nil {
-			return fmt.Errorf("seed %s block: %w", block.name, err)
-		}
-	}
-
 	document := func(title, text string) string {
 		return fmt.Sprintf(`{"version":1,"nodes":[{"id":"heading","block":"core/heading","version":1,"props":{"text":%q,"level":1}},{"id":"text","block":"core/text","version":1,"props":{"text":%q}}]}`, title, text)
 	}

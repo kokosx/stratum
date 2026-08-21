@@ -32,6 +32,7 @@ type LayoutData struct {
 	Title      string
 	ActiveMenu string
 	Flash      string
+	CSRFToken  string
 	Content    any
 }
 
@@ -100,10 +101,16 @@ func (h *Handler) Routes() http.Handler {
 	}
 	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServer(http.FS(staticFS))))
 
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, maxAdminRequestBody)
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 const csrfCookieName = "stratum_csrf"
+const maxAdminRequestBody = 1 << 20
 
 func (h *Handler) csrfToken(w http.ResponseWriter) (string, error) {
 	bytes := make([]byte, 32)
@@ -125,17 +132,17 @@ func (h *Handler) validCSRF(r *http.Request) bool {
 
 const flashCookieName = "stratum_flash"
 
-func setFlash(w http.ResponseWriter, message string) {
+func (h *Handler) setFlash(w http.ResponseWriter, message string) {
 	value := base64.RawURLEncoding.EncodeToString([]byte(message))
-	http.SetCookie(w, &http.Cookie{Name: flashCookieName, Value: value, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 60})
+	http.SetCookie(w, &http.Cookie{Name: flashCookieName, Value: value, Path: "/admin", HttpOnly: true, Secure: h.auth.SecureCookies(), SameSite: http.SameSiteLaxMode, MaxAge: 60})
 }
 
-func consumeFlash(w http.ResponseWriter, r *http.Request) string {
+func (h *Handler) consumeFlash(w http.ResponseWriter, r *http.Request) string {
 	cookie, err := r.Cookie(flashCookieName)
 	if err != nil || cookie.Value == "" {
 		return ""
 	}
-	http.SetCookie(w, &http.Cookie{Name: flashCookieName, Value: "", Path: "/admin", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: flashCookieName, Value: "", Path: "/admin", HttpOnly: true, Secure: h.auth.SecureCookies(), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	message, err := base64.RawURLEncoding.DecodeString(cookie.Value)
 	if err != nil {
 		return ""
@@ -144,8 +151,9 @@ func consumeFlash(w http.ResponseWriter, r *http.Request) string {
 }
 
 type authPageData struct {
-	Title string
-	Error string
+	Title     string
+	Error     string
+	CSRFToken string
 }
 
 func (h *Handler) adminHome(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +184,10 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
+		if !h.validCSRF(r) {
+			http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+			return
+		}
 		token, err := h.auth.Setup(r.Context(), r.FormValue("setup_code"), r.FormValue("site_title"), r.FormValue("email"), r.FormValue("password"))
 		if err == nil {
 			h.setSessionCookie(w, token)
@@ -203,6 +215,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
+		if !h.validCSRF(r) {
+			http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+			return
+		}
 		token, err := h.auth.Login(r.Context(), r.FormValue("email"), r.FormValue("password"))
 		if err == nil {
 			h.setSessionCookie(w, token)
@@ -216,6 +232,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
 	if cookie, err := r.Cookie(auth.CookieName); err == nil {
 		_ = h.auth.Logout(r.Context(), cookie.Value)
 	}
@@ -247,7 +267,12 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
 }
 
 func (h *Handler) renderAuth(w http.ResponseWriter, page *template.Template, title, message string) {
-	if err := page.ExecuteTemplate(w, "auth.html", authPageData{Title: title, Error: message}); err != nil {
+	token, err := h.csrfToken(w)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := page.ExecuteTemplate(w, "auth.html", authPageData{Title: title, Error: message, CSRFToken: token}); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }

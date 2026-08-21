@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
@@ -77,7 +78,15 @@ func serve(application *app.App) {
 	mux.Handle("/admin/", adminHandler.Routes())
 	mux.Handle("/", publicHandler)
 
-	server := &http.Server{Addr: ":8080", Handler: mux}
+	server := &http.Server{
+		Addr:              ":8080",
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 	log.Println("Stratum running on http://localhost:8080")
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)

@@ -67,9 +67,9 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("publish") != "" {
-		setFlash(w, "Page published.")
+		h.setFlash(w, "Page published.")
 	} else {
-		setFlash(w, "Page saved as draft.")
+		h.setFlash(w, "Page saved as draft.")
 	}
 	http.Redirect(w, r, "/admin/pages", http.StatusSeeOther)
 }
@@ -123,9 +123,9 @@ func (h *Handler) updatePage(w http.ResponseWriter, r *http.Request, publish boo
 		return
 	}
 	if publish {
-		setFlash(w, "Page published.")
+		h.setFlash(w, "Page published.")
 	} else {
-		setFlash(w, "Page saved as draft.")
+		h.setFlash(w, "Page saved as draft.")
 	}
 	http.Redirect(w, r, "/admin/pages", http.StatusSeeOther)
 }
@@ -139,10 +139,6 @@ func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input
 	if err != nil {
 		return err
 	}
-	documentJSON, err := textDocument(input.content)
-	if err != nil {
-		return err
-	}
 	tx, err := h.database.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin page write: %w", err)
@@ -151,6 +147,7 @@ func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input
 	qtx := h.queries.WithTx(tx)
 
 	revisionNumber := int64(1)
+	nodeID := ""
 	if create {
 		err = qtx.CreateEntry(ctx, db.CreateEntryParams{ID: entryID, ContentTypeID: "page", Slug: input.slug, Status: "active", AuthorID: sql.NullString{String: authorID, Valid: true}, CreatedAt: now, UpdatedAt: now})
 	} else {
@@ -162,11 +159,19 @@ func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input
 		if getErr != nil {
 			return fmt.Errorf("get latest revision: %w", getErr)
 		}
+		nodeID, getErr = textNodeID(latest.DocumentJson)
+		if getErr != nil {
+			return fmt.Errorf("read latest page document: %w", getErr)
+		}
 		revisionNumber = latest.RevisionNumber + 1
 		err = qtx.UpdateEntry(ctx, db.UpdateEntryParams{Slug: input.slug, Status: entry.Status, AuthorID: sql.NullString{String: authorID, Valid: true}, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
 	}
 	if err != nil {
 		return fmt.Errorf("save page entry: %w", err)
+	}
+	documentJSON, err := textDocument(input.content, nodeID)
+	if err != nil {
+		return err
 	}
 	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title, DocumentJson: documentJSON, CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now}); err != nil {
 		return fmt.Errorf("create page revision: %w", err)
@@ -232,7 +237,7 @@ func (h *Handler) renderPageForm(w http.ResponseWriter, data pageFormData) {
 		return
 	}
 	data.CSRFToken = token
-	if err := h.pageTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: "pages", Content: data}); err != nil {
+	if err := h.pageTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: "pages", CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render page form: %v", err)
 	}
 }
@@ -248,17 +253,32 @@ func readPageInput(r *http.Request) (pageInput, error) {
 	return input, nil
 }
 
-func textDocument(content string) (string, error) {
+func textDocument(content, nodeID string) (string, error) {
 	props, err := json.Marshal(map[string]string{"text": content})
 	if err != nil {
 		return "", err
 	}
-	nodeID, err := randomID()
-	if err != nil {
-		return "", err
+	if nodeID == "" {
+		nodeID, err = randomID()
+		if err != nil {
+			return "", err
+		}
 	}
 	encoded, err := json.Marshal(document.Document{Version: 1, Nodes: []document.Node{{ID: nodeID, Block: "core/text", Version: 1, Props: props}}})
 	return string(encoded), err
+}
+
+func textNodeID(documentJSON string) (string, error) {
+	doc, err := document.Decode([]byte(documentJSON))
+	if err != nil {
+		return "", err
+	}
+	for _, node := range doc.Nodes {
+		if node.Block == "core/text" && node.Version == 1 {
+			return node.ID, nil
+		}
+	}
+	return "", nil
 }
 
 func textContent(documentJSON string) (string, error) {

@@ -10,49 +10,6 @@ import (
 	"database/sql"
 )
 
-const seedBlockDefinition = `-- name: SeedBlockDefinition :exec
-INSERT INTO block_definitions (
-    id, namespace, name, version, display_name, description, schema_json,
-    renderer_type, template, source, enabled, created_at, updated_at
-)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'template', ?, 'core', 1, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-    display_name = excluded.display_name,
-    schema_json = excluded.schema_json,
-    renderer_type = excluded.renderer_type,
-    template = excluded.template,
-    updated_at = excluded.updated_at
-`
-
-type SeedBlockDefinitionParams struct {
-	ID          string         `json:"id"`
-	Namespace   string         `json:"namespace"`
-	Name        string         `json:"name"`
-	Version     int64          `json:"version"`
-	DisplayName string         `json:"display_name"`
-	Description sql.NullString `json:"description"`
-	SchemaJson  string         `json:"schema_json"`
-	Template    sql.NullString `json:"template"`
-	CreatedAt   int64          `json:"created_at"`
-	UpdatedAt   int64          `json:"updated_at"`
-}
-
-func (q *Queries) SeedBlockDefinition(ctx context.Context, arg SeedBlockDefinitionParams) error {
-	_, err := q.db.ExecContext(ctx, seedBlockDefinition,
-		arg.ID,
-		arg.Namespace,
-		arg.Name,
-		arg.Version,
-		arg.DisplayName,
-		arg.Description,
-		arg.SchemaJson,
-		arg.Template,
-		arg.CreatedAt,
-		arg.UpdatedAt,
-	)
-	return err
-}
-
 const seedEntry = `-- name: SeedEntry :exec
 INSERT INTO entries (
     id, content_type_id, slug, status, created_at, updated_at, published_at

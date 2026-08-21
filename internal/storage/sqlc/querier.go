@@ -39,7 +39,6 @@ type Querier interface {
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
 	ListRoutesForEntry(ctx context.Context, entryID sql.NullString) ([]Route, error)
-	SeedBlockDefinition(ctx context.Context, arg SeedBlockDefinitionParams) error
 	SeedEntry(ctx context.Context, arg SeedEntryParams) error
 	SeedEntryRevision(ctx context.Context, arg SeedEntryRevisionParams) error
 	SeedPublishedRevision(ctx context.Context, arg SeedPublishedRevisionParams) error
