@@ -1,0 +1,19 @@
+{{ define "layout.html" }}<!doctype html>
+<html lang="{{ .Site.Language }}" data-appearance="{{ setting .Theme.Settings "appearance.mode" }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ if .Entry.SEOTitle }}{{ .Entry.SEOTitle }}{{ else }}{{ .Entry.Title }}{{ end }} · {{ .Site.Title }}</title>
+  {{ if .Entry.SEODescription }}<meta name="description" content="{{ .Entry.SEODescription }}">{{ end }}
+  <link rel="stylesheet" href="/stratum/blocks.css">
+  <link rel="stylesheet" href="/stratum/theme.css">
+  {{ if .PreviewCSS }}<style id="stratum-preview-theme">{{ .PreviewCSS }}</style>{{ end }}
+  <script src="/stratum/theme.js" defer></script>
+</head>
+<body class="st-links--{{ setting .Theme.Settings "links.style" }} st-buttons-primary--{{ setting .Theme.Settings "buttons.primaryStyle" }} st-buttons-secondary--{{ setting .Theme.Settings "buttons.secondaryStyle" }} st-dropdown-indicator--{{ setting .Theme.Settings "navigation.showDropdownIndicator" }}">
+  {{ template "topbar" . }}
+  {{ template "header" . }}
+  <main id="content" class="site-main st-container st-container--content">{{ .Content }}</main>
+  {{ template "footer" . }}
+</body>
+</html>{{ end }}

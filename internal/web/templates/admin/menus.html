@@ -1,0 +1,102 @@
+{{ define "content" }}
+  <div class="page-heading">
+    <h1>Menus</h1>
+    <form class="inline-form" method="post" action="/admin/menus">
+      <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+      <label><span class="screen-reader-text">New menu name</span><input name="name" placeholder="New menu name" required></label>
+      <button class="button" type="submit">Create New</button>
+    </form>
+  </div>
+
+  {{ if .Content.Menus }}
+    <form class="menu-selector" method="get" action="/admin/menus">
+      <label for="menu-select">Select a menu to edit</label>
+      <select id="menu-select" name="menu">
+        {{ range .Content.Menus }}<option value="{{ .ID }}" {{ if and $.Content.Selected (eq .ID $.Content.Selected.ID) }}selected{{ end }}>{{ .Name }}</option>{{ end }}
+      </select>
+      <button class="button" type="submit">Select</button>
+    </form>
+  {{ end }}
+
+  {{ template "menu-editor" . }}
+{{ end }}
+
+{{ define "menu-editor" }}
+<div id="menu-editor-region">
+  {{ if .Content.Error }}<div class="form-error" role="alert">{{ .Content.Error }}</div>{{ end }}
+  {{ if .Content.Notice }}<div class="flash-message" role="status">{{ .Content.Notice }}</div>{{ end }}
+
+  {{ with .Content.Selected }}
+  <form id="menu-editor-form" method="post" action="/admin/menus/{{ .ID }}" class="menu-editor">
+    <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+    <section class="panel menu-add-panel">
+      <h2>Add items</h2>
+      <div class="menu-add-columns">
+        <fieldset>
+          <legend>Published Pages</legend>
+          {{ range $.Content.Pages }}
+            <label class="check-row"><input type="checkbox" name="add_entry_id" value="{{ .ID }}"> <span>{{ .Title }}</span><small>{{ .Path }}</small></label>
+          {{ else }}<p class="muted">There are no published Pages.</p>{{ end }}
+          <button class="button" type="submit" name="action" value="add-entry" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-entry', {contentType: 'form'})">Add to menu</button>
+        </fieldset>
+        <fieldset>
+          <legend>Custom Link</legend>
+          <label>URL<input name="custom_url" placeholder="https://example.com, /pricing, or #contact"></label>
+          <label>Label<input name="custom_label" placeholder="Example"></label>
+          <button class="button" type="submit" name="action" value="add-url" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-url', {contentType: 'form'})">Add to menu</button>
+        </fieldset>
+        <fieldset>
+          <legend>Dropdown heading</legend>
+          <p class="muted">A label with no link. Indent other items below it to create a dropdown.</p>
+          <label>Label<input name="group_label" placeholder="Services"></label>
+          <button class="button" type="submit" name="action" value="add-group" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-group', {contentType: 'form'})">Add to menu</button>
+        </fieldset>
+      </div>
+    </section>
+
+    <section class="panel menu-structure">
+      <h2>Menu structure</h2>
+      <p class="muted">Indent an item below the item immediately above it to make it part of that dropdown.</p>
+      <label class="menu-name">Menu name<input name="name" value="{{ .Name }}" required></label>
+      <ol class="menu-item-list">
+        {{ range $.Content.Items }}
+        <li id="menu-item-{{ .ID }}" class="menu-item menu-depth-{{ .Depth }}">
+          <input type="hidden" name="item_id" value="{{ .ID }}">
+          <input type="hidden" name="item_parent_id" value="{{ .ParentID }}">
+          <input type="hidden" name="item_target_type" value="{{ .TargetType }}">
+          <input type="hidden" name="item_entry_id" value="{{ .EntryID }}">
+          <input type="hidden" name="item_url" value="{{ .URL }}">
+          <div class="menu-item-heading">
+            <label>Navigation label<input name="item_label" value="{{ .Label }}" required></label>
+            <div class="menu-target"><strong>{{ .TargetName }}</strong><small>{{ .TargetPath }}</small></div>
+          </div>
+          {{ if and (eq .TargetType "entry") (not .Public) }}<p class="menu-warning">Page is not currently public.</p>{{ end }}
+          <div class="menu-item-actions">
+            <button type="submit" name="action" value="move-up:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=move-up:{{ .ID }}', {contentType: 'form'})">Move up</button>
+            <button type="submit" name="action" value="move-down:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=move-down:{{ .ID }}', {contentType: 'form'})">Move down</button>
+            <button type="submit" name="action" value="indent:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=indent:{{ .ID }}', {contentType: 'form'})">Indent</button>
+            <button type="submit" name="action" value="outdent:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=outdent:{{ .ID }}', {contentType: 'form'})">Outdent</button>
+            <button class="danger-link" type="submit" name="action" value="delete:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=delete:{{ .ID }}', {contentType: 'form'})">Remove</button>
+          </div>
+        </li>
+        {{ else }}<li class="muted">This menu has no items yet.</li>{{ end }}
+      </ol>
+    </section>
+
+    <section class="panel menu-locations">
+      <h2>Locations</h2>
+      {{ range $.Content.Locations }}<label class="check-row"><input type="checkbox" name="locations" value="{{ .Name }}" {{ if .Checked }}checked{{ end }}> {{ .Label }} <small>{{ .Name }}</small></label>{{ end }}
+      <label>Additional locations (comma-separated)<input name="custom_locations" placeholder="theme-sidebar"></label>
+    </section>
+
+    <div class="form-actions"><button class="button button-primary" type="submit" name="action" value="save" data-on:click="@post('/admin/menus/{{ .ID }}?action=save', {contentType: 'form'})">Save Menu</button></div>
+  </form>
+  <form method="post" action="/admin/menus/{{ .ID }}/delete" class="delete-menu-form">
+    <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+    <button class="danger-link" type="submit">Delete menu</button>
+  </form>
+  {{ else }}
+    <div class="panel"><p>Create your first menu. Pages are only added when you explicitly select them.</p></div>
+  {{ end }}
+</div>
+{{ end }}

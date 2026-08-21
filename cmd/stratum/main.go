@@ -61,6 +61,7 @@ func serve(application *app.App) {
 		application.Queries,
 		authService,
 		application.Blocks,
+		application.Themes,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -69,10 +70,12 @@ func serve(application *app.App) {
 	publicHandler, err := publicweb.NewHandler(
 		application.Queries,
 		application.Blocks,
+		application.Themes,
 	)
 	if err != nil {
 		log.Fatal(err)
 	}
+	adminHandler.SetPreviewRenderer(publicHandler.RenderPreview)
 
 	mux := http.NewServeMux()
 	mux.Handle("/admin", adminHandler.Routes())

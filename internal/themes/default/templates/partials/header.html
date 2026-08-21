@@ -1,0 +1,20 @@
+{{ define "topbar" }}{{ $menu := index .Navigation "topbar" }}{{ if and (setting .Theme.Settings "topbar.enabled") $menu.Items }}
+<aside class="site-topbar site-topbar--{{ setting .Theme.Settings "topbar.menuAlignment" }}"><div class="st-container st-container--wide"><nav aria-label="Top bar"><ul>{{ template "menu-items" $menu.Items }}</ul></nav></div></aside>
+{{ end }}{{ end }}
+
+{{ define "header" }}
+<header class="site-header site-header--{{ setting .Theme.Settings "header.layout" }} site-header--width-{{ setting .Theme.Settings "header.width" }} site-header--logo-{{ setting .Theme.Settings "header.logoPosition" }}{{ if setting .Theme.Settings "header.sticky" }} is-sticky{{ end }}{{ if setting .Theme.Settings "header.border" }} has-border{{ end }} shadow--{{ setting .Theme.Settings "header.shadow" }}">
+  <div class="site-header__inner st-container st-container--{{ setting .Theme.Settings "header.width" }}">
+    <a class="site-brand" href="/">
+      {{ if setting .Theme.Settings "header.showSiteTitle" }}<span class="site-title">{{ .Site.Title }}</span>{{ end }}
+      {{ if and (setting .Theme.Settings "header.showTagline") .Site.Tagline }}<span class="site-tagline">{{ .Site.Tagline }}</span>{{ end }}
+    </a>
+    {{ $primary := index .Navigation "primary" }}{{ if $primary.Items }}
+      <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation"><span class="sr-only">Toggle navigation</span><span aria-hidden="true">☰</span></button>
+      <div id="primary-navigation" class="primary-navigation mobile--{{ setting .Theme.Settings "navigation.mobileStyle" }}">
+        <nav class="site-navigation site-navigation--{{ setting .Theme.Settings "navigation.style" }} site-navigation--{{ setting .Theme.Settings "navigation.layout" }} site-navigation--align-{{ setting .Theme.Settings "navigation.align" }} dropdown--{{ setting .Theme.Settings "navigation.dropdownStyle" }}" aria-label="Primary navigation"><ul>{{ template "menu-items" $primary.Items }}</ul></nav>
+      </div>
+    {{ end }}
+  </div>
+</header>
+{{ end }}

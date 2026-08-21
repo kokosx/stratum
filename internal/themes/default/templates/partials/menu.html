@@ -1,0 +1,11 @@
+{{ define "menu-items" }}{{ range . }}
+  <li class="menu-item{{ if .Children }} menu-item--has-children{{ end }}{{ if .Current }} menu-item--current{{ end }}{{ if .Ancestor }} menu-item--ancestor{{ end }}">
+    {{ if .URL }}<a href="{{ .URL }}"{{ if .Current }} aria-current="page"{{ end }}>{{ .Label }}</a>{{ else }}<span class="menu-label">{{ .Label }}</span>{{ end }}
+    {{ if .Children }}
+      <button class="submenu-toggle" type="button" aria-expanded="false" aria-label="Toggle {{ .Label }} submenu"><span aria-hidden="true">⌄</span></button>
+      <ul class="submenu">{{ template "menu-items" .Children }}</ul>
+    {{ end }}
+  </li>
+{{ end }}{{ end }}
+
+{{ define "navigation" }}{{ if .Menu.Items }}<nav class="site-navigation site-navigation--{{ .Style }} site-navigation--{{ .Layout }} site-navigation--align-{{ .Align }} dropdown--{{ .DropdownStyle }}" aria-label="{{ .Label }}"><ul>{{ template "menu-items" .Menu.Items }}</ul></nav>{{ end }}{{ end }}

@@ -7,6 +7,8 @@
   <title>{{ .Title }} · Stratum</title>
   <link rel="stylesheet" href="/admin/static/admin.css">
   <link rel="stylesheet" href="/admin/static/editor/editor.css">
+  <link rel="stylesheet" href="/admin/static/appearance/customizer.css">
+  <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.2/bundles/datastar.js"></script>
 </head>
 <body>
   <div class="admin">
@@ -17,6 +19,8 @@
           <li><a href="/admin" class="{{ if eq .ActiveMenu "dashboard" }}active{{ end }}">Dashboard</a></li>
           <li><a href="/admin/pages" class="{{ if eq .ActiveMenu "pages" }}active{{ end }}">Pages</a></li>
           <li><a href="/admin/posts" class="{{ if eq .ActiveMenu "posts" }}active{{ end }}">Posts</a></li>
+          <li><a href="/admin/appearance" class="{{ if eq .ActiveMenu "appearance" }}active{{ end }}">Appearance</a></li>
+          <li class="menu-child"><a href="/admin/menus" class="{{ if eq .ActiveMenu "menus" }}active{{ end }}">Menus</a></li>
         </ul>
       </nav>
     </aside>

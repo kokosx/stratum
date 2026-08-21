@@ -1,159 +1,125 @@
 package public
 
 import (
+	"context"
 	"database/sql"
 	"errors"
-	"html/template"
-	"io/fs"
+	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/navigation"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
-	webassets "github.com/kokosx/stratum/internal/web"
+	"github.com/kokosx/stratum/internal/themes"
 )
 
 type Handler struct {
-	queries  *db.Queries
-	blocks   *blocks.Registry
-	template *template.Template
+	queries    *db.Queries
+	blocks     *blocks.Registry
+	navigation *navigation.Loader
+	themes     *themes.Runtime
 }
 
-type PageData struct {
-	Title          string
-	SEOTitle       string
-	SEODescription string
-	SiteTitle      string
-	Language       string
-
-	Content template.HTML
-}
-
-func NewHandler(
-	queries *db.Queries,
-	blocks *blocks.Registry,
-) (*Handler, error) {
-
-	templateFS, err := fs.Sub(webassets.Assets, "templates/public")
-	if err != nil {
-		return nil, err
+func NewHandler(queries *db.Queries, blocks *blocks.Registry, runtimes ...*themes.Runtime) (*Handler, error) {
+	var runtime *themes.Runtime
+	if len(runtimes) > 0 {
+		runtime = runtimes[0]
+	} else {
+		var err error
+		runtime, err = themes.NewRuntime(context.Background(), queries)
+		if err != nil {
+			return nil, err
+		}
 	}
-	tmpl, err := template.ParseFS(templateFS, "layout.html")
-	if err != nil {
-		return nil, err
-	}
-
-	return &Handler{
-		queries:  queries,
-		blocks:   blocks,
-		template: tmpl,
-	}, nil
+	return &Handler{queries: queries, blocks: blocks, navigation: navigation.NewLoader(queries), themes: runtime}, nil
 }
 
-func (h *Handler) ServeHTTP(
-	w http.ResponseWriter,
-	r *http.Request,
-) {
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if r.URL.Path == "/stratum/blocks.css" {
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		_, _ = w.Write([]byte(h.blocks.Styles()))
+	switch r.URL.Path {
+	case "/stratum/blocks.css":
+		serveAsset(w, "text/css; charset=utf-8", h.blocks.Styles())
+		return
+	case "/stratum/theme.css":
+		serveAsset(w, "text/css; charset=utf-8", h.themes.Styles())
+		return
+	case "/stratum/theme.js":
+		serveAsset(w, "text/javascript; charset=utf-8", h.themes.JavaScript())
 		return
 	}
 
-	path := r.URL.Path
-
-	entry, err := h.queries.GetPublishedEntryByPath(
-		r.Context(),
-		path,
-	)
-
+	page, err := h.RenderPath(r.Context(), r.URL.Path, nil)
 	if err != nil {
-
 		if errors.Is(err, sql.ErrNoRows) {
 			http.NotFound(w, r)
 			return
 		}
-
-		log.Printf("get entry: %v", err)
-
-		http.Error(
-			w,
-			"Internal Server Error",
-			http.StatusInternalServerError,
-		)
-
-		return
-	}
-
-	doc, err := document.Decode(
-		[]byte(entry.DocumentJson),
-	)
-
-	if err != nil {
-
-		log.Printf("decode document: %v", err)
-
-		http.Error(
-			w,
-			"Internal Server Error",
-			http.StatusInternalServerError,
-		)
-
-		return
-	}
-
-	content, err := h.blocks.RenderDocument(doc)
-
-	if err != nil {
-
-		log.Printf("render document: %v", err)
-
-		http.Error(
-			w,
-			"Internal Server Error",
-			http.StatusInternalServerError,
-		)
-
-		return
-	}
-	settings, err := h.queries.GetSiteSettings(r.Context())
-	if err != nil {
-		log.Printf("get site settings: %v", err)
+		log.Printf("render public page: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(page)
+}
 
-	data := PageData{
-		Title:          entry.Title,
-		SEOTitle:       stringValue(entry.SeoTitle),
-		SEODescription: stringValue(entry.SeoDescription),
-		SiteTitle:      settings.SiteTitle,
-		Language:       settings.Language,
+func serveAsset(w http.ResponseWriter, contentType, value string) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write([]byte(value))
+}
 
-		Content: content,
+// RenderPath is the single public and preview rendering pipeline. Passing
+// temporary settings changes only this render and never the runtime snapshot.
+func (h *Handler) RenderPath(ctx context.Context, path string, temporary map[string]any) ([]byte, error) {
+	return h.renderPath(ctx, path, temporary, nil)
+}
+
+func (h *Handler) RenderPreview(ctx context.Context, path string, temporary map[string]any, customCSS string) ([]byte, error) {
+	return h.renderPath(ctx, path, temporary, &customCSS)
+}
+
+func (h *Handler) renderPath(ctx context.Context, path string, temporary map[string]any, customCSS *string) ([]byte, error) {
+	entry, err := h.queries.GetPublishedEntryByPath(ctx, path)
+	if err != nil {
+		return nil, err
 	}
-
-	if err := h.template.ExecuteTemplate(
-		w,
-		"layout.html",
-		data,
-	); err != nil {
-
-		log.Printf("render page template: %v", err)
+	doc, err := document.Decode([]byte(entry.DocumentJson))
+	if err != nil {
+		return nil, fmt.Errorf("decode document: %w", err)
 	}
+	content, err := h.blocks.RenderDocument(doc)
+	if err != nil {
+		return nil, fmt.Errorf("render document: %w", err)
+	}
+	settings, err := h.queries.GetSiteSettings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get site settings: %w", err)
+	}
+	menus, err := h.navigation.LoadLocationsForPath(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("load navigation: %w", err)
+	}
+	view := themes.PageView{
+		Site:       themes.SiteView{Title: settings.SiteTitle, Tagline: settings.SiteTagline, Language: settings.Language},
+		Entry:      themes.EntryView{Title: entry.Title, SEOTitle: stringValue(entry.SeoTitle), SEODescription: stringValue(entry.SeoDescription)},
+		Navigation: menus,
+		Content:    content,
+	}
+	if customCSS != nil {
+		return h.themes.Preview(view, temporary, *customCSS)
+	}
+	return h.themes.Render(view, temporary)
 }
 
 func stringValue(value sql.NullString) string {
-	if !value.Valid {
-		return ""
+	if value.Valid {
+		return value.String
 	}
-
-	return value.String
+	return ""
 }

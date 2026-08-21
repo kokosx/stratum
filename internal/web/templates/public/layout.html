@@ -1,3 +1,12 @@
+{{ define "menu-items" }}
+  {{ range . }}
+    <li class="{{ if .Children }}has-children{{ end }}">
+      {{ if .URL }}<a href="{{ .URL }}">{{ .Label }}{{ if .Children }} <span aria-hidden="true">⌄</span>{{ end }}</a>{{ else if .Children }}<button type="button">{{ .Label }} <span aria-hidden="true">⌄</span></button>{{ else }}<span class="menu-label">{{ .Label }}</span>{{ end }}
+      {{ if .Children }}<ul>{{ template "menu-items" .Children }}</ul>{{ end }}
+    </li>
+  {{ end }}
+{{ end }}
+{{ define "layout.html" }}
 <!doctype html>
 <html lang="{{ .Language }}">
   <head>
@@ -30,10 +39,35 @@
       h3 {
         line-height: 1.2;
       }
+
+      .site-header, .site-footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+      .site-header { margin-bottom: 40px; }
+      .site-footer { margin-top: 56px; padding-top: 24px; border-top: 1px solid #ddd; }
+      .site-title { color: inherit; font-weight: 700; text-decoration: none; }
+      .site-navigation ul { margin: 0; padding: 0; list-style: none; }
+      .site-navigation > ul { display: flex; gap: 20px; }
+      .site-navigation li { position: relative; }
+      .site-navigation a, .site-navigation button, .site-navigation .menu-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; color: inherit; font: inherit; text-decoration: none; white-space: nowrap; }
+      .site-navigation button { border: 0; background: transparent; cursor: pointer; }
+      .site-navigation li > ul { display: none; position: absolute; z-index: 1; top: 100%; left: 0; min-width: 200px; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; background: #fff; box-shadow: 0 8px 24px rgb(0 0 0 / 14%); }
+      .site-navigation li li > ul { top: -11px; left: calc(100% + 14px); }
+      .site-navigation li:hover > ul, .site-navigation li:focus-within > ul { display: grid; }
+      .footer-navigation ul { display: flex; flex-wrap: wrap; gap: 16px; margin: 0; padding: 0; list-style: none; }
+      .footer-navigation ul ul { display: grid; gap: 4px; margin-top: 6px; padding-left: 16px; }
+      .footer-navigation button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }
     </style>
   </head>
 
   <body>
+    <header class="site-header">
+      <a class="site-title" href="/">{{ .SiteTitle }}</a>
+      {{ with index .Navigation "primary" }}{{ if .Items }}<nav class="site-navigation" aria-label="Primary navigation"><ul>{{ template "menu-items" .Items }}</ul></nav>{{ end }}{{ end }}
+    </header>
     <main>{{ .Content }}</main>
+    <footer class="site-footer">
+      <span>{{ .SiteTitle }}</span>
+      {{ with index .Navigation "footer" }}{{ if .Items }}<nav class="footer-navigation" aria-label="Footer navigation"><ul>{{ template "menu-items" .Items }}</ul></nav>{{ end }}{{ end }}
+    </footer>
   </body>
 </html>
+{{ end }}

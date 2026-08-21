@@ -4,5 +4,5 @@ import "embed"
 
 // Assets contains the templates and static files required by the web handlers.
 //
-//go:embed templates/admin/*.html static/admin.css static/editor/* templates/public/layout.html
+//go:embed templates/admin/*.html static/admin.css static/editor/* static/appearance/* templates/public/layout.html
 var Assets embed.FS

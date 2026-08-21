@@ -7,12 +7,14 @@ import (
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/themes"
 )
 
 type App struct {
 	Database *storage.Database
 	Queries  *db.Queries
 	Blocks   *blocks.Registry
+	Themes   *themes.Runtime
 }
 
 func New(ctx context.Context) (*App, error) {
@@ -32,11 +34,17 @@ func New(ctx context.Context) (*App, error) {
 		database.Close()
 		return nil, fmt.Errorf("load block registry: %w", err)
 	}
+	themeRuntime, err := themes.NewRuntime(ctx, queries)
+	if err != nil {
+		database.Close()
+		return nil, fmt.Errorf("load theme runtime: %w", err)
+	}
 
 	return &App{
 		Database: database,
 		Queries:  queries,
 		Blocks:   registry,
+		Themes:   themeRuntime,
 	}, nil
 }
 

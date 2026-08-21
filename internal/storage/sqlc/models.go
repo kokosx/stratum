@@ -61,6 +61,32 @@ type EntryRevision struct {
 	CreatedAt      int64          `json:"created_at"`
 }
 
+type NavigationItem struct {
+	ID         string         `json:"id"`
+	MenuID     string         `json:"menu_id"`
+	ParentID   sql.NullString `json:"parent_id"`
+	Position   int64          `json:"position"`
+	Label      string         `json:"label"`
+	TargetType string         `json:"target_type"`
+	EntryID    sql.NullString `json:"entry_id"`
+	Url        sql.NullString `json:"url"`
+	CreatedAt  int64          `json:"created_at"`
+	UpdatedAt  int64          `json:"updated_at"`
+}
+
+type NavigationLocation struct {
+	Location string `json:"location"`
+	MenuID   string `json:"menu_id"`
+}
+
+type NavigationMenu struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
 type Route struct {
 	ID             string         `json:"id"`
 	Path           string         `json:"path"`
@@ -93,6 +119,14 @@ type SiteSetting struct {
 	IndexingEnabled  int64          `json:"indexing_enabled"`
 	CreatedAt        int64          `json:"created_at"`
 	UpdatedAt        int64          `json:"updated_at"`
+}
+
+type ThemeCustomization struct {
+	ThemeID      string `json:"theme_id"`
+	ThemeVersion int64  `json:"theme_version"`
+	SettingsJson string `json:"settings_json"`
+	CustomCss    string `json:"custom_css"`
+	UpdatedAt    int64  `json:"updated_at"`
 }
 
 type User struct {

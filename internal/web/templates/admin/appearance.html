@@ -1,0 +1,29 @@
+{{ define "content" }}
+<section class="appearance-shell" id="theme-customizer">
+  <script id="appearance-bootstrap" type="application/json">{{ .Content.BootstrapJSON }}</script>
+  <header class="appearance-toolbar">
+    <div><h1>Appearance</h1><p><strong>{{ .Content.ThemeName }}</strong> · Version {{ .Content.ThemeVersion }}</p></div>
+    <div class="appearance-viewports" role="group" aria-label="Preview size">
+      <button type="button" data-viewport="desktop" class="active">Desktop</button>
+      <button type="button" data-viewport="tablet">Tablet</button>
+      <button type="button" data-viewport="mobile">Mobile</button>
+    </div>
+    <div class="appearance-actions"><span id="appearance-status" role="status">Saved</span><button id="appearance-save" class="button-primary" type="button" disabled>Save Changes</button></div>
+  </header>
+  <div class="appearance-workspace">
+    <aside class="appearance-panel">
+      <div class="active-theme"><span>Active theme</span><strong>{{ .Content.ThemeName }}</strong><small>{{ .Content.ThemeDescription }}</small></div>
+      <nav id="appearance-groups" aria-label="Customizer sections"></nav>
+      <button id="appearance-reset-all" class="button-link" type="button">Reset entire theme</button>
+    </aside>
+    <section class="appearance-controls" aria-live="polite">
+      <div class="controls-heading"><div><h2 id="appearance-group-title"></h2><p id="appearance-group-description"></p></div><button id="appearance-reset-group" class="button-link" type="button">Reset group</button></div>
+      <div id="appearance-fields"></div>
+    </section>
+    <section class="appearance-preview" aria-label="Live preview">
+      <div id="appearance-frame-wrap" data-viewport="desktop"><iframe id="appearance-frame" title="Live site preview" sandbox="allow-scripts allow-forms allow-same-origin"></iframe></div>
+    </section>
+  </div>
+</section>
+<script src="/admin/static/appearance/customizer.js" defer></script>
+{{ end }}

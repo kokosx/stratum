@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -14,20 +15,28 @@ import (
 
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/navigation"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/themes"
 	webassets "github.com/kokosx/stratum/internal/web"
 )
 
 type Handler struct {
-	database          *sql.DB
-	queries           *db.Queries
-	auth              *auth.Service
-	blocks            *blocks.Registry
-	dashboardTemplate *template.Template
-	entriesTemplate   *template.Template
-	pageTemplate      *template.Template
-	setupTemplate     *template.Template
-	loginTemplate     *template.Template
+	database           *sql.DB
+	queries            *db.Queries
+	auth               *auth.Service
+	blocks             *blocks.Registry
+	dashboardTemplate  *template.Template
+	entriesTemplate    *template.Template
+	pageTemplate       *template.Template
+	setupTemplate      *template.Template
+	loginTemplate      *template.Template
+	menusTemplate      *template.Template
+	appearanceTemplate *template.Template
+	navigation         *navigation.Service
+	navigationLoader   *navigation.Loader
+	themes             *themes.Runtime
+	previewRenderer    func(context.Context, string, map[string]any, string) ([]byte, error)
 }
 
 type LayoutData struct {
@@ -38,7 +47,7 @@ type LayoutData struct {
 	Content    any
 }
 
-func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry) (*Handler, error) {
+func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry, runtimes ...*themes.Runtime) (*Handler, error) {
 	templateFS, err := fs.Sub(webassets.Assets, "templates/admin")
 	if err != nil {
 		return nil, fmt.Errorf("admin templates: %w", err)
@@ -65,17 +74,39 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	menusTemplate, err := template.ParseFS(templateFS, "layout.html", "menus.html")
+	if err != nil {
+		return nil, err
+	}
+	appearanceTemplate, err := template.ParseFS(templateFS, "layout.html", "appearance.html")
+	if err != nil {
+		return nil, err
+	}
+	var themeRuntime *themes.Runtime
+	if len(runtimes) > 0 {
+		themeRuntime = runtimes[0]
+	} else {
+		themeRuntime, err = themes.NewRuntime(context.Background(), queries)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &Handler{
-		database:          database,
-		queries:           queries,
-		auth:              authService,
-		blocks:            blockRegistry,
-		dashboardTemplate: dashboardTemplate,
-		entriesTemplate:   entriesTemplate,
-		pageTemplate:      pageTemplate,
-		setupTemplate:     setupTemplate,
-		loginTemplate:     loginTemplate,
+		database:           database,
+		queries:            queries,
+		auth:               authService,
+		blocks:             blockRegistry,
+		dashboardTemplate:  dashboardTemplate,
+		entriesTemplate:    entriesTemplate,
+		pageTemplate:       pageTemplate,
+		setupTemplate:      setupTemplate,
+		loginTemplate:      loginTemplate,
+		menusTemplate:      menusTemplate,
+		appearanceTemplate: appearanceTemplate,
+		navigation:         navigation.NewService(database, queries),
+		navigationLoader:   navigation.NewLoader(queries),
+		themes:             themeRuntime,
 	}, nil
 }
 
@@ -99,6 +130,13 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/editor/preview", h.requireAuth(h.previewDocument))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
 	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
+	mux.HandleFunc("GET /admin/menus", h.requireAuth(h.listMenus))
+	mux.HandleFunc("POST /admin/menus", h.requireAuth(h.createMenu))
+	mux.HandleFunc("POST /admin/menus/{id}", h.requireAuth(h.updateMenu))
+	mux.HandleFunc("POST /admin/menus/{id}/delete", h.requireAuth(h.deleteMenu))
+	mux.HandleFunc("GET /admin/appearance", h.requireAuth(h.appearance))
+	mux.HandleFunc("POST /admin/appearance", h.requireAuth(h.saveAppearance))
+	mux.HandleFunc("POST /admin/appearance/preview", h.requireAuth(h.previewAppearance))
 	staticFS, err := fs.Sub(webassets.Assets, "static")
 	if err != nil {
 		panic(fmt.Sprintf("admin static files: %v", err))
@@ -128,10 +166,18 @@ func (h *Handler) csrfToken(w http.ResponseWriter) (string, error) {
 
 func (h *Handler) validCSRF(r *http.Request) bool {
 	cookie, err := r.Cookie(csrfCookieName)
-	if err != nil || cookie.Value == "" || r.FormValue("csrf_token") == "" {
+	token := r.Header.Get("X-CSRF-Token")
+	if token == "" {
+		token = r.FormValue("csrf_token")
+	}
+	if err != nil || cookie.Value == "" || token == "" {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(r.FormValue("csrf_token"))) == 1
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) == 1
+}
+
+func (h *Handler) SetPreviewRenderer(renderer func(context.Context, string, map[string]any, string) ([]byte, error)) {
+	h.previewRenderer = renderer
 }
 
 const flashCookieName = "stratum_flash"

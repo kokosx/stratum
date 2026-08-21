@@ -14,10 +14,15 @@ type Querier interface {
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
 	CreateEntryRevision(ctx context.Context, arg CreateEntryRevisionParams) error
+	CreateNavigationItem(ctx context.Context, arg CreateNavigationItemParams) error
+	CreateNavigationMenu(ctx context.Context, arg CreateNavigationMenuParams) error
 	CreateRoute(ctx context.Context, arg CreateRouteParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
 	DeleteEntry(ctx context.Context, id string) error
+	DeleteNavigationItemsByMenu(ctx context.Context, menuID string) error
+	DeleteNavigationLocationsForMenu(ctx context.Context, menuID string) error
+	DeleteNavigationMenu(ctx context.Context, id string) error
 	DeleteRoute(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, tokenHash string) error
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
@@ -28,16 +33,24 @@ type Querier interface {
 	GetEntryRevision(ctx context.Context, id string) (EntryRevision, error)
 	GetEntryRoute(ctx context.Context, entryID sql.NullString) (Route, error)
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
+	GetNavigationMenu(ctx context.Context, id string) (NavigationMenu, error)
+	GetNavigationMenuBySlug(ctx context.Context, slug string) (NavigationMenu, error)
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
 	GetRouteByPath(ctx context.Context, path string) (Route, error)
 	GetSessionUser(ctx context.Context, tokenHash string) (GetSessionUserRow, error)
 	GetSiteSettings(ctx context.Context) (SiteSetting, error)
+	GetThemeCustomization(ctx context.Context, themeID string) (ThemeCustomization, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	HasAdmin(ctx context.Context) (bool, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
+	ListNavigationItemsByMenu(ctx context.Context, menuID string) ([]ListNavigationItemsByMenuRow, error)
+	ListNavigationLocations(ctx context.Context) ([]NavigationLocation, error)
+	ListNavigationLocationsForMenu(ctx context.Context, menuID string) ([]string, error)
+	ListNavigationMenus(ctx context.Context) ([]NavigationMenu, error)
+	ListPublishedPagesForNavigation(ctx context.Context) ([]ListPublishedPagesForNavigationRow, error)
 	ListRoutesForEntry(ctx context.Context, entryID sql.NullString) ([]Route, error)
 	SeedEntry(ctx context.Context, arg SeedEntryParams) error
 	SeedEntryRevision(ctx context.Context, arg SeedEntryRevisionParams) error
@@ -47,9 +60,12 @@ type Querier interface {
 	SetPublishedRevision(ctx context.Context, arg SetPublishedRevisionParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
+	UpdateNavigationMenu(ctx context.Context, arg UpdateNavigationMenuParams) error
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error
 	UpdateSiteSettings(ctx context.Context, arg UpdateSiteSettingsParams) error
 	UpdateSiteTitle(ctx context.Context, arg UpdateSiteTitleParams) error
+	UpsertNavigationLocation(ctx context.Context, arg UpsertNavigationLocationParams) error
+	UpsertThemeCustomization(ctx context.Context, arg UpsertThemeCustomizationParams) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -223,7 +223,7 @@ CREATE TABLE site_settings (
 
     timezone TEXT NOT NULL DEFAULT 'UTC',
 
-    active_theme TEXT NOT NULL DEFAULT 'default',
+    active_theme TEXT NOT NULL DEFAULT 'stratum/default',
 
     indexing_enabled INTEGER NOT NULL DEFAULT 1
         CHECK (indexing_enabled IN (0, 1)),
