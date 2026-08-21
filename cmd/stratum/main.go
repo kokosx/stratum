@@ -36,6 +36,9 @@ func main() {
 		if err := application.Database.Seed(ctx); err != nil {
 			log.Fatal(err)
 		}
+		if err := application.Blocks.Reload(ctx); err != nil {
+			log.Fatal(err)
+		}
 		log.Println("Development seed data is ready at http://localhost:8080/")
 	case "serve":
 		serve(application)
@@ -45,6 +48,7 @@ func main() {
 func serve(application *app.App) {
 	publicHandler, err := publicweb.NewHandler(
 		application.Queries,
+		application.Blocks,
 		"internal/web/templates/public/layout.html",
 	)
 	if err != nil {

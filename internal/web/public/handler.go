@@ -7,14 +7,14 @@ import (
 	"log"
 	"net/http"
 
-	db "github.com/kokosx/stratum/internal/storage/sqlc"
-
+	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/document"
-	"github.com/kokosx/stratum/internal/rendering"
+	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
 type Handler struct {
 	queries  *db.Queries
+	blocks   *blocks.Registry
 	template *template.Template
 }
 
@@ -28,6 +28,7 @@ type PageData struct {
 
 func NewHandler(
 	queries *db.Queries,
+	blocks *blocks.Registry,
 	templatePath string,
 ) (*Handler, error) {
 
@@ -38,6 +39,7 @@ func NewHandler(
 
 	return &Handler{
 		queries:  queries,
+		blocks:   blocks,
 		template: tmpl,
 	}, nil
 }
@@ -89,37 +91,7 @@ func (h *Handler) ServeHTTP(
 		return
 	}
 
-	blockDefinitions, err := h.queries.ListBlockDefinitions(r.Context())
-	if err != nil {
-		log.Printf("load block definitions: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	definitions := make([]rendering.Definition, 0, len(blockDefinitions))
-	for _, definition := range blockDefinitions {
-		if !definition.Template.Valid {
-			log.Printf("block %s/%s@%d has no template", definition.Namespace, definition.Name, definition.Version)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-		definitions = append(definitions, rendering.Definition{
-			Namespace:    definition.Namespace,
-			Name:         definition.Name,
-			Version:      definition.Version,
-			RendererType: definition.RendererType,
-			Template:     definition.Template.String,
-		})
-	}
-
-	renderer, err := rendering.NewRenderer(definitions)
-	if err != nil {
-		log.Printf("build block renderer: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	content, err := renderer.RenderDocument(doc)
+	content, err := h.blocks.RenderDocument(doc)
 
 	if err != nil {
 
