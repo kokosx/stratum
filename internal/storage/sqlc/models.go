@@ -46,6 +46,7 @@ type Entry struct {
 	CreatedAt           int64          `json:"created_at"`
 	UpdatedAt           int64          `json:"updated_at"`
 	PublishedAt         sql.NullInt64  `json:"published_at"`
+	FeaturedMediaID     sql.NullString `json:"featured_media_id"`
 }
 
 type EntryRevision struct {
@@ -59,6 +60,37 @@ type EntryRevision struct {
 	SeoDescription sql.NullString `json:"seo_description"`
 	CreatedBy      sql.NullString `json:"created_by"`
 	CreatedAt      int64          `json:"created_at"`
+	CanonicalUrl   sql.NullString `json:"canonical_url"`
+}
+
+type MediaVariant struct {
+	ID         string        `json:"id"`
+	MediaID    string        `json:"media_id"`
+	Kind       string        `json:"kind"`
+	StorageKey string        `json:"storage_key"`
+	MimeType   string        `json:"mime_type"`
+	Width      sql.NullInt64 `json:"width"`
+	Height     sql.NullInt64 `json:"height"`
+	FileSize   int64         `json:"file_size"`
+	CreatedAt  int64         `json:"created_at"`
+}
+
+type Medium struct {
+	ID               string         `json:"id"`
+	OriginalFilename string         `json:"original_filename"`
+	StorageKey       string         `json:"storage_key"`
+	MimeType         string         `json:"mime_type"`
+	AssetType        string         `json:"asset_type"`
+	FileSize         int64          `json:"file_size"`
+	Width            sql.NullInt64  `json:"width"`
+	Height           sql.NullInt64  `json:"height"`
+	AltText          string         `json:"alt_text"`
+	Title            string         `json:"title"`
+	Caption          string         `json:"caption"`
+	Description      string         `json:"description"`
+	AuthorID         sql.NullString `json:"author_id"`
+	CreatedAt        int64          `json:"created_at"`
+	UpdatedAt        int64          `json:"updated_at"`
 }
 
 type NavigationItem struct {
@@ -106,19 +138,29 @@ type Session struct {
 }
 
 type SiteSetting struct {
-	ID               int64          `json:"id"`
-	SiteTitle        string         `json:"site_title"`
-	SiteTagline      string         `json:"site_tagline"`
-	HomepageMode     string         `json:"homepage_mode"`
-	HomepageEntryID  sql.NullString `json:"homepage_entry_id"`
-	PostsPageEntryID sql.NullString `json:"posts_page_entry_id"`
-	PostsPerPage     int64          `json:"posts_per_page"`
-	Language         string         `json:"language"`
-	Timezone         string         `json:"timezone"`
-	ActiveTheme      string         `json:"active_theme"`
-	IndexingEnabled  int64          `json:"indexing_enabled"`
-	CreatedAt        int64          `json:"created_at"`
-	UpdatedAt        int64          `json:"updated_at"`
+	ID                   int64          `json:"id"`
+	SiteTitle            string         `json:"site_title"`
+	SiteTagline          string         `json:"site_tagline"`
+	HomepageMode         string         `json:"homepage_mode"`
+	HomepageEntryID      sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID     sql.NullString `json:"posts_page_entry_id"`
+	PostsPerPage         int64          `json:"posts_per_page"`
+	Language             string         `json:"language"`
+	Timezone             string         `json:"timezone"`
+	ActiveTheme          string         `json:"active_theme"`
+	IndexingEnabled      int64          `json:"indexing_enabled"`
+	CreatedAt            int64          `json:"created_at"`
+	UpdatedAt            int64          `json:"updated_at"`
+	SiteUrl              string         `json:"site_url"`
+	SitemapEnabled       int64          `json:"sitemap_enabled"`
+	RobotsMode           string         `json:"robots_mode"`
+	RobotsCustom         string         `json:"robots_custom"`
+	SpeculationMode      string         `json:"speculation_mode"`
+	SpeculationEagerness string         `json:"speculation_eagerness"`
+	TitleSeparator       string         `json:"title_separator"`
+	SiteIconMediaID      sql.NullString `json:"site_icon_media_id"`
+	SiteLogoMediaID      sql.NullString `json:"site_logo_media_id"`
+	SocialLinks          sql.NullString `json:"social_links"`
 }
 
 type ThemeCustomization struct {

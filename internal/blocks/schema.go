@@ -58,6 +58,7 @@ type EditorField struct {
 var supportedControls = map[string]bool{
 	"text": true, "textarea": true, "number": true, "checkbox": true,
 	"select": true, "segmented": true, "radio": true, "range": true,
+	"media": true,
 }
 
 var blockNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$`)
@@ -301,13 +302,13 @@ func validateValueContract(schema *ValueSchema, path string) error {
 		withoutEnum.Enum = nil
 		withoutEnum.hasDefault = false
 		for i, option := range schema.Enum {
-			if err := validateValue(withoutEnum, option, fmt.Sprintf("%s.enum[%d]", path, i), true); err != nil {
+			if err := validateValue(withoutEnum, option, fmt.Sprintf("%s.enum[%d]", path, i), true, false); err != nil {
 				return err
 			}
 		}
 	}
 	if schema.hasDefault {
-		if err := validateValue(*schema, schema.Default, path+".default", true); err != nil {
+		if err := validateValue(*schema, schema.Default, path+".default", true, false); err != nil {
 			return err
 		}
 	}
@@ -323,7 +324,7 @@ func hasComplexObjects(schema ValueSchema) bool {
 	return false
 }
 
-func validateValue(schema ValueSchema, value any, path string, enforceRequired bool) error {
+func validateValue(schema ValueSchema, value any, path string, enforceRequired bool, allowUnknown bool) error {
 	if !enumContains(schema.Enum, value) {
 		return fmt.Errorf("%s: expected one of %s", path, enumText(schema.Enum))
 	}
@@ -343,9 +344,12 @@ func validateValue(schema ValueSchema, value any, path string, enforceRequired b
 		for name, item := range object {
 			property, ok := schema.Properties[name]
 			if !ok {
+				if allowUnknown {
+					continue
+				}
 				return fmt.Errorf("%s.%s: unknown field", path, name)
 			}
-			if err := validateValue(property, item, path+"."+name, true); err != nil {
+			if err := validateValue(property, item, path+"."+name, true, allowUnknown); err != nil {
 				return err
 			}
 		}
@@ -354,11 +358,11 @@ func validateValue(schema ValueSchema, value any, path string, enforceRequired b
 		if !ok {
 			return fmt.Errorf("%s: expected array", path)
 		}
-		for i, item := range array {
-			if err := validateValue(*schema.Items, item, fmt.Sprintf("%s[%d]", path, i), true); err != nil {
-				return err
+			for i, item := range array {
+				if err := validateValue(*schema.Items, item, fmt.Sprintf("%s[%d]", path, i), true, allowUnknown); err != nil {
+					return err
+				}
 			}
-		}
 	case "string":
 		text, ok := value.(string)
 		if !ok {

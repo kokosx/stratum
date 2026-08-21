@@ -1,0 +1,216 @@
+{{ define "content" }}
+<section class="settings-shell">
+  <header class="page-heading">
+    <h1>Settings</h1>
+  </header>
+
+  <form id="settings-form" class="settings-layout" method="post" action="/admin/settings"
+        data-on:submit__prevent="@post('/admin/settings', {contentType:'form'})">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+
+    <nav class="settings-nav" aria-label="Settings sections">
+      <a href="#section-general" class="settings-nav__link is-active" data-section="general">General</a>
+      <a href="#section-reading" class="settings-nav__link" data-section="reading">Reading</a>
+      <a href="#section-seo" class="settings-nav__link" data-section="seo">SEO &amp; Crawling</a>
+      <a href="#section-performance" class="settings-nav__link" data-section="performance">Performance</a>
+    </nav>
+
+    <div id="settings-content" class="settings-content">
+      <section id="section-general" class="panel settings-section">
+        <h2>General</h2>
+
+        <div class="form-field">
+          <label for="site_title">Site title</label>
+          <input type="text" id="site_title" name="site_title" value="{{ .Content.Form.SiteTitle }}" maxlength="200" autocomplete="off">
+          <p class="field-desc">The name of the site, used by the theme and SEO.</p>
+          {{ $e := index .Content.Errors "site_title" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="tagline">Tagline</label>
+          <input type="text" id="tagline" name="tagline" value="{{ .Content.Form.Tagline }}" maxlength="200" autocomplete="off">
+          <p class="field-desc">An optional one-line description.</p>
+          {{ $e := index .Content.Errors "tagline" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="site_url">Site URL</label>
+          <input type="url" id="site_url" name="site_url" value="{{ .Content.Form.SiteURL }}" placeholder="https://example.com" autocomplete="off">
+          <p class="field-desc">The public canonical base URL. Used for canonical links, the sitemap and robots.</p>
+          {{ if .Content.SiteURLWarning }}<p class="form-warning" role="alert">Configure the Site URL so canonical links, the sitemap and robots.txt can use absolute URLs.</p>{{ end }}
+          {{ $e := index .Content.Errors "site_url" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="language">Language</label>
+          <input type="text" id="language" name="language" value="{{ .Content.Form.Language }}" placeholder="en" autocomplete="off">
+          <p class="field-desc">Language tag, e.g. <code>en</code>, <code>pl</code> or <code>en-US</code>. Sets <code>&lt;html lang&gt;</code>.</p>
+          {{ $e := index .Content.Errors "language" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="timezone">Timezone</label>
+          <input type="text" id="timezone" name="timezone" value="{{ .Content.Form.Timezone }}" placeholder="UTC" autocomplete="off">
+          <p class="field-desc">IANA timezone, e.g. <code>Europe/Warsaw</code>.</p>
+          {{ $e := index .Content.Errors "timezone" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <span class="field-label">Site Icon (favicon)</span>
+          <input type="hidden" name="site_icon_media_id" id="site_icon_media_id" value="{{ .Content.Form.SiteIconMediaID }}">
+          <div class="site-icon-field">
+            <div class="site-icon-preview" id="site-icon-preview">
+              {{ if .Content.SiteIconPreview }}<img src="{{ .Content.SiteIconPreview }}" alt="">{{ end }}
+            </div>
+            <div class="site-icon-actions">
+              <button type="button" class="button" id="site-icon-choose">Choose image</button>
+              <button type="button" class="button button-danger" id="site-icon-remove" {{ if not .Content.Form.SiteIconMediaID }}hidden{{ end }}>Remove</button>
+            </div>
+          </div>
+          <p class="field-desc">Pick a square image of at least 512×512 px. The CMS generates every favicon size automatically.</p>
+          {{ if .Content.SiteIconWarning }}<p class="form-warning">{{ .Content.SiteIconWarning }}</p>{{ end }}
+          {{ $e := index .Content.Errors "site_icon_media_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+      </section>
+
+      <section id="section-reading" class="panel settings-section">
+        <h2>Reading</h2>
+
+        <div class="form-field">
+          <label for="homepage_entry_id">Homepage</label>
+          <select id="homepage_entry_id" name="homepage_entry_id">
+            <option value="">— Latest posts —</option>
+            {{ range .Content.Pages }}
+            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.HomepageEntryID }}selected{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}</option>
+            {{ end }}
+          </select>
+          <p class="field-desc">The page shown at <code>/</code>. Changing it updates routing safely.</p>
+          {{ $e := index .Content.Errors "homepage_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+      </section>
+
+      <section id="section-seo" class="panel settings-section">
+        <h2>SEO &amp; Crawling</h2>
+
+        <div class="form-field">
+          <label class="check-row">
+            <input type="checkbox" name="indexing_enabled" value="on" {{ if .Content.Form.IndexingEnabled }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            Allow search engines to index this site
+          </label>
+          <p class="form-warning">This does not make the site private. It only asks search engines not to index it.</p>
+        </div>
+
+        <div class="form-field">
+          <label class="check-row">
+            <input type="checkbox" name="sitemap_enabled" value="on" {{ if .Content.Form.SitemapEnabled }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            Enable XML Sitemap
+          </label>
+          {{ if .Content.SitemapPublicURL }}
+          <p class="field-desc">Public URL: <a class="view-link" href="{{ .Content.SitemapPublicURL }}" target="_blank" rel="noopener">{{ .Content.SitemapPublicURL }}</a></p>
+          {{ else }}
+          <p class="form-warning">Configure the Site URL to generate canonical sitemap URLs.</p>
+          {{ end }}
+        </div>
+
+        <div class="form-field">
+          <span class="field-label">Robots.txt mode</span>
+          <label class="check-row">
+            <input type="radio" name="robots_mode" value="managed" {{ if eq .Content.Form.RobotsMode "managed" }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            Managed
+          </label>
+          <label class="check-row">
+            <input type="radio" name="robots_mode" value="custom" {{ if eq .Content.Form.RobotsMode "custom" }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            Custom
+          </label>
+        </div>
+
+        <div class="form-field robots-custom-field" {{ if ne .Content.Form.RobotsMode "custom" }}hidden{{ end }}>
+          <label for="robots_custom">Custom robots.txt</label>
+          <textarea id="robots_custom" name="robots_custom" rows="6">{{ .Content.Form.RobotsCustom }}</textarea>
+          <p class="field-desc">Plain text served verbatim. Max 32 KB. Changes apply only after saving.</p>
+          <button type="button" class="button" data-on:click__prevent="@post('/admin/settings/robots-preview', {contentType:'form'})">Preview robots.txt</button>
+          <pre id="robots-preview" class="robots-preview"></pre>
+          {{ $e := index .Content.Errors "robots_custom" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="title_separator">Default title separator</label>
+          <input type="text" id="title_separator" name="title_separator" value="{{ .Content.Form.TitleSeparator }}" maxlength="8" autocomplete="off">
+          <p class="field-desc">Used by the theme to build titles like <code>Page Title – Site Name</code>.</p>
+        </div>
+      </section>
+
+      <section id="section-performance" class="panel settings-section">
+        <h2>Performance</h2>
+
+        <div class="form-field">
+          <label class="check-row">
+            <input type="checkbox" name="speculation_enabled" value="on" {{ if .Content.Form.SpeculationEnabled }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            Enable Speculation Rules (Navigation Preloading)
+          </label>
+          <p class="field-desc">Lets supporting browsers preload likely next pages, making navigation feel faster.</p>
+        </div>
+
+        <div class="form-field">
+          <label for="speculation_mode">Strategy</label>
+          <select id="speculation_mode" name="speculation_mode">
+            <option value="prefetch" {{ if eq .Content.Form.SpeculationMode "prefetch" }}selected{{ end }}>Prefetch</option>
+            <option value="prerender" {{ if eq .Content.Form.SpeculationMode "prerender" }}selected{{ end }}>Prerender</option>
+          </select>
+          {{ $e := index .Content.Errors "speculation_mode" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="speculation_eagerness">Eagerness</label>
+          <select id="speculation_eagerness" name="speculation_eagerness">
+            <option value="conservative" {{ if eq .Content.Form.SpeculationEagerness "conservative" }}selected{{ end }}>Conservative</option>
+            <option value="moderate" {{ if eq .Content.Form.SpeculationEagerness "moderate" }}selected{{ end }}>Moderate</option>
+            <option value="eager" {{ if eq .Content.Form.SpeculationEagerness "eager" }}selected{{ end }}>Eager</option>
+          </select>
+          {{ $e := index .Content.Errors "speculation_eagerness" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+      </section>
+
+      <div class="settings-savebar">
+        <span id="settings-save-state" class="editor-status {{ if .Content.Errored }}is-dirty{{ else }}is-saved{{ end }}">{{ if .Content.Errored }}Unsaved{{ else }}Saved{{ end }}</span>
+        <button id="settings-save" type="submit" class="button button-primary" {{ if not .Content.Errored }}disabled{{ end }}>Save Changes</button>
+      </div>
+    </div>
+  </form>
+</section>
+<script>
+(function () {
+  const input = document.getElementById('site_icon_media_id');
+  const preview = document.getElementById('site-icon-preview');
+  const removeBtn = document.getElementById('site-icon-remove');
+  const chooseBtn = document.getElementById('site-icon-choose');
+  const form = document.getElementById('settings-form');
+  if (!chooseBtn) return;
+  function markDirty() {
+    if (form) form.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  chooseBtn.addEventListener('click', () => {
+    window.openMediaPicker({
+      onSelect: (asset) => {
+        input.value = asset.id;
+        preview.innerHTML = '<img src="' + asset.url + '" alt="">';
+        removeBtn.hidden = false;
+        markDirty();
+      }
+    });
+  });
+  removeBtn.addEventListener('click', () => {
+    input.value = '';
+    preview.innerHTML = '';
+    removeBtn.hidden = true;
+    markDirty();
+  });
+})();
+</script>
+<script src="/admin/static/admin/settings.js" defer></script>
+{{ end }}

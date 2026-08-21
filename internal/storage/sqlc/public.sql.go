@@ -17,13 +17,15 @@ SELECT
     e.slug,
     e.status,
     e.published_at,
+    e.featured_media_id,
 
     r.id AS revision_id,
     r.title,
     r.excerpt,
     r.document_json,
     r.seo_title,
-    r.seo_description
+    r.seo_description,
+    r.canonical_url
 
 FROM routes rt
 
@@ -41,17 +43,19 @@ LIMIT 1
 `
 
 type GetPublishedEntryByPathRow struct {
-	ID             string         `json:"id"`
-	ContentTypeID  string         `json:"content_type_id"`
-	Slug           string         `json:"slug"`
-	Status         string         `json:"status"`
-	PublishedAt    sql.NullInt64  `json:"published_at"`
-	RevisionID     string         `json:"revision_id"`
-	Title          string         `json:"title"`
-	Excerpt        sql.NullString `json:"excerpt"`
-	DocumentJson   string         `json:"document_json"`
-	SeoTitle       sql.NullString `json:"seo_title"`
-	SeoDescription sql.NullString `json:"seo_description"`
+	ID              string         `json:"id"`
+	ContentTypeID   string         `json:"content_type_id"`
+	Slug            string         `json:"slug"`
+	Status          string         `json:"status"`
+	PublishedAt     sql.NullInt64  `json:"published_at"`
+	FeaturedMediaID sql.NullString `json:"featured_media_id"`
+	RevisionID      string         `json:"revision_id"`
+	Title           string         `json:"title"`
+	Excerpt         sql.NullString `json:"excerpt"`
+	DocumentJson    string         `json:"document_json"`
+	SeoTitle        sql.NullString `json:"seo_title"`
+	SeoDescription  sql.NullString `json:"seo_description"`
+	CanonicalUrl    sql.NullString `json:"canonical_url"`
 }
 
 func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error) {
@@ -63,12 +67,14 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.Slug,
 		&i.Status,
 		&i.PublishedAt,
+		&i.FeaturedMediaID,
 		&i.RevisionID,
 		&i.Title,
 		&i.Excerpt,
 		&i.DocumentJson,
 		&i.SeoTitle,
 		&i.SeoDescription,
+		&i.CanonicalUrl,
 	)
 	return i, err
 }

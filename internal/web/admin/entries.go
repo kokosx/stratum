@@ -8,9 +8,10 @@ import (
 )
 
 type EntriesData struct {
-	Heading string
-	NewURL  string
-	Entries []EntryData
+	Heading  string
+	NewURL   string
+	EditBase string
+	Entries  []EntryData
 }
 
 type EntryData struct {
@@ -28,11 +29,6 @@ func (h *Handler) listPages(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 	h.listEntries(w, r, "post", "Posts", "posts")
-}
-
-func (h *Handler) newPost(w http.ResponseWriter, r *http.Request) {
-	h.setFlash(w, "Post creation is not implemented yet.")
-	http.Redirect(w, r, "/admin/posts", http.StatusSeeOther)
 }
 
 func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentType, heading, activeMenu string) {
@@ -68,12 +64,13 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		ActiveMenu: activeMenu,
 		Flash:      h.consumeFlash(w, r),
 		Content: EntriesData{
-			Heading: heading,
-			NewURL:  "/admin/" + activeMenu + "/new",
-			Entries: items,
+			Heading:  heading,
+			NewURL:   "/admin/" + activeMenu + "/new",
+			Entries:  items,
+			EditBase: "/admin/" + activeMenu,
 		},
 	}
-	token, err := h.csrfToken(w)
+	token, err := h.csrfToken(w, r)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return

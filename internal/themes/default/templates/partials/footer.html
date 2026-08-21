@@ -3,11 +3,11 @@
   <div class="site-footer__inner st-container st-container--{{ setting .Theme.Settings "footer.width" }}">
     <div class="site-footer__main">
       {{ if setting .Theme.Settings "footer.showSiteTitle" }}<div class="footer-brand"><strong>{{ .Site.Title }}</strong>{{ if .Site.Tagline }}<span>{{ .Site.Tagline }}</span>{{ end }}</div>{{ end }}
-      {{ $footer := index .Navigation "footer" }}{{ if $footer.Items }}<nav class="footer-navigation" aria-label="Footer navigation"><ul>{{ template "menu-items" $footer.Items }}</ul></nav>{{ end }}
+      {{ $footer := index .Navigation "footer" }}{{ if $footer.Items }}<nav class="footer-navigation" aria-label="Footer navigation"><ul>{{ template "footer-menu-items" $footer.Items }}</ul></nav>{{ end }}
     </div>
     <div class="site-footer__legal">
       {{ if setting .Theme.Settings "footer.showCopyright" }}<small>© {{ .Site.Title }}</small>{{ end }}
-      {{ $legal := index .Navigation "legal" }}{{ if $legal.Items }}<nav class="legal-navigation" aria-label="Legal navigation"><ul>{{ template "menu-items" $legal.Items }}</ul></nav>{{ end }}
+      {{ $legal := index .Navigation "legal" }}{{ if $legal.Items }}<nav class="legal-navigation" aria-label="Legal navigation"><ul>{{ template "footer-menu-items" $legal.Items }}</ul></nav>{{ end }}
     </div>
   </div>
 </footer>

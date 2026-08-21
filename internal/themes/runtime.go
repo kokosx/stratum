@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,10 @@ func NewRuntime(ctx context.Context, queries *db.Queries) (*Runtime, error) {
 	return runtime, nil
 }
 
+func (r *Runtime) RegisterMigration(migration Migration) {
+	r.registry.RegisterMigration(migration.ThemeID, migration)
+}
+
 func (r *Runtime) Reload(ctx context.Context) error {
 	r.reloadMu.Lock()
 	defer r.reloadMu.Unlock()
@@ -71,13 +76,26 @@ func (r *Runtime) Reload(ctx context.Context) error {
 	customCSS := ""
 	if err == nil {
 		if int(stored.ThemeVersion) != definition.Version {
-			return fmt.Errorf("theme customization %s@%d requires migration to version %d", stored.ThemeID, stored.ThemeVersion, definition.Version)
+			migrated, migrateErr := r.registry.MigrateSettings(definition.ID, int(stored.ThemeVersion), definition.Version, stored.SettingsJson)
+			if migrateErr != nil {
+				log.Printf("theme version mismatch: %s@%d -> %d: no migration registered, starting with defaults (old customization preserved in DB)", stored.ThemeID, stored.ThemeVersion, definition.Version)
+			} else {
+				values = migrated
+				customCSS = stored.CustomCss
+				encoded, encodeErr := json.Marshal(values)
+				if encodeErr == nil {
+					if saveErr := r.queries.UpsertThemeCustomization(ctx, db.UpsertThemeCustomizationParams{ThemeID: definition.ID, ThemeVersion: int64(definition.Version), SettingsJson: string(encoded), CustomCss: customCSS}); saveErr != nil {
+						log.Printf("theme migration: save migrated settings: %v", saveErr)
+					}
+				}
+			}
+		} else {
+			values, err = decodeSettingsJSON([]byte(stored.SettingsJson))
+			if err != nil {
+				return fmt.Errorf("decode stored theme settings: %w", err)
+			}
+			customCSS = stored.CustomCss
 		}
-		values, err = decodeSettingsJSON([]byte(stored.SettingsJson))
-		if err != nil {
-			return fmt.Errorf("decode stored theme settings: %w", err)
-		}
-		customCSS = stored.CustomCss
 	}
 	validated, err := definition.Schema.ValidateSettings(values)
 	if err != nil {

@@ -14,8 +14,10 @@ import (
 
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/themes"
 )
 
 func TestPageTemplateSafelyEmbedsEditorBootstrap(t *testing.T) {
@@ -31,8 +33,8 @@ func TestPageTemplateSafelyEmbedsEditorBootstrap(t *testing.T) {
 		t.Fatalf("bootstrap JSON contains a script terminator: %s", encoded)
 	}
 	var output bytes.Buffer
-	data := pageFormData{Heading: "Edit", Action: "/admin/pages/x", PublishAction: "/admin/pages/x/publish", EditorJSON: template.JS(encoded), CSRFToken: "token"}
-	if err := handler.pageTemplate.ExecuteTemplate(&output, "layout.html", LayoutData{Title: "Edit", Content: data}); err != nil {
+	data := entryFormData{Heading: "Edit", Action: "/admin/pages/x", PublishAction: "/admin/pages/x/publish", EditorJSON: template.JS(encoded), CSRFToken: "token"}
+	if err := handler.entryTemplate.ExecuteTemplate(&output, "layout.html", LayoutData{Title: "Edit", Content: data}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), "ZgotmplZ") || !strings.Contains(output.String(), `"previewUrl":"/admin/editor/preview"`) {
@@ -62,6 +64,36 @@ func TestSetupRequiresCSRFToken(t *testing.T) {
 	}
 }
 
+func TestCSRFTokenReuseAcrossMultipleTabs(t *testing.T) {
+	handler, _ := newTestHandler(t)
+
+	tab1Recorder := httptest.NewRecorder()
+	tab1Request := httptest.NewRequest(http.MethodGet, "/admin/pages", nil)
+	token1, err := handler.csrfToken(tab1Recorder, tab1Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookies := tab1Recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected 1 cookie, got %d", len(cookies))
+	}
+
+	tab2Request := httptest.NewRequest(http.MethodGet, "/admin/pages", nil)
+	tab2Request.AddCookie(cookies[0])
+	tab2Recorder := httptest.NewRecorder()
+	token2, err := handler.csrfToken(tab2Recorder, tab2Request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if token1 != token2 {
+		t.Fatalf("second tab got a different token: %q != %q", token1, token2)
+	}
+	if len(tab2Recorder.Result().Cookies()) != 0 {
+		t.Fatal("second tab received a new cookie despite having a valid one")
+	}
+}
+
 func newTestHandler(t *testing.T) (*Handler, *auth.Service) {
 	t.Helper()
 	ctx := context.Background()
@@ -82,9 +114,22 @@ func newTestHandler(t *testing.T) (*Handler, *auth.Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(database.DB, queries, service, registry)
+	themeRuntime, err := themes.NewRuntime(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(database.DB, queries, service, registry, themeRuntime, newTestMedia(t, queries))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return handler, service
+}
+
+func newTestMedia(t *testing.T, queries *db.Queries) *media.Service {
+	t.Helper()
+	store, err := media.NewLocalStorage(filepath.Join(t.TempDir(), "media"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return media.NewService(queries, store)
 }

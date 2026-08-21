@@ -62,6 +62,7 @@ func serve(application *app.App) {
 		authService,
 		application.Blocks,
 		application.Themes,
+		application.Media,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -71,6 +72,7 @@ func serve(application *app.App) {
 		application.Queries,
 		application.Blocks,
 		application.Themes,
+		application.Media,
 	)
 	if err != nil {
 		log.Fatal(err)

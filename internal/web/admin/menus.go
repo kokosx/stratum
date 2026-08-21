@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"log"
@@ -177,7 +178,7 @@ func (h *Handler) renderMenus(w http.ResponseWriter, r *http.Request, selectedID
 			return
 		}
 	}
-	token, err := h.csrfToken(w)
+	token, err := h.csrfToken(w, r)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -195,10 +196,22 @@ func (h *Handler) renderMenuEditorFragment(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.menusTemplate.ExecuteTemplate(w, "menu-editor", LayoutData{Content: data}); err != nil {
+	var buf bytes.Buffer
+	if err := h.menusTemplate.ExecuteTemplate(&buf, "menu-editor", LayoutData{Content: data}); err != nil {
 		log.Printf("render menu editor fragment: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
+	// Re-render the whole menu editor region and mirror the result in the
+	// shared toast area. Datastar morphs #menu-editor-region in place, so no
+	// full document reload happens.
+	events := []sseEvent{patchElementsEvent("outer", "", buf.String())}
+	if formError != "" {
+		events = append(events, toastEvent("error", formError))
+	} else if notice != "" {
+		events = append(events, toastEvent("success", notice))
+	}
+	writeSSE(w, events...)
 }
 
 func (h *Handler) populateMenuEditorData(r *http.Request, data *menusData, selectedID string) error {

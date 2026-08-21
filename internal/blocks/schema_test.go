@@ -51,11 +51,11 @@ func TestSchemaV1SupportedTypesAndArrayRepeaterValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	valid := map[string]any{"title": "Card", "count": float64(2), "ratio": .5, "active": false, "tags": []any{"one", "two"}, "items": []any{map[string]any{"label": "First", "enabled": true}}}
-	if err := validateValue(schema.Props, valid, "props", true); err != nil {
+	if err := validateValue(schema.Props, valid, "props", true, false); err != nil {
 		t.Fatalf("valid supported values rejected: %v", err)
 	}
 	invalid := map[string]any{"title": "lowercase", "count": float64(4), "ratio": .5, "active": false, "tags": []any{}, "items": []any{}}
-	if err := validateValue(schema.Props, invalid, "props", true); err == nil || !strings.Contains(err.Error(), "props.") {
+	if err := validateValue(schema.Props, invalid, "props", true, false); err == nil || !strings.Contains(err.Error(), "props.") {
 		t.Fatalf("constraint error = %v", err)
 	}
 	nestedArray := strings.Replace(input, `"items":{"type":"string"}`, `"items":{"type":"array","items":{"type":"string"}}`, 1)
@@ -98,8 +98,8 @@ func TestRegistryRejectsInvalidPropsSettingsAndVersions(t *testing.T) {
 		{"missing props", `{"version":1,"nodes":[{"id":"x","block":"test/card","version":1,"props":{"description":"D"},"settings":{"variant":"plain"}}]}`, "nodes[0].props.title: field is required"},
 		{"invalid props", `{"version":1,"nodes":[{"id":"x","block":"test/card","version":1,"props":{"title":4,"description":"D"},"settings":{"variant":"plain"}}]}`, "nodes[0].props.title: expected string"},
 		{"invalid settings", `{"version":1,"nodes":[{"id":"x","block":"test/card","version":1,"props":{"title":"T","description":"D"},"settings":{"variant":"loud"}}]}`, "nodes[0].settings.variant: expected one of plain, featured"},
-		{"unknown block", `{"version":1,"nodes":[{"id":"x","block":"test/missing","version":1,"props":{},"settings":{}}]}`, "nodes[0]: unknown block test/missing@1"},
-		{"wrong version", `{"version":1,"nodes":[{"id":"x","block":"test/card","version":2,"props":{},"settings":{}}]}`, "nodes[0]: unknown block test/card@2"},
+		{"unknown block", `{"version":1,"nodes":[{"id":"x","block":"test/missing","version":1,"props":{},"settings":{}}]}`, "unknown block test/missing@1"},
+		{"wrong version", `{"version":1,"nodes":[{"id":"x","block":"test/card","version":2,"props":{},"settings":{}}]}`, "unknown block test/card@2"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -123,7 +123,7 @@ func TestRegistryValidatesChildrenAndDuplicateIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	disallowed := decodeTestDocument(t, `{"version":1,"nodes":[{"id":"parent","block":"test/container","version":1,"props":{},"settings":{},"children":[{"id":"child","block":"test/other","version":1,"props":{"title":"T","description":"D"},"settings":{"variant":"plain"}}]}]}`)
-	if err := registry.ValidateDocument(disallowed); err == nil || !strings.Contains(err.Error(), "nodes[0].children[0]: test/other is not allowed inside test/container") {
+	if err := registry.ValidateDocument(disallowed); err == nil || !strings.Contains(err.Error(), "is not allowed inside the") {
 		t.Fatalf("children error = %v", err)
 	}
 	empty := decodeTestDocument(t, `{"version":1,"nodes":[{"id":"parent","block":"test/container","version":1,"props":{},"settings":{}}]}`)

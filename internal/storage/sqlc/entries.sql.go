@@ -53,7 +53,7 @@ func (q *Queries) DeleteEntry(ctx context.Context, id string) error {
 }
 
 const getEntry = `-- name: GetEntry :one
-SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id
 FROM entries
 WHERE id = ?
 LIMIT 1
@@ -72,12 +72,13 @@ func (q *Queries) GetEntry(ctx context.Context, id string) (Entry, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.FeaturedMediaID,
 	)
 	return i, err
 }
 
 const getEntryBySlug = `-- name: GetEntryBySlug :one
-SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id
 FROM entries
 WHERE content_type_id = ?
   AND slug = ?
@@ -102,6 +103,7 @@ func (q *Queries) GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PublishedAt,
+		&i.FeaturedMediaID,
 	)
 	return i, err
 }

@@ -1,27 +1,72 @@
 {{ define "content" }}
-<section class="appearance-shell" id="theme-customizer">
+<section class="cz-shell" id="theme-customizer">
   <script id="appearance-bootstrap" type="application/json">{{ .Content.BootstrapJSON }}</script>
-  <header class="appearance-toolbar">
-    <div><h1>Appearance</h1><p><strong>{{ .Content.ThemeName }}</strong> · Version {{ .Content.ThemeVersion }}</p></div>
-    <div class="appearance-viewports" role="group" aria-label="Preview size">
-      <button type="button" data-viewport="desktop" class="active">Desktop</button>
-      <button type="button" data-viewport="tablet">Tablet</button>
-      <button type="button" data-viewport="mobile">Mobile</button>
+
+  <header class="cz-toolbar">
+    <div class="cz-toolbar__brand">
+      <a href="/admin" class="cz-toolbar__back" aria-label="Back to dashboard">&larr;</a>
+      <div>
+        <h1>Appearance</h1>
+        <p>{{ .Content.ThemeName }} &middot; v{{ .Content.ThemeVersion }}</p>
+      </div>
     </div>
-    <div class="appearance-actions"><span id="appearance-status" role="status">Saved</span><button id="appearance-save" class="button-primary" type="button" disabled>Save Changes</button></div>
+
+    <div class="cz-toolbar__preview-ctrl">
+      {{ if .Content.PreviewPages }}
+      <label class="cz-preview-path">
+        <span class="sr-only">Preview page</span>
+        <select id="cz-preview-page" aria-label="Preview page">
+          <option value="/">Homepage</option>
+          {{ range .Content.PreviewPages }}
+          <option value="{{ .Path }}">{{ .Title }}</option>
+          {{ end }}
+        </select>
+      </label>
+      {{ end }}
+
+      <div class="cz-viewports" role="group" aria-label="Preview size">
+        <button type="button" data-viewport="desktop" class="active" aria-label="Desktop preview">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </button>
+        <button type="button" data-viewport="tablet" aria-label="Tablet preview">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+        </button>
+        <button type="button" data-viewport="mobile" aria-label="Mobile preview">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="cz-toolbar__actions">
+      <span id="appearance-status" class="cz-status" role="status">Saved</span>
+      <button id="appearance-save" class="cz-btn cz-btn--primary" type="button" disabled>Save Changes</button>
+    </div>
   </header>
-  <div class="appearance-workspace">
-    <aside class="appearance-panel">
-      <div class="active-theme"><span>Active theme</span><strong>{{ .Content.ThemeName }}</strong><small>{{ .Content.ThemeDescription }}</small></div>
-      <nav id="appearance-groups" aria-label="Customizer sections"></nav>
-      <button id="appearance-reset-all" class="button-link" type="button">Reset entire theme</button>
+
+  <div class="cz-workspace">
+    <aside class="cz-panel" aria-label="Theme settings">
+      <div class="cz-panel__search">
+        <svg class="cz-panel__search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="cz-search" type="search" placeholder="Search settings&hellip;" autocomplete="off" aria-label="Search settings">
+      </div>
+
+      <div id="cz-presets" class="cz-presets"></div>
+
+      <nav id="cz-groups" class="cz-groups" aria-label="Setting groups"></nav>
+
+      <div class="cz-panel__footer">
+        <button id="appearance-reset-all" class="cz-btn cz-btn--ghost cz-btn--sm" type="button">Reset all to defaults</button>
+      </div>
     </aside>
-    <section class="appearance-controls" aria-live="polite">
-      <div class="controls-heading"><div><h2 id="appearance-group-title"></h2><p id="appearance-group-description"></p></div><button id="appearance-reset-group" class="button-link" type="button">Reset group</button></div>
-      <div id="appearance-fields"></div>
-    </section>
-    <section class="appearance-preview" aria-label="Live preview">
-      <div id="appearance-frame-wrap" data-viewport="desktop"><iframe id="appearance-frame" title="Live site preview" sandbox="allow-scripts allow-forms allow-same-origin"></iframe></div>
+
+    <section class="cz-preview" aria-label="Live preview">
+      <div class="cz-preview__frame" data-viewport="desktop">
+        <div class="cz-preview__loading" id="cz-loading" aria-live="polite">
+          <div class="cz-spinner"></div>
+          <span>Loading preview&hellip;</span>
+        </div>
+        <iframe id="appearance-frame" title="Live site preview" sandbox="allow-scripts allow-forms allow-same-origin"></iframe>
+      </div>
     </section>
   </div>
 </section>

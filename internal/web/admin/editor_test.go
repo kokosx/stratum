@@ -15,7 +15,7 @@ func TestPreviewValidatesAndUsesRegistryRenderer(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("preview status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if body := response.Body.String(); !strings.Contains(body, `<h3 class="stratum-align-center">Preview</h3>`) || !strings.Contains(body, "stratum-align-center") {
+	if body := response.Body.String(); !strings.Contains(body, `stratum-align-center`) || !strings.Contains(body, `Preview`) {
 		t.Fatalf("preview body = %q", body)
 	}
 

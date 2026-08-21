@@ -5,6 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ .Title }} · Stratum</title>
+  <meta name="csrf-token" content="{{ .CSRFToken }}">
   <link rel="stylesheet" href="/admin/static/admin.css">
   <link rel="stylesheet" href="/admin/static/editor/editor.css">
   <link rel="stylesheet" href="/admin/static/appearance/customizer.css">
@@ -20,7 +21,9 @@
           <li><a href="/admin/pages" class="{{ if eq .ActiveMenu "pages" }}active{{ end }}">Pages</a></li>
           <li><a href="/admin/posts" class="{{ if eq .ActiveMenu "posts" }}active{{ end }}">Posts</a></li>
           <li><a href="/admin/appearance" class="{{ if eq .ActiveMenu "appearance" }}active{{ end }}">Appearance</a></li>
+          <li><a href="/admin/media" class="{{ if eq .ActiveMenu "media" }}active{{ end }}">Media</a></li>
           <li class="menu-child"><a href="/admin/menus" class="{{ if eq .ActiveMenu "menus" }}active{{ end }}">Menus</a></li>
+          <li><a href="/admin/settings" class="{{ if eq .ActiveMenu "settings" }}active{{ end }}">Settings</a></li>
         </ul>
       </nav>
     </aside>
@@ -33,8 +36,11 @@
         </form>
       </header>
       <div class="content">{{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}{{ template "content" . }}</div>
+      <div id="admin-toast-region" class="toast-region" aria-live="polite"></div>
     </main>
   </div>
-</body>
+  <script src="/admin/static/admin/toast.js"></script>
+  <script src="/admin/static/admin/media-picker.js" defer></script>
+  </body>
 </html>
 {{ end }}

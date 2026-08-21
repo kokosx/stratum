@@ -10,7 +10,7 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		Title:      "Dashboard",
 		ActiveMenu: "dashboard",
 	}
-	token, err := h.csrfToken(w)
+	token, err := h.csrfToken(w, r)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return

@@ -12,11 +12,17 @@ import (
 	"github.com/kokosx/stratum/internal/themes"
 )
 
+type previewPage struct {
+	Title string `json:"title"`
+	Path  string `json:"path"`
+}
+
 type appearanceData struct {
 	ThemeName        string
 	ThemeVersion     int
 	ThemeDescription string
 	BootstrapJSON    template.JS
+	PreviewPages     []previewPage
 }
 
 type appearanceBootstrap struct {
@@ -32,7 +38,7 @@ type appearanceRequest struct {
 }
 
 func (h *Handler) appearance(w http.ResponseWriter, r *http.Request) {
-	token, err := h.csrfToken(w)
+	token, err := h.csrfToken(w, r)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -43,7 +49,28 @@ func (h *Handler) appearance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	data := appearanceData{ThemeName: customization.Name, ThemeVersion: customization.Version, ThemeDescription: customization.Description, BootstrapJSON: template.JS(bootstrap)}
+
+	var previewPages []previewPage
+	entries, err := h.queries.ListEntriesByContentType(r.Context(), "page")
+	if err == nil {
+		for _, entry := range entries {
+			if entry.Status == "active" && entry.PublishedRevisionID.Valid && entry.PublicPath.Valid && entry.PublicPath.String != "" {
+				title := "(untitled)"
+				if entry.Title.Valid && entry.Title.String != "" {
+					title = entry.Title.String
+				}
+				previewPages = append(previewPages, previewPage{Title: title, Path: entry.PublicPath.String})
+			}
+		}
+	}
+
+	data := appearanceData{
+		ThemeName:        customization.Name,
+		ThemeVersion:     customization.Version,
+		ThemeDescription: customization.Description,
+		BootstrapJSON:    template.JS(bootstrap),
+		PreviewPages:     previewPages,
+	}
 	layout := LayoutData{Title: "Appearance", ActiveMenu: "appearance", CSRFToken: token, Content: data}
 	if err := h.appearanceTemplate.ExecuteTemplate(w, "layout.html", layout); err != nil {
 		log.Printf("render appearance: %v", err)
@@ -93,7 +120,7 @@ func (h *Handler) previewAppearance(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errors.New("invalid preview path"))
 		return
 	}
-	page, err := h.previewRenderer(r.Context(), path, validated, request.CustomCSS)
+	page, err := h.previewRenderer(r.Context(), path, requestOrigin(r), validated, request.CustomCSS)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err)
 		return

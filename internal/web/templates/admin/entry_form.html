@@ -1,0 +1,157 @@
+{{ define "content" }}
+<form id="stratum-editor-form" class="block-editor" method="post" action="{{ .Content.Action }}">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <input id="document-json" type="hidden" name="document_json" value="">
+  <header class="editor-topbar">
+    <div class="editor-metadata">
+      <label>Title<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
+      <label>Slug<input id="entry-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
+      {{ if .Content.ShowExcerpt }}
+      <label class="editor-excerpt">Excerpt<textarea id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea></label>
+      {{ end }}
+    </div>
+    <div class="form-actions">
+      <a class="button" href="{{ .Content.BackURL }}">Back</a>
+      <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
+      <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+    </div>
+  </header>
+  <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
+  {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  <div class="editor-workspace">
+    <aside class="editor-panel block-library" aria-label="Block library">
+      <h2>Block Library</h2>
+      <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
+      <div id="block-catalog"></div>
+    </aside>
+    <section class="editor-panel document-canvas" aria-label="Document">
+      <div class="editor-panel-heading"><h2>Document</h2></div>
+      <div id="document-tree"></div>
+      <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
+    </section>
+    <aside class="editor-panel block-inspector" aria-label="Inspector">
+      <h2>Inspector</h2>
+      <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
+    </aside>
+  </div>
+  <section class="editor-preview-panel">
+    <div class="editor-panel-heading"><h2>Preview</h2><button id="refresh-preview" class="button" type="button">Refresh</button></div>
+    <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
+  </section>
+  {{ if .Content.ShowSEO }}
+  <section class="editor-seo-panel" data-site-url="{{ .Content.SiteURL }}" data-public-path="{{ .Content.PublicPath }}">
+    <details class="editor-seo-details" {{ if or .Content.SEOTitle .Content.SEODescription .Content.CanonicalURL }}open{{ end }}>
+      <summary>SEO</summary>
+      <div class="editor-seo-fields">
+        <label class="editor-field">
+          <span class="editor-field-label">SEO Title</span>
+          <input id="entry-seo-title" name="seo_title" value="{{ .Content.SEOTitle }}" maxlength="120">
+          <span class="editor-field-meta"><span id="seo-title-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~50–60 characters.</span></span>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Meta Description</span>
+          <textarea id="entry-seo-description" name="seo_description" rows="3" maxlength="320">{{ .Content.SEODescription }}</textarea>
+          <span class="editor-field-meta"><span id="seo-desc-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~150–160 characters.</span></span>
+        </label>
+        <label class="editor-field">
+          <span class="editor-field-label">Canonical URL</span>
+          <input id="entry-canonical-url" name="canonical_url" value="{{ .Content.CanonicalURL }}" placeholder="https://example.com/path or /path">
+          <span class="editor-field-meta"><span class="seo-hint">Optional. Absolute http(s) URL or a root-relative path.</span></span>
+        </label>
+        <div class="seo-serp" aria-label="Search result preview">
+          <div class="seo-serp-title" id="serp-title"></div>
+          <div class="seo-serp-url" id="serp-url"></div>
+          <div class="seo-serp-description" id="serp-description"></div>
+        </div>
+      </div>
+    </details>
+  </section>
+  <style>
+    .editor-seo-details { border: 1px solid var(--st-border, #d9dee5); border-radius: 6px; padding: 0 .75rem .75rem; }
+    .editor-seo-details > summary { cursor: pointer; font-weight: 600; padding: .5rem 0; }
+    .editor-seo-fields { display: flex; flex-direction: column; gap: .75rem; }
+    .editor-field { display: flex; flex-direction: column; gap: .25rem; }
+    .editor-field-label { font-weight: 600; font-size: .9rem; }
+    .editor-field input, .editor-field textarea { font: inherit; padding: .4rem .5rem; border: 1px solid var(--st-border, #d9dee5); border-radius: 4px; }
+    .editor-field-meta { font-size: .8rem; color: #5b6573; }
+    .seo-counter { font-variant-numeric: tabular-nums; }
+    .seo-counter.is-over { color: #b42318; font-weight: 600; }
+    .seo-hint { color: #5b6573; }
+    .seo-serp { margin-top: .25rem; padding: .75rem; border: 1px solid var(--st-border, #d9dee5); border-radius: 6px; background: #fbfcfe; font-family: Arial, Helvetica, sans-serif; }
+    .seo-serp-title { color: #1a0dab; font-size: 1.05rem; line-height: 1.3; }
+    .seo-serp-url { color: #006621; font-size: .82rem; margin: .15rem 0; word-break: break-all; }
+    .seo-serp-description { color: #333; font-size: .85rem; line-height: 1.4; }
+  </style>
+  <script>
+    (function () {
+      var panel = document.querySelector('.editor-seo-panel');
+      if (!panel) return;
+      var titleInput = document.getElementById('entry-seo-title');
+      var descInput = document.getElementById('entry-seo-description');
+      var canonicalInput = document.getElementById('entry-canonical-url');
+      var titleEntry = document.getElementById('entry-title');
+      var excerptEntry = document.getElementById('entry-excerpt');
+      var titleCount = document.getElementById('seo-title-count');
+      var descCount = document.getElementById('seo-desc-count');
+      var serpTitle = document.getElementById('serp-title');
+      var serpURL = document.getElementById('serp-url');
+      var serpDesc = document.getElementById('serp-description');
+      var siteURL = panel.getAttribute('data-site-url') || '';
+      var publicPath = panel.getAttribute('data-public-path') || '/';
+
+      function stripTrailingSlash(value) { return value.replace(/\/+$/, ''); }
+
+      function updateCounts() {
+        if (titleCount) {
+          var n = titleInput.value.length;
+          titleCount.textContent = n + ' characters';
+          titleCount.classList.toggle('is-over', n > 60);
+        }
+        if (descCount) {
+          var m = descInput.value.length;
+          descCount.textContent = m + ' characters';
+          descCount.classList.toggle('is-over', m > 160);
+        }
+      }
+
+      function updateSerp() {
+        var title = titleInput.value.trim() || (titleEntry ? titleEntry.value.trim() : '') || 'Untitled';
+        serpTitle.textContent = title;
+        var desc = descInput.value.trim() || (excerptEntry ? excerptEntry.value.trim() : '') || 'No description yet.';
+        serpDesc.textContent = desc;
+        var override = canonicalInput.value.trim();
+        var url;
+        if (override) {
+          if (/^https?:\/\//i.test(override)) {
+            url = override;
+          } else if (override.charAt(0) === '/') {
+            url = stripTrailingSlash(siteURL) + override;
+          } else {
+            url = override;
+          }
+        } else {
+          url = stripTrailingSlash(siteURL) + publicPath;
+        }
+        serpURL.textContent = url;
+      }
+
+      [titleInput, descInput, canonicalInput].forEach(function (el) {
+        if (el) el.addEventListener('input', function () { updateCounts(); updateSerp(); });
+      });
+      if (titleEntry) titleEntry.addEventListener('input', updateSerp);
+      if (excerptEntry) excerptEntry.addEventListener('input', updateSerp);
+      updateCounts();
+      updateSerp();
+    })();
+  </script>
+  {{ end }}
+</form>
+<script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
+<script type="module" src="/admin/static/editor/editor.js"></script>
+{{ end }}
+
+{{ define "editor-status-region" }}
+<span id="editor-dirty" class="editor-status {{ if eq .Dirty "Saved" }}is-saved{{ else if eq .Dirty "Published" }}is-published{{ else }}is-dirty{{ end }}">{{ .Dirty }}</span>
+<span id="editor-publish-state" class="editor-status editor-publish-state">{{ .Status }}</span>
+<span id="editor-public-url" class="editor-public-url" {{ if not .PublicURL }}hidden{{ end }}>{{ if .PublicURL }}Public: <a href="{{ .PublicURL }}" target="_blank" rel="noopener noreferrer">{{ .PublicURL }}</a>{{ end }}</span>
+{{ end }}

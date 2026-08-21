@@ -9,10 +9,21 @@ import (
 	"testing"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/themes"
 )
+
+func newTestMedia(t *testing.T, queries *db.Queries) *media.Service {
+	t.Helper()
+	store, err := media.NewLocalStorage(filepath.Join(t.TempDir(), "media"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return media.NewService(queries, store)
+}
 
 func TestDefaultThemeReceivesPrimaryAndFooterNavigation(t *testing.T) {
 	ctx := context.Background()
@@ -43,7 +54,11 @@ func TestDefaultThemeReceivesPrimaryAndFooterNavigation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(queries, registry)
+	themeRuntime, err := themes.NewRuntime(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(queries, registry, themeRuntime, newTestMedia(t, queries))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ if .Entry.SEOTitle }}{{ .Entry.SEOTitle }}{{ else }}{{ .Entry.Title }}{{ end }} · {{ .Site.Title }}</title>
-  {{ if .Entry.SEODescription }}<meta name="description" content="{{ .Entry.SEODescription }}">{{ end }}
+  {{ if .Head.Description }}<meta name="description" content="{{ .Head.Description }}">{{ end }}
+  {{ if .Head.Canonical }}<link rel="canonical" href="{{ .Head.Canonical }}">{{ end }}
+  {{ if .Head.Robots }}<meta name="robots" content="{{ .Head.Robots }}">{{ end }}
+  {{ if .Head.Speculation.Enabled }}<script type="speculationrules">{{ .Head.Speculation.RulesJSON }}</script>{{ end }}
+  {{ if .Head.SiteIcon }}{{ if .Head.SiteIcon.Size32 }}<link rel="icon" type="image/png" sizes="32x32" href="{{ .Head.SiteIcon.Size32 }}">{{ end }}{{ if .Head.SiteIcon.Size16 }}<link rel="icon" type="image/png" sizes="16x16" href="{{ .Head.SiteIcon.Size16 }}">{{ end }}{{ if .Head.SiteIcon.Size192 }}<link rel="icon" type="image/png" sizes="192x192" href="{{ .Head.SiteIcon.Size192 }}">{{ end }}{{ if .Head.SiteIcon.Size512 }}<link rel="icon" type="image/png" sizes="512x512" href="{{ .Head.SiteIcon.Size512 }}">{{ end }}{{ if .Head.SiteIcon.Size180 }}<link rel="apple-touch-icon" href="{{ .Head.SiteIcon.Size180 }}">{{ end }}{{ end }}
   <link rel="stylesheet" href="/stratum/blocks.css">
   <link rel="stylesheet" href="/stratum/theme.css">
   {{ if .PreviewCSS }}<style id="stratum-preview-theme">{{ .PreviewCSS }}</style>{{ end }}

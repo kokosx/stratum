@@ -37,19 +37,19 @@
           {{ range $.Content.Pages }}
             <label class="check-row"><input type="checkbox" name="add_entry_id" value="{{ .ID }}"> <span>{{ .Title }}</span><small>{{ .Path }}</small></label>
           {{ else }}<p class="muted">There are no published Pages.</p>{{ end }}
-          <button class="button" type="submit" name="action" value="add-entry" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-entry', {contentType: 'form'})">Add to menu</button>
+          <button class="button" type="submit" name="action" value="add-entry" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-entry', {contentType: 'form'})">Add to menu</button>
         </fieldset>
         <fieldset>
           <legend>Custom Link</legend>
           <label>URL<input name="custom_url" placeholder="https://example.com, /pricing, or #contact"></label>
           <label>Label<input name="custom_label" placeholder="Example"></label>
-          <button class="button" type="submit" name="action" value="add-url" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-url', {contentType: 'form'})">Add to menu</button>
+          <button class="button" type="submit" name="action" value="add-url" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-url', {contentType: 'form'})">Add to menu</button>
         </fieldset>
         <fieldset>
           <legend>Dropdown heading</legend>
           <p class="muted">A label with no link. Indent other items below it to create a dropdown.</p>
           <label>Label<input name="group_label" placeholder="Services"></label>
-          <button class="button" type="submit" name="action" value="add-group" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-group', {contentType: 'form'})">Add to menu</button>
+          <button class="button" type="submit" name="action" value="add-group" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=add-group', {contentType: 'form'})">Add to menu</button>
         </fieldset>
       </div>
     </section>
@@ -72,11 +72,11 @@
           </div>
           {{ if and (eq .TargetType "entry") (not .Public) }}<p class="menu-warning">Page is not currently public.</p>{{ end }}
           <div class="menu-item-actions">
-            <button type="submit" name="action" value="move-up:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=move-up:{{ .ID }}', {contentType: 'form'})">Move up</button>
-            <button type="submit" name="action" value="move-down:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=move-down:{{ .ID }}', {contentType: 'form'})">Move down</button>
-            <button type="submit" name="action" value="indent:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=indent:{{ .ID }}', {contentType: 'form'})">Indent</button>
-            <button type="submit" name="action" value="outdent:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=outdent:{{ .ID }}', {contentType: 'form'})">Outdent</button>
-            <button class="danger-link" type="submit" name="action" value="delete:{{ .ID }}" data-on:click="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=delete:{{ .ID }}', {contentType: 'form'})">Remove</button>
+            <button type="submit" name="action" value="move-up:{{ .ID }}" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=move-up:{{ .ID }}', {contentType: 'form'})">Move up</button>
+            <button type="submit" name="action" value="move-down:{{ .ID }}" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=move-down:{{ .ID }}', {contentType: 'form'})">Move down</button>
+            <button type="submit" name="action" value="indent:{{ .ID }}" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=indent:{{ .ID }}', {contentType: 'form'})">Indent</button>
+            <button type="submit" name="action" value="outdent:{{ .ID }}" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=outdent:{{ .ID }}', {contentType: 'form'})">Outdent</button>
+            <button class="danger-link" type="submit" name="action" value="delete:{{ .ID }}" data-on:click__prevent="@post('/admin/menus/{{ $.Content.Selected.ID }}?action=delete:{{ .ID }}', {contentType: 'form'})">Remove</button>
           </div>
         </li>
         {{ else }}<li class="muted">This menu has no items yet.</li>{{ end }}
@@ -89,7 +89,7 @@
       <label>Additional locations (comma-separated)<input name="custom_locations" placeholder="theme-sidebar"></label>
     </section>
 
-    <div class="form-actions"><button class="button button-primary" type="submit" name="action" value="save" data-on:click="@post('/admin/menus/{{ .ID }}?action=save', {contentType: 'form'})">Save Menu</button></div>
+    <div class="form-actions"><button class="button button-primary" type="submit" name="action" value="save" data-on:click__prevent="@post('/admin/menus/{{ .ID }}?action=save', {contentType: 'form'})">Save Menu</button></div>
   </form>
   <form method="post" action="/admin/menus/{{ .ID }}/delete" class="delete-menu-form">
     <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">

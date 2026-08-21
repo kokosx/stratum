@@ -5,13 +5,15 @@ SELECT
     e.slug,
     e.status,
     e.published_at,
+    e.featured_media_id,
 
     r.id AS revision_id,
     r.title,
     r.excerpt,
     r.document_json,
     r.seo_title,
-    r.seo_description
+    r.seo_description,
+    r.canonical_url
 
 FROM routes rt
 

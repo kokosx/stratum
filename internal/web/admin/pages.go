@@ -1,47 +1,29 @@
 package admin
 
 import (
-	"context"
-	"crypto/rand"
+	"bytes"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"html/template"
+	"html"
 	"log"
 	"net/http"
-	"regexp"
-	"strings"
-	"time"
 
-	"github.com/kokosx/stratum/internal/auth"
-	"github.com/kokosx/stratum/internal/document"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
-var pageSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
-type pageFormData struct {
-	Heading       string
-	Action        string
-	PublishAction string
-	Title         string
-	Slug          string
-	DocumentJSON  string
-	EditorJSON    template.JS
-	Error         string
-	CSRFToken     string
-}
-
-type pageInput struct {
-	title        string
-	slug         string
-	documentJSON string
-}
+const pageContentType = "page"
 
 func (h *Handler) newPage(w http.ResponseWriter, r *http.Request) {
-	h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", DocumentJSON: `{"version":1,"nodes":[]}`})
+	h.renderEntryForm(w, r, entryFormData{
+		Heading:       "Add New Page",
+		Action:        "/admin/pages",
+		PublishAction: "/admin/pages",
+		BackURL:       "/admin/pages",
+		DocumentJSON:  `{"version":1,"nodes":[]}`,
+		Dirty:         "Saved",
+		Status:        "Draft",
+		ShowSEO:       true,
+	}, "pages")
 }
 
 func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
@@ -49,9 +31,9 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	input, err := readPageInput(r)
+	input, err := readEntryInput(r)
 	if err != nil {
-		h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), Error: err.Error()})
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), DocumentJSON: postedDocument(r), Error: err.Error(), ShowSEO: true}, "pages")
 		return
 	}
 	user, err := h.currentUser(r)
@@ -61,11 +43,11 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	entryID, err := randomID()
 	if err == nil {
-		err = h.writePage(r.Context(), user.ID, entryID, input, true, r.FormValue("publish") != "")
+		err = h.writeEntry(r.Context(), pageContentType, user.ID, entryID, input, true, r.FormValue("publish") != "")
 	}
 	if err != nil {
 		log.Printf("create page: %v", err)
-		h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", Title: input.title, Slug: input.slug, DocumentJSON: input.documentJSON, Error: pageWriteError(err)})
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, DocumentJSON: input.documentJSON, Error: entryWriteError(err), ShowSEO: true}, "pages")
 		return
 	}
 	if r.FormValue("publish") != "" {
@@ -77,34 +59,91 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
-	entry, revision, err := h.pageAndLatestRevision(r.Context(), r.PathValue("id"))
+	entry, revision, err := h.entryAndLatestRevision(r.Context(), r.PathValue("id"), pageContentType)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entry.ID, PublishAction: "/admin/pages/" + entry.ID + "/publish", Title: revision.Title, Slug: entry.Slug, DocumentJSON: revision.DocumentJson})
+	status, publicURL := h.entryEditorStatus(r, entry)
+	settings, _ := h.queries.GetSiteSettings(r.Context())
+	h.renderEntryForm(w, r, entryFormData{
+		Heading:       "Edit Page",
+		Action:        "/admin/pages/" + entry.ID,
+		PublishAction: "/admin/pages/" + entry.ID + "/publish",
+		BackURL:       "/admin/pages",
+		Title:         revision.Title,
+		Slug:          entry.Slug,
+		DocumentJSON:  revision.DocumentJson,
+		CanonicalURL:  stringValue(revision.CanonicalUrl),
+		SiteURL:       settings.SiteUrl,
+		PublicPath:    h.entryPublicPath(r, entry.ID),
+		Dirty:         "Saved",
+		Status:        status,
+		PublicURL:     publicURL,
+		ShowSEO:       true,
+	}, "pages")
+}
+
+// entryEditorStatus derives the displayed status label and public URL for an
+// entry from its publish state.
+func (h *Handler) entryEditorStatus(r *http.Request, entry db.Entry) (string, string) {
+	if !entry.PublishedRevisionID.Valid {
+		return "Draft", ""
+	}
+	publicURL := ""
+	if path := h.entryPublicPath(r, entry.ID); path != "" {
+		publicURL = absoluteURL(r, path)
+	}
+	return "Published", publicURL
+}
+
+// entryPublicPath returns the public route path for an entry, or "" if it is
+// not published.
+func (h *Handler) entryPublicPath(r *http.Request, entryID string) string {
+	route, err := h.queries.GetEntryRoute(r.Context(), sql.NullString{String: entryID, Valid: true})
+	if err != nil {
+		return ""
+	}
+	return route.Path
 }
 
 func (h *Handler) savePage(w http.ResponseWriter, r *http.Request) {
-	h.updatePage(w, r, false)
+	h.updateEntry(w, r, pageContentType, "pages", "/admin/pages", false)
 }
 
 func (h *Handler) publishPage(w http.ResponseWriter, r *http.Request) {
-	h.updatePage(w, r, true)
+	h.updateEntry(w, r, pageContentType, "pages", "/admin/pages", true)
 }
 
-func (h *Handler) updatePage(w http.ResponseWriter, r *http.Request, publish bool) {
+// updateEntry is shared by Pages and Posts. It validates the posted input and
+// writes a new revision (preserving the public document until publish). The
+// publish flag is decided by the route, not by a form field, so the editor can
+// fire Save Draft and Publish through the same form via Datastar.
+//
+// When the request comes from Datastar the handler responds with SSE fragment
+// patches (status region, inline error, toast) and keeps the editor mounted.
+// Without the Datastar header it falls back to the classic full-page render or
+// redirect, preserving progressive enhancement.
+func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentType, activeMenu, listingURL string, publish bool) {
 	if !h.validCSRF(r) {
+		if isDatastarRequest(r) {
+			writeSSE(w, patchElementsEvent("outer", "", editorErrorFragment(errors.New("invalid security token"))), toastEvent("error", "Invalid security token"))
+			return
+		}
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
 	entryID := r.PathValue("id")
-	input, err := readPageInput(r)
+	input, err := readEntryInput(r)
 	if err != nil {
-		h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entryID, PublishAction: "/admin/pages/" + entryID + "/publish", Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), Error: err.Error()})
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, err)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
 		return
 	}
-	if _, _, err := h.pageAndLatestRevision(r.Context(), entryID); err != nil {
+	if _, _, err := h.entryAndLatestRevision(r.Context(), entryID, contentType); err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -113,157 +152,126 @@ func (h *Handler) updatePage(w http.ResponseWriter, r *http.Request, publish boo
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if err := h.writePage(r.Context(), user.ID, entryID, input, false, publish); err != nil {
-		log.Printf("save page: %v", err)
-		h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entryID, PublishAction: "/admin/pages/" + entryID + "/publish", Title: input.title, Slug: input.slug, DocumentJSON: input.documentJSON, Error: pageWriteError(err)})
+	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, publish)
+	if isDatastarRequest(r) {
+		h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, saveErr)
+		return
+	}
+	if saveErr != nil {
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, saveErr)
 		return
 	}
 	if publish {
-		h.setFlash(w, "Page published.")
+		h.setFlash(w, contentTypeTitle(contentType)+" published.")
 	} else {
-		h.setFlash(w, "Page saved as draft.")
+		h.setFlash(w, contentTypeTitle(contentType)+" saved as draft.")
 	}
-	http.Redirect(w, r, "/admin/pages", http.StatusSeeOther)
+	http.Redirect(w, r, listingURL, http.StatusSeeOther)
 }
 
-func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input pageInput, create, publish bool) error {
-	if h.database == nil {
-		return errors.New("admin database is not configured")
+// renderEntryError re-renders the full editor form with the posted values and
+// an inline error message. Used by the no-JS fallback path.
+func (h *Handler) renderEntryError(w http.ResponseWriter, r *http.Request, contentType, activeMenu, entryID string, input entryInput, saveErr error) {
+	data := entryFormData{
+		Heading:        "Edit " + contentTypeTitle(contentType),
+		Action:         "/" + activeMenu + "/" + entryID,
+		PublishAction:  "/" + activeMenu + "/" + entryID + "/publish",
+		BackURL:        "/" + activeMenu,
+		Title:          input.title,
+		Slug:           input.slug,
+		Excerpt:        input.excerpt,
+		SEOTitle:       input.seoTitle,
+		SEODescription: input.seoDescription,
+		CanonicalURL:   input.canonicalURL,
+		DocumentJSON:   input.documentJSON,
+		Error:          entryWriteError(saveErr),
+		Dirty:          "Unsaved",
+		Status:         "Draft",
+		ShowSEO:        true,
 	}
-	doc, err := document.Decode([]byte(input.documentJSON))
-	if err != nil {
-		return fmt.Errorf("invalid document: %w", err)
+	if contentType == postContentType {
+		data.ShowExcerpt = true
 	}
-	if h.blocks == nil {
-		return errors.New("block registry is not configured")
-	}
-	if err := h.blocks.ValidateDocument(doc); err != nil {
-		return fmt.Errorf("invalid document: %w", err)
-	}
-	documentJSON, err := json.Marshal(doc)
-	if err != nil {
-		return fmt.Errorf("encode document: %w", err)
-	}
-	now := time.Now().Unix()
-	revisionID, err := randomID()
-	if err != nil {
-		return err
-	}
-	tx, err := h.database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin page write: %w", err)
-	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
+	h.renderEntryForm(w, r, data, activeMenu)
+}
 
-	revisionNumber := int64(1)
-	if create {
-		err = qtx.CreateEntry(ctx, db.CreateEntryParams{ID: entryID, ContentTypeID: "page", Slug: input.slug, Status: "active", AuthorID: sql.NullString{String: authorID, Valid: true}, CreatedAt: now, UpdatedAt: now})
+// editorSaveFragment responds to a Datastar save/publish request. It patches
+// the editor status region, the inline error paragraph, and a toast without
+// reloading the document or kicking the user out of the editor.
+func (h *Handler) editorSaveFragment(w http.ResponseWriter, r *http.Request, contentType, activeMenu, entryID string, publish bool, input entryInput, saveErr error) {
+	view := h.editorStatusView(r, entryID, publish, saveErr)
+	var statusBuf bytes.Buffer
+	if err := h.entryTemplate.ExecuteTemplate(&statusBuf, "editor-status-region", view); err != nil {
+		log.Printf("render editor status fragment: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	events := []sseEvent{
+		patchElementsEvent("inner", "#editor-status-region", statusBuf.String()),
+		patchElementsEvent("outer", "", editorErrorFragment(saveErr)),
+	}
+	if saveErr != nil {
+		events = append(events, toastEvent("error", entryWriteError(saveErr)))
+	} else if publish {
+		events = append(events, toastEvent("success", contentTypeTitle(contentType)+" published."))
 	} else {
-		entry, getErr := qtx.GetEntry(ctx, entryID)
-		if getErr != nil || entry.ContentTypeID != "page" {
-			return sql.ErrNoRows
-		}
-		latest, getErr := qtx.GetLatestEntryRevision(ctx, entryID)
-		if getErr != nil {
-			return fmt.Errorf("get latest revision: %w", getErr)
-		}
-		revisionNumber = latest.RevisionNumber + 1
-		err = qtx.UpdateEntry(ctx, db.UpdateEntryParams{Slug: input.slug, Status: entry.Status, AuthorID: sql.NullString{String: authorID, Valid: true}, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
+		events = append(events, toastEvent("success", contentTypeTitle(contentType)+" draft saved."))
 	}
-	if err != nil {
-		return fmt.Errorf("save page entry: %w", err)
+	writeSSE(w, events...)
+}
+
+// editorStatusView derives the post-save status region values from the entry:
+// whether it is published (and its public URL) and whether the dirty indicator
+// should read "Saved" or "Unsaved".
+func (h *Handler) editorStatusView(r *http.Request, entryID string, publish bool, saveErr error) editorStatusView {
+	dirty := "Saved"
+	if saveErr != nil {
+		dirty = "Unsaved"
 	}
-	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title, DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now}); err != nil {
-		return fmt.Errorf("create page revision: %w", err)
-	}
-	if publish {
-		if err := h.upsertPageRoute(ctx, qtx, entryID, input.slug, now); err != nil {
-			return err
-		}
-		if err := qtx.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revisionID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entryID}); err != nil {
-			return fmt.Errorf("publish page revision: %w", err)
+	status := "Draft"
+	publicURL := ""
+	if saveErr == nil {
+		if entry, err := h.queries.GetEntry(r.Context(), entryID); err == nil && entry.PublishedRevisionID.Valid {
+			status = "Published"
+			if path := h.entryPublicPath(r, entryID); path != "" {
+				publicURL = absoluteURL(r, path)
+			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit page write: %w", err)
-	}
-	return nil
+	return editorStatusView{Dirty: dirty, Status: status, PublicURL: publicURL}
 }
 
-func (h *Handler) upsertPageRoute(ctx context.Context, queries *db.Queries, entryID, slug string, now int64) error {
-	path := "/" + slug
-	byPath, err := queries.GetRouteByPath(ctx, path)
-	if err == nil && (!byPath.EntryID.Valid || byPath.EntryID.String != entryID) {
-		return errors.New("a route already uses this slug")
+// editorErrorFragment returns the #editor-error element, shown with a message
+// on failure and hidden on success.
+func editorErrorFragment(saveErr error) string {
+	if saveErr == nil {
+		return `<p id="editor-error" class="form-error" role="alert" hidden></p>`
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check page route: %w", err)
-	}
-	route, err := queries.GetEntryRoute(ctx, sql.NullString{String: entryID, Valid: true})
-	if errors.Is(err, sql.ErrNoRows) {
-		routeID, idErr := randomID()
-		if idErr != nil {
-			return idErr
-		}
-		return queries.CreateRoute(ctx, db.CreateRouteParams{ID: routeID, Path: path, EntryID: sql.NullString{String: entryID, Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now})
-	}
-	if err != nil {
-		return fmt.Errorf("get page route: %w", err)
-	}
-	return queries.UpdateRoute(ctx, db.UpdateRouteParams{ID: route.ID, Path: path, EntryID: sql.NullString{String: entryID, Valid: true}, RouteType: "entry", UpdatedAt: now})
+	return `<p id="editor-error" class="form-error" role="alert">` + html.EscapeString(entryWriteError(saveErr)) + `</p>`
 }
 
-func (h *Handler) pageAndLatestRevision(ctx context.Context, entryID string) (db.Entry, db.EntryRevision, error) {
-	entry, err := h.queries.GetEntry(ctx, entryID)
-	if err != nil || entry.ContentTypeID != "page" {
-		return db.Entry{}, db.EntryRevision{}, sql.ErrNoRows
+func absoluteURL(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
 	}
-	revision, err := h.queries.GetLatestEntryRevision(ctx, entryID)
-	return entry, revision, err
+	return scheme + "://" + r.Host + path
 }
 
-func (h *Handler) currentUser(r *http.Request) (auth.User, error) {
-	cookie, err := r.Cookie(auth.CookieName)
-	if err != nil {
-		return auth.User{}, err
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
 	}
-	return h.auth.UserForToken(r.Context(), cookie.Value)
+	return scheme + "://" + r.Host
 }
 
-func readPageInput(r *http.Request) (pageInput, error) {
-	input := pageInput{title: strings.TrimSpace(r.FormValue("title")), slug: strings.TrimSpace(r.FormValue("slug")), documentJSON: postedDocument(r)}
-	if input.title == "" {
-		return input, errors.New("title is required")
+func contentTypeTitle(contentType string) string {
+	switch contentType {
+	case pageContentType:
+		return "Page"
+	case postContentType:
+		return "Post"
 	}
-	if !pageSlugPattern.MatchString(input.slug) {
-		return input, errors.New("slug may contain lowercase letters, numbers, and hyphens only")
-	}
-	if input.documentJSON == "" {
-		return input, errors.New("document is required")
-	}
-	return input, nil
-}
-
-func postedDocument(r *http.Request) string { return r.FormValue("document_json") }
-
-func randomID() (string, error) {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(bytes), nil
-}
-
-func pageWriteError(err error) string {
-	if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "unique constraint") {
-		return "a page already uses this slug"
-	}
-	if strings.Contains(err.Error(), "route already uses") {
-		return err.Error()
-	}
-	if strings.Contains(err.Error(), "invalid document") {
-		return err.Error()
-	}
-	return "Could not save the page."
+	return contentType
 }

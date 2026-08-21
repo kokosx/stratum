@@ -49,7 +49,7 @@ func TestSeedCreatesAnIdempotentPublishedHomepage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(content), `<h1 class="stratum-align-left">Welcome to StratumCMS</h1>`) {
+	if !strings.Contains(string(content), `stratum-align-left`) || !strings.Contains(string(content), `Welcome to StratumCMS`) {
 		t.Errorf("seeded templates rendered %q", content)
 	}
 

@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
@@ -15,6 +17,7 @@ type App struct {
 	Queries  *db.Queries
 	Blocks   *blocks.Registry
 	Themes   *themes.Runtime
+	Media    *media.Service
 }
 
 func New(ctx context.Context) (*App, error) {
@@ -29,7 +32,16 @@ func New(ctx context.Context) (*App, error) {
 	}
 
 	queries := db.New(database.DB)
-	registry, err := blocks.NewRegistry(ctx, queries)
+
+	storageRoot := filepath.Join("data", "media")
+	mediaStore, err := media.NewLocalStorage(storageRoot)
+	if err != nil {
+		database.Close()
+		return nil, fmt.Errorf("init media storage: %w", err)
+	}
+	mediaService := media.NewService(queries, mediaStore)
+
+	registry, err := blocks.NewRegistry(ctx, queries, mediaService)
 	if err != nil {
 		database.Close()
 		return nil, fmt.Errorf("load block registry: %w", err)
@@ -45,6 +57,7 @@ func New(ctx context.Context) (*App, error) {
 		Queries:  queries,
 		Blocks:   registry,
 		Themes:   themeRuntime,
+		Media:    mediaService,
 	}, nil
 }
 

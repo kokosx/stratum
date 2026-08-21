@@ -77,7 +77,7 @@
     "layout.contentWidth":{"type":"number","default":1100,"minimum":560,"maximum":1600,"ui":{"label":"Content width","description":"Maximum width of the main content container.","group":"layout","control":"range"},"output":{"cssVariable":"--st-content-width","unit":"px"}},
     "layout.wideWidth":{"type":"number","default":1400,"minimum":720,"maximum":1920,"ui":{"label":"Wide width","group":"layout","control":"range"},"output":{"cssVariable":"--st-wide-width","unit":"px"}},
     "layout.pagePadding":{"type":"number","default":24,"minimum":8,"maximum":96,"ui":{"label":"Page horizontal padding","group":"layout","control":"range"},"output":{"cssVariable":"--st-page-padding","unit":"px"}},
-    "layout.sectionSpacing":{"type":"number","default":72,"minimum":0,"maximum":192,"ui":{"label":"Section spacing","group":"layout","control":"range"},"output":{"cssVariable":"--st-section-spacing","unit":"px"}},
+    "layout.sectionSpacing":{"type":"number","default":64,"minimum":0,"maximum":192,"ui":{"label":"Section spacing","group":"layout","control":"range"},"output":{"cssVariable":"--st-section-spacing","unit":"px"}},
     "layout.background":{"type":"color","default":"#ffffff","ui":{"label":"Page background","group":"layout","control":"color"},"output":{"cssVariable":"--st-layout-background"}},
 
     "header.layout":{"type":"string","enum":["left","centered","stacked","split","minimal"],"default":"left","ui":{"label":"Header layout","group":"header","control":"segmented"}},
@@ -115,7 +115,7 @@
     "footer.showSiteTitle":{"type":"boolean","default":true,"ui":{"label":"Show site title","group":"footer","control":"checkbox"}},
     "footer.showCopyright":{"type":"boolean","default":true,"ui":{"label":"Show copyright","group":"footer","control":"checkbox"}},
     "footer.width":{"type":"string","enum":["content","wide","full"],"default":"wide","ui":{"label":"Footer width","group":"footer","control":"segmented"}},
-    "footer.spacing":{"type":"number","default":56,"minimum":16,"maximum":160,"ui":{"label":"Vertical spacing","group":"footer","control":"range"},"output":{"cssVariable":"--st-footer-spacing","unit":"px"}},
+    "footer.spacing":{"type":"number","default":40,"minimum":16,"maximum":160,"ui":{"label":"Vertical spacing","group":"footer","control":"range"},"output":{"cssVariable":"--st-footer-spacing","unit":"px"}},
     "footer.menuLayout":{"type":"string","enum":["inline","columns"],"default":"inline","ui":{"label":"Menu layout","group":"footer","control":"segmented"}},
     "footer.legalMenuPosition":{"type":"string","enum":["left","center","right"],"default":"right","ui":{"label":"Legal menu position","group":"footer","control":"segmented"}},
 
@@ -135,6 +135,6 @@
     {"id":"editorial","label":"Editorial","values":{"colors.primary":"#8b3a3a","typography.fontBody":"editorialSerif","typography.fontHeading":"editorialSerif","typography.headingWeight":600,"layout.contentWidth":860,"header.layout":"centered","footer.layout":"centered"}},
     {"id":"bold","label":"Bold","values":{"colors.primary":"#7c3aed","typography.headingWeight":800,"typography.h1Size":64,"radius.md":4,"header.layout":"split","navigation.style":"pill"}},
     {"id":"soft","label":"Soft","values":{"colors.primary":"#0f766e","colors.surfaceMuted":"#f0fdfa","radius.md":16,"radius.lg":28,"shadow.md":"soft","buttons.radius":"pill"}},
-    {"id":"dark","label":"Dark","values":{"appearance.mode":"dark","colors.background":"#0b1220","colors.surface":"#111827","colors.surfaceMuted":"#1f2937","colors.text":"#e5e7eb","colors.textMuted":"#9ca3af","colors.heading":"#f9fafb","colors.border":"#374151","colors.primary":"#60a5fa","colors.primaryHover":"#93c5fd","colors.primaryContrast":"#0b1220","layout.background":"#0b1220","header.background":"#111827","footer.background":"#030712","links.color":"#60a5fa","links.hoverColor":"#93c5fd"}}
+    {"id":"dark","label":"Dark","values":{"appearance.mode":"dark","colors.background":"#0b1120","colors.surface":"#131c2b","colors.surfaceMuted":"#1e293b","colors.text":"#e6edf3","colors.textMuted":"#94a3b8","colors.heading":"#f8fafc","colors.border":"#2b3645","colors.primary":"#60a5fa","colors.primaryHover":"#93c5fd","colors.primaryContrast":"#0b1120","layout.background":"#0b1120","header.background":"#0f172a","footer.background":"#060b14","links.color":"#60a5fa","links.hoverColor":"#93c5fd"}}
   ]
 }

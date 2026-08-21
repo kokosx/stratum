@@ -7,7 +7,7 @@
   <tbody>
     {{ range .Content.Entries }}
     <tr>
-      <td class="entry-title">{{ if eq $.Content.Heading "Pages" }}<a href="/admin/pages/{{ .ID }}/edit">{{ .Title }}</a>{{ else }}{{ .Title }}{{ end }}</td>
+      <td class="entry-title"><a href="{{ $.Content.EditBase }}/{{ .ID }}/edit">{{ .Title }}</a></td>
       <td>{{ .Slug }}</td>
       <td>{{ .Status }}</td>
       <td>{{ .UpdatedAt }}</td>

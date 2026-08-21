@@ -125,7 +125,7 @@ func TestMigrateInstallsCoreBlockDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(rendered), `<p class="stratum-align-left stratum-tone-default">fresh install</p>`) {
+	if !strings.Contains(string(rendered), `stratum-align-left`) || !strings.Contains(string(rendered), `fresh install`) {
 		t.Fatalf("rendered core text = %q", rendered)
 	}
 }

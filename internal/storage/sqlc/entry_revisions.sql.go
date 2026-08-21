@@ -13,9 +13,9 @@ import (
 const createEntryRevision = `-- name: CreateEntryRevision :exec
 INSERT INTO entry_revisions (
     id, entry_id, revision_number, title, excerpt, document_json,
-    seo_title, seo_description, created_by, created_at
+    seo_title, seo_description, canonical_url, created_by, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateEntryRevisionParams struct {
@@ -27,6 +27,7 @@ type CreateEntryRevisionParams struct {
 	DocumentJson   string         `json:"document_json"`
 	SeoTitle       sql.NullString `json:"seo_title"`
 	SeoDescription sql.NullString `json:"seo_description"`
+	CanonicalUrl   sql.NullString `json:"canonical_url"`
 	CreatedBy      sql.NullString `json:"created_by"`
 	CreatedAt      int64          `json:"created_at"`
 }
@@ -41,6 +42,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 		arg.DocumentJson,
 		arg.SeoTitle,
 		arg.SeoDescription,
+		arg.CanonicalUrl,
 		arg.CreatedBy,
 		arg.CreatedAt,
 	)
@@ -48,7 +50,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 }
 
 const getEntryRevision = `-- name: GetEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url
 FROM entry_revisions
 WHERE id = ?
 LIMIT 1
@@ -68,12 +70,13 @@ func (q *Queries) GetEntryRevision(ctx context.Context, id string) (EntryRevisio
 		&i.SeoDescription,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.CanonicalUrl,
 	)
 	return i, err
 }
 
 const getLatestEntryRevision = `-- name: GetLatestEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -94,12 +97,13 @@ func (q *Queries) GetLatestEntryRevision(ctx context.Context, entryID string) (E
 		&i.SeoDescription,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.CanonicalUrl,
 	)
 	return i, err
 }
 
 const listEntryRevisions = `-- name: ListEntryRevisions :many
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -125,6 +129,7 @@ func (q *Queries) ListEntryRevisions(ctx context.Context, entryID string) ([]Ent
 			&i.SeoDescription,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.CanonicalUrl,
 		); err != nil {
 			return nil, err
 		}

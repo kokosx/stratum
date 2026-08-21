@@ -16,7 +16,11 @@ const state = {
   dirty: false,
 };
 const definitions = new Map([...state.catalog, ...(bootstrap.definitions || [])].map((item) => [`${item.block}@${item.version}`, item]));
-let draggedNodeId = null;
+
+// currentDrag describes what is being dragged right now:
+//   { type: "library", definition }  -> a new block type from the Block Library
+//   { type: "node", nodeId }         -> an existing node being moved
+let currentDrag = null;
 let previewTimer = null;
 
 const element = (tag, className, text) => {
@@ -77,12 +81,40 @@ function findNode(id, nodes = state.document.nodes, parent = null) {
   return null;
 }
 
+function isWithin(ancestorId, node) {
+  if (node.id === ancestorId) return true;
+  return (node.children || []).some((child) => isWithin(ancestorId, child));
+}
+
 function childrenAllow(definition, block, currentCount) {
   if (!definition) return false;
   const rule = definition.schema.children;
   if (rule.mode === "none") return false;
   if (rule.max !== undefined && rule.max !== null && currentCount >= rule.max) return false;
   return rule.mode === "any" || (rule.mode === "allowed" && rule.blocks.includes(block));
+}
+
+// containerAccepts decides whether a block may be placed inside containerNode
+// (null means the root Document, which accepts anything). drag is used to relax
+// the max-count rule when the move is a pure reorder inside the same container.
+function containerAccepts(containerNode, block, drag) {
+  if (!containerNode) return true;
+  const definition = definitionFor(containerNode);
+  if (!definition) return false;
+  const rule = definition.schema.children;
+  if (rule.mode === "none") return false;
+  if (rule.mode === "allowed" && !rule.blocks.includes(block)) return false;
+  if (rule.max !== undefined && rule.max !== null) {
+    const count = containerNode.children.length;
+    const sameContainer = drag.type === "node" && findNode(drag.nodeId)?.parent === containerNode;
+    if (!sameContainer && count >= rule.max) return false;
+  }
+  return true;
+}
+
+function dragBlock(drag) {
+  if (drag.type === "library") return drag.definition.block;
+  return definitionFor(findNode(drag.nodeId).node).block;
 }
 
 function insertionPoint(block) {
@@ -103,11 +135,10 @@ function insertionPoint(block) {
 function randomID() {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return "blk_" + Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function addBlock(definition) {
-  const point = insertionPoint(definition.block);
+function createNode(definition) {
   const node = {
     id: randomID(),
     block: definition.block,
@@ -116,6 +147,12 @@ function addBlock(definition) {
     settings: defaultValue(definition.schema.settings),
   };
   if (definition.schema.children.mode !== "none") node.children = [];
+  return node;
+}
+
+function addBlock(definition) {
+  const point = insertionPoint(definition.block);
+  const node = createNode(definition);
   point.siblings.splice(point.index, 0, node);
   state.selectedNodeId = node.id;
   changed();
@@ -129,6 +166,75 @@ function changed(options = {}) {
   if (options.tree !== false) renderTree();
   if (options.inspector !== false) renderInspector();
   schedulePreview();
+}
+
+function clearDropUI() {
+  treeElement.querySelectorAll(".drop-slot--active, .drop-slot--invalid")
+    .forEach((slot) => slot.classList.remove("drop-slot--active", "drop-slot--invalid"));
+  treeElement.querySelectorAll(".node--droptarget").forEach((node) => node.classList.remove("node--droptarget"));
+  treeElement.classList.remove("tree--droptarget");
+  treeElement.classList.remove("tree--dragging");
+}
+
+function highlightContainer(containerNode) {
+  if (!containerNode) {
+    treeElement.classList.add("tree--droptarget");
+    return;
+  }
+  const article = treeElement.querySelector(`.node[data-node-id="${containerNode.id}"]`);
+  if (article) article.classList.add("node--droptarget");
+}
+
+function attachSlot(slot, containerNode, index) {
+  slot.addEventListener("dragover", (event) => {
+    if (!currentDrag) return;
+    event.preventDefault();
+    const block = dragBlock(currentDrag);
+    const valid = containerAccepts(containerNode, block, currentDrag)
+      && !(currentDrag.type === "node" && containerNode && isWithin(currentDrag.nodeId, containerNode));
+    slot.classList.remove("drop-slot--active", "drop-slot--invalid");
+    if (valid) {
+      event.dataTransfer.dropEffect = currentDrag.type === "library" ? "copy" : "move";
+      slot.classList.add("drop-slot--active");
+      highlightContainer(containerNode);
+    } else {
+      event.dataTransfer.dropEffect = "none";
+      slot.classList.add("drop-slot--invalid");
+    }
+  });
+  slot.addEventListener("dragleave", () => {
+    slot.classList.remove("drop-slot--active", "drop-slot--invalid");
+  });
+  slot.addEventListener("drop", (event) => {
+    event.preventDefault();
+    slot.classList.remove("drop-slot--active", "drop-slot--invalid");
+    performDrop(currentDrag, containerNode, index);
+    clearDropUI();
+  });
+}
+
+function performDrop(drag, containerNode, index) {
+  if (!drag) return;
+  const block = dragBlock(drag);
+  if (!containerAccepts(containerNode, block, drag)) return;
+  const targetSiblings = containerNode ? containerNode.children : state.document.nodes;
+  let node;
+  if (drag.type === "library") {
+    node = createNode(drag.definition);
+    targetSiblings.splice(index, 0, node);
+  } else {
+    const found = findNode(drag.nodeId);
+    if (!found) return;
+    if (containerNode && isWithin(drag.nodeId, containerNode)) return;
+    if (found.parent === containerNode && found.index === index) return;
+    found.siblings.splice(found.index, 1);
+    let targetIndex = index;
+    if (found.parent === containerNode && found.index < index) targetIndex -= 1;
+    targetSiblings.splice(targetIndex, 0, found.node);
+    node = found.node;
+  }
+  state.selectedNodeId = node.id;
+  changed();
 }
 
 function renderCatalog(filter = "") {
@@ -148,6 +254,20 @@ function renderCatalog(filter = "") {
       }
       const button = element("button", "catalog-item");
       button.type = "button";
+      button.draggable = true;
+      button.dataset.block = definition.block;
+      button.dataset.version = String(definition.version);
+      button.addEventListener("dragstart", (event) => {
+        currentDrag = { type: "library", definition };
+        clearDropUI();
+        treeElement.classList.add("tree--dragging");
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", `${definition.block}@${definition.version}`);
+      });
+      button.addEventListener("dragend", () => {
+        currentDrag = null;
+        clearDropUI();
+      });
       const title = element("strong");
       title.append(element("span", "catalog-icon", definition.schema.editor.icon ? "◇" : "+"));
       title.append(document.createTextNode(definition.displayName));
@@ -161,59 +281,74 @@ function renderCatalog(filter = "") {
 
 function renderTree() {
   treeElement.replaceChildren();
-  state.document.nodes.forEach((node) => treeElement.append(renderNode(node)));
-  emptyElement.hidden = state.document.nodes.length > 0;
+  treeElement.append(renderDropZone(state.document.nodes, null));
+  emptyElement.hidden = true;
+}
+
+function renderDropZone(siblings, containerNode) {
+  const zone = element("div", containerNode ? "node__children" : "tree__root");
+  if (siblings.length === 0) {
+    const slot = element("div", "drop-slot drop-slot--empty");
+    slot.append(element("div", "node__empty", containerNode ? "Drop blocks here" : "Drag blocks here to begin"));
+    attachSlot(slot, containerNode, 0);
+    zone.append(slot);
+    return zone;
+  }
+  siblings.forEach((child, index) => {
+    const slot = element("div", "drop-slot");
+    attachSlot(slot, containerNode, index);
+    zone.append(slot);
+    zone.append(renderNode(child));
+  });
+  const tail = element("div", "drop-slot");
+  attachSlot(tail, containerNode, siblings.length);
+  zone.append(tail);
+  return zone;
 }
 
 function renderNode(node) {
   const definition = definitionFor(node);
-  const wrapper = element("article", `document-node${node.id === state.selectedNodeId ? " is-selected" : ""}`);
+  const isContainer = definition?.schema.children.mode !== "none";
+  const wrapper = element("article", `node ${isContainer ? "node--container" : "node--leaf"}${node.id === state.selectedNodeId ? " is-selected" : ""}`);
   wrapper.dataset.nodeId = node.id;
   wrapper.draggable = true;
   wrapper.addEventListener("dragstart", (event) => {
-    draggedNodeId = node.id;
+    currentDrag = { type: "node", nodeId: node.id };
+    clearDropUI();
+    treeElement.classList.add("tree--dragging");
     event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", node.id);
   });
-  wrapper.addEventListener("dragover", (event) => event.preventDefault());
-  wrapper.addEventListener("drop", (event) => {
-    event.preventDefault();
-    if (!draggedNodeId || draggedNodeId === node.id) return;
-    const from = findNode(draggedNodeId);
-    const to = findNode(node.id);
-    if (!from || !to || from.siblings !== to.siblings) return;
-    const [moved] = from.siblings.splice(from.index, 1);
-    const target = from.index < to.index ? to.index - 1 : to.index;
-    to.siblings.splice(target, 0, moved);
-    changed();
+  wrapper.addEventListener("dragend", () => {
+    currentDrag = null;
+    clearDropUI();
   });
-  const header = element("div", "node-header");
+  const header = element("div", "node__header");
   header.addEventListener("click", () => {
     state.selectedNodeId = node.id;
     renderTree();
     renderInspector();
   });
-  header.append(element("span", "node-drag", "⋮⋮"));
-  header.append(element("span", "node-label", definition?.displayName || `${node.block}@${node.version}`));
-  header.append(element("span", "node-summary", nodeSummary(node)));
-  const actions = element("span", "node-actions");
+  header.append(element("span", "node__drag", "⋮⋮"));
+  if (definition) header.append(element("span", "node__type", definition.displayName));
+  header.append(element("span", "node__label", node.block));
+  header.append(element("span", "node__summary", nodeSummary(node)));
+  const actions = element("span", "node__actions");
+  if (canOutdent(node.id)) actions.append(actionButton("↰", "Outdent", () => outdentNode(node.id)));
+  if (canIndent(node.id)) actions.append(actionButton("↳", "Indent", () => indentNode(node.id)));
   actions.append(actionButton("↑", "Move up", () => moveNode(node.id, -1)));
   actions.append(actionButton("↓", "Move down", () => moveNode(node.id, 1)));
   actions.append(actionButton("×", "Remove", () => removeNode(node.id)));
   actions.addEventListener("click", (event) => event.stopPropagation());
   header.append(actions);
   wrapper.append(header);
-  if (definition?.schema.children.mode !== "none") {
-    const children = element("div", "node-children");
-    if (!node.children.length) children.append(element("div", "node-children-empty", "Select this container, then add a block from the library."));
-    node.children.forEach((child) => children.append(renderNode(child)));
-    wrapper.append(children);
-  }
+  if (isContainer) wrapper.append(renderDropZone(node.children, node));
   return wrapper;
 }
 
 function nodeSummary(node) {
   const value = Object.values(node.props || {}).find((item) => typeof item === "string" && item);
-  return value ? value.slice(0, 70) : node.block;
+  return value ? value.slice(0, 70) : "";
 }
 
 function actionButton(text, label, handler) {
@@ -231,6 +366,50 @@ function moveNode(id, offset) {
   const next = found.index + offset;
   if (next < 0 || next >= found.siblings.length) return;
   [found.siblings[found.index], found.siblings[next]] = [found.siblings[next], found.siblings[found.index]];
+  changed();
+}
+
+function canIndent(id) {
+  const found = findNode(id);
+  if (!found || found.index < 1) return false;
+  const prev = found.siblings[found.index - 1];
+  const prevDefinition = definitionFor(prev);
+  if (!prevDefinition || prevDefinition.schema.children.mode === "none") return false;
+  return childrenAllow(prevDefinition, found.node.block, prev.children.length);
+}
+
+function indentNode(id) {
+  const found = findNode(id);
+  if (!found || found.index < 1) return;
+  const prev = found.siblings[found.index - 1];
+  const prevDefinition = definitionFor(prev);
+  if (!prevDefinition || prevDefinition.schema.children.mode === "none") return;
+  if (!childrenAllow(prevDefinition, found.node.block, prev.children.length)) return;
+  const [moved] = found.siblings.splice(found.index, 1);
+  prev.children.push(moved);
+  changed();
+}
+
+function canOutdent(id) {
+  const found = findNode(id);
+  if (!found || !found.parent) return false;
+  const parentFound = findNode(found.parent.id);
+  if (!parentFound) return false;
+  const newContainer = parentFound.parent;
+  if (!newContainer) return true;
+  return childrenAllow(definitionFor(newContainer), found.node.block, newContainer.children.length);
+}
+
+function outdentNode(id) {
+  const found = findNode(id);
+  if (!found || !found.parent) return;
+  const parentFound = findNode(found.parent.id);
+  if (!parentFound) return;
+  const newContainer = parentFound.parent;
+  if (newContainer && !childrenAllow(definitionFor(newContainer), found.node.block, newContainer.children.length)) return;
+  const [moved] = found.siblings.splice(found.index, 1);
+  const targetSiblings = newContainer ? newContainer.children : state.document.nodes;
+  targetSiblings.splice(parentFound.index + 1, 0, moved);
   changed();
 }
 
@@ -292,6 +471,10 @@ function buildField(node, object, name, schema, metadata, path) {
     return wrapper;
   }
   const control = metadata.control || inferredControl(schema);
+  if (control === "media") {
+    wrapper.append(buildMediaControl(node, object, name, updateFromObject(object, name)));
+    return wrapper;
+  }
   const factory = controlFactories[control] || controlFactories.text;
   wrapper.append(factory(schema, object[name], (value) => {
     object[name] = value;
@@ -401,6 +584,66 @@ function inferredControl(schema) {
   return "text";
 }
 
+// updateFromObject builds the standard change handler for a single prop/setting.
+function updateFromObject(object, name) {
+  return (value) => {
+    object[name] = value;
+    changed({ tree: false, inspector: false });
+    renderTree();
+  };
+}
+
+// buildMediaControl renders the "media" inspector control: a preview, choose /
+// replace / remove actions, and an accessibility hint when a meaningful image
+// lacks alt text. It opens the shared Media Picker for selection.
+function buildMediaControl(node, object, name, update) {
+  const container = element("div", "inspector-media");
+
+  function openPicker() {
+    if (!window.openMediaPicker) return;
+    window.openMediaPicker({ onSelect: (asset) => { update(asset.id); render(); } });
+  }
+
+  function render() {
+    const mediaId = object[name] || "";
+    container.replaceChildren();
+    if (mediaId) {
+      const preview = element("div", "inspector-media__preview");
+      const img = element("img");
+      img.alt = "";
+      img.src = "/media/" + mediaId + "/480";
+      img.onerror = () => { img.onerror = null; img.src = "/media/" + mediaId + "/original"; };
+      preview.append(img);
+      container.append(preview);
+
+      const actions = element("div", "inspector-media__actions");
+      const replace = element("button", "button", "Replace");
+      replace.type = "button";
+      replace.addEventListener("click", openPicker);
+      const remove = element("button", "button button-danger", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", () => { update(""); render(); });
+      actions.append(replace, remove);
+      container.append(actions);
+
+      const alt = (node.props && node.props.alt) || object.alt || "";
+      const decorative = !!(node.settings && node.settings.decorative);
+      if (!decorative && !alt) {
+        container.append(element("p", "inspector-media__warning", "No alt text — add one for accessibility."));
+      }
+    } else {
+      container.append(element("div", "inspector-media__empty", "No image selected"));
+      const choose = element("button", "button button-primary", "Choose image");
+      choose.type = "button";
+      choose.addEventListener("click", openPicker);
+      container.append(choose);
+    }
+  }
+
+  render();
+  return container;
+}
+
 function humanize(value) {
   return value.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -424,7 +667,20 @@ async function updatePreview() {
     const output = await response.text();
     if (!response.ok) throw new Error(output.trim() || "Preview failed");
     previewElement.classList.remove("editor-preview-error");
-    previewElement.innerHTML = output;
+    previewElement.replaceChildren();
+    const frame = document.createElement("iframe");
+    frame.className = "editor-preview-frame";
+    frame.title = "Live preview";
+    frame.setAttribute("sandbox", "allow-same-origin");
+    frame.srcdoc = output;
+    frame.addEventListener("load", () => {
+      try {
+        const doc = frame.contentDocument;
+        if (doc && doc.body) frame.style.height = `${Math.max(240, doc.body.scrollHeight + 32)}px`;
+      } catch (error) { /* cross-origin guard */ }
+    });
+    previewElement.append(frame);
+    errorElement.textContent = "";
     errorElement.hidden = true;
   } catch (error) {
     previewElement.classList.add("editor-preview-error");
@@ -438,8 +694,8 @@ document.getElementById("block-search").addEventListener("input", (event) => ren
 document.getElementById("refresh-preview").addEventListener("click", updatePreview);
 form.addEventListener("submit", () => { documentInput.value = JSON.stringify(state.document); });
 
-const title = document.getElementById("page-title");
-const slug = document.getElementById("page-slug");
+const title = document.getElementById("entry-title");
+const slug = document.getElementById("entry-slug");
 const normalizeSlug = (value) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ł/g, "l").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 let lastAutoSlug = normalizeSlug(title.value);
 let manuallyEditedSlug = slug.value !== "" && slug.value !== lastAutoSlug;

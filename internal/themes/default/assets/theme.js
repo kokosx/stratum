@@ -38,3 +38,43 @@
     (focusedToggle || menuToggle)?.focus();
   });
 })();
+
+// Code block copy button.
+(() => {
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-copy-code]');
+    if (!button) return;
+    const code = button.closest('.stratum-code')?.querySelector('code');
+    if (!code) return;
+    navigator.clipboard?.writeText(code.textContent).then(() => {
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = original; }, 1500);
+    });
+  });
+})();
+
+// Tabs: build the navigation from each panel's data-label and toggle visibility.
+(() => {
+  document.querySelectorAll('[data-tabs]').forEach((root) => {
+    const nav = root.querySelector('[data-tabs-nav]');
+    if (!nav) return;
+    const tabs = Array.from(root.querySelectorAll(':scope > .stratum-tab'));
+    if (tabs.length === 0) return;
+    const buttons = tabs.map((tab, index) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'stratum-tab-btn';
+      button.textContent = tab.dataset.label || `Tab ${index + 1}`;
+      button.setAttribute('role', 'tab');
+      button.addEventListener('click', () => {
+        tabs.forEach((other, otherIndex) => { other.hidden = otherIndex !== index; });
+        buttons.forEach((other, otherIndex) => other.setAttribute('aria-selected', String(otherIndex === index)));
+      });
+      nav.appendChild(button);
+      return button;
+    });
+    tabs.forEach((tab, index) => { tab.hidden = index !== 0; });
+    buttons[0]?.setAttribute('aria-selected', 'true');
+  });
+})();

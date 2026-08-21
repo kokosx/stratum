@@ -1,0 +1,30 @@
+{{ define "content" }}
+<section class="media-shell">
+  <header class="page-heading media-heading">
+    <h1>Media Library</h1>
+    <button type="button" class="button button-primary" id="media-upload">Upload</button>
+  </header>
+
+  <div class="media-layout">
+    <div class="media-grid" id="media-grid">
+      {{ range .Content.Cards }}
+      <button type="button" class="media-card" data-media-card="{{ .ID }}" data-media-id="{{ .ID }}">
+        <span class="media-thumb">
+          <img src="{{ .URL }}" alt="" loading="lazy" onerror="this.onerror=null;this.src='{{ .Original }}'">
+        </span>
+        <span class="media-card__name" title="{{ .Filename }}">{{ .Filename }}</span>
+        {{ if .Alt }}<span class="media-card__alt" title="Alt: {{ .Alt }}">Alt set</span>{{ end }}
+      </button>
+      {{ else }}
+      <p class="editor-empty">No media yet. Upload your first image.</p>
+      {{ end }}
+    </div>
+
+    <aside class="media-detail" id="media-detail" aria-live="polite">
+      <p class="editor-empty">Select an asset to view details.</p>
+    </aside>
+  </div>
+</section>
+<script src="/admin/static/admin/media-picker.js" defer></script>
+<script src="/admin/static/admin/media.js" defer></script>
+{{ end }}

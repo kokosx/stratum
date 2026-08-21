@@ -70,7 +70,7 @@ func TestDatastarIndentUpdatesOnlyEditorFragmentAndPersistsParent(t *testing.T) 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
 	}
-	if !strings.Contains(response.Header().Get("Content-Type"), "text/html") || !strings.Contains(response.Body.String(), `id="menu-editor-region"`) || strings.Contains(response.Body.String(), "<!doctype") {
+	if !strings.Contains(response.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(response.Body.String(), "datastar-patch-elements") || !strings.Contains(response.Body.String(), `id="menu-editor-region"`) || strings.Contains(response.Body.String(), "<!doctype") {
 		t.Fatalf("response is not a Datastar editor fragment: %s", response.Body.String())
 	}
 	stored, err := handler.queries.ListNavigationItemsByMenu(ctx, "default-main-navigation")

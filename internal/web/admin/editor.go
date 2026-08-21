@@ -2,8 +2,8 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 
 	"github.com/kokosx/stratum/internal/document"
@@ -14,40 +14,6 @@ type editorBootstrap struct {
 	Catalog     any             `json:"catalog"`
 	Definitions any             `json:"definitions"`
 	PreviewURL  string          `json:"previewUrl"`
-}
-
-func (h *Handler) renderPageForm(w http.ResponseWriter, data pageFormData) {
-	token, err := h.csrfToken(w)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if h.blocks == nil {
-		http.Error(w, "Block registry is not configured", http.StatusInternalServerError)
-		return
-	}
-	if data.DocumentJSON == "" {
-		data.DocumentJSON = `{"version":1,"nodes":[]}`
-	}
-	doc, err := document.Decode([]byte(data.DocumentJSON))
-	if err != nil {
-		log.Printf("prepare editor document: %v", err)
-		http.Error(w, "Invalid stored document", http.StatusInternalServerError)
-		return
-	}
-	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(data.DocumentJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/editor/preview",
-	})
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	// encoding/json escapes '<', '>' and '&', so this cannot terminate the script element.
-	data.EditorJSON = template.JS(bootstrap)
-	data.CSRFToken = token
-	if err := h.pageTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: "pages", CSRFToken: token, Content: data}); err != nil {
-		log.Printf("render page form: %v", err)
-	}
 }
 
 func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +33,25 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	// Render a fully themed, self-contained document. The editor preview is
+	// shown inside an isolated iframe so the public theme globals (typography,
+	// colors, :root variables) apply to the preview without restyling the
+	// admin UI.
+	page := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/stratum/theme.css">
+<link rel="stylesheet" href="/stratum/blocks.css">
+</head>
+<body>
+<main class="site-main">
+<div class="st-container st-container--content">%s</div>
+</main>
+</body>
+</html>`, string(rendered))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte("<style>" + h.blocks.Styles() + "</style>" + string(rendered)))
+	_, _ = w.Write([]byte(page))
 }

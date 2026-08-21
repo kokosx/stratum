@@ -11,14 +11,39 @@ import (
 )
 
 const getSiteSettings = `-- name: GetSiteSettings :one
-SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, language, timezone, active_theme, indexing_enabled, created_at, updated_at
+SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, created_at, updated_at
 FROM site_settings
 WHERE id = 1
 `
 
-func (q *Queries) GetSiteSettings(ctx context.Context) (SiteSetting, error) {
+type GetSiteSettingsRow struct {
+	ID                   int64          `json:"id"`
+	SiteTitle            string         `json:"site_title"`
+	SiteTagline          string         `json:"site_tagline"`
+	HomepageMode         string         `json:"homepage_mode"`
+	HomepageEntryID      sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID     sql.NullString `json:"posts_page_entry_id"`
+	PostsPerPage         int64          `json:"posts_per_page"`
+	Language             string         `json:"language"`
+	Timezone             string         `json:"timezone"`
+	ActiveTheme          string         `json:"active_theme"`
+	IndexingEnabled      int64          `json:"indexing_enabled"`
+	SiteUrl              string         `json:"site_url"`
+	SitemapEnabled       int64          `json:"sitemap_enabled"`
+	RobotsMode           string         `json:"robots_mode"`
+	RobotsCustom         string         `json:"robots_custom"`
+	SpeculationMode      string         `json:"speculation_mode"`
+	SpeculationEagerness string         `json:"speculation_eagerness"`
+	TitleSeparator       string         `json:"title_separator"`
+	SiteLogoMediaID      sql.NullString `json:"site_logo_media_id"`
+	SocialLinks          sql.NullString `json:"social_links"`
+	CreatedAt            int64          `json:"created_at"`
+	UpdatedAt            int64          `json:"updated_at"`
+}
+
+func (q *Queries) GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, error) {
 	row := q.db.QueryRowContext(ctx, getSiteSettings)
-	var i SiteSetting
+	var i GetSiteSettingsRow
 	err := row.Scan(
 		&i.ID,
 		&i.SiteTitle,
@@ -31,6 +56,15 @@ func (q *Queries) GetSiteSettings(ctx context.Context) (SiteSetting, error) {
 		&i.Timezone,
 		&i.ActiveTheme,
 		&i.IndexingEnabled,
+		&i.SiteUrl,
+		&i.SitemapEnabled,
+		&i.RobotsMode,
+		&i.RobotsCustom,
+		&i.SpeculationMode,
+		&i.SpeculationEagerness,
+		&i.TitleSeparator,
+		&i.SiteLogoMediaID,
+		&i.SocialLinks,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -50,22 +84,36 @@ SET
     timezone = ?,
     active_theme = ?,
     indexing_enabled = ?,
+    site_url = ?,
+    sitemap_enabled = ?,
+    robots_mode = ?,
+    robots_custom = ?,
+    speculation_mode = ?,
+    speculation_eagerness = ?,
+    title_separator = ?,
     updated_at = ?
 WHERE id = 1
 `
 
 type UpdateSiteSettingsParams struct {
-	SiteTitle        string         `json:"site_title"`
-	SiteTagline      string         `json:"site_tagline"`
-	HomepageMode     string         `json:"homepage_mode"`
-	HomepageEntryID  sql.NullString `json:"homepage_entry_id"`
-	PostsPageEntryID sql.NullString `json:"posts_page_entry_id"`
-	PostsPerPage     int64          `json:"posts_per_page"`
-	Language         string         `json:"language"`
-	Timezone         string         `json:"timezone"`
-	ActiveTheme      string         `json:"active_theme"`
-	IndexingEnabled  int64          `json:"indexing_enabled"`
-	UpdatedAt        int64          `json:"updated_at"`
+	SiteTitle            string         `json:"site_title"`
+	SiteTagline          string         `json:"site_tagline"`
+	HomepageMode         string         `json:"homepage_mode"`
+	HomepageEntryID      sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID     sql.NullString `json:"posts_page_entry_id"`
+	PostsPerPage         int64          `json:"posts_per_page"`
+	Language             string         `json:"language"`
+	Timezone             string         `json:"timezone"`
+	ActiveTheme          string         `json:"active_theme"`
+	IndexingEnabled      int64          `json:"indexing_enabled"`
+	SiteUrl              string         `json:"site_url"`
+	SitemapEnabled       int64          `json:"sitemap_enabled"`
+	RobotsMode           string         `json:"robots_mode"`
+	RobotsCustom         string         `json:"robots_custom"`
+	SpeculationMode      string         `json:"speculation_mode"`
+	SpeculationEagerness string         `json:"speculation_eagerness"`
+	TitleSeparator       string         `json:"title_separator"`
+	UpdatedAt            int64          `json:"updated_at"`
 }
 
 func (q *Queries) UpdateSiteSettings(ctx context.Context, arg UpdateSiteSettingsParams) error {
@@ -80,6 +128,13 @@ func (q *Queries) UpdateSiteSettings(ctx context.Context, arg UpdateSiteSettings
 		arg.Timezone,
 		arg.ActiveTheme,
 		arg.IndexingEnabled,
+		arg.SiteUrl,
+		arg.SitemapEnabled,
+		arg.RobotsMode,
+		arg.RobotsCustom,
+		arg.SpeculationMode,
+		arg.SpeculationEagerness,
+		arg.TitleSeparator,
 		arg.UpdatedAt,
 	)
 	return err

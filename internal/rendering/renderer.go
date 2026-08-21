@@ -2,6 +2,7 @@ package rendering
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -21,7 +22,8 @@ type Definition struct {
 }
 
 type Renderer struct {
-	blocks map[blockKey]*template.Template
+	blocks        map[blockKey]*template.Template
+	mediaProvider MediaProvider
 }
 
 type blockKey struct {
@@ -33,11 +35,62 @@ type blockData struct {
 	Props    map[string]any
 	Settings map[string]any
 	Children template.HTML
+	Context  RenderContext
+}
+
+// RenderContext carries request-time data that dynamic blocks bind to (the
+// current Entry and Site settings). It is the same for every node in a document.
+// In the editor preview it is empty, so dynamic blocks fall back to placeholders.
+type RenderContext struct {
+	Site  SiteContext
+	Entry EntryContext
+}
+
+// SiteSocialLink is a single configured social profile surfaced by the Social
+// Links block. It is populated from Site Settings at render time.
+type SiteSocialLink struct {
+	Platform string
+	URL      string
+	Label    string
+}
+
+type SiteContext struct {
+	Name        string
+	Tagline     string
+	URL         string
+	LogoURL     string
+	SocialLinks []SiteSocialLink
+}
+
+type EntryContext struct {
+	Title         string
+	Excerpt       string
+	Permalink     string
+	PublishDate   string
+	PublishISO    string
+	FeaturedImage string
 }
 
 // NewRenderer validates and compiles enabled block templates from the database.
-func NewRenderer(definitions []Definition) (*Renderer, error) {
-	renderer := &Renderer{blocks: make(map[blockKey]*template.Template, len(definitions))}
+// provider may be nil; when nil the media template function returns an empty view
+// so documents without media (and tests) keep working.
+func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, error) {
+	renderer := &Renderer{blocks: make(map[blockKey]*template.Template, len(definitions)), mediaProvider: provider}
+
+	mediaFunc := func(id any) MediaView {
+		if renderer.mediaProvider == nil {
+			return MediaView{}
+		}
+		str, ok := id.(string)
+		if !ok || str == "" {
+			return MediaView{}
+		}
+		view, ok := renderer.mediaProvider.MediaView(context.Background(), str)
+		if !ok {
+			return MediaView{}
+		}
+		return view
+	}
 
 	for _, definition := range definitions {
 		if definition.RendererType != "template" {
@@ -54,6 +107,15 @@ func NewRenderer(definitions []Definition) (*Renderer, error) {
 
 		tmpl, err := template.New(key.name).Funcs(template.FuncMap{
 			"integerEquals": integerEquals,
+			"media":         mediaFunc,
+			"icon":          iconFunc,
+			"lines":         linesFunc,
+			"split":         splitFunc,
+			"youtubeID":     youtubeIDFunc,
+			"vimeoID":       vimeoIDFunc,
+			"tagFor":        tagForFunc,
+			"tagOpen":       tagOpenFunc,
+			"tagClose":      tagCloseFunc,
 		}).Parse(definition.Template)
 		if err != nil {
 			return nil, fmt.Errorf("parse block %s@%d template: %w", key.name, key.version, err)
@@ -81,9 +143,13 @@ func integerEquals(value any, expected int) bool {
 }
 
 func (r *Renderer) RenderDocument(doc *document.Document) (template.HTML, error) {
+	return r.RenderDocumentContext(doc, RenderContext{})
+}
+
+func (r *Renderer) RenderDocumentContext(doc *document.Document, rc RenderContext) (template.HTML, error) {
 	var out strings.Builder
 	for _, node := range doc.Nodes {
-		rendered, err := r.renderNode(node)
+		rendered, err := r.renderNode(node, rc)
 		if err != nil {
 			return "", err
 		}
@@ -92,7 +158,7 @@ func (r *Renderer) RenderDocument(doc *document.Document) (template.HTML, error)
 	return template.HTML(out.String()), nil
 }
 
-func (r *Renderer) renderNode(node document.Node) (template.HTML, error) {
+func (r *Renderer) renderNode(node document.Node, rc RenderContext) (template.HTML, error) {
 	key := blockKey{name: node.Block, version: int64(node.Version)}
 	tmpl, ok := r.blocks[key]
 	if !ok {
@@ -110,7 +176,7 @@ func (r *Renderer) renderNode(node document.Node) (template.HTML, error) {
 
 	var children strings.Builder
 	for _, child := range node.Children {
-		rendered, err := r.renderNode(child)
+		rendered, err := r.renderNode(child, rc)
 		if err != nil {
 			return "", err
 		}
@@ -118,7 +184,7 @@ func (r *Renderer) renderNode(node document.Node) (template.HTML, error) {
 	}
 
 	var out bytes.Buffer
-	if err := tmpl.Execute(&out, blockData{Props: props, Settings: settings, Children: template.HTML(children.String())}); err != nil {
+	if err := tmpl.Execute(&out, blockData{Props: props, Settings: settings, Children: template.HTML(children.String()), Context: rc}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	return template.HTML(out.String()), nil

@@ -20,6 +20,6 @@ ORDER BY revision_number DESC;
 -- name: CreateEntryRevision :exec
 INSERT INTO entry_revisions (
     id, entry_id, revision_number, title, excerpt, document_json,
-    seo_title, seo_description, created_by, created_at
+    seo_title, seo_description, canonical_url, created_by, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

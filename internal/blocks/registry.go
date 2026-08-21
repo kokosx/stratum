@@ -23,9 +23,10 @@ type DefinitionStore interface {
 // Registry holds a fully compiled immutable snapshot. Readers use atomic loads;
 // Reload serializes writers and publishes only after every definition compiles.
 type Registry struct {
-	store    DefinitionStore
-	reloadMu sync.Mutex
-	snapshot atomic.Pointer[snapshot]
+	store         DefinitionStore
+	reloadMu      sync.Mutex
+	snapshot      atomic.Pointer[snapshot]
+	mediaProvider rendering.MediaProvider
 }
 
 type snapshot struct {
@@ -35,9 +36,13 @@ type snapshot struct {
 	styles      string
 }
 
-// NewRegistry loads the initial renderer snapshot.
-func NewRegistry(ctx context.Context, store DefinitionStore) (*Registry, error) {
+// NewRegistry loads the initial renderer snapshot. provider is optional; when
+// given it lets block templates resolve media assets.
+func NewRegistry(ctx context.Context, store DefinitionStore, provider ...rendering.MediaProvider) (*Registry, error) {
 	registry := &Registry{store: store}
+	if len(provider) > 0 {
+		registry.mediaProvider = provider[0]
+	}
 	if err := registry.Reload(ctx); err != nil {
 		return nil, err
 	}
@@ -94,7 +99,7 @@ func (r *Registry) Reload(ctx context.Context) error {
 		}
 	}
 
-	renderer, err := rendering.NewRenderer(rendererDefinitions)
+	renderer, err := rendering.NewRenderer(rendererDefinitions, r.mediaProvider)
 	if err != nil {
 		return fmt.Errorf("build block renderer: %w", err)
 	}
@@ -105,6 +110,13 @@ func (r *Registry) Reload(ctx context.Context) error {
 
 // RenderDocument renders using one consistent registry snapshot.
 func (r *Registry) RenderDocument(doc *document.Document) (template.HTML, error) {
+	return r.RenderDocumentContext(doc, rendering.RenderContext{})
+}
+
+// RenderDocumentContext renders a document bound to request-time data (current
+// Entry and Site settings) for use by dynamic blocks such as Entry Title or
+// Site Name. The editor preview passes an empty context.
+func (r *Registry) RenderDocumentContext(doc *document.Document, rc rendering.RenderContext) (template.HTML, error) {
 	current := r.snapshot.Load()
 	if current == nil {
 		return "", fmt.Errorf("block registry is not initialized")
@@ -116,7 +128,7 @@ func (r *Registry) RenderDocument(doc *document.Document) (template.HTML, error)
 	if err != nil {
 		return "", fmt.Errorf("apply block defaults: %w", err)
 	}
-	return current.renderer.RenderDocument(renderDocument)
+	return current.renderer.RenderDocumentContext(renderDocument, rc)
 }
 
 // EditorCatalog returns a detached copy of the enabled definitions. Disabled

@@ -15,6 +15,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
@@ -26,17 +27,20 @@ type Handler struct {
 	queries            *db.Queries
 	auth               *auth.Service
 	blocks             *blocks.Registry
+	media              *media.Service
 	dashboardTemplate  *template.Template
 	entriesTemplate    *template.Template
-	pageTemplate       *template.Template
+	entryTemplate      *template.Template
 	setupTemplate      *template.Template
 	loginTemplate      *template.Template
 	menusTemplate      *template.Template
+	mediaTemplate      *template.Template
 	appearanceTemplate *template.Template
+	settingsTemplate   *template.Template
 	navigation         *navigation.Service
 	navigationLoader   *navigation.Loader
 	themes             *themes.Runtime
-	previewRenderer    func(context.Context, string, map[string]any, string) ([]byte, error)
+	previewRenderer    func(context.Context, string, string, map[string]any, string) ([]byte, error)
 }
 
 type LayoutData struct {
@@ -47,7 +51,7 @@ type LayoutData struct {
 	Content    any
 }
 
-func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry, runtimes ...*themes.Runtime) (*Handler, error) {
+func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry, themeRuntime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
 	templateFS, err := fs.Sub(webassets.Assets, "templates/admin")
 	if err != nil {
 		return nil, fmt.Errorf("admin templates: %w", err)
@@ -62,7 +66,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	pageTemplate, err := template.ParseFS(templateFS, "layout.html", "page_form.html")
+	entryTemplate, err := template.ParseFS(templateFS, "layout.html", "entry_form.html")
 	if err != nil {
 		return nil, err
 	}
@@ -82,14 +86,13 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	var themeRuntime *themes.Runtime
-	if len(runtimes) > 0 {
-		themeRuntime = runtimes[0]
-	} else {
-		themeRuntime, err = themes.NewRuntime(context.Background(), queries)
-		if err != nil {
-			return nil, err
-		}
+	settingsTemplate, err := template.ParseFS(templateFS, "layout.html", "settings.html")
+	if err != nil {
+		return nil, err
+	}
+	mediaTemplate, err := template.ParseFS(templateFS, "layout.html", "media.html")
+	if err != nil {
+		return nil, err
 	}
 
 	return &Handler{
@@ -97,13 +100,16 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		queries:            queries,
 		auth:               authService,
 		blocks:             blockRegistry,
+		media:              mediaService,
 		dashboardTemplate:  dashboardTemplate,
 		entriesTemplate:    entriesTemplate,
-		pageTemplate:       pageTemplate,
+		entryTemplate:      entryTemplate,
 		setupTemplate:      setupTemplate,
 		loginTemplate:      loginTemplate,
 		menusTemplate:      menusTemplate,
+		mediaTemplate:      mediaTemplate,
 		appearanceTemplate: appearanceTemplate,
+		settingsTemplate:   settingsTemplate,
 		navigation:         navigation.NewService(database, queries),
 		navigationLoader:   navigation.NewLoader(queries),
 		themes:             themeRuntime,
@@ -130,6 +136,10 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/editor/preview", h.requireAuth(h.previewDocument))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
 	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
+	mux.HandleFunc("POST /admin/posts", h.requireAuth(h.createPost))
+	mux.HandleFunc("GET /admin/posts/{id}/edit", h.requireAuth(h.editPost))
+	mux.HandleFunc("POST /admin/posts/{id}", h.requireAuth(h.savePost))
+	mux.HandleFunc("POST /admin/posts/{id}/publish", h.requireAuth(h.publishPost))
 	mux.HandleFunc("GET /admin/menus", h.requireAuth(h.listMenus))
 	mux.HandleFunc("POST /admin/menus", h.requireAuth(h.createMenu))
 	mux.HandleFunc("POST /admin/menus/{id}", h.requireAuth(h.updateMenu))
@@ -137,6 +147,15 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/appearance", h.requireAuth(h.appearance))
 	mux.HandleFunc("POST /admin/appearance", h.requireAuth(h.saveAppearance))
 	mux.HandleFunc("POST /admin/appearance/preview", h.requireAuth(h.previewAppearance))
+	mux.HandleFunc("GET /admin/settings", h.requireAuth(h.settings))
+	mux.HandleFunc("POST /admin/settings", h.requireAuth(h.saveSettings))
+	mux.HandleFunc("POST /admin/settings/robots-preview", h.requireAuth(h.robotsPreview))
+	mux.HandleFunc("GET /admin/media", h.requireAuth(h.mediaLibrary))
+	mux.HandleFunc("GET /admin/media.json", h.requireAuth(h.mediaListJSON))
+	mux.HandleFunc("POST /admin/media/upload", h.requireAuth(h.uploadMedia))
+	mux.HandleFunc("GET /admin/media/{id}/json", h.requireAuth(h.mediaDetailJSON))
+	mux.HandleFunc("POST /admin/media/{id}", h.requireAuth(h.updateMedia))
+	mux.HandleFunc("POST /admin/media/{id}/delete", h.requireAuth(h.deleteMedia))
 	staticFS, err := fs.Sub(webassets.Assets, "static")
 	if err != nil {
 		panic(fmt.Sprintf("admin static files: %v", err))
@@ -153,8 +172,12 @@ func (h *Handler) Routes() http.Handler {
 
 const csrfCookieName = "stratum_csrf"
 const maxAdminRequestBody = 1 << 20
+const maxUploadBytes = 12 << 20
 
-func (h *Handler) csrfToken(w http.ResponseWriter) (string, error) {
+func (h *Handler) csrfToken(w http.ResponseWriter, r *http.Request) (string, error) {
+	if cookie, err := r.Cookie(csrfCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value, nil
+	}
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
@@ -176,7 +199,7 @@ func (h *Handler) validCSRF(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(token)) == 1
 }
 
-func (h *Handler) SetPreviewRenderer(renderer func(context.Context, string, map[string]any, string) ([]byte, error)) {
+func (h *Handler) SetPreviewRenderer(renderer func(context.Context, string, string, map[string]any, string) ([]byte, error)) {
 	h.previewRenderer = renderer
 }
 
@@ -248,10 +271,10 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
-		h.renderAuth(w, h.setupTemplate, "Install Stratum", err.Error())
+		h.renderAuth(w, r, h.setupTemplate, "Install Stratum", err.Error())
 		return
 	}
-	h.renderAuth(w, h.setupTemplate, "Install Stratum", "")
+	h.renderAuth(w, r, h.setupTemplate, "Install Stratum", "")
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -275,10 +298,10 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
 			return
 		}
-		h.renderAuth(w, h.loginTemplate, "Sign in", "Invalid email or password.")
+		h.renderAuth(w, r, h.loginTemplate, "Sign in", "Invalid email or password.")
 		return
 	}
-	h.renderAuth(w, h.loginTemplate, "Sign in", "")
+	h.renderAuth(w, r, h.loginTemplate, "Sign in", "")
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -316,8 +339,8 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{Name: auth.CookieName, Value: token, Path: "/", HttpOnly: true, Secure: h.auth.SecureCookies(), SameSite: http.SameSiteLaxMode, MaxAge: 60 * 60 * 24 * 30})
 }
 
-func (h *Handler) renderAuth(w http.ResponseWriter, page *template.Template, title, message string) {
-	token, err := h.csrfToken(w)
+func (h *Handler) renderAuth(w http.ResponseWriter, r *http.Request, page *template.Template, title, message string) {
+	token, err := h.csrfToken(w, r)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
