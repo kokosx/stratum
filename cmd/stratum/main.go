@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/kokosx/stratum/internal/app"
+	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
 )
 
@@ -46,6 +47,14 @@ func main() {
 }
 
 func serve(application *app.App) {
+	adminHandler, err := adminweb.NewHandler(
+		application.Queries,
+		"internal/web/templates/admin",
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	publicHandler, err := publicweb.NewHandler(
 		application.Queries,
 		application.Blocks,
@@ -56,6 +65,8 @@ func serve(application *app.App) {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("/admin", adminHandler.Routes())
+	mux.Handle("/admin/", adminHandler.Routes())
 	mux.Handle("/", publicHandler)
 
 	server := &http.Server{Addr: ":8080", Handler: mux}

@@ -14,3 +14,6 @@ build:
 
 test:
 	go test ./...
+
+run:
+	make build && ./stratum

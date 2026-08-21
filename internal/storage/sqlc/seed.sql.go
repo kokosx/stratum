@@ -57,21 +57,23 @@ const seedEntry = `-- name: SeedEntry :exec
 INSERT INTO entries (
     id, content_type_id, slug, status, created_at, updated_at, published_at
 )
-VALUES (?, 'page', ?, 'active', ?, ?, ?)
+VALUES (?, ?, ?, 'active', ?, ?, ?)
 ON CONFLICT(id) DO NOTHING
 `
 
 type SeedEntryParams struct {
-	ID          string        `json:"id"`
-	Slug        string        `json:"slug"`
-	CreatedAt   int64         `json:"created_at"`
-	UpdatedAt   int64         `json:"updated_at"`
-	PublishedAt sql.NullInt64 `json:"published_at"`
+	ID            string        `json:"id"`
+	ContentTypeID string        `json:"content_type_id"`
+	Slug          string        `json:"slug"`
+	CreatedAt     int64         `json:"created_at"`
+	UpdatedAt     int64         `json:"updated_at"`
+	PublishedAt   sql.NullInt64 `json:"published_at"`
 }
 
 func (q *Queries) SeedEntry(ctx context.Context, arg SeedEntryParams) error {
 	_, err := q.db.ExecContext(ctx, seedEntry,
 		arg.ID,
+		arg.ContentTypeID,
 		arg.Slug,
 		arg.CreatedAt,
 		arg.UpdatedAt,

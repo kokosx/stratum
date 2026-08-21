@@ -29,7 +29,7 @@ type Querier interface {
 	GetSiteSettings(ctx context.Context) (SiteSetting, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
-	ListEntriesByContentType(ctx context.Context, arg ListEntriesByContentTypeParams) ([]Entry, error)
+	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
 	ListRoutesForEntry(ctx context.Context, entryID sql.NullString) ([]Route, error)
 	SeedBlockDefinition(ctx context.Context, arg SeedBlockDefinitionParams) error

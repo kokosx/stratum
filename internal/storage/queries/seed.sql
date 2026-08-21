@@ -15,7 +15,7 @@ ON CONFLICT(id) DO UPDATE SET
 INSERT INTO entries (
     id, content_type_id, slug, status, created_at, updated_at, published_at
 )
-VALUES (?, 'page', ?, 'active', ?, ?, ?)
+VALUES (?, ?, ?, 'active', ?, ?, ?)
 ON CONFLICT(id) DO NOTHING;
 
 -- name: SeedEntryRevision :exec

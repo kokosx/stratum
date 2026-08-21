@@ -1,0 +1,21 @@
+{{ define "content" }}
+<h1>{{ .Content.Heading }}</h1>
+<table class="list-table">
+  <thead>
+    <tr><th>Title</th><th>Slug</th><th>Status</th><th>Updated</th><th>View</th></tr>
+  </thead>
+  <tbody>
+    {{ range .Content.Entries }}
+    <tr>
+      <td class="entry-title">{{ .Title }}</td>
+      <td>{{ .Slug }}</td>
+      <td>{{ .Status }}</td>
+      <td>{{ .UpdatedAt }}</td>
+      <td>{{ if .PublicURL }}<a class="view-link" href="{{ .PublicURL }}" target="_blank" rel="noopener noreferrer">View</a>{{ else }}<span class="muted">—</span>{{ end }}</td>
+    </tr>
+    {{ else }}
+    <tr><td colspan="5" class="muted">No entries found.</td></tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ end }}
