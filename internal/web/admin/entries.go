@@ -51,7 +51,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 			ID:        entry.ID,
 			Title:     title,
 			Slug:      entry.Slug,
-			Status:    entry.Status,
+			Status:    entryStatus(entry.Status, entry.PublishedRevisionID.Valid),
 			UpdatedAt: time.Unix(entry.UpdatedAt, 0).Format("2 Jan 2006, 15:04"),
 			PublicURL: publicURL,
 		})
@@ -67,6 +67,20 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	if err := h.entriesTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render admin %s: %v", contentType, err)
+	}
+}
+
+func entryStatus(status string, hasPublishedRevision bool) string {
+	if hasPublishedRevision {
+		return "Published"
+	}
+	switch status {
+	case "private":
+		return "Private"
+	case "trash":
+		return "Trash"
+	default:
+		return "Draft"
 	}
 }
 

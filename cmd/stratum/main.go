@@ -49,7 +49,6 @@ func main() {
 func serve(application *app.App) {
 	adminHandler, err := adminweb.NewHandler(
 		application.Queries,
-		"internal/web/templates/admin",
 	)
 	if err != nil {
 		log.Fatal(err)

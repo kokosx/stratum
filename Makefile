@@ -1,4 +1,4 @@
-.PHONY: generate migrate seed build test
+.PHONY: generate migrate seed build test run
 
 generate:
 	sqlc generate
@@ -15,5 +15,5 @@ build:
 test:
 	go test ./...
 
-run:
-	make build && ./stratum
+run: build
+	./stratum
