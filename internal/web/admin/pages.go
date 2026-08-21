@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"regexp"
@@ -27,19 +28,20 @@ type pageFormData struct {
 	PublishAction string
 	Title         string
 	Slug          string
-	Content       string
+	DocumentJSON  string
+	EditorJSON    template.JS
 	Error         string
 	CSRFToken     string
 }
 
 type pageInput struct {
-	title   string
-	slug    string
-	content string
+	title        string
+	slug         string
+	documentJSON string
 }
 
 func (h *Handler) newPage(w http.ResponseWriter, r *http.Request) {
-	h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages"})
+	h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", DocumentJSON: `{"version":1,"nodes":[]}`})
 }
 
 func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
@@ -49,7 +51,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := readPageInput(r)
 	if err != nil {
-		h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Content: r.FormValue("content"), Error: err.Error()})
+		h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), Error: err.Error()})
 		return
 	}
 	user, err := h.currentUser(r)
@@ -63,7 +65,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create page: %v", err)
-		h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", Title: input.title, Slug: input.slug, Content: input.content, Error: pageWriteError(err)})
+		h.renderPageForm(w, pageFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", Title: input.title, Slug: input.slug, DocumentJSON: input.documentJSON, Error: pageWriteError(err)})
 		return
 	}
 	if r.FormValue("publish") != "" {
@@ -80,13 +82,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	content, err := textContent(revision.DocumentJson)
-	if err != nil {
-		log.Printf("read page document: %v", err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entry.ID, PublishAction: "/admin/pages/" + entry.ID + "/publish", Title: revision.Title, Slug: entry.Slug, Content: content})
+	h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entry.ID, PublishAction: "/admin/pages/" + entry.ID + "/publish", Title: revision.Title, Slug: entry.Slug, DocumentJSON: revision.DocumentJson})
 }
 
 func (h *Handler) savePage(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +101,7 @@ func (h *Handler) updatePage(w http.ResponseWriter, r *http.Request, publish boo
 	entryID := r.PathValue("id")
 	input, err := readPageInput(r)
 	if err != nil {
-		h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entryID, PublishAction: "/admin/pages/" + entryID + "/publish", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Content: r.FormValue("content"), Error: err.Error()})
+		h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entryID, PublishAction: "/admin/pages/" + entryID + "/publish", Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), Error: err.Error()})
 		return
 	}
 	if _, _, err := h.pageAndLatestRevision(r.Context(), entryID); err != nil {
@@ -119,7 +115,7 @@ func (h *Handler) updatePage(w http.ResponseWriter, r *http.Request, publish boo
 	}
 	if err := h.writePage(r.Context(), user.ID, entryID, input, false, publish); err != nil {
 		log.Printf("save page: %v", err)
-		h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entryID, PublishAction: "/admin/pages/" + entryID + "/publish", Title: input.title, Slug: input.slug, Content: input.content, Error: pageWriteError(err)})
+		h.renderPageForm(w, pageFormData{Heading: "Edit Page", Action: "/admin/pages/" + entryID, PublishAction: "/admin/pages/" + entryID + "/publish", Title: input.title, Slug: input.slug, DocumentJSON: input.documentJSON, Error: pageWriteError(err)})
 		return
 	}
 	if publish {
@@ -134,6 +130,20 @@ func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input
 	if h.database == nil {
 		return errors.New("admin database is not configured")
 	}
+	doc, err := document.Decode([]byte(input.documentJSON))
+	if err != nil {
+		return fmt.Errorf("invalid document: %w", err)
+	}
+	if h.blocks == nil {
+		return errors.New("block registry is not configured")
+	}
+	if err := h.blocks.ValidateDocument(doc); err != nil {
+		return fmt.Errorf("invalid document: %w", err)
+	}
+	documentJSON, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("encode document: %w", err)
+	}
 	now := time.Now().Unix()
 	revisionID, err := randomID()
 	if err != nil {
@@ -147,7 +157,6 @@ func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input
 	qtx := h.queries.WithTx(tx)
 
 	revisionNumber := int64(1)
-	nodeID := ""
 	if create {
 		err = qtx.CreateEntry(ctx, db.CreateEntryParams{ID: entryID, ContentTypeID: "page", Slug: input.slug, Status: "active", AuthorID: sql.NullString{String: authorID, Valid: true}, CreatedAt: now, UpdatedAt: now})
 	} else {
@@ -159,21 +168,13 @@ func (h *Handler) writePage(ctx context.Context, authorID, entryID string, input
 		if getErr != nil {
 			return fmt.Errorf("get latest revision: %w", getErr)
 		}
-		nodeID, getErr = textNodeID(latest.DocumentJson)
-		if getErr != nil {
-			return fmt.Errorf("read latest page document: %w", getErr)
-		}
 		revisionNumber = latest.RevisionNumber + 1
 		err = qtx.UpdateEntry(ctx, db.UpdateEntryParams{Slug: input.slug, Status: entry.Status, AuthorID: sql.NullString{String: authorID, Valid: true}, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
 	}
 	if err != nil {
 		return fmt.Errorf("save page entry: %w", err)
 	}
-	documentJSON, err := textDocument(input.content, nodeID)
-	if err != nil {
-		return err
-	}
-	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title, DocumentJson: documentJSON, CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now}); err != nil {
+	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title, DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now}); err != nil {
 		return fmt.Errorf("create page revision: %w", err)
 	}
 	if publish {
@@ -230,76 +231,21 @@ func (h *Handler) currentUser(r *http.Request) (auth.User, error) {
 	return h.auth.UserForToken(r.Context(), cookie.Value)
 }
 
-func (h *Handler) renderPageForm(w http.ResponseWriter, data pageFormData) {
-	token, err := h.csrfToken(w)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	data.CSRFToken = token
-	if err := h.pageTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: "pages", CSRFToken: token, Content: data}); err != nil {
-		log.Printf("render page form: %v", err)
-	}
-}
-
 func readPageInput(r *http.Request) (pageInput, error) {
-	input := pageInput{title: strings.TrimSpace(r.FormValue("title")), slug: strings.TrimSpace(r.FormValue("slug")), content: r.FormValue("content")}
+	input := pageInput{title: strings.TrimSpace(r.FormValue("title")), slug: strings.TrimSpace(r.FormValue("slug")), documentJSON: postedDocument(r)}
 	if input.title == "" {
 		return input, errors.New("title is required")
 	}
 	if !pageSlugPattern.MatchString(input.slug) {
 		return input, errors.New("slug may contain lowercase letters, numbers, and hyphens only")
 	}
+	if input.documentJSON == "" {
+		return input, errors.New("document is required")
+	}
 	return input, nil
 }
 
-func textDocument(content, nodeID string) (string, error) {
-	props, err := json.Marshal(map[string]string{"text": content})
-	if err != nil {
-		return "", err
-	}
-	if nodeID == "" {
-		nodeID, err = randomID()
-		if err != nil {
-			return "", err
-		}
-	}
-	encoded, err := json.Marshal(document.Document{Version: 1, Nodes: []document.Node{{ID: nodeID, Block: "core/text", Version: 1, Props: props}}})
-	return string(encoded), err
-}
-
-func textNodeID(documentJSON string) (string, error) {
-	doc, err := document.Decode([]byte(documentJSON))
-	if err != nil {
-		return "", err
-	}
-	for _, node := range doc.Nodes {
-		if node.Block == "core/text" && node.Version == 1 {
-			return node.ID, nil
-		}
-	}
-	return "", nil
-}
-
-func textContent(documentJSON string) (string, error) {
-	doc, err := document.Decode([]byte(documentJSON))
-	if err != nil {
-		return "", err
-	}
-	for _, node := range doc.Nodes {
-		if node.Block != "core/text" || node.Version != 1 {
-			continue
-		}
-		var props struct {
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal(node.Props, &props); err != nil {
-			return "", err
-		}
-		return props.Text, nil
-	}
-	return "", nil
-}
+func postedDocument(r *http.Request) string { return r.FormValue("document_json") }
 
 func randomID() (string, error) {
 	bytes := make([]byte, 16)
@@ -314,6 +260,9 @@ func pageWriteError(err error) string {
 		return "a page already uses this slug"
 	}
 	if strings.Contains(err.Error(), "route already uses") {
+		return err.Error()
+	}
+	if strings.Contains(err.Error(), "invalid document") {
 		return err.Error()
 	}
 	return "Could not save the page."

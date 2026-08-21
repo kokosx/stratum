@@ -1,34 +1,40 @@
 {{ define "content" }}
-<div class="page-heading"><h1>{{ .Content.Heading }}</h1><a class="button" href="/admin/pages">Back to Pages</a></div>
-{{ if .Content.Error }}<p class="form-error">{{ .Content.Error }}</p>{{ end }}
-<form class="panel entry-form" method="post" action="{{ .Content.Action }}">
+<form id="stratum-editor-form" class="block-editor" method="post" action="{{ .Content.Action }}">
   <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-  <label>Title<input id="page-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
-  <label>Slug<input id="page-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
-  <label>Content<textarea name="content">{{ .Content.Content }}</textarea></label>
-  <div class="form-actions">
-    <button class="button" type="submit">Save Draft</button>
-    <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}">Publish</button>
+  <input id="document-json" type="hidden" name="document_json" value="">
+  <header class="editor-topbar">
+    <div class="editor-metadata">
+      <label>Page title<input id="page-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
+      <label>Slug<input id="page-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
+    </div>
+    <div class="form-actions">
+      <a class="button" href="/admin/pages">Back</a>
+      <button class="button" type="submit">Save Draft</button>
+      <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}">Publish</button>
+    </div>
+  </header>
+  {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  <div class="editor-workspace">
+    <aside class="editor-panel block-library" aria-label="Block library">
+      <h2>Block Library</h2>
+      <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
+      <div id="block-catalog"></div>
+    </aside>
+    <section class="editor-panel document-canvas" aria-label="Document">
+      <div class="editor-panel-heading"><h2>Document</h2><span id="editor-dirty" class="editor-status">Saved</span></div>
+      <div id="document-tree"></div>
+      <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
+    </section>
+    <aside class="editor-panel block-inspector" aria-label="Inspector">
+      <h2>Inspector</h2>
+      <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
+    </aside>
   </div>
+  <section class="editor-preview-panel">
+    <div class="editor-panel-heading"><h2>Preview</h2><button id="refresh-preview" class="button" type="button">Refresh</button></div>
+    <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
+  </section>
 </form>
-<script>
-(() => {
-  const title = document.getElementById('page-title');
-  const slug = document.getElementById('page-slug');
-  if (!title || !slug) return;
-  const normalize = (value) => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-  let lastAuto = normalize(title.value);
-  let manuallyEdited = slug.value !== '' && slug.value !== lastAuto;
-  title.addEventListener('input', () => {
-    if (!manuallyEdited || slug.value === lastAuto) {
-      slug.value = normalize(title.value);
-      lastAuto = slug.value;
-      manuallyEdited = false;
-    }
-  });
-  slug.addEventListener('input', () => {
-    manuallyEdited = slug.value !== normalize(title.value);
-  });
-})();
-</script>
+<script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
+<script type="module" src="/admin/static/editor/editor.js"></script>
 {{ end }}

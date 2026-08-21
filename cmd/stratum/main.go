@@ -60,6 +60,7 @@ func serve(application *app.App) {
 		application.Database.DB,
 		application.Queries,
 		authService,
+		application.Blocks,
 	)
 	if err != nil {
 		log.Fatal(err)

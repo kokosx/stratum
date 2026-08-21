@@ -52,7 +52,9 @@ func NewRenderer(definitions []Definition) (*Renderer, error) {
 			return nil, fmt.Errorf("duplicate block definition: %s@%d", key.name, key.version)
 		}
 
-		tmpl, err := template.New(key.name).Parse(definition.Template)
+		tmpl, err := template.New(key.name).Funcs(template.FuncMap{
+			"integerEquals": integerEquals,
+		}).Parse(definition.Template)
 		if err != nil {
 			return nil, fmt.Errorf("parse block %s@%d template: %w", key.name, key.version, err)
 		}
@@ -60,6 +62,22 @@ func NewRenderer(definitions []Definition) (*Renderer, error) {
 	}
 
 	return renderer, nil
+}
+
+func integerEquals(value any, expected int) bool {
+	switch number := value.(type) {
+	case float64:
+		return number == float64(expected)
+	case json.Number:
+		integer, err := number.Int64()
+		return err == nil && integer == int64(expected)
+	case int:
+		return number == expected
+	case int64:
+		return number == int64(expected)
+	default:
+		return false
+	}
 }
 
 func (r *Renderer) RenderDocument(doc *document.Document) (template.HTML, error) {

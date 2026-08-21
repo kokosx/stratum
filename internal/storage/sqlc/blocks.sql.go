@@ -111,7 +111,6 @@ func (q *Queries) GetBlockDefinition(ctx context.Context, arg GetBlockDefinition
 const listBlockDefinitions = `-- name: ListBlockDefinitions :many
 SELECT id, namespace, name, version, display_name, description, schema_json, renderer_type, template, styles, source, enabled, created_at, updated_at
 FROM block_definitions
-WHERE enabled = 1
 ORDER BY namespace, name, version
 `
 

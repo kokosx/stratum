@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,9 +13,32 @@ import (
 	"testing"
 
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
+
+func TestPageTemplateSafelyEmbedsEditorBootstrap(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	encoded, err := json.Marshal(editorBootstrap{
+		Document: json.RawMessage(`{"version":1,"nodes":[{"id":"x","block":"core/text","version":1,"props":{"text":"</script><script>alert(1)</script>"}}]}`),
+		Catalog:  []any{}, Definitions: []any{}, PreviewURL: "/admin/editor/preview",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "</script>") {
+		t.Fatalf("bootstrap JSON contains a script terminator: %s", encoded)
+	}
+	var output bytes.Buffer
+	data := pageFormData{Heading: "Edit", Action: "/admin/pages/x", PublishAction: "/admin/pages/x/publish", EditorJSON: template.JS(encoded), CSRFToken: "token"}
+	if err := handler.pageTemplate.ExecuteTemplate(&output, "layout.html", LayoutData{Title: "Edit", Content: data}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "ZgotmplZ") || !strings.Contains(output.String(), `"previewUrl":"/admin/editor/preview"`) {
+		t.Fatalf("editor bootstrap was not embedded safely: %s", output.String())
+	}
+}
 
 func TestSetupRequiresCSRFToken(t *testing.T) {
 	handler, service := newTestHandler(t)
@@ -52,7 +78,11 @@ func newTestHandler(t *testing.T) (*Handler, *auth.Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(database.DB, queries, service)
+	registry, err := blocks.NewRegistry(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(database.DB, queries, service, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

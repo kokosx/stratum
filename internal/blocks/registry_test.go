@@ -53,7 +53,8 @@ func TestRegistryFailedReloadKeepsCurrentSnapshot(t *testing.T) {
 func blockDefinition(blockTemplate string) db.BlockDefinition {
 	return db.BlockDefinition{
 		Namespace: "core", Name: "text", Version: 1, RendererType: "template",
-		Template: sql.NullString{String: blockTemplate, Valid: true},
+		DisplayName: "Text", SchemaJson: `{"schemaVersion":1,"props":{"type":"object","properties":{}},"settings":{"type":"object","properties":{}},"children":{"mode":"none"},"editor":{}}`,
+		Template: sql.NullString{String: blockTemplate, Valid: true}, Enabled: 1,
 	}
 }
 

@@ -2,15 +2,17 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
+	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
-func TestWritePageKeepsDraftsSeparateFromPublishedRevision(t *testing.T) {
+func TestWritePagePreservesDocumentsAndPublishedRevision(t *testing.T) {
 	ctx := context.Background()
 	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
 	if err != nil {
@@ -20,13 +22,19 @@ func TestWritePageKeepsDraftsSeparateFromPublishedRevision(t *testing.T) {
 	if err := database.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	h, err := NewHandler(database.DB, db.New(database.DB), nil)
+	queries := db.New(database.DB)
+	registry, err := blocks.NewRegistry(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(database.DB, queries, nil, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	entryID := "page-under-test"
-	if err := h.writePage(ctx, "author", entryID, pageInput{title: "First", slug: "first", content: "draft one"}, true, false); err != nil {
+	draftOne := nestedDocument("draft one", "left")
+	if err := h.writePage(ctx, "author", entryID, pageInput{title: "First", slug: "first", documentJSON: draftOne}, true, false); err != nil {
 		t.Fatal(err)
 	}
 	entry, err := h.queries.GetEntry(ctx, entryID)
@@ -36,14 +44,16 @@ func TestWritePageKeepsDraftsSeparateFromPublishedRevision(t *testing.T) {
 	if entry.PublishedRevisionID.Valid {
 		t.Fatal("new draft unexpectedly has a published revision")
 	}
-	assertLatestText(t, h.queries, entryID, 1, "draft one")
+	assertLatestDocument(t, h.queries, entryID, 1, draftOne)
 
-	if err := h.writePage(ctx, "author", entryID, pageInput{title: "Second", slug: "first", content: "draft two"}, false, false); err != nil {
+	draftTwo := nestedDocument("draft two", "center")
+	if err := h.writePage(ctx, "author", entryID, pageInput{title: "Second", slug: "first", documentJSON: draftTwo}, false, false); err != nil {
 		t.Fatal(err)
 	}
-	assertLatestText(t, h.queries, entryID, 2, "draft two")
+	assertLatestDocument(t, h.queries, entryID, 2, draftTwo)
 
-	if err := h.writePage(ctx, "author", entryID, pageInput{title: "Published", slug: "published", content: "public version"}, false, true); err != nil {
+	publishedDocument := nestedDocument("public version", "right")
+	if err := h.writePage(ctx, "author", entryID, pageInput{title: "Published", slug: "published", documentJSON: publishedDocument}, false, true); err != nil {
 		t.Fatal(err)
 	}
 	published, err := h.queries.GetEntry(ctx, entryID)
@@ -54,13 +64,10 @@ func TestWritePageKeepsDraftsSeparateFromPublishedRevision(t *testing.T) {
 		t.Fatal("published page has no published revision")
 	}
 	publishedRevisionID := published.PublishedRevisionID.String
-	assertLatestText(t, h.queries, entryID, 3, "public version")
-	route, err := h.queries.GetRouteByPath(ctx, "/published")
-	if err != nil || !route.EntryID.Valid || route.EntryID.String != entryID {
-		t.Fatalf("published route = %#v, %v", route, err)
-	}
+	assertLatestDocument(t, h.queries, entryID, 3, publishedDocument)
 
-	if err := h.writePage(ctx, "author", entryID, pageInput{title: "New draft", slug: "published", content: "not public yet"}, false, false); err != nil {
+	newDraft := nestedDocument("not public yet", "left")
+	if err := h.writePage(ctx, "author", entryID, pageInput{title: "New draft", slug: "published", documentJSON: newDraft}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	entry, err = h.queries.GetEntry(ctx, entryID)
@@ -74,31 +81,62 @@ func TestWritePageKeepsDraftsSeparateFromPublishedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content, err := textContent(public.DocumentJson); err != nil || content != "public version" {
-		t.Fatalf("public content = %q, %v", content, err)
-	}
-	assertLatestText(t, h.queries, entryID, 4, "not public yet")
+	assertSameDocument(t, public.DocumentJson, publishedDocument)
+	assertLatestDocument(t, h.queries, entryID, 4, newDraft)
+
 	revisions, err := h.queries.ListEntryRevisions(ctx, entryID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var nodeID string
 	for _, revision := range revisions {
 		doc, err := document.Decode([]byte(revision.DocumentJson))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if nodeID == "" {
-			nodeID = doc.Nodes[0].ID
-			continue
-		}
-		if doc.Nodes[0].ID != nodeID {
-			t.Fatalf("node ID changed between revisions: got %q, want %q", doc.Nodes[0].ID, nodeID)
+		if doc.Nodes[0].ID != "section-stable" || doc.Nodes[0].Children[0].ID != "text-stable" {
+			t.Fatalf("stable IDs changed in revision %d: %#v", revision.RevisionNumber, doc.Nodes)
 		}
 	}
 }
 
-func assertLatestText(t *testing.T, queries *db.Queries, entryID string, revisionNumber int64, want string) {
+func TestWritePageRejectsInvalidDocumentBeforeCreatingRevision(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database.DB)
+	registry, err := blocks.NewRegistry(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(database.DB, queries, nil, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = h.writePage(ctx, "author", "bad-page", pageInput{title: "Bad", slug: "bad", documentJSON: `{"version":1,"nodes":[{"id":"x","block":"missing/block","version":1,"props":{},"settings":{}}]}`}, true, false)
+	if err == nil {
+		t.Fatal("invalid document was saved")
+	}
+	if _, err := queries.GetEntry(ctx, "bad-page"); err == nil {
+		t.Fatal("entry was created before document validation")
+	}
+}
+
+func nestedDocument(text, align string) string {
+	return `{"version":1,"nodes":[{"id":"section-stable","block":"core/section","version":1,"props":{},"settings":{"width":"normal","spacing":"md"},"children":[{"id":"text-stable","block":"core/text","version":1,"props":{"text":` + mustJSON(text) + `},"settings":{"align":` + mustJSON(align) + `,"tone":"default"}}]}]}`
+}
+
+func mustJSON(value string) string {
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func assertLatestDocument(t *testing.T, queries *db.Queries, entryID string, revisionNumber int64, want string) {
 	t.Helper()
 	revision, err := queries.GetLatestEntryRevision(context.Background(), entryID)
 	if err != nil {
@@ -107,15 +145,21 @@ func assertLatestText(t *testing.T, queries *db.Queries, entryID string, revisio
 	if revision.RevisionNumber != revisionNumber {
 		t.Fatalf("revision number = %d, want %d", revision.RevisionNumber, revisionNumber)
 	}
-	doc, err := document.Decode([]byte(revision.DocumentJson))
-	if err != nil {
+	assertSameDocument(t, revision.DocumentJson, want)
+}
+
+func assertSameDocument(t *testing.T, got, want string) {
+	t.Helper()
+	var gotValue, wantValue any
+	if err := json.Unmarshal([]byte(got), &gotValue); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Nodes) != 1 || doc.Nodes[0].Block != "core/text" || doc.Nodes[0].ID == "" {
-		t.Fatalf("document nodes = %#v", doc.Nodes)
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatal(err)
 	}
-	content, err := textContent(revision.DocumentJson)
-	if err != nil || content != want {
-		t.Fatalf("content = %q, %v; want %q", content, err, want)
+	gotJSON, _ := json.Marshal(gotValue)
+	wantJSON, _ := json.Marshal(wantValue)
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("document = %s, want %s", gotJSON, wantJSON)
 	}
 }

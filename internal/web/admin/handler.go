@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/blocks"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	webassets "github.com/kokosx/stratum/internal/web"
 )
@@ -21,6 +22,7 @@ type Handler struct {
 	database          *sql.DB
 	queries           *db.Queries
 	auth              *auth.Service
+	blocks            *blocks.Registry
 	dashboardTemplate *template.Template
 	entriesTemplate   *template.Template
 	pageTemplate      *template.Template
@@ -36,7 +38,7 @@ type LayoutData struct {
 	Content    any
 }
 
-func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service) (*Handler, error) {
+func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry) (*Handler, error) {
 	templateFS, err := fs.Sub(webassets.Assets, "templates/admin")
 	if err != nil {
 		return nil, fmt.Errorf("admin templates: %w", err)
@@ -68,6 +70,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		database:          database,
 		queries:           queries,
 		auth:              authService,
+		blocks:            blockRegistry,
 		dashboardTemplate: dashboardTemplate,
 		entriesTemplate:   entriesTemplate,
 		pageTemplate:      pageTemplate,
@@ -93,6 +96,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/pages/{id}/edit", h.requireAuth(h.editPage))
 	mux.HandleFunc("POST /admin/pages/{id}", h.requireAuth(h.savePage))
 	mux.HandleFunc("POST /admin/pages/{id}/publish", h.requireAuth(h.publishPage))
+	mux.HandleFunc("POST /admin/editor/preview", h.requireAuth(h.previewDocument))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
 	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
 	staticFS, err := fs.Sub(webassets.Assets, "static")

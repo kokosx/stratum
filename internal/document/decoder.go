@@ -19,14 +19,18 @@ func Decode(data []byte) (*Document, error) {
 		return nil, fmt.Errorf("decode document JSON: %w", err)
 	}
 
-	if err := validateDocument(&doc); err != nil {
+	if err := Validate(&doc); err != nil {
 		return nil, err
 	}
 
 	return &doc, nil
 }
 
-func validateDocument(doc *Document) error {
+// Validate verifies the version and stable-ID invariants of an in-memory document.
+func Validate(doc *Document) error {
+	if doc == nil {
+		return errors.New("document is nil")
+	}
 	if doc.Version != 1 {
 		return fmt.Errorf("unsupported document version: %d", doc.Version)
 	}
@@ -34,7 +38,7 @@ func validateDocument(doc *Document) error {
 	ids := make(map[string]struct{})
 	for i, node := range doc.Nodes {
 		if err := validateNode(node, ids, 1); err != nil {
-			return fmt.Errorf("node %d: %w", i, err)
+			return fmt.Errorf("nodes[%d]: %w", i, err)
 		}
 	}
 
@@ -63,7 +67,7 @@ func validateNode(node Node, ids map[string]struct{}, depth int) error {
 
 	for i, child := range node.Children {
 		if err := validateNode(child, ids, depth+1); err != nil {
-			return fmt.Errorf("child %d: %w", i, err)
+			return fmt.Errorf("children[%d]: %w", i, err)
 		}
 	}
 

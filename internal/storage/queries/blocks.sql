@@ -9,7 +9,6 @@ LIMIT 1;
 -- name: ListBlockDefinitions :many
 SELECT *
 FROM block_definitions
-WHERE enabled = 1
 ORDER BY namespace, name, version;
 
 -- name: CreateBlockDefinition :exec

@@ -1,0 +1,48 @@
+.content:has(.block-editor) { max-width: none; padding: 20px; }
+.block-editor { display: grid; gap: 16px; }
+.editor-topbar { display: flex; justify-content: space-between; gap: 20px; align-items: end; padding: 16px; background: #fff; border: 1px solid #dcdcde; }
+.editor-metadata { display: grid; grid-template-columns: minmax(240px, 2fr) minmax(180px, 1fr); gap: 12px; flex: 1; }
+.editor-metadata label, .inspector-field { display: grid; gap: 5px; font-weight: 600; }
+.editor-metadata input, .editor-search, .inspector-field input, .inspector-field textarea, .inspector-field select { width: 100%; padding: 8px 9px; border: 1px solid #8c8f94; border-radius: 3px; font: inherit; font-weight: 400; }
+.editor-workspace { display: grid; grid-template-columns: minmax(190px, 240px) minmax(360px, 1fr) minmax(220px, 290px); min-height: 560px; border: 1px solid #dcdcde; background: #fff; }
+.editor-panel { min-width: 0; padding: 16px; }
+.editor-panel + .editor-panel { border-left: 1px solid #dcdcde; }
+.editor-panel h2, .editor-preview-panel h2 { margin: 0; font-size: 16px; }
+.editor-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; }
+.editor-status { color: #646970; font-size: 12px; }
+.editor-status.is-dirty { color: #b54708; }
+.editor-search { margin: 14px 0; }
+.catalog-category { margin: 15px 0 7px; color: #646970; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.catalog-item { width: 100%; margin-bottom: 7px; padding: 9px; text-align: left; border: 1px solid #dcdcde; border-radius: 3px; background: #fff; cursor: pointer; }
+.catalog-item:hover { border-color: #2271b1; background: #f6f7f7; }
+.catalog-item strong, .catalog-item small { display: block; }
+.catalog-item small { margin-top: 2px; color: #646970; }
+.catalog-icon { display: inline-block; width: 20px; color: #2271b1; }
+.document-canvas { background: #f6f7f7; }
+.document-node { margin: 8px 0; border: 1px solid #c3c4c7; border-radius: 4px; background: #fff; }
+.document-node.is-selected { border-color: #2271b1; box-shadow: 0 0 0 1px #2271b1; }
+.node-header { display: flex; align-items: center; gap: 7px; padding: 9px; cursor: pointer; }
+.node-drag { color: #8c8f94; cursor: grab; }
+.node-label { font-weight: 600; }
+.node-summary { min-width: 0; flex: 1; overflow: hidden; color: #646970; text-overflow: ellipsis; white-space: nowrap; }
+.node-actions { display: flex; gap: 3px; }
+.node-actions button { width: 27px; height: 27px; padding: 0; border: 1px solid #c3c4c7; background: #fff; border-radius: 3px; cursor: pointer; }
+.node-children { margin: 0 10px 10px 26px; padding-left: 10px; border-left: 2px solid #dcdcde; }
+.node-children-empty { padding: 8px; color: #8c8f94; font-size: 12px; }
+.editor-empty { color: #646970; }
+.inspector-title { margin: 12px 0; font-weight: 600; }
+.inspector-group { margin: 0 0 18px; padding: 0; border: 0; }
+.inspector-group legend { width: 100%; margin-bottom: 10px; padding-bottom: 5px; border-bottom: 1px solid #dcdcde; font-weight: 700; }
+.inspector-field { margin-bottom: 12px; }
+.inspector-options { display: flex; flex-wrap: wrap; }
+.inspector-options label { flex: 1; min-width: 54px; padding: 6px; border: 1px solid #c3c4c7; text-align: center; font-size: 12px; cursor: pointer; }
+.inspector-options label + label { border-left: 0; }
+.inspector-options input { position: absolute; opacity: 0; pointer-events: none; }
+.inspector-options label:has(input:checked) { background: #2271b1; color: #fff; border-color: #2271b1; }
+.array-items { display: grid; gap: 7px; }
+.array-item { display: grid; grid-template-columns: 1fr auto; gap: 5px; padding: 7px; border: 1px solid #dcdcde; }
+.editor-preview-panel { padding: 18px; border: 1px solid #dcdcde; background: #fff; }
+.editor-preview { min-height: 90px; padding: 20px; border: 1px solid #dcdcde; }
+.editor-preview-error { color: #b42318; white-space: pre-wrap; }
+@media (max-width: 1050px) { .editor-workspace { grid-template-columns: 200px 1fr; } .block-inspector { grid-column: 1 / -1; border-top: 1px solid #dcdcde; border-left: 0 !important; } }
+@media (max-width: 720px) { .editor-topbar { align-items: stretch; flex-direction: column; } .editor-metadata, .editor-workspace { grid-template-columns: 1fr; } .editor-panel + .editor-panel { border-left: 0; border-top: 1px solid #dcdcde; } }

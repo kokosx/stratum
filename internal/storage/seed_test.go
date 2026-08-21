@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/document"
-	"github.com/kokosx/stratum/internal/rendering"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
@@ -41,26 +41,15 @@ func TestSeedCreatesAnIdempotentPublishedHomepage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blockDefinitions, err := queries.ListBlockDefinitions(ctx)
+	registry, err := blocks.NewRegistry(ctx, queries)
 	if err != nil {
 		t.Fatal(err)
 	}
-	definitions := make([]rendering.Definition, 0, len(blockDefinitions))
-	for _, definition := range blockDefinitions {
-		definitions = append(definitions, rendering.Definition{
-			Namespace: definition.Namespace, Name: definition.Name, Version: definition.Version,
-			RendererType: definition.RendererType, Template: definition.Template.String,
-		})
-	}
-	renderer, err := rendering.NewRenderer(definitions)
+	content, err := registry.RenderDocument(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	content, err := renderer.RenderDocument(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(content), "<h2>Welcome to StratumCMS</h2>") {
+	if !strings.Contains(string(content), `<h1 class="stratum-align-left">Welcome to StratumCMS</h1>`) {
 		t.Errorf("seeded templates rendered %q", content)
 	}
 

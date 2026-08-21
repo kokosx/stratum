@@ -60,6 +60,12 @@ func (h *Handler) ServeHTTP(
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if r.URL.Path == "/stratum/blocks.css" {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write([]byte(h.blocks.Styles()))
+		return
+	}
 
 	path := r.URL.Path
 
