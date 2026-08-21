@@ -19,7 +19,20 @@ body { margin: 0; color: #1d2327; background: #f0f0f1; font: 14px/1.5 -apple-sys
 .logout-button { padding: 6px 10px; border: 1px solid #8c8f94; border-radius: 3px; background: #fff; color: #1d2327; font: inherit; cursor: pointer; }
 .logout-button:hover { border-color: #2271b1; color: #135e96; }
 .content { max-width: 1200px; padding: 32px; }
+.flash-message { margin-bottom: 20px; padding: 10px 12px; border-left: 4px solid #00a32a; background: #edfaef; color: #135e2b; }
 h1 { margin: 0 0 24px; font-size: 28px; font-weight: 600; }
+.page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.page-heading h1 { margin-bottom: 24px; }
+.button { display: inline-block; padding: 8px 12px; border: 1px solid #2271b1; border-radius: 3px; color: #2271b1; background: #fff; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+.button-primary { background: #2271b1; color: #fff; }
+.button-primary:hover { background: #135e96; border-color: #135e96; }
+.entry-title a { color: #2271b1; text-decoration: none; }
+.entry-title a:hover { text-decoration: underline; }
+.entry-form { display: grid; gap: 20px; max-width: 800px; }
+.entry-form label { display: grid; gap: 6px; font-weight: 600; }
+.entry-form input, .entry-form textarea { width: 100%; padding: 9px 10px; border: 1px solid #8c8f94; border-radius: 3px; font: inherit; font-weight: 400; }
+.entry-form textarea { min-height: 280px; resize: vertical; }
+.form-actions { display: flex; gap: 10px; align-items: center; }
 .panel { padding: 24px; background: #fff; border: 1px solid #dcdcde; border-radius: 3px; }
 .panel h2 { margin-top: 0; }
 .list-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #dcdcde; }

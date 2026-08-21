@@ -26,6 +26,7 @@ type Querier interface {
 	GetEntry(ctx context.Context, id string) (Entry, error)
 	GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) (Entry, error)
 	GetEntryRevision(ctx context.Context, id string) (EntryRevision, error)
+	GetEntryRoute(ctx context.Context, entryID sql.NullString) (Route, error)
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
 	GetRouteByPath(ctx context.Context, path string) (Route, error)

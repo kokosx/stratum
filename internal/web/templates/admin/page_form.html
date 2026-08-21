@@ -1,0 +1,34 @@
+{{ define "content" }}
+<div class="page-heading"><h1>{{ .Content.Heading }}</h1><a class="button" href="/admin/pages">Back to Pages</a></div>
+{{ if .Content.Error }}<p class="form-error">{{ .Content.Error }}</p>{{ end }}
+<form class="panel entry-form" method="post" action="{{ .Content.Action }}">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <label>Title<input id="page-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
+  <label>Slug<input id="page-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
+  <label>Content<textarea name="content">{{ .Content.Content }}</textarea></label>
+  <div class="form-actions">
+    <button class="button" type="submit">Save Draft</button>
+    <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}">Publish</button>
+  </div>
+</form>
+<script>
+(() => {
+  const title = document.getElementById('page-title');
+  const slug = document.getElementById('page-slug');
+  if (!title || !slug) return;
+  const normalize = (value) => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  let lastAuto = normalize(title.value);
+  let manuallyEdited = slug.value !== '' && slug.value !== lastAuto;
+  title.addEventListener('input', () => {
+    if (!manuallyEdited || slug.value === lastAuto) {
+      slug.value = normalize(title.value);
+      lastAuto = slug.value;
+      manuallyEdited = false;
+    }
+  });
+  slug.addEventListener('input', () => {
+    manuallyEdited = slug.value !== normalize(title.value);
+  });
+})();
+</script>
+{{ end }}

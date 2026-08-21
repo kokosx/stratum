@@ -1,5 +1,5 @@
 {{ define "content" }}
-<h1>{{ .Content.Heading }}</h1>
+<div class="page-heading"><h1>{{ .Content.Heading }}</h1><a class="button button-primary" href="{{ .Content.NewURL }}">Add New</a></div>
 <table class="list-table">
   <thead>
     <tr><th>Title</th><th>Slug</th><th>Status</th><th>Updated</th><th>View</th></tr>
@@ -7,7 +7,7 @@
   <tbody>
     {{ range .Content.Entries }}
     <tr>
-      <td class="entry-title">{{ .Title }}</td>
+      <td class="entry-title">{{ if eq $.Content.Heading "Pages" }}<a href="/admin/pages/{{ .ID }}/edit">{{ .Title }}</a>{{ else }}{{ .Title }}{{ end }}</td>
       <td>{{ .Slug }}</td>
       <td>{{ .Status }}</td>
       <td>{{ .UpdatedAt }}</td>

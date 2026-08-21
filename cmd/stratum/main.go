@@ -56,6 +56,7 @@ func serve(application *app.App) {
 		log.Printf("StratumCMS is not configured. Open http://localhost:8080/admin/setup with setup code: %s", setupCode)
 	}
 	adminHandler, err := adminweb.NewHandler(
+		application.Database.DB,
 		application.Queries,
 		authService,
 	)

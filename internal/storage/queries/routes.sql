@@ -10,6 +10,14 @@ FROM routes
 WHERE entry_id = ?
 ORDER BY path;
 
+-- name: GetEntryRoute :one
+SELECT *
+FROM routes
+WHERE entry_id = ?
+  AND route_type = 'entry'
+ORDER BY path
+LIMIT 1;
+
 -- name: CreateRoute :exec
 INSERT INTO routes (
     id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at

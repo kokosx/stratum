@@ -52,6 +52,31 @@ func (q *Queries) DeleteRoute(ctx context.Context, id string) error {
 	return err
 }
 
+const getEntryRoute = `-- name: GetEntryRoute :one
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at
+FROM routes
+WHERE entry_id = ?
+  AND route_type = 'entry'
+ORDER BY path
+LIMIT 1
+`
+
+func (q *Queries) GetEntryRoute(ctx context.Context, entryID sql.NullString) (Route, error) {
+	row := q.db.QueryRowContext(ctx, getEntryRoute, entryID)
+	var i Route
+	err := row.Scan(
+		&i.ID,
+		&i.Path,
+		&i.EntryID,
+		&i.RouteType,
+		&i.RedirectTo,
+		&i.RedirectStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getRouteByPath = `-- name: GetRouteByPath :one
 SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at
 FROM routes

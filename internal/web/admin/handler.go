@@ -1,6 +1,10 @@
 package admin
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"html/template"
@@ -14,10 +18,12 @@ import (
 )
 
 type Handler struct {
+	database          *sql.DB
 	queries           *db.Queries
 	auth              *auth.Service
 	dashboardTemplate *template.Template
 	entriesTemplate   *template.Template
+	pageTemplate      *template.Template
 	setupTemplate     *template.Template
 	loginTemplate     *template.Template
 }
@@ -25,10 +31,11 @@ type Handler struct {
 type LayoutData struct {
 	Title      string
 	ActiveMenu string
+	Flash      string
 	Content    any
 }
 
-func NewHandler(queries *db.Queries, authService *auth.Service) (*Handler, error) {
+func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service) (*Handler, error) {
 	templateFS, err := fs.Sub(webassets.Assets, "templates/admin")
 	if err != nil {
 		return nil, fmt.Errorf("admin templates: %w", err)
@@ -43,6 +50,10 @@ func NewHandler(queries *db.Queries, authService *auth.Service) (*Handler, error
 	if err != nil {
 		return nil, err
 	}
+	pageTemplate, err := template.ParseFS(templateFS, "layout.html", "page_form.html")
+	if err != nil {
+		return nil, err
+	}
 	setupTemplate, err := template.ParseFS(templateFS, "auth.html", "setup.html")
 	if err != nil {
 		return nil, err
@@ -53,10 +64,12 @@ func NewHandler(queries *db.Queries, authService *auth.Service) (*Handler, error
 	}
 
 	return &Handler{
+		database:          database,
 		queries:           queries,
 		auth:              authService,
 		dashboardTemplate: dashboardTemplate,
 		entriesTemplate:   entriesTemplate,
+		pageTemplate:      pageTemplate,
 		setupTemplate:     setupTemplate,
 		loginTemplate:     loginTemplate,
 	}, nil
@@ -74,7 +87,13 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/login", h.login)
 	mux.HandleFunc("POST /admin/logout", h.logout)
 	mux.HandleFunc("GET /admin/pages", h.requireAuth(h.listPages))
+	mux.HandleFunc("GET /admin/pages/new", h.requireAuth(h.newPage))
+	mux.HandleFunc("POST /admin/pages", h.requireAuth(h.createPage))
+	mux.HandleFunc("GET /admin/pages/{id}/edit", h.requireAuth(h.editPage))
+	mux.HandleFunc("POST /admin/pages/{id}", h.requireAuth(h.savePage))
+	mux.HandleFunc("POST /admin/pages/{id}/publish", h.requireAuth(h.publishPage))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
+	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
 	staticFS, err := fs.Sub(webassets.Assets, "static")
 	if err != nil {
 		panic(fmt.Sprintf("admin static files: %v", err))
@@ -82,6 +101,46 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServer(http.FS(staticFS))))
 
 	return mux
+}
+
+const csrfCookieName = "stratum_csrf"
+
+func (h *Handler) csrfToken(w http.ResponseWriter) (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	token := base64.RawURLEncoding.EncodeToString(bytes)
+	http.SetCookie(w, &http.Cookie{Name: csrfCookieName, Value: token, Path: "/admin", HttpOnly: true, Secure: h.auth.SecureCookies(), SameSite: http.SameSiteStrictMode, MaxAge: 60 * 60 * 8})
+	return token, nil
+}
+
+func (h *Handler) validCSRF(r *http.Request) bool {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || cookie.Value == "" || r.FormValue("csrf_token") == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(r.FormValue("csrf_token"))) == 1
+}
+
+const flashCookieName = "stratum_flash"
+
+func setFlash(w http.ResponseWriter, message string) {
+	value := base64.RawURLEncoding.EncodeToString([]byte(message))
+	http.SetCookie(w, &http.Cookie{Name: flashCookieName, Value: value, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 60})
+}
+
+func consumeFlash(w http.ResponseWriter, r *http.Request) string {
+	cookie, err := r.Cookie(flashCookieName)
+	if err != nil || cookie.Value == "" {
+		return ""
+	}
+	http.SetCookie(w, &http.Cookie{Name: flashCookieName, Value: "", Path: "/admin", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	message, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	if err != nil {
+		return ""
+	}
+	return string(message)
 }
 
 type authPageData struct {

@@ -9,6 +9,7 @@ import (
 
 type EntriesData struct {
 	Heading string
+	NewURL  string
 	Entries []EntryData
 }
 
@@ -27,6 +28,11 @@ func (h *Handler) listPages(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listPosts(w http.ResponseWriter, r *http.Request) {
 	h.listEntries(w, r, "post", "Posts", "posts")
+}
+
+func (h *Handler) newPost(w http.ResponseWriter, r *http.Request) {
+	setFlash(w, "Post creation is not implemented yet.")
+	http.Redirect(w, r, "/admin/posts", http.StatusSeeOther)
 }
 
 func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentType, heading, activeMenu string) {
@@ -60,8 +66,10 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 	data := LayoutData{
 		Title:      heading,
 		ActiveMenu: activeMenu,
+		Flash:      consumeFlash(w, r),
 		Content: EntriesData{
 			Heading: heading,
+			NewURL:  "/admin/" + activeMenu + "/new",
 			Entries: items,
 		},
 	}
