@@ -50,9 +50,47 @@ func loadDefaultDefinition() (*Definition, error) {
 }
 
 func (d *Definition) Render(view PageView) ([]byte, error) {
+	name := d.resolveTarget(view)
 	var output bytes.Buffer
-	if err := d.template.ExecuteTemplate(&output, "layout.html", view); err != nil {
+	if err := d.template.ExecuteTemplate(&output, name, view); err != nil {
+		if name != "layout.html" {
+			// fallback to layout
+			output.Reset()
+			if ferr := d.template.ExecuteTemplate(&output, "layout.html", view); ferr == nil {
+				return output.Bytes(), nil
+			}
+		}
 		return nil, fmt.Errorf("render theme %s@%d: %w", d.ID, d.Version, err)
 	}
 	return output.Bytes(), nil
+}
+
+func (d *Definition) resolveTarget(view PageView) string {
+	switch view.Kind {
+	case PageKindHome:
+		return firstPresent(d.template, "home.html", "single-page.html", "single.html", "layout.html")
+	case PageKindArchive:
+		if view.ContentType == "post" {
+			return firstPresent(d.template, "archive-post.html", "archive.html", "layout.html")
+		}
+		return firstPresent(d.template, "archive.html", "layout.html")
+	default:
+		// single
+		if view.ContentType == "post" {
+			return firstPresent(d.template, "single-post.html", "single.html", "layout.html")
+		}
+		if view.ContentType == "page" {
+			return firstPresent(d.template, "single-page.html", "single.html", "layout.html")
+		}
+		return firstPresent(d.template, "single.html", "layout.html")
+	}
+}
+
+func firstPresent(t *template.Template, names ...string) string {
+	for _, n := range names {
+		if t.Lookup(n) != nil {
+			return n
+		}
+	}
+	return "layout.html"
 }

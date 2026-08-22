@@ -102,6 +102,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/robots.txt":
 		h.serveRobots(w, r)
 		return
+	case "/feed.xml":
+		h.serveFeed(w, r)
+		return
 	}
 
 	h.serveCachedPage(w, r)
@@ -204,48 +207,98 @@ func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pageca
 }
 
 func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecache.Entry, error) {
-	entry, err := h.queries.GetPublishedEntryByPath(ctx, path)
-	if err != nil {
-		return pagecache.Entry{}, err
-	}
-	doc, err := document.Decode([]byte(entry.DocumentJson))
-	if err != nil {
-		return pagecache.Entry{}, fmt.Errorf("decode document: %w", err)
-	}
 	siteSnap := h.hub.Site.Current()
 	if siteSnap == nil {
 		return pagecache.Entry{}, fmt.Errorf("site runtime not initialized")
 	}
 
+	// 1. exact route (source of truth)
+	if route, rerr := h.queries.GetRouteByPath(ctx, path); rerr == nil {
+		switch route.RouteType {
+		case "redirect":
+			// handled earlier in serve
+			return pagecache.Entry{}, sql.ErrNoRows
+		case "archive":
+			return h.renderArchivePage(ctx, origin, path, 1, siteSnap)
+		case "entry":
+			return h.renderEntryByRoute(ctx, origin, path, route, siteSnap)
+		case "system":
+			return pagecache.Entry{}, sql.ErrNoRows
+		}
+	}
+
+	// 2. pagination child: /blog/page/3 or /page/3 for home archive
+	if base, pg, ok := parseArchivePagination(path); ok {
+		if rt, rerr := h.queries.GetRouteByPath(ctx, base); rerr == nil && rt.RouteType == "archive" {
+			if pg < 1 {
+				return pagecache.Entry{}, sql.ErrNoRows
+			}
+			return h.renderArchivePage(ctx, origin, base, pg, siteSnap)
+		}
+		// if home archive and path /page/N
+		if base == "/" {
+			if snap := h.hub.Site.Current(); snap != nil && snap.HomepageMode == "latest_posts" {
+				return h.renderArchivePage(ctx, origin, "/", pg, siteSnap)
+			}
+		}
+	}
+
+	// 3. fallback to old entry path (compat for direct)
+	entry, err := h.queries.GetPublishedEntryByPath(ctx, path)
+	if err != nil {
+		return pagecache.Entry{}, err
+	}
+	return h.renderEntry(ctx, origin, path, entry, siteSnap)
+}
+
+func (h *Handler) renderEntryByRoute(ctx context.Context, origin, path string, route db.Route, siteSnap *site.Snapshot) (pagecache.Entry, error) {
+	if !route.EntryID.Valid {
+		return pagecache.Entry{}, sql.ErrNoRows
+	}
+	// reuse existing by loading the published via path (it joins on route)
+	entry, err := h.queries.GetPublishedEntryByPath(ctx, path)
+	if err != nil {
+		return pagecache.Entry{}, err
+	}
+	return h.renderEntry(ctx, origin, path, entry, siteSnap)
+}
+
+func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db.GetPublishedEntryByPathRow, siteSnap *site.Snapshot) (pagecache.Entry, error) {
+	doc, err := document.Decode([]byte(entry.DocumentJson))
+	if err != nil {
+		return pagecache.Entry{}, fmt.Errorf("decode document: %w", err)
+	}
 	prepared, err := h.blocks.PreparedCache(entry.RevisionID, doc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("prepare document: %w", err)
 	}
-
 	resolved := h.resolvePublishedSEO(ctx, siteSnap, &entry, path, origin)
 	rc := h.entryRenderContext(siteSnap, &entry, path, resolved)
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("render document: %w", err)
 	}
-
 	menus := h.hub.Navigation.LocationsForPath(path)
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, resolved, siteIcon)
-	// Exactly one LCP preload when the prepared document selected a candidate.
-	head.Preloads = h.lcpPreloads(ctx, prepared)
+	head.Preloads = h.lcpPreloads(ctx, prepared, rc)
 
 	_, themeCSS, themeJS := h.hub.Assets.URLs()
 	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
-	view := themes.PageView{
-		Site:       themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
-		Entry:      themes.EntryView{Title: entry.Title, SEOTitle: stringValue(entry.SeoTitle), SEODescription: resolved.Description, CanonicalURL: resolved.Canonical},
-		Head:       head,
-		Navigation: menus,
-		Content:    content,
-		Assets:     themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
+	kind := themes.PageKindSingle
+	if path == "/" {
+		kind = themes.PageKindHome
 	}
-
+	view := themes.PageView{
+		Site:        themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
+		Entry:       themes.EntryView{Title: entry.Title, SEOTitle: stringValue(entry.SeoTitle), SEODescription: resolved.Description, CanonicalURL: resolved.Canonical},
+		Head:        head,
+		Navigation:  menus,
+		Content:     content,
+		ContentType: entry.ContentTypeID,
+		Kind:        kind,
+		Assets:      themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
+	}
 	html, err := h.themes.Render(view, nil)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render: %w", err)
@@ -258,6 +311,304 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 		Robots:      resolved.Robots,
 		ContentType: "text/html; charset=utf-8",
 	}, nil
+}
+
+func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath string, pageNum int, siteSnap *site.Snapshot) (pagecache.Entry, error) {
+	if pageNum < 1 {
+		return pagecache.Entry{}, sql.ErrNoRows
+	}
+	postsBase := siteSnap.PostsBasePath
+	if postsBase == "" {
+		postsBase = seo.DefaultPostsBase
+	}
+	perPage := int(siteSnap.PostsPerPage)
+	if perPage <= 0 {
+		perPage = 10
+	}
+	offset := (pageNum - 1) * perPage
+
+	total, err := h.queries.CountPublishedEntriesByContentType(ctx, "post")
+	if err != nil {
+		return pagecache.Entry{}, err
+	}
+	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
+	if pageNum > totalPages && totalPages > 0 {
+		return pagecache.Entry{}, sql.ErrNoRows
+	}
+	if pageNum == 1 && strings.HasSuffix(archivePath, "/page/1") {
+		// will be handled by redirect higher? return normal for /blog
+	}
+
+	rows, err := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{
+		ContentTypeID: "post",
+		Limit:         int64(perPage),
+		Offset:        int64(offset),
+	})
+	if err != nil {
+		return pagecache.Entry{}, err
+	}
+
+	// Build archive entries + batch media (simple loop ok for small perPage)
+	entries := make([]themes.ArchiveEntryView, 0, len(rows))
+	featIDs := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.FeaturedMediaID.Valid && r.FeaturedMediaID.String != "" {
+			featIDs = append(featIDs, r.FeaturedMediaID.String)
+		}
+	}
+	mediaCache := map[string]rendering.MediaView{}
+	for _, id := range featIDs {
+		if v, ok := h.media.MediaView(ctx, id); ok {
+			mediaCache[id] = v
+		}
+	}
+
+	for _, r := range rows {
+		u := seo.EntryPath("post", r.Slug, postsBase)
+		// if this archive is mounted at / (latest home), still use post base for singles
+		ev := themes.ArchiveEntryView{
+			ID:           r.ID,
+			Title:        r.Title,
+			Excerpt:      stringValue(r.Excerpt),
+			URL:          u,
+			PublishedAt:  formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, false),
+			PublishedISO: formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, true),
+		}
+		if r.FeaturedMediaID.Valid {
+			if mv, ok := mediaCache[r.FeaturedMediaID.String]; ok {
+				ev.FeaturedImage = mv
+			}
+		}
+		entries = append(entries, ev)
+	}
+
+	// Intro from posts page published revision if set
+	var intro template.HTML
+	archiveTitle := "Blog"
+	archiveDesc := ""
+	if siteSnap.PostsPageEntryID != "" {
+		ppath := ""
+		if pentry, perr := h.queries.GetEntry(ctx, siteSnap.PostsPageEntryID); perr == nil && pentry.PublishedRevisionID.Valid {
+			if prt, prerr := h.queries.GetEntryRoute(ctx, sql.NullString{String: pentry.ID, Valid: true}); prerr == nil {
+				ppath = prt.Path
+			}
+			if ppath != "" {
+				if pfull, perr := h.queries.GetPublishedEntryByPath(ctx, ppath); perr == nil {
+					archiveTitle = pfull.Title
+					archiveDesc = stringValue(pfull.Excerpt)
+					if pfull.DocumentJson != "" {
+						if d, derr := document.Decode([]byte(pfull.DocumentJson)); derr == nil {
+							if prep, perr := h.blocks.PreparedCache(pfull.RevisionID, d); perr == nil {
+								irc := rendering.RenderContext{Site: rendering.SiteContext{Name: siteSnap.SiteTitle, URL: siteSnap.SiteURL}}
+								if c, cerr := h.blocks.RenderPrepared(ctx, prep, irc); cerr == nil {
+									intro = c
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// pagination urls
+	prev, next := "", ""
+	if pageNum > 1 {
+		prev = seo.PaginatedPath(archivePath, pageNum-1)
+	}
+	if pageNum < totalPages {
+		next = seo.PaginatedPath(archivePath, pageNum+1)
+	}
+
+	archView := themes.ArchiveView{
+		ContentTypeID: "post",
+		Title:         archiveTitle,
+		Description:   archiveDesc,
+		Intro:         intro,
+		Entries:       entries,
+		Pagination: themes.PaginationView{
+			Current:     pageNum,
+			TotalPages:  totalPages,
+			TotalItems:  total,
+			PreviousURL: prev,
+			NextURL:     next,
+		},
+	}
+
+	// SEO for archive
+	resolved := h.resolveArchiveSEO(ctx, siteSnap, archivePath, pageNum, archiveTitle, archiveDesc, origin)
+
+	menus := h.hub.Navigation.LocationsForPath(archivePath)
+	siteIcon := h.siteIconView(ctx, siteSnap)
+	head := h.headView(siteSnap, resolved, siteIcon)
+	// no LCP preload for archive listing by default (first card not auto high)
+
+	_, themeCSS, themeJS := h.hub.Assets.URLs()
+	blocksCSS := h.hub.Assets.BlocksCSSFor(nil)
+	kind := themes.PageKindArchive
+	if archivePath == "/" {
+		kind = themes.PageKindHome
+	}
+	view := themes.PageView{
+		Site:        themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: siteIconURL(siteSnap, h.media), LogoWidth: 0, LogoHeight: 0},
+		Head:        head,
+		Navigation:  menus,
+		ContentType: "post",
+		Kind:        kind,
+		Archive:     archView,
+		Assets:      themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
+	}
+
+	html, err := h.themes.Render(view, nil)
+	if err != nil {
+		return pagecache.Entry{}, fmt.Errorf("theme render archive: %w", err)
+	}
+	gz, _ := gzipBytes(html)
+	return pagecache.Entry{
+		HTML:        html,
+		Gzip:        gz,
+		ETag:        pagecache.ComputeETag(html),
+		Robots:      resolved.Robots,
+		ContentType: "text/html; charset=utf-8",
+	}, nil
+}
+
+func siteIconURL(snap *site.Snapshot, m *media.Service) string {
+	if snap == nil || snap.LogoMediaID == "" || m == nil {
+		return ""
+	}
+	if v, ok := m.MediaView(context.Background(), snap.LogoMediaID); ok {
+		return v.Src
+	}
+	return ""
+}
+
+// RSS types (simple, no external dep)
+type rssFeed struct {
+	XMLName xml.Name   `xml:"rss"`
+	Version string     `xml:"version,attr"`
+	Channel rssChannel `xml:"channel"`
+}
+type rssChannel struct {
+	Title       string    `xml:"title"`
+	Link        string    `xml:"link"`
+	Description string    `xml:"description"`
+	Items       []rssItem `xml:"item"`
+}
+type rssItem struct {
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	PubDate     string `xml:"pubDate"`
+	GUID        string `xml:"guid"`
+}
+
+func (h *Handler) serveFeed(w http.ResponseWriter, r *http.Request) {
+	siteSnap := h.hub.Site.Current()
+	if siteSnap == nil || strings.TrimSpace(siteSnap.SiteURL) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	body, gz, etag, ok := h.hub.Feed.Get()
+	if !ok {
+		built, err := h.buildFeed(r.Context(), siteSnap)
+		if err != nil {
+			log.Printf("feed build: %v", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		gz, _ = gzipBytes(built)
+		etag = pagecache.ComputeETag(built)
+		h.hub.Feed.Set(built, gz, etag)
+		body = built
+	}
+	h.writeText(w, r, body, gz, etag, "application/rss+xml; charset=utf-8", "public, max-age=300")
+}
+
+func (h *Handler) buildFeed(ctx context.Context, siteSnap *site.Snapshot) ([]byte, error) {
+	base := strings.TrimRight(siteSnap.SiteURL, "/")
+	// latest 20 published posts
+	rows, err := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "post", Limit: 20, Offset: 0})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]rssItem, 0, len(rows))
+	for _, r := range rows {
+		link := base + seo.EntryPath("post", r.Slug, siteSnap.PostsBasePath)
+		pub := ""
+		if r.FirstPublishedAt.Valid {
+			pub = time.Unix(r.FirstPublishedAt.Int64, 0).UTC().Format(time.RFC1123)
+		}
+		guid := r.ID // stable GUID by entry id
+		desc := stringValue(r.Excerpt)
+		items = append(items, rssItem{
+			Title:       r.Title,
+			Link:        link,
+			Description: desc,
+			PubDate:     pub,
+			GUID:        guid,
+		})
+	}
+	feed := rssFeed{
+		Version: "2.0",
+		Channel: rssChannel{
+			Title:       siteSnap.SiteTitle,
+			Link:        base + "/",
+			Description: siteSnap.SiteTagline,
+			Items:       items,
+		},
+	}
+	out, err := xml.MarshalIndent(feed, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?>\n` + string(out)), nil
+}
+
+func (h *Handler) resolveArchiveSEO(ctx context.Context, siteSnap *site.Snapshot, path string, page int, title, desc, origin string) seo.Resolved {
+	seoTitle := title
+	if page > 1 {
+		seoTitle = fmt.Sprintf("%s – Page %d – %s", title, page, siteSnap.SiteTitle)
+	}
+	canonical := seo.Canonical(siteSnap.SiteURL, origin, path, "")
+	if page > 1 {
+		canonical = seo.Canonical(siteSnap.SiteURL, origin, seo.PaginatedPath(path, page), "")
+	}
+	robots := "index,follow"
+	if !siteSnap.IndexingEnabled {
+		robots = "noindex,nofollow"
+	}
+	res := seo.Resolved{
+		Title:       seoTitle,
+		Description: desc,
+		Canonical:   canonical,
+		Robots:      robots,
+		OpenGraph: seo.OpenGraphView{
+			Title:       seoTitle,
+			Description: desc,
+			URL:         canonical,
+			Type:        "website",
+			SiteName:    siteSnap.SiteTitle,
+			Locale:      siteSnap.Language,
+		},
+		Twitter: seo.TwitterView{
+			Card:  "summary_large_image",
+			Title: seoTitle,
+		},
+	}
+	// social image from global
+	if siteSnap.GlobalSocialMediaID != "" {
+		if v, ok := h.media.MediaView(ctx, siteSnap.GlobalSocialMediaID); ok {
+			abs := seo.Canonical(siteSnap.SiteURL, origin, "", v.Src) // ensure abs? media already?
+			res.OpenGraph.Image = abs
+			res.OpenGraph.ImageWidth = v.Width
+			res.OpenGraph.ImageHeight = v.Height
+			res.Twitter.Image = abs
+		}
+	}
+	feed := seo.Canonical(siteSnap.SiteURL, origin, "/feed.xml", "")
+	res.Alternates = append(res.Alternates, seo.AlternateView{Href: feed, Type: "application/rss+xml"})
+	return res
 }
 
 func (h *Handler) resolvePublishedSEO(ctx context.Context, siteSnap *site.Snapshot, entry *db.GetPublishedEntryByPathRow, path, origin string) seo.Resolved {
@@ -292,6 +643,8 @@ func (h *Handler) resolvePublishedSEO(ctx context.Context, siteSnap *site.Snapsh
 	// Structured data is generated from the same resolved model so the JSON-LD
 	// always agrees with the meta tags rendered from it.
 	resolved.StructuredData = h.buildStructuredData(ctx, siteSnap, entry, path, origin, resolved)
+	feed := seo.Canonical(siteSnap.SiteURL, origin, "/feed.xml", "")
+	resolved.Alternates = append(resolved.Alternates, seo.AlternateView{Href: feed, Type: "application/rss+xml"})
 	return resolved
 }
 
@@ -524,17 +877,23 @@ func (h *Handler) enrichSocialImage(ctx context.Context, siteSnap *site.Snapshot
 	return resolved
 }
 
-// lcpPreloads emits at most one image preload for the prepared LCP candidate.
-// Featured-image LCP is resolved via the render context at render time; preload
-// only covers core/image nodes with an explicit mediaId.
-func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedDocument) []themes.ImagePreload {
-	if prepared == nil || prepared.LCPCandidate == "" || h.media == nil {
+// lcpPreloads emits at most one image preload for the FINAL LCP candidate
+// chosen the same way as the renderer: explicit high that exists, then first
+// auto that exists. It supports both core/image and core/featured-image
+// (the latter resolved via rc.Entry.FeaturedImage).
+func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedDocument, rc rendering.RenderContext) []themes.ImagePreload {
+	if prepared == nil || h.media == nil {
+		return nil
+	}
+	hasFeatured := rc.Entry.FeaturedImage != ""
+	candID := prepared.ResolveLCP(hasFeatured)
+	if candID == "" {
 		return nil
 	}
 	var find func([]rendering.PreparedNode) *rendering.PreparedNode
 	find = func(nodes []rendering.PreparedNode) *rendering.PreparedNode {
 		for i := range nodes {
-			if nodes[i].ID == prepared.LCPCandidate {
+			if nodes[i].ID == candID {
 				return &nodes[i]
 			}
 			if child := find(nodes[i].Children); child != nil {
@@ -544,10 +903,15 @@ func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedD
 		return nil
 	}
 	node := find(prepared.Nodes)
-	if node == nil || node.Block != "core/image" {
+	if node == nil {
 		return nil
 	}
-	mediaID, _ := node.Props["mediaId"].(string)
+	var mediaID string
+	if node.Block == "core/featured-image" {
+		mediaID = rc.Entry.FeaturedImage
+	} else if node.Block == "core/image" {
+		mediaID, _ = node.Props["mediaId"].(string)
+	}
 	if mediaID == "" {
 		return nil
 	}
@@ -582,7 +946,7 @@ func (h *Handler) renderThemedDocument(ctx context.Context, siteSnap *site.Snaps
 	menus := h.hub.Navigation.LocationsForPath(path)
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, resolved, siteIcon)
-	head.Preloads = h.lcpPreloads(ctx, prepared)
+	head.Preloads = h.lcpPreloads(ctx, prepared, rc)
 
 	_, themeCSS, themeJS := h.hub.Assets.URLs()
 	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
@@ -640,6 +1004,17 @@ func (h *Handler) buildSitemap(ctx context.Context, siteSnap *site.Snapshot) ([]
 		urlset.URLs = append(urlset.URLs, sitemapURL{
 			Loc:     base + entry.RoutePath,
 			Lastmod: time.Unix(entry.Lastmod, 0).UTC().Format(time.RFC3339),
+		})
+	}
+	// Add the main posts archive (page 1 only)
+	if siteSnap.IndexingEnabled {
+		arch := seo.PostsArchivePath(siteSnap.PostsBasePath)
+		if siteSnap.HomepageMode == "latest_posts" {
+			arch = "/"
+		}
+		urlset.URLs = append(urlset.URLs, sitemapURL{
+			Loc:     base + arch,
+			Lastmod: time.Now().UTC().Format(time.RFC3339), // archive lastmod is soft; posts inside dominate
 		})
 	}
 	return h.marshalSitemap(urlset)
@@ -791,6 +1166,30 @@ func stringValue(value sql.NullString) string {
 		return value.String
 	}
 	return ""
+}
+
+// parseArchivePagination returns the base archive path and page number for
+// paths like /blog/page/3 or /page/2 . Returns ok=false for non pagination.
+func parseArchivePagination(path string) (base string, page int, ok bool) {
+	path = strings.TrimSuffix(path, "/")
+	if strings.HasSuffix(path, "/page/1") {
+		base = strings.TrimSuffix(path, "/page/1")
+		if base == "" {
+			base = "/"
+		}
+		return base, 1, true
+	}
+	if idx := strings.LastIndex(path, "/page/"); idx != -1 {
+		suffix := path[idx+6:]
+		if n, err := strconv.Atoi(suffix); err == nil && n > 1 {
+			base = path[:idx]
+			if base == "" {
+				base = "/"
+			}
+			return base, n, true
+		}
+	}
+	return "", 0, false
 }
 
 func formatEntryDate(ts sql.NullInt64, tz string, iso bool) string {

@@ -243,9 +243,11 @@ func TestSettingsClearHomepageRestoresPageURL(t *testing.T) {
 	if err != nil || route.RouteType != "entry" || !route.EntryID.Valid || route.EntryID.String != "seed-about" {
 		t.Fatalf("/about should be an entry route owned by seed-about: err=%v route=%+v", err, route)
 	}
-	// No stale homepage route remains.
-	if _, err := queries.GetRouteByPath(ctx, "/"); err == nil {
-		t.Fatal("stale homepage route at / was not removed")
+	// After clearing homepage we serve latest posts at / via an archive route (new semantics).
+	if rt, err := queries.GetRouteByPath(ctx, "/"); err == nil {
+		if rt.RouteType != "archive" {
+			t.Fatalf("expected archive route at / for latest-posts home, got %s", rt.RouteType)
+		}
 	}
 }
 

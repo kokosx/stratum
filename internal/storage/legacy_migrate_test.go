@@ -197,3 +197,59 @@ func columnExists(ctx context.Context, t *testing.T, sqldb *sql.DB, table, colum
 	}
 	return false
 }
+
+// TestTransitionalDatabaseUpgradeToCurrent exercises the compatibility bridge
+// for the short-lived 0001_baseline … 0007_* marker names. When those are
+// present the migrator must record the matching current filenames (001_* and
+// 020_*–025_*) and then proceed with 026+ without re-executing any DDL.
+func TestTransitionalDatabaseUpgradeToCurrent(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "transitional.db")
+
+	d, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatalf("initial Migrate: %v", err)
+	}
+
+	// Replace the current markers for the transitional range with the old names.
+	// 026 stays under its real name so the second Migrate can still consider it.
+	transitional := map[string]string{
+		"0001_baseline.sql":              "001_initial.sql",
+		"0002_fix_block_rendering.sql":   "020_fix_block_rendering.sql",
+		"0003_lcp_and_assets.sql":        "021_lcp_and_assets.sql",
+		"0004_seo_foundation.sql":        "022_seo_foundation.sql",
+		"0005_social_seo.sql":            "023_social_seo.sql",
+		"0006_structured_data.sql":       "024_structured_data.sql",
+		"0007_image_seo_performance.sql": "025_image_seo_performance.sql",
+	}
+	for old, curr := range transitional {
+		_, _ = d.DB.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = ?`, curr)
+		_, _ = d.DB.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, 1)`, old)
+	}
+
+	// Re-run: compat must map back without causing duplicate-table errors.
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate on transitional DB failed: %v", err)
+	}
+
+	// The current names must now be recorded.
+	for _, curr := range []string{"001_initial.sql", "020_fix_block_rendering.sql", "025_image_seo_performance.sql", "026_schema_mode.sql"} {
+		var has bool
+		if err := d.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)", curr).Scan(&has); err != nil {
+			t.Fatal(err)
+		}
+		if !has {
+			t.Errorf("current marker %s not present after transitional bridge", curr)
+		}
+	}
+
+	if !columnExists(ctx, t, d.DB, "entry_revisions", "schema_mode") {
+		t.Error("column from 026 missing after transitional path")
+	}
+}

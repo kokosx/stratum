@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/rendering"
+	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
 // fakeMedia resolves a single known id so image rendering can be tested.
@@ -348,7 +348,7 @@ func TestHeadingRendering(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
+		name  string
 		input string
 		want  string
 	}{
@@ -614,31 +614,31 @@ func TestAllCoreBlocksInCatalog(t *testing.T) {
 	}
 
 	expected := map[string]bool{
-		"core/heading":        false,
-		"core/text":           false,
-		"core/button":         false,
-		"core/section":        false,
-		"core/stack":          false,
-		"core/grid":           false,
-		"core/card":           false,
-		"core/accordion":      false,
-		"core/accordion-item": false,
-		"core/divider":        false,
-		"core/quote":          false,
-		"core/row":            false,
-		"core/list":           false,
-		"core/image":          false,
-		"core/button-group":   false,
-		"core/icon":           false,
-		"core/callout":        false,
-		"core/code":           false,
-		"core/tabs":           false,
-		"core/tab":            false,
-		"core/entry-title":    false,
-		"core/entry-excerpt":  false,
+		"core/heading":            false,
+		"core/text":               false,
+		"core/button":             false,
+		"core/section":            false,
+		"core/stack":              false,
+		"core/grid":               false,
+		"core/card":               false,
+		"core/accordion":          false,
+		"core/accordion-item":     false,
+		"core/divider":            false,
+		"core/quote":              false,
+		"core/row":                false,
+		"core/list":               false,
+		"core/image":              false,
+		"core/button-group":       false,
+		"core/icon":               false,
+		"core/callout":            false,
+		"core/code":               false,
+		"core/tabs":               false,
+		"core/tab":                false,
+		"core/entry-title":        false,
+		"core/entry-excerpt":      false,
 		"core/entry-publish-date": false,
-		"core/site-name":      false,
-		"core/site-tagline":   false,
+		"core/site-name":          false,
+		"core/site-tagline":       false,
 	}
 	for _, def := range catalog {
 		expected[def.Block] = true

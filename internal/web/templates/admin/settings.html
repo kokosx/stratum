@@ -87,15 +87,53 @@
         <h2>Reading</h2>
 
         <div class="form-field">
+          <span class="field-label">Homepage displays</span>
+          <label class="check-row">
+            <input type="radio" name="homepage_mode_choice" value="latest" {{ if eq .Content.Form.HomepageEntryID "" }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            Latest posts
+          </label>
+          <label class="check-row">
+            <input type="radio" name="homepage_mode_choice" value="page" {{ if ne .Content.Form.HomepageEntryID "" }}checked{{ end }}
+                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            A static page
+          </label>
+        </div>
+
+        <div class="form-field" {{ if eq .Content.Form.HomepageEntryID "" }}hidden{{ end }} id="homepage-page-field">
           <label for="homepage_entry_id">Homepage</label>
           <select id="homepage_entry_id" name="homepage_entry_id">
-            <option value="">— Latest posts —</option>
             {{ range .Content.Pages }}
             <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.HomepageEntryID }}selected{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}</option>
             {{ end }}
           </select>
-          <p class="field-desc">The page shown at <code>/</code>. Changing it updates routing safely.</p>
+          <p class="field-desc">Published page shown at <code>/</code>.</p>
           {{ $e := index .Content.Errors "homepage_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="posts_page_entry_id">Posts page</label>
+          <select id="posts_page_entry_id" name="posts_page_entry_id">
+            <option value="">— None —</option>
+            {{ range .Content.Pages }}
+            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.PostsPageEntryID }}selected{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}</option>
+            {{ end }}
+          </select>
+          <p class="field-desc">Published page whose content becomes the archive intro at the Posts URL base.</p>
+          {{ $e := index .Content.Errors "posts_page_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="posts_base_path">Posts URL base</label>
+          <input type="text" id="posts_base_path" name="posts_base_path" value="{{ .Content.Form.PostsBasePath }}" placeholder="/blog" maxlength="64">
+          <p class="field-desc">Archive and Post prefix. Must start with /, no trailing slash.</p>
+          {{ $e := index .Content.Errors "posts_base_path" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="posts_per_page">Posts per page</label>
+          <input type="number" id="posts_per_page" name="posts_per_page" value="{{ .Content.Form.PostsPerPage }}" min="1" max="100" step="1">
+          {{ $e := index .Content.Errors "posts_per_page" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
         </div>
       </section>
 

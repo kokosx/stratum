@@ -140,15 +140,60 @@ type AssetsView struct {
 }
 
 type PageView struct {
-	Site       SiteView
-	Entry      EntryView
-	Head       HeadView
-	Theme      ThemeView
-	Navigation map[string]navigation.Menu
-	Content    template.HTML
+	Site        SiteView
+	Entry       EntryView
+	Head        HeadView
+	Theme       ThemeView
+	Navigation  map[string]navigation.Menu
+	Content     template.HTML
+	ContentType string // "page" | "post" — used for template resolution
+	// Kind tells the theme what kind of page this is for deterministic template choice.
+	Kind PageKind
+	// Archive is populated for archive and home-latest-posts renders.
+	Archive ArchiveView
 	// PreviewCSS is generated exclusively by Theme Runtime after server-side
 	// validation. Public renders leave it empty and use /stratum/theme.css.
 	PreviewCSS template.CSS
 	// Assets holds the fingerprinted stylesheet and script URLs.
 	Assets AssetsView
+}
+
+// PageKind is a small, closed set used for template resolution and view logic.
+type PageKind string
+
+const (
+	PageKindSingle  PageKind = "single"
+	PageKindArchive PageKind = "archive"
+	PageKindHome    PageKind = "home"
+)
+
+// ArchiveView is the typed contract passed to the theme for any post listing
+// (including homepage in "latest posts" mode and dedicated Posts Page shell).
+type ArchiveView struct {
+	ContentTypeID string
+	Title         string
+	Description   string
+	Intro         template.HTML // rendered SDT from Posts Page published revision when set
+	Entries       []ArchiveEntryView
+	Pagination    PaginationView
+}
+
+// ArchiveEntryView is one card in the listing. Theme controls markup.
+type ArchiveEntryView struct {
+	ID            string
+	Title         string
+	Excerpt       string
+	URL           string
+	PublishedAt   string
+	PublishedISO  string
+	FeaturedImage rendering.MediaView // may be zero value
+}
+
+// PaginationView carries everything the theme needs for page nav without queries.
+type PaginationView struct {
+	Current     int
+	TotalPages  int
+	TotalItems  int64
+	PreviousURL string
+	NextURL     string
 }

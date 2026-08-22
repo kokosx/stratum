@@ -10,6 +10,23 @@ import (
 	"database/sql"
 )
 
+const countPublishedEntriesByContentType = `-- name: CountPublishedEntriesByContentType :one
+SELECT COUNT(*)
+FROM entries e
+JOIN routes rt ON rt.entry_id = e.id
+WHERE e.content_type_id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+  AND rt.route_type = 'entry'
+`
+
+func (q *Queries) CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPublishedEntriesByContentType, contentTypeID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getPublishedEntryByPath = `-- name: GetPublishedEntryByPath :one
 SELECT
     e.id,
@@ -92,4 +109,78 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.SchemaMode,
 	)
 	return i, err
+}
+
+const listPublishedEntriesByContentType = `-- name: ListPublishedEntriesByContentType :many
+SELECT
+    e.id,
+    e.slug,
+    e.first_published_at,
+    e.published_at,
+    r.id AS revision_id,
+    r.title,
+    r.excerpt,
+    r.featured_media_id,
+    rt.path AS route_path
+FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
+JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
+WHERE e.content_type_id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+ORDER BY
+    COALESCE(e.first_published_at, e.published_at) DESC,
+    e.published_at DESC
+LIMIT ? OFFSET ?
+`
+
+type ListPublishedEntriesByContentTypeParams struct {
+	ContentTypeID string `json:"content_type_id"`
+	Limit         int64  `json:"limit"`
+	Offset        int64  `json:"offset"`
+}
+
+type ListPublishedEntriesByContentTypeRow struct {
+	ID               string         `json:"id"`
+	Slug             string         `json:"slug"`
+	FirstPublishedAt sql.NullInt64  `json:"first_published_at"`
+	PublishedAt      sql.NullInt64  `json:"published_at"`
+	RevisionID       string         `json:"revision_id"`
+	Title            string         `json:"title"`
+	Excerpt          sql.NullString `json:"excerpt"`
+	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	RoutePath        string         `json:"route_path"`
+}
+
+func (q *Queries) ListPublishedEntriesByContentType(ctx context.Context, arg ListPublishedEntriesByContentTypeParams) ([]ListPublishedEntriesByContentTypeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPublishedEntriesByContentType, arg.ContentTypeID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublishedEntriesByContentTypeRow{}
+	for rows.Next() {
+		var i ListPublishedEntriesByContentTypeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.FirstPublishedAt,
+			&i.PublishedAt,
+			&i.RevisionID,
+			&i.Title,
+			&i.Excerpt,
+			&i.FeaturedMediaID,
+			&i.RoutePath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

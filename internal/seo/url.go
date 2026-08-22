@@ -1,6 +1,7 @@
 package seo
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -90,4 +91,65 @@ func PaginatedPath(path string, page int) string {
 		return fmt.Sprintf("/page/%d", page)
 	}
 	return fmt.Sprintf("%s/page/%d", path, page)
+}
+
+// DefaultPostsBase is the conventional default for the posts archive and all
+// single post URLs. It is the value of posts_base_path when not customized.
+const DefaultPostsBase = "/blog"
+
+// EntryPath is the single place that computes the public path for an Entry.
+// Page → "/{slug}"
+// Post → "{postsBase}/{slug}" (default /blog)
+// Future content types can extend here without touching dozens of call sites.
+func EntryPath(contentTypeID, slug, postsBasePath string) string {
+	s := strings.Trim(slug, "/")
+	if s == "" {
+		return "/"
+	}
+	if contentTypeID == "post" {
+		base := PostsArchivePath(postsBasePath)
+		if base == "/" {
+			return "/" + s
+		}
+		return NormalizePath(base + "/" + s)
+	}
+	return "/" + s
+}
+
+// PostsArchivePath returns the base under which the post archive and all post
+// singles are published. Never returns empty; falls back to DefaultPostsBase.
+func PostsArchivePath(postsBasePath string) string {
+	p := NormalizePath(strings.TrimSpace(postsBasePath))
+	if p == "" || p == "/" {
+		// "/" as posts base is allowed only for "latest posts as homepage" mode,
+		// but we still surface a non-root archive path for explicit /blog links.
+		// Callers that want root archive use the homepage mode.
+		return DefaultPostsBase
+	}
+	return p
+}
+
+// ValidatePostsBasePath enforces the structural rules for posts_base_path
+// before it is written to settings and used to create archive routes.
+func ValidatePostsBasePath(p string) error {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return errors.New("Posts URL base must not be empty")
+	}
+	if !strings.HasPrefix(p, "/") {
+		return errors.New("Posts URL base must start with /")
+	}
+	if strings.Contains(p, "?") || strings.Contains(p, "#") {
+		return errors.New("Posts URL base must not contain query string or fragment")
+	}
+	if len(p) > 1 && strings.HasSuffix(p, "/") {
+		return errors.New("Posts URL base must not end with / (except for root)")
+	}
+	reserved := []string{"/admin", "/stratum", "/media", "/sitemap.xml", "/robots.txt", "/feed.xml"}
+	for _, r := range reserved {
+		if p == r {
+			return fmt.Errorf("Posts URL base %s conflicts with reserved path %s", p, r)
+		}
+	}
+	return nil
 }

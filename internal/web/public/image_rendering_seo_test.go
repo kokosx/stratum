@@ -135,8 +135,8 @@ func TestOnlyLCPImageGetsHighPriority(t *testing.T) {
 	seedDocEntry(t, handler, queries, "lcpimg", "/lcpimg", "Img", doc)
 
 	body := renderPath(t, handler, "/lcpimg")
-	if got := strings.Count(body, `fetchpriority="high"`); got != 1 {
-		t.Fatalf("fetchpriority=high count = %d, want exactly 1:\n%s", got, body)
+	if got := strings.Count(body, `fetchpriority="high"`); got != 2 {
+		t.Fatalf("fetchpriority=high count = %d, want exactly 2 (preload + img):\n%s", got, body)
 	}
 	// The prioritized node is eager; every other image stays lazy even when an
 	// author left the legacy eager flag set (it only feeds LCP selection).
@@ -231,8 +231,10 @@ func TestFeaturedImageDimensionsAndVersionedURLs(t *testing.T) {
 	bodyContains(t, body, `width="1200"`)
 	bodyContains(t, body, `height="800"`)
 	bodyContains(t, body, `<source type="image/webp" srcset="/media/`+featID+`/480.webp?v=`)
-	// Featured image alone is not the LCP unless it is a core/image block.
-	bodyContains(t, body, `loading="lazy"`)
+	// When the entry actually has a Featured Image the block is a valid LCP
+	// candidate and receives eager+high (same candidate used for preload).
+	bodyContains(t, body, `loading="eager"`)
+	bodyContains(t, body, `fetchpriority="high"`)
 }
 
 func min(a, b int) int {

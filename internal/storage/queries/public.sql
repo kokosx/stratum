@@ -33,3 +33,34 @@ WHERE rt.path = ?
   AND e.status = 'active'
 
 LIMIT 1;
+
+-- name: CountPublishedEntriesByContentType :one
+SELECT COUNT(*)
+FROM entries e
+JOIN routes rt ON rt.entry_id = e.id
+WHERE e.content_type_id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+  AND rt.route_type = 'entry';
+
+-- name: ListPublishedEntriesByContentType :many
+SELECT
+    e.id,
+    e.slug,
+    e.first_published_at,
+    e.published_at,
+    r.id AS revision_id,
+    r.title,
+    r.excerpt,
+    r.featured_media_id,
+    rt.path AS route_path
+FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
+JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
+WHERE e.content_type_id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+ORDER BY
+    COALESCE(e.first_published_at, e.published_at) DESC,
+    e.published_at DESC
+LIMIT ? OFFSET ?;

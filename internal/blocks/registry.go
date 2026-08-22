@@ -151,7 +151,7 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 	}
 	prepared := &rendering.PreparedDocument{Nodes: nodes}
 	used := make(map[rendering.BlockKey]bool)
-	var firstAuto, firstHigh string
+	var high, auto []rendering.LCPCandidate
 	var visit func([]rendering.PreparedNode)
 	visit = func(items []rendering.PreparedNode) {
 		for _, node := range items {
@@ -169,12 +169,13 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 						priority = "auto"
 					}
 				}
-				if priority == "high" && firstHigh == "" {
-					firstHigh = node.ID
+				cand := rendering.LCPCandidate{ID: node.ID, Block: node.Block, RequiresFeatured: node.Block == "core/featured-image"}
+				if priority == "high" {
+					high = append(high, cand)
+				} else if priority == "auto" {
+					auto = append(auto, cand)
 				}
-				if priority == "auto" && firstAuto == "" {
-					firstAuto = node.ID
-				}
+				// "normal" is deliberately excluded from LCP candidates
 			}
 			visit(node.Children)
 		}
@@ -189,11 +190,9 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 		}
 		return prepared.UsedBlocks[i].Name < prepared.UsedBlocks[j].Name
 	})
-	if firstHigh != "" {
-		prepared.LCPCandidate = firstHigh
-	} else {
-		prepared.LCPCandidate = firstAuto
-	}
+	prepared.HighPriority = high
+	prepared.AutoCandidates = auto
+	prepared.LCPCandidate = prepared.ResolveLCP(true) // best-effort for legacy direct access
 	return prepared, nil
 }
 
@@ -236,7 +235,8 @@ func (r *Registry) RenderPrepared(ctx context.Context, pd *rendering.PreparedDoc
 	if current == nil {
 		return "", fmt.Errorf("block registry is not initialized")
 	}
-	rc.LCPNodeID = pd.LCPCandidate
+	hasFeatured := rc.Entry.FeaturedImage != ""
+	rc.LCPNodeID = pd.ResolveLCP(hasFeatured)
 	return current.renderer.RenderPreparedDocumentContext(ctx, pd, rc)
 }
 

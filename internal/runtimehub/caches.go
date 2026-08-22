@@ -60,3 +60,32 @@ func (c *robotsCache) Invalidate() {
 	c.body, c.gzip, c.etag, c.present = nil, nil, "", false
 	c.mu.Unlock()
 }
+
+// FeedCache stores the rendered feed.xml .
+type FeedCache struct {
+	mu      sync.RWMutex
+	body    []byte
+	gzip    []byte
+	etag    string
+	present bool
+}
+
+func NewFeedCache() *FeedCache { return &FeedCache{} }
+
+func (c *FeedCache) Get() ([]byte, []byte, string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.body, c.gzip, c.etag, c.present
+}
+
+func (c *FeedCache) Set(body []byte, gzip []byte, etag string) {
+	c.mu.Lock()
+	c.body, c.gzip, c.etag, c.present = body, gzip, etag, true
+	c.mu.Unlock()
+}
+
+func (c *FeedCache) Invalidate() {
+	c.mu.Lock()
+	c.body, c.gzip, c.etag, c.present = nil, nil, "", false
+	c.mu.Unlock()
+}

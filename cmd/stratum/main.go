@@ -12,9 +12,9 @@ import (
 
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/runtimehub"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
-	"github.com/kokosx/stratum/internal/runtimehub"
 )
 
 func main() {

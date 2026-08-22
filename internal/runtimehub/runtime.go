@@ -15,8 +15,8 @@ import (
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/pagecache"
 	"github.com/kokosx/stratum/internal/site"
-	"github.com/kokosx/stratum/internal/themes"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/themes"
 )
 
 // Runtime is the public runtime coordinator. It is safe for concurrent use by
@@ -33,6 +33,7 @@ type Runtime struct {
 	Assets  *AssetManifest
 	Sitemap *SitemapCache
 	Robots  *RobotsCache
+	Feed    *FeedCache
 }
 
 // New builds every runtime snapshot and cache. It performs the initial reloads
@@ -49,6 +50,7 @@ func New(queries *db.Queries, blocks *blocks.Registry, themes *themes.Runtime, m
 		Assets:     NewAssetManifest(blocks, themes),
 		Sitemap:    NewSitemapCache(),
 		Robots:     NewRobotsCache(),
+		Feed:       NewFeedCache(),
 	}
 	if err := hub.Site.Reload(context.Background()); err != nil {
 		return nil, err
@@ -70,6 +72,7 @@ func (h *Runtime) ReloadSite(ctx context.Context) error {
 	h.Pages.InvalidateAll()
 	h.Sitemap.Invalidate()
 	h.Robots.Invalidate()
+	h.Feed.Invalidate()
 	return nil
 }
 

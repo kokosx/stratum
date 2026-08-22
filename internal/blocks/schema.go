@@ -358,11 +358,11 @@ func validateValue(schema ValueSchema, value any, path string, enforceRequired b
 		if !ok {
 			return fmt.Errorf("%s: expected array", path)
 		}
-			for i, item := range array {
-				if err := validateValue(*schema.Items, item, fmt.Sprintf("%s[%d]", path, i), true, allowUnknown); err != nil {
-					return err
-				}
+		for i, item := range array {
+			if err := validateValue(*schema.Items, item, fmt.Sprintf("%s[%d]", path, i), true, allowUnknown); err != nil {
+				return err
 			}
+		}
 	case "string":
 		text, ok := value.(string)
 		if !ok {

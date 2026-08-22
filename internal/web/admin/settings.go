@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/seo"
 	"github.com/kokosx/stratum/internal/site"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/structured"
@@ -28,6 +30,9 @@ type settingsForm struct {
 	Timezone             string
 	SiteRepresents       string // "organization" or "person"
 	HomepageEntryID      string
+	PostsPageEntryID     string
+	PostsBasePath        string
+	PostsPerPage         int
 	SiteIconMediaID      string
 	SiteSocialMediaID    string
 	TwitterSite          string
@@ -325,10 +330,22 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 	qtx := h.queries.WithTx(tx)
 	oldHome := nullStringToStr(current.HomepageEntryID)
 	newHome := strings.TrimSpace(form.HomepageEntryID)
-	if oldHome != newHome {
-		if err := h.applyHomepageRoute(ctx, qtx, oldHome, newHome, time.Now().Unix()); err != nil {
-			return err
+	oldPosts := nullStringToStr(current.PostsPageEntryID)
+	newPosts := strings.TrimSpace(form.PostsPageEntryID)
+	oldBase := current.PostsBasePath
+	newBase := strings.TrimSpace(form.PostsBasePath)
+	if newBase == "" {
+		newBase = seo.DefaultPostsBase
+	}
+	if form.PostsPerPage < 1 {
+		form.PostsPerPage = int(current.PostsPerPage)
+		if form.PostsPerPage < 1 {
+			form.PostsPerPage = 10
 		}
+	}
+	now := time.Now().Unix()
+	if err := h.applyReadingRoutes(ctx, qtx, oldHome, newHome, oldPosts, newPosts, oldBase, newBase, now); err != nil {
+		return err
 	}
 	homepageMode := "latest_posts"
 	if newHome != "" {
@@ -349,8 +366,9 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 		SiteTagline:          strings.TrimSpace(form.Tagline),
 		HomepageMode:         homepageMode,
 		HomepageEntryID:      strToNullString(newHome),
-		PostsPageEntryID:     current.PostsPageEntryID,
-		PostsPerPage:         current.PostsPerPage,
+		PostsPageEntryID:     strToNullString(newPosts),
+		PostsPerPage:         int64(func() int { if form.PostsPerPage > 0 { return form.PostsPerPage }; return 10 }()),
+		PostsBasePath:        newBase,
 		Language:             strings.TrimSpace(form.Language),
 		Timezone:             strings.TrimSpace(form.Timezone),
 		ActiveTheme:          current.ActiveTheme,
@@ -448,6 +466,109 @@ func (h *Handler) applyHomepageRoute(ctx context.Context, queries *db.Queries, o
 	return nil
 }
 
+// applyReadingRoutes is the single transactional writer for homepage mode,
+// homepage page, posts page and posts base path. It maintains:
+// - / entry route (or redirect) for homepage
+// - one archive route (type=archive) at the effective archive root
+// - redirects for base changes (flattening chains) and old post URLs
+// - conflict detection (no silent overwrite of page routes)
+func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, oldHome, newHome, oldPosts, newPosts, oldBase, newBase string, now int64) error {
+	// Homepage (reuses the existing safe logic)
+	if oldHome != newHome {
+		if err := h.applyHomepageRoute(ctx, queries, oldHome, newHome, now); err != nil {
+			return err
+		}
+	}
+
+	if newBase == "" {
+		newBase = seo.DefaultPostsBase
+	}
+	if err := seo.ValidatePostsBasePath(newBase); err != nil {
+		return err
+	}
+
+	isLatest := newHome == ""
+	archPath := "/"
+	if !isLatest {
+		archPath = seo.PostsArchivePath(newBase)
+	}
+
+	// Conflict check for archive mount (pages must not be silently replaced)
+	if archPath != "/" {
+		if rt, rerr := queries.GetRouteByPath(ctx, archPath); rerr == nil && rt.RouteType == "entry" && rt.EntryID.Valid {
+			if ent, eerr := queries.GetEntry(ctx, rt.EntryID.String); eerr == nil {
+				return fmt.Errorf("The Posts URL base %s conflicts with Page %s.", archPath, ent.Slug)
+			}
+			return fmt.Errorf("The Posts URL base %s conflicts with an existing route.", archPath)
+		}
+	}
+
+	// Base change → redirects + remap post entry routes (no chains)
+	if oldBase != "" && oldBase != newBase {
+		oldArch := seo.PostsArchivePath(oldBase)
+		if oldArch != archPath {
+			if err := h.upsertRedirectRoute(ctx, queries, oldArch, archPath, now); err != nil {
+				return err
+			}
+		}
+		// Remap published posts that lived under old base
+		posts, _ := queries.ListEntriesByContentType(ctx, "post")
+		for _, p := range posts {
+			if p.Status != "active" {
+				continue
+			}
+			rt, rerr := queries.GetEntryRoute(ctx, strToNullString(p.ID))
+			if rerr != nil {
+				continue
+			}
+			if !strings.HasPrefix(rt.Path, oldArch) && oldArch != "/" {
+				continue
+			}
+			newP := seo.EntryPath("post", p.Slug, newBase)
+			if newP == rt.Path {
+				continue
+			}
+			if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+				ID: rt.ID, Path: newP, EntryID: strToNullString(p.ID), RouteType: "entry", UpdatedAt: now,
+			}); err != nil {
+				return err
+			}
+			if err := h.upsertRedirectRoute(ctx, queries, rt.Path, newP, now); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Ensure archive route exists at the mount point
+	if rt, rerr := queries.GetRouteByPath(ctx, archPath); errors.Is(rerr, sql.ErrNoRows) {
+		id, _ := randomID()
+		if err := queries.CreateRoute(ctx, db.CreateRouteParams{
+			ID: id, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+	} else if rerr == nil && rt.RouteType != "archive" && archPath != "/" {
+		// promote to archive (home apply should have cleared / entry)
+		if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+			ID: rt.ID, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", UpdatedAt: now,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// If explicit posts base differs from archive mount (latest-posts home case), redirect base -> archive root
+	explicit := seo.PostsArchivePath(newBase)
+	if explicit != archPath {
+		if err := h.upsertRedirectRoute(ctx, queries, explicit, archPath, now); err != nil {
+			return err
+		}
+	}
+
+	_ = oldPosts
+	_ = newPosts // posts page changes only affect which published revision we read for intro/SEO; no route mutation
+	return nil
+}
+
 func (h *Handler) listPageOptions(r *http.Request) []pageOption {
 	entries, err := h.queries.ListEntriesByContentType(r.Context(), "page")
 	if err != nil {
@@ -516,6 +637,9 @@ func formFromRow(row db.GetSiteSettingsRow, siteIconMediaID, siteSocialMediaID s
 		Timezone:             row.Timezone,
 		SiteRepresents:       siteRepresentsFormValue(row.SiteRepresents),
 		HomepageEntryID:      nullStringToStr(row.HomepageEntryID),
+		PostsPageEntryID:     nullStringToStr(row.PostsPageEntryID),
+		PostsBasePath:        row.PostsBasePath,
+		PostsPerPage:         int(row.PostsPerPage),
 		SiteIconMediaID:      siteIconMediaID,
 		SiteSocialMediaID:    siteSocialMediaID,
 		TwitterSite:          row.TwitterSite,
@@ -540,6 +664,9 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 		Timezone:             strings.TrimSpace(r.FormValue("timezone")),
 		SiteRepresents:       siteRepresentsFormValue(r.FormValue("site_represents")),
 		HomepageEntryID:      strings.TrimSpace(r.FormValue("homepage_entry_id")),
+		PostsPageEntryID:     strings.TrimSpace(r.FormValue("posts_page_entry_id")),
+		PostsBasePath:        strings.TrimSpace(r.FormValue("posts_base_path")),
+		PostsPerPage:         parsePostsPerPage(r.FormValue("posts_per_page")),
 		SiteIconMediaID:      strings.TrimSpace(r.FormValue("site_icon_media_id")),
 		SiteSocialMediaID:    strings.TrimSpace(r.FormValue("site_social_media_id")),
 		TwitterSite:          strings.TrimSpace(r.FormValue("twitter_site")),
@@ -551,6 +678,10 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 		SpeculationMode:      strings.TrimSpace(r.FormValue("speculation_mode")),
 		SpeculationEagerness: strings.TrimSpace(r.FormValue("speculation_eagerness")),
 		TitleSeparator:       strings.TrimSpace(r.FormValue("title_separator")),
+	}
+	choice := strings.TrimSpace(r.FormValue("homepage_mode_choice"))
+	if choice == "latest" {
+		form.HomepageEntryID = ""
 	}
 	if form.SpeculationEnabled && form.SpeculationMode == "" {
 		form.SpeculationMode = "prefetch"
@@ -584,6 +715,22 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 		if err != nil || entry.ContentTypeID != "page" {
 			errors["homepage_entry_id"] = "Homepage must be an existing Page."
 		}
+	}
+	if form.PostsPageEntryID != "" {
+		entry, err := h.queries.GetEntry(r.Context(), form.PostsPageEntryID)
+		if err != nil || entry.ContentTypeID != "page" || entry.Status == "trash" {
+			errors["posts_page_entry_id"] = "Posts page must be an existing (non-trashed) Page."
+		} else if !entry.PublishedRevisionID.Valid {
+			errors["posts_page_entry_id"] = "Posts page must be published before it can be used as archive shell."
+		}
+	}
+	if form.PostsBasePath != "" {
+		if err := seo.ValidatePostsBasePath(form.PostsBasePath); err != nil {
+			errors["posts_base_path"] = err.Error()
+		}
+	}
+	if form.PostsPerPage < 1 || form.PostsPerPage > 100 {
+		errors["posts_per_page"] = "Posts per page must be between 1 and 100."
 	}
 	if form.RobotsMode != "managed" && form.RobotsMode != "custom" {
 		errors["robots_mode"] = "Robots mode must be managed or custom."
@@ -623,6 +770,17 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 		}
 	}
 	return form, errors
+}
+
+func parsePostsPerPage(v string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 1 {
+		return 10
+	}
+	if n > 100 {
+		return 100
+	}
+	return n
 }
 
 func nullStringToStr(value sql.NullString) string {

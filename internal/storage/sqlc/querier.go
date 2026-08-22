@@ -12,6 +12,7 @@ import (
 type Querier interface {
 	CountMedia(ctx context.Context) (int64, error)
 	CountMediaUsage(ctx context.Context, id sql.NullString) (int64, error)
+	CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error)
 	CreateBlockDefinition(ctx context.Context, arg CreateBlockDefinitionParams) error
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
@@ -63,6 +64,7 @@ type Querier interface {
 	ListNavigationLocations(ctx context.Context) ([]NavigationLocation, error)
 	ListNavigationLocationsForMenu(ctx context.Context, menuID string) ([]string, error)
 	ListNavigationMenus(ctx context.Context) ([]NavigationMenu, error)
+	ListPublishedEntriesByContentType(ctx context.Context, arg ListPublishedEntriesByContentTypeParams) ([]ListPublishedEntriesByContentTypeRow, error)
 	ListPublishedPagesForNavigation(ctx context.Context) ([]ListPublishedPagesForNavigationRow, error)
 	// Every redirect route whose target is the given path. Slug changes use this to
 	// flatten redirect chains: when /a -> /b exists and /b moves to /c, this query

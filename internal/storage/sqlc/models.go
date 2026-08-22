@@ -171,6 +171,7 @@ type SiteSetting struct {
 	SiteSocialMediaID    sql.NullString `json:"site_social_media_id"`
 	TwitterSite          string         `json:"twitter_site"`
 	SiteRepresents       string         `json:"site_represents"`
+	PostsBasePath        string         `json:"posts_base_path"`
 }
 
 type ThemeCustomization struct {

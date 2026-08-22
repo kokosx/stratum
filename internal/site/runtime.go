@@ -47,8 +47,11 @@ type Snapshot struct {
 	GlobalSocialMediaID string
 	TwitterSite         string
 
-	HomepageMode    string
-	HomepageEntryID string
+	HomepageMode     string
+	HomepageEntryID  string
+	PostsPageEntryID string
+	PostsBasePath    string
+	PostsPerPage     int64
 
 	TitleSeparator string
 	SiteRepresents string // "organization" or "person" (structured data publisher)
@@ -90,6 +93,9 @@ func (r *Runtime) Reload(ctx context.Context) error {
 		SpeculationEagerness: row.SpeculationEagerness,
 		HomepageMode:         row.HomepageMode,
 		HomepageEntryID:      nullStringToStr(row.HomepageEntryID),
+		PostsPageEntryID:     nullStringToStr(row.PostsPageEntryID),
+		PostsBasePath:        row.PostsBasePath,
+		PostsPerPage:         row.PostsPerPage,
 		TitleSeparator:       row.TitleSeparator,
 		TwitterSite:          row.TwitterSite,
 		SiteRepresents:       row.SiteRepresents,
