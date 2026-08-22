@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"log"
+	"strings"
 
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/seo"
@@ -33,9 +34,12 @@ func (h *Handler) buildStructuredData(ctx context.Context, siteSnap *site.Snapsh
 	page := structured.Page{
 		Path:          path,
 		ContentTypeID: entry.ContentTypeID,
-		Name:          resolved.OpenGraph.Title,
+		// BlogPosting.headline / WebPage.name use the real entry title, not the
+		// marketing SEO title used for <title>/OG.
+		Name:          entry.Title,
 		Description:   resolved.Description,
 		CanonicalURL:  resolved.Canonical,
+		Mode:          structured.Mode(strings.TrimSpace(entry.SchemaMode)),
 		PublishedUnix: firstPublishedAt(entry),
 		ModifiedUnix:  modifiedAt(entry),
 		Timezone:      siteSnap.TimezoneName,

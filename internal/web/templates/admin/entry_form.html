@@ -4,14 +4,26 @@
   <input id="document-json" type="hidden" name="document_json" value="">
   <input type="hidden" name="featured_media_id" id="entry-featured-media-id" value="{{ .Content.FeaturedMediaID }}">
   <input type="hidden" name="social_media_id" id="entry-social-media-id" value="{{ .Content.SocialMediaID }}">
-  <input type="hidden" name="seo_robots_index" value="{{ .Content.RobotsIndex }}">
-  <input type="hidden" name="seo_robots_follow" value="{{ .Content.RobotsFollow }}">
   <header class="editor-topbar">
     <div class="editor-metadata">
       <label>Title<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
       <label>Slug<input id="entry-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
       {{ if .Content.ShowExcerpt }}
       <label class="editor-excerpt">Excerpt<textarea id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea></label>
+      {{ end }}
+      {{ if .Content.ShowFeatured }}
+      <div class="form-field editor-featured-image">
+        <span class="field-label">Featured Image</span>
+        <div class="social-image-field">
+          <div class="social-image-preview" id="entry-featured-preview">
+            {{ if .Content.FeaturedMediaID }}<img src="/media/{{ .Content.FeaturedMediaID }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="field-desc">No Featured Image</span>{{ end }}
+          </div>
+          <div class="social-image-actions">
+            <button type="button" class="button" id="entry-featured-choose">Choose image</button>
+            <button type="button" class="button button-danger" id="entry-featured-remove" {{ if not .Content.FeaturedMediaID }}hidden{{ end }}>Remove</button>
+          </div>
+        </div>
+      </div>
       {{ end }}
     </div>
     <div class="form-actions">
@@ -73,6 +85,35 @@
           <span class="editor-field-meta"><span class="seo-hint">Optional. Absolute http(s) URL or a root-relative path.</span></span>
         </label>
         <p id="canonical-warning" class="form-warning" role="alert" hidden>This canonical URL points to a different domain. External canonicals are allowed (for example for syndicated content) — make sure this is intentional.</p>
+        <div class="editor-field editor-field-row">
+          <label class="editor-field">
+            <span class="editor-field-label">Indexing</span>
+            <select id="entry-seo-robots-index" name="seo_robots_index">
+              <option value="inherit" {{ if eq .Content.RobotsIndex "inherit" }}selected{{ end }}>Inherit</option>
+              <option value="1" {{ if eq .Content.RobotsIndex "1" }}selected{{ end }}>Index</option>
+              <option value="0" {{ if eq .Content.RobotsIndex "0" }}selected{{ end }}>Noindex</option>
+            </select>
+          </label>
+          <label class="editor-field">
+            <span class="editor-field-label">Links</span>
+            <select id="entry-seo-robots-follow" name="seo_robots_follow">
+              <option value="inherit" {{ if eq .Content.RobotsFollow "inherit" }}selected{{ end }}>Inherit</option>
+              <option value="1" {{ if eq .Content.RobotsFollow "1" }}selected{{ end }}>Follow</option>
+              <option value="0" {{ if eq .Content.RobotsFollow "0" }}selected{{ end }}>Nofollow</option>
+            </select>
+          </label>
+        </div>
+        <label class="editor-field">
+          <span class="editor-field-label">Structured Data</span>
+          <select id="entry-schema-mode" name="schema_mode">
+            <option value="" {{ if eq .Content.SchemaMode "" }}selected{{ end }}>Automatic</option>
+            <option value="disabled" {{ if eq .Content.SchemaMode "disabled" }}selected{{ end }}>Disabled</option>
+            <option value="webpage" {{ if eq .Content.SchemaMode "webpage" }}selected{{ end }}>WebPage</option>
+            <option value="aboutpage" {{ if eq .Content.SchemaMode "aboutpage" }}selected{{ end }}>AboutPage</option>
+            <option value="contactpage" {{ if eq .Content.SchemaMode "contactpage" }}selected{{ end }}>ContactPage</option>
+          </select>
+          <span class="editor-field-meta"><span class="seo-hint">Automatic: Page → WebPage, Post → BlogPosting.</span></span>
+        </label>
         <div class="seo-serp" aria-label="Search result preview">
           <div class="seo-serp-title" id="serp-title"></div>
           <div class="seo-serp-url" id="serp-url"></div>

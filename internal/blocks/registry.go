@@ -156,13 +156,17 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 	visit = func(items []rendering.PreparedNode) {
 		for _, node := range items {
 			used[rendering.BlockKey{Name: node.Block, Version: node.Version}] = true
-			if node.Block == "core/image" && imageEligible(node) {
+			// Image-producing content blocks can be LCP candidates. Logo/header
+			// icons are never auto-selected.
+			if isLCPImageBlock(node.Block) && imageEligible(node) {
 				priority, _ := node.Settings["priority"].(string)
 				// Existing revisions used eager as the manual opt-in. Keep that
 				// explicit intent until the author changes the new priority field.
-				if priority == "auto" {
+				if priority == "auto" || priority == "" {
 					if eager, _ := node.Settings["eager"].(bool); eager {
 						priority = "high"
+					} else if priority == "" {
+						priority = "auto"
 					}
 				}
 				if priority == "high" && firstHigh == "" {
@@ -325,10 +329,31 @@ func (r *Registry) StylesFor(keys []rendering.BlockKey) string {
 	return styles.String()
 }
 
+func isLCPImageBlock(block string) bool {
+	switch block {
+	case "core/image", "core/featured-image":
+		return true
+	default:
+		return false
+	}
+}
+
 func imageEligible(node rendering.PreparedNode) bool {
-	mediaID, _ := node.Props["mediaId"].(string)
 	decorative, _ := node.Settings["decorative"].(bool)
-	return mediaID != "" && !decorative
+	if decorative {
+		return false
+	}
+	switch node.Block {
+	case "core/image":
+		mediaID, _ := node.Props["mediaId"].(string)
+		return mediaID != ""
+	case "core/featured-image":
+		// Featured image media id lives on the entry, not block props; treat the
+		// block as eligible so it can win LCP when it appears first.
+		return true
+	default:
+		return false
+	}
 }
 
 func nullString(value sql.NullString) string {

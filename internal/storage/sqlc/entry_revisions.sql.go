@@ -14,9 +14,9 @@ const createEntryRevision = `-- name: CreateEntryRevision :exec
 INSERT INTO entry_revisions (
     id, entry_id, revision_number, title, excerpt, document_json,
     seo_title, seo_description, canonical_url, featured_media_id, social_media_id,
-    seo_robots_index, seo_robots_follow, created_by, created_at
+    seo_robots_index, seo_robots_follow, schema_mode, created_by, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateEntryRevisionParams struct {
@@ -33,6 +33,7 @@ type CreateEntryRevisionParams struct {
 	SocialMediaID   sql.NullString `json:"social_media_id"`
 	SeoRobotsIndex  sql.NullInt64  `json:"seo_robots_index"`
 	SeoRobotsFollow sql.NullInt64  `json:"seo_robots_follow"`
+	SchemaMode      string         `json:"schema_mode"`
 	CreatedBy       sql.NullString `json:"created_by"`
 	CreatedAt       int64          `json:"created_at"`
 }
@@ -52,6 +53,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 		arg.SocialMediaID,
 		arg.SeoRobotsIndex,
 		arg.SeoRobotsFollow,
+		arg.SchemaMode,
 		arg.CreatedBy,
 		arg.CreatedAt,
 	)
@@ -59,7 +61,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 }
 
 const getEntryRevision = `-- name: GetEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode
 FROM entry_revisions
 WHERE id = ?
 LIMIT 1
@@ -84,12 +86,13 @@ func (q *Queries) GetEntryRevision(ctx context.Context, id string) (EntryRevisio
 		&i.SocialMediaID,
 		&i.SeoRobotsIndex,
 		&i.SeoRobotsFollow,
+		&i.SchemaMode,
 	)
 	return i, err
 }
 
 const getLatestEntryRevision = `-- name: GetLatestEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -115,12 +118,13 @@ func (q *Queries) GetLatestEntryRevision(ctx context.Context, entryID string) (E
 		&i.SocialMediaID,
 		&i.SeoRobotsIndex,
 		&i.SeoRobotsFollow,
+		&i.SchemaMode,
 	)
 	return i, err
 }
 
 const listEntryRevisions = `-- name: ListEntryRevisions :many
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -151,6 +155,7 @@ func (q *Queries) ListEntryRevisions(ctx context.Context, entryID string) ([]Ent
 			&i.SocialMediaID,
 			&i.SeoRobotsIndex,
 			&i.SeoRobotsFollow,
+			&i.SchemaMode,
 		); err != nil {
 			return nil, err
 		}

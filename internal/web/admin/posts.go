@@ -18,6 +18,7 @@ func (h *Handler) newPost(w http.ResponseWriter, r *http.Request) {
 		Status:        "Draft",
 		ShowExcerpt:   true,
 		ShowSEO:       true,
+		ShowFeatured:  true,
 	}, "posts")
 }
 
@@ -28,7 +29,7 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := readEntryInput(r)
 	if err != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Excerpt: r.FormValue("excerpt"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), DocumentJSON: postedDocument(r), Error: err.Error(), ShowExcerpt: true, ShowSEO: true}, "posts")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Excerpt: r.FormValue("excerpt"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), Error: err.Error(), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
 		return
 	}
 	user, err := h.currentUser(r)
@@ -42,7 +43,7 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create post: %v", err)
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: input.title, Slug: input.slug, Excerpt: input.excerpt, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), DocumentJSON: input.documentJSON, Error: entryWriteError(err), ShowExcerpt: true, ShowSEO: true}, "posts")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: input.title, Slug: input.slug, Excerpt: input.excerpt, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, Error: entryWriteError(err), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
 		return
 	}
 	if r.FormValue("publish") != "" {
@@ -76,6 +77,7 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		SocialMediaID:   stringValue(revision.SocialMediaID),
 		RobotsIndex:     robotsFormValue(revision.SeoRobotsIndex),
 		RobotsFollow:    robotsFormValue(revision.SeoRobotsFollow),
+		SchemaMode:      revision.SchemaMode,
 		SiteURL:         settings.SiteUrl,
 		PublicPath:      h.entryPublicPath(r, entry.ID),
 		DocumentJSON:    revision.DocumentJson,
@@ -84,6 +86,7 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		PublicURL:       publicURL,
 		ShowExcerpt:     true,
 		ShowSEO:         true,
+		ShowFeatured:    true,
 	}, "posts")
 }
 

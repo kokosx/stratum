@@ -51,6 +51,7 @@ type entryFormData struct {
 	SocialMediaID   string
 	RobotsIndex     string // "inherit" | "1" | "0"
 	RobotsFollow    string // "inherit" | "1" | "0"
+	SchemaMode      string // "" | disabled | webpage | aboutpage | contactpage
 	SiteURL         string
 	PublicPath      string
 	DocumentJSON    string
@@ -62,6 +63,7 @@ type entryFormData struct {
 	PublicURL       string
 	ShowExcerpt     bool
 	ShowSEO         bool
+	ShowFeatured    bool
 }
 
 // editorStatusView holds the values rendered into the editor status region via
@@ -84,6 +86,7 @@ type entryInput struct {
 	socialMediaID   string
 	robotsIndex     *bool
 	robotsFollow    *bool
+	schemaMode      string
 	documentJSON    string
 }
 
@@ -208,11 +211,12 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if err != nil {
 		return fmt.Errorf("save entry: %w", err)
 	}
+	schemaMode := normalizeSchemaMode(input.schemaMode)
 	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
 		ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title,
 		Excerpt: excerpt, SeoTitle: seoTitle, SeoDescription: seoDescription, CanonicalUrl: canonicalURL,
 		FeaturedMediaID: featuredMediaID, SocialMediaID: socialMediaID,
-		SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow,
+		SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
 		DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
 	}); err != nil {
 		return fmt.Errorf("create entry revision: %w", err)
@@ -386,18 +390,19 @@ func (h *Handler) currentUser(r *http.Request) (auth.User, error) {
 
 func readEntryInput(r *http.Request) (entryInput, error) {
 	input := entryInput{
-		title:           strings.TrimSpace(r.FormValue("title")),
-		slug:            strings.TrimSpace(r.FormValue("slug")),
-		excerpt:         strings.TrimSpace(r.FormValue("excerpt")),
-		seoTitle:        strings.TrimSpace(r.FormValue("seo_title")),
-		seoDescription:  strings.TrimSpace(r.FormValue("seo_description")),
-		canonicalURL:    strings.TrimSpace(r.FormValue("canonical_url")),
-		featuredMediaID: strings.TrimSpace(r.FormValue("featured_media_id")),
-		socialMediaID:   strings.TrimSpace(r.FormValue("social_media_id")),
-		robotsIndex:     parseRobotsOverride(r.FormValue("seo_robots_index")),
-		robotsFollow:    parseRobotsOverride(r.FormValue("seo_robots_follow")),
-		documentJSON:    postedDocument(r),
-	}
+			title:           strings.TrimSpace(r.FormValue("title")),
+			slug:            strings.TrimSpace(r.FormValue("slug")),
+			excerpt:         strings.TrimSpace(r.FormValue("excerpt")),
+			seoTitle:        strings.TrimSpace(r.FormValue("seo_title")),
+			seoDescription:  strings.TrimSpace(r.FormValue("seo_description")),
+			canonicalURL:    strings.TrimSpace(r.FormValue("canonical_url")),
+			featuredMediaID: strings.TrimSpace(r.FormValue("featured_media_id")),
+			socialMediaID:   strings.TrimSpace(r.FormValue("social_media_id")),
+			robotsIndex:     parseRobotsOverride(r.FormValue("seo_robots_index")),
+			robotsFollow:    parseRobotsOverride(r.FormValue("seo_robots_follow")),
+			schemaMode:      strings.TrimSpace(r.FormValue("schema_mode")),
+			documentJSON:    postedDocument(r),
+		}
 	if input.title == "" {
 		return input, errors.New("title is required")
 	}
@@ -465,6 +470,15 @@ func robotsInputFormValue(v *bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+func normalizeSchemaMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "disabled", "webpage", "aboutpage", "contactpage":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return ""
+	}
 }
 
 func postedDocument(r *http.Request) string { return r.FormValue("document_json") }

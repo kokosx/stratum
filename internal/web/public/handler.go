@@ -104,17 +104,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Honor redirect routes left behind by slug changes (e.g. a published page
-	// that moved to a new URL). These are served as 301s before any render.
-	if route, rerr := h.queries.GetRouteByPath(r.Context(), r.URL.Path); rerr == nil && route.RouteType == "redirect" && route.RedirectTo.Valid && route.RedirectTo.String != "" {
-		status := http.StatusMovedPermanently
-		if route.RedirectStatus.Valid && route.RedirectStatus.Int64 != 0 {
-			status = int(route.RedirectStatus.Int64)
-		}
-		http.Redirect(w, r, route.RedirectTo.String, status)
-		return
-	}
-
 	h.serveCachedPage(w, r)
 }
 
@@ -134,6 +123,27 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	key := pagecache.Key("", r.URL.Path)
 	if siteSnap == nil || siteSnap.SiteURL == "" {
 		key = pagecache.Key(origin, r.URL.Path)
+	}
+
+	// Full-page cache HIT: serve without touching the database (including
+	// redirect lookups). Redirects and renders run only on miss.
+	if cached, ok := h.hub.Pages.Get(key); ok {
+		if h.dev {
+			w.Header().Set("Server-Timing", "cache;desc=\"hit\"")
+		}
+		h.writePage(w, r, cached)
+		return
+	}
+
+	// Redirect routes left by slug changes (e.g. /old → /new). Checked only on
+	// page-cache miss so a warm cache never pays for GetRouteByPath.
+	if route, rerr := h.queries.GetRouteByPath(r.Context(), r.URL.Path); rerr == nil && route.RouteType == "redirect" && route.RedirectTo.Valid && route.RedirectTo.String != "" {
+		status := http.StatusMovedPermanently
+		if route.RedirectStatus.Valid && route.RedirectStatus.Int64 != 0 {
+			status = int(route.RedirectStatus.Int64)
+		}
+		http.Redirect(w, r, route.RedirectTo.String, status)
+		return
 	}
 
 	entry, err := h.hub.Pages.Do(key, func() (pagecache.Entry, error) {
@@ -156,16 +166,23 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pagecache.Entry) {
+	// HTML must revalidate: the public URL is stable across Publish, so a long
+	// immutable max-age would freeze stale content in browsers/CDNs. no-cache
+	// still allows storing the response; clients must revalidate via ETag.
+	const htmlCacheControl = "no-cache"
+
 	if match := r.Header.Get("If-None-Match"); match != "" && match == entry.ETag {
 		w.Header().Set("ETag", entry.ETag)
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("Cache-Control", htmlCacheControl)
+		w.Header().Set("Vary", "Accept-Encoding")
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
 	w.Header().Set("Content-Type", entry.ContentType)
 	w.Header().Set("ETag", entry.ETag)
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Cache-Control", htmlCacheControl)
+	w.Header().Set("Vary", "Accept-Encoding")
 	if entry.Robots != "" {
 		w.Header().Set("X-Robots-Tag", entry.Robots)
 	}
@@ -173,7 +190,6 @@ func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pageca
 	acceptGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
 	if acceptGzip && len(entry.Gzip) > 0 {
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Vary", "Accept-Encoding")
 		w.Header().Set("Content-Length", strconv.Itoa(len(entry.Gzip)))
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(entry.Gzip)
@@ -216,8 +232,11 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 	menus := h.hub.Navigation.LocationsForPath(path)
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, resolved, siteIcon)
+	// Exactly one LCP preload when the prepared document selected a candidate.
+	head.Preloads = h.lcpPreloads(ctx, prepared)
 
-	blocksCSS, themeCSS, themeJS := h.hub.Assets.URLs()
+	_, themeCSS, themeJS := h.hub.Assets.URLs()
+	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
 	view := themes.PageView{
 		Site:       themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
 		Entry:      themes.EntryView{Title: entry.Title, SEOTitle: stringValue(entry.SeoTitle), SEODescription: resolved.Description, CanonicalURL: resolved.Canonical},
@@ -289,45 +308,13 @@ func (h *Handler) headView(siteSnap *site.Snapshot, resolved seo.Resolved, siteI
 			RulesJSON: template.JS(siteSnap.SpeculationRulesJSON),
 		},
 		SiteIcon: siteIcon,
-		OpenGraph: themes.OpenGraphView{
-			Title:       resolved.OpenGraph.Title,
-			Description: resolved.OpenGraph.Description,
-			URL:         resolved.OpenGraph.URL,
-			Type:        resolved.OpenGraph.Type,
-			Image:       resolved.OpenGraph.Image,
-			ImageWidth:  resolved.OpenGraph.ImageWidth,
-			ImageHeight: resolved.OpenGraph.ImageHeight,
-			ImageType:   resolved.OpenGraph.ImageType,
-			ImageAlt:    resolved.OpenGraph.ImageAlt,
-			SiteName:    resolved.OpenGraph.SiteName,
-			Locale:      resolved.OpenGraph.Locale,
-		},
-		Twitter: themes.TwitterView{
-			Card:        resolved.Twitter.Card,
-			Title:       resolved.Twitter.Title,
-			Description: resolved.Twitter.Description,
-			Image:       resolved.Twitter.Image,
-			Site:        resolved.Twitter.Site,
-		},
-		StructuredData: template.JS(resolved.StructuredData),
-		Alternates: func() []themes.AlternateView {
-			out := make([]themes.AlternateView, 0, len(resolved.Alternates))
-			for _, a := range resolved.Alternates {
-				out = append(out, themes.AlternateView{Href: a.Href, HrefLang: a.HrefLang, Type: a.Type})
-			}
-			return out
-		}(),
-		SEO: themes.SEOView{
-			Title:       resolved.Title,
-			Description: resolved.Description,
-			Canonical:   resolved.Canonical,
-			Robots:      resolved.Robots,
 			OpenGraph: themes.OpenGraphView{
 				Title:       resolved.OpenGraph.Title,
 				Description: resolved.OpenGraph.Description,
 				URL:         resolved.OpenGraph.URL,
 				Type:        resolved.OpenGraph.Type,
 				Image:       resolved.OpenGraph.Image,
+				ImageSecure: resolved.OpenGraph.ImageSecure,
 				ImageWidth:  resolved.OpenGraph.ImageWidth,
 				ImageHeight: resolved.OpenGraph.ImageHeight,
 				ImageType:   resolved.OpenGraph.ImageType,
@@ -340,14 +327,50 @@ func (h *Handler) headView(siteSnap *site.Snapshot, resolved seo.Resolved, siteI
 				Title:       resolved.Twitter.Title,
 				Description: resolved.Twitter.Description,
 				Image:       resolved.Twitter.Image,
+				ImageAlt:    resolved.Twitter.ImageAlt,
 				Site:        resolved.Twitter.Site,
 			},
 			StructuredData: template.JS(resolved.StructuredData),
-			Favicon:        siteIcon,
-		},
+			Alternates: func() []themes.AlternateView {
+				out := make([]themes.AlternateView, 0, len(resolved.Alternates))
+				for _, a := range resolved.Alternates {
+					out = append(out, themes.AlternateView{Href: a.Href, HrefLang: a.HrefLang, Type: a.Type})
+				}
+				return out
+			}(),
+			SEO: themes.SEOView{
+				Title:       resolved.Title,
+				Description: resolved.Description,
+				Canonical:   resolved.Canonical,
+				Robots:      resolved.Robots,
+				OpenGraph: themes.OpenGraphView{
+					Title:       resolved.OpenGraph.Title,
+					Description: resolved.OpenGraph.Description,
+					URL:         resolved.OpenGraph.URL,
+					Type:        resolved.OpenGraph.Type,
+					Image:       resolved.OpenGraph.Image,
+					ImageSecure: resolved.OpenGraph.ImageSecure,
+					ImageWidth:  resolved.OpenGraph.ImageWidth,
+					ImageHeight: resolved.OpenGraph.ImageHeight,
+					ImageType:   resolved.OpenGraph.ImageType,
+					ImageAlt:    resolved.OpenGraph.ImageAlt,
+					SiteName:    resolved.OpenGraph.SiteName,
+					Locale:      resolved.OpenGraph.Locale,
+				},
+				Twitter: themes.TwitterView{
+					Card:        resolved.Twitter.Card,
+					Title:       resolved.Twitter.Title,
+					Description: resolved.Twitter.Description,
+					Image:       resolved.Twitter.Image,
+					ImageAlt:    resolved.Twitter.ImageAlt,
+					Site:        resolved.Twitter.Site,
+				},
+				StructuredData: template.JS(resolved.StructuredData),
+				Favicon:        siteIcon,
+			},
+		}
+		return head
 	}
-	return head
-}
 
 // --- The shared editor/preview pipeline (bypasses the page cache) ---
 
@@ -489,12 +512,58 @@ func (h *Handler) enrichSocialImage(ctx context.Context, siteSnap *site.Snapshot
 	base := seo.BaseURL(siteSnap.SiteURL, origin)
 	absURL := base + view.URL
 	resolved.OpenGraph.Image = absURL
+	if strings.HasPrefix(absURL, "https://") {
+		resolved.OpenGraph.ImageSecure = absURL
+	}
 	resolved.OpenGraph.ImageWidth = view.Width
 	resolved.OpenGraph.ImageHeight = view.Height
 	resolved.OpenGraph.ImageType = view.Type
 	resolved.OpenGraph.ImageAlt = view.Alt
 	resolved.Twitter.Image = absURL
+	resolved.Twitter.ImageAlt = view.Alt
 	return resolved
+}
+
+// lcpPreloads emits at most one image preload for the prepared LCP candidate.
+// Featured-image LCP is resolved via the render context at render time; preload
+// only covers core/image nodes with an explicit mediaId.
+func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedDocument) []themes.ImagePreload {
+	if prepared == nil || prepared.LCPCandidate == "" || h.media == nil {
+		return nil
+	}
+	var find func([]rendering.PreparedNode) *rendering.PreparedNode
+	find = func(nodes []rendering.PreparedNode) *rendering.PreparedNode {
+		for i := range nodes {
+			if nodes[i].ID == prepared.LCPCandidate {
+				return &nodes[i]
+			}
+			if child := find(nodes[i].Children); child != nil {
+				return child
+			}
+		}
+		return nil
+	}
+	node := find(prepared.Nodes)
+	if node == nil || node.Block != "core/image" {
+		return nil
+	}
+	mediaID, _ := node.Props["mediaId"].(string)
+	if mediaID == "" {
+		return nil
+	}
+	view, ok := h.media.MediaView(ctx, mediaID)
+	if !ok || view.Src == "" {
+		return nil
+	}
+	sizes, _ := node.Settings["sizes"].(string)
+	if strings.TrimSpace(sizes) == "" {
+		sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
+	}
+	return []themes.ImagePreload{{
+		Href:   view.Src,
+		SrcSet: view.SrcSet,
+		Sizes:  sizes,
+	}}
 }
 
 // renderThemedDocument renders a document as a fully themed page: it prepares
@@ -513,8 +582,10 @@ func (h *Handler) renderThemedDocument(ctx context.Context, siteSnap *site.Snaps
 	menus := h.hub.Navigation.LocationsForPath(path)
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, resolved, siteIcon)
+	head.Preloads = h.lcpPreloads(ctx, prepared)
 
-	blocksCSS, themeCSS, themeJS := h.hub.Assets.URLs()
+	_, themeCSS, themeJS := h.hub.Assets.URLs()
+	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
 	view := themes.PageView{
 		Site:       themes.SiteView{Title: rc.Site.Name, Tagline: rc.Site.Tagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
 		Entry:      themes.EntryView{Title: rc.Entry.Title, SEOTitle: resolved.OpenGraph.Title, SEODescription: resolved.Description, CanonicalURL: resolved.Canonical},

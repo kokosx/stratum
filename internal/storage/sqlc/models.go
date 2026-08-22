@@ -66,6 +66,7 @@ type EntryRevision struct {
 	SocialMediaID   sql.NullString `json:"social_media_id"`
 	SeoRobotsIndex  sql.NullInt64  `json:"seo_robots_index"`
 	SeoRobotsFollow sql.NullInt64  `json:"seo_robots_follow"`
+	SchemaMode      string         `json:"schema_mode"`
 }
 
 type MediaVariant struct {

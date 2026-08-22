@@ -29,7 +29,8 @@ SELECT
     r.featured_media_id,
     r.social_media_id,
     r.seo_robots_index,
-    r.seo_robots_follow
+    r.seo_robots_follow,
+    r.schema_mode
 
 FROM routes rt
 
@@ -64,6 +65,7 @@ type GetPublishedEntryByPathRow struct {
 	SocialMediaID    sql.NullString `json:"social_media_id"`
 	SeoRobotsIndex   sql.NullInt64  `json:"seo_robots_index"`
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
+	SchemaMode       string         `json:"schema_mode"`
 }
 
 func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error) {
@@ -87,6 +89,7 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.SocialMediaID,
 		&i.SeoRobotsIndex,
 		&i.SeoRobotsFollow,
+		&i.SchemaMode,
 	)
 	return i, err
 }

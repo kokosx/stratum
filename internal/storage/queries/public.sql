@@ -17,7 +17,8 @@ SELECT
     r.featured_media_id,
     r.social_media_id,
     r.seo_robots_index,
-    r.seo_robots_follow
+    r.seo_robots_follow,
+    r.schema_mode
 
 FROM routes rt
 

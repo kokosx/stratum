@@ -81,6 +81,7 @@ type OpenGraphView struct {
 	URL         string // absolute canonical URL
 	Type        string // "website" or "article"
 	Image       string // absolute URL; empty when none
+	ImageSecure string // https image URL when applicable
 	ImageWidth  int
 	ImageHeight int
 	ImageType   string // e.g. "image/jpeg"
@@ -96,6 +97,7 @@ type TwitterView struct {
 	Title       string
 	Description string
 	Image       string // absolute URL, same as OpenGraph.Image
+	ImageAlt    string
 	Site        string // optional twitter:site handle
 }
 

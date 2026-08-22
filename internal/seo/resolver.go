@@ -63,6 +63,7 @@ type OpenGraphView struct {
 	URL         string // absolute canonical URL
 	Type        string // "website" or "article"
 	Image       string // absolute URL to the 1200x630 variant or fallback; empty when none
+	ImageSecure string // set when Image is https
 	ImageWidth  int
 	ImageHeight int
 	ImageType   string // mime type, e.g. "image/jpeg"
@@ -79,6 +80,7 @@ type TwitterView struct {
 	Title       string
 	Description string
 	Image       string // absolute URL, same as OpenGraph.Image
+	ImageAlt    string
 	Site        string // optional "@handle" for twitter:site
 }
 
@@ -205,22 +207,22 @@ func (r *Resolver) Resolve(in Input) Resolved {
 
 	twitterCard := "summary_large_image"
 
-	og := OpenGraphView{
-		Title:       raw,
-		Description: desc,
-		URL:         canonical,
-		Type:        ogType,
-		Image:       ogImage,
-		SiteName:    strings.TrimSpace(in.Site.Title),
-		Locale:      strings.TrimSpace(in.Site.Language),
-	}
-	tw := TwitterView{
-		Card:        twitterCard,
-		Title:       raw,
-		Description: desc,
-		Image:       ogImage,
-		Site:        strings.TrimSpace(in.Site.TwitterSite),
-	}
+		og := OpenGraphView{
+			Title:       raw,
+			Description: desc,
+			URL:         canonical,
+			Type:        ogType,
+			Image:       ogImage,
+			SiteName:    strings.TrimSpace(in.Site.Title),
+			Locale:      OGLocale(in.Site.Language),
+		}
+		tw := TwitterView{
+			Card:        twitterCard,
+			Title:       raw,
+			Description: desc,
+			Image:       ogImage,
+			Site:        strings.TrimSpace(in.Site.TwitterSite),
+		}
 
 	return Resolved{
 		Title:               title,
@@ -254,6 +256,16 @@ func robotsString(index, follow bool) string {
 		parts = append(parts, "nofollow")
 	}
 	return strings.Join(parts, ",")
+}
+
+// OGLocale converts a BCP 47 language tag into the underscore form Open Graph
+// expects (en_US). Bare primary tags (en, pl) pass through unchanged.
+func OGLocale(lang string) string {
+	lang = strings.TrimSpace(lang)
+	if lang == "" {
+		return ""
+	}
+	return strings.ReplaceAll(lang, "-", "_")
 }
 
 // Helper for tri-state bool pointer creation.

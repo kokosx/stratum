@@ -13,7 +13,7 @@
   {{ if .Head.OpenGraph.Type }}<meta property="og:type" content="{{ .Head.OpenGraph.Type }}">{{ end }}
   {{ if .Head.OpenGraph.SiteName }}<meta property="og:site_name" content="{{ .Head.OpenGraph.SiteName }}">{{ end }}
   {{ if .Head.OpenGraph.Locale }}<meta property="og:locale" content="{{ .Head.OpenGraph.Locale }}">{{ end }}
-  {{ if .Head.OpenGraph.Image }}<meta property="og:image" content="{{ .Head.OpenGraph.Image }}">{{ end }}
+  {{ if .Head.OpenGraph.Image }}<meta property="og:image" content="{{ .Head.OpenGraph.Image }}">{{ if .Head.OpenGraph.ImageSecure }}<meta property="og:image:secure_url" content="{{ .Head.OpenGraph.ImageSecure }}">{{ end }}{{ end }}
   {{ if .Head.OpenGraph.ImageWidth }}<meta property="og:image:width" content="{{ .Head.OpenGraph.ImageWidth }}">{{ end }}
   {{ if .Head.OpenGraph.ImageHeight }}<meta property="og:image:height" content="{{ .Head.OpenGraph.ImageHeight }}">{{ end }}
   {{ if .Head.OpenGraph.ImageType }}<meta property="og:image:type" content="{{ .Head.OpenGraph.ImageType }}">{{ end }}
@@ -22,12 +22,13 @@
   {{ if .Head.Twitter.Title }}<meta name="twitter:title" content="{{ .Head.Twitter.Title }}">{{ end }}
   {{ if .Head.Twitter.Description }}<meta name="twitter:description" content="{{ .Head.Twitter.Description }}">{{ end }}
   {{ if .Head.Twitter.Image }}<meta name="twitter:image" content="{{ .Head.Twitter.Image }}">{{ end }}
+  {{ if .Head.Twitter.ImageAlt }}<meta name="twitter:image:alt" content="{{ .Head.Twitter.ImageAlt }}">{{ end }}
   {{ if .Head.Twitter.Site }}<meta name="twitter:site" content="{{ .Head.Twitter.Site }}">{{ end }}
   {{ if .Head.Speculation.Enabled }}<script type="speculationrules">{{ .Head.Speculation.RulesJSON }}</script>{{ end }}
   {{ if .Head.StructuredData }}<script type="application/ld+json">{{ .Head.StructuredData }}</script>{{ end }}
   {{ if .Head.SiteIcon }}{{ if .Head.SiteIcon.Size32 }}<link rel="icon" type="image/png" sizes="32x32" href="{{ .Head.SiteIcon.Size32 }}">{{ end }}{{ if .Head.SiteIcon.Size16 }}<link rel="icon" type="image/png" sizes="16x16" href="{{ .Head.SiteIcon.Size16 }}">{{ end }}{{ if .Head.SiteIcon.Size192 }}<link rel="icon" type="image/png" sizes="192x192" href="{{ .Head.SiteIcon.Size192 }}">{{ end }}{{ if .Head.SiteIcon.Size512 }}<link rel="icon" type="image/png" sizes="512x512" href="{{ .Head.SiteIcon.Size512 }}">{{ end }}{{ if .Head.SiteIcon.Size180 }}<link rel="apple-touch-icon" href="{{ .Head.SiteIcon.Size180 }}">{{ end }}{{ end }}
   {{ range .Head.Preloads }}<link rel="preload" as="image" href="{{ .Href }}"{{ if .SrcSet }} imagesrcset="{{ .SrcSet }}"{{ end }}{{ if .Sizes }} imagesizes="{{ .Sizes }}"{{ end }} fetchpriority="high">{{ end }}
-  <link rel="stylesheet" href="{{ .Assets.BlocksCSS }}">
+  {{ if .Assets.BlocksCSS }}<link rel="stylesheet" href="{{ .Assets.BlocksCSS }}">{{ end }}
   <link rel="stylesheet" href="{{ .Assets.ThemeCSS }}">
   {{ if .PreviewCSS }}<style id="stratum-preview-theme">{{ .PreviewCSS }}</style>{{ end }}
   {{ if .Assets.ThemeJS }}<script src="{{ .Assets.ThemeJS }}" defer></script>{{ end }}
