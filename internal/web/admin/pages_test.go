@@ -108,6 +108,52 @@ func TestWritePagePreservesDocumentsAndPublishedRevision(t *testing.T) {
 	}
 }
 
+func TestPublishingHomepageKeepsRootRoute(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Seed(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database.DB)
+	registry, err := blocks.NewRegistry(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	themeRuntime, err := themes.NewRuntime(ctx, queries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := NewHandler(database.DB, queries, nil, registry, themeRuntime, newTestMedia(t, queries))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The seeded homepage is a page with slug "home" whose live route is "/".
+	// Publishing it from the editor must keep it at "/" and must not leave a
+	// redirect row at the site root.
+	if err := h.writeEntry(ctx, "page", "author", "seed-home", entryInput{title: "Home v2", slug: "home", documentJSON: nestedDocument("Home v2", "left")}, false, true); err != nil {
+		t.Fatal(err)
+	}
+
+	route, err := queries.GetRouteByPath(ctx, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.RouteType != "entry" || !route.EntryID.Valid || route.EntryID.String != "seed-home" {
+		t.Fatalf("root route = %+v, want entry route for seed-home", route)
+	}
+	if _, err := queries.GetPublishedEntryByPath(ctx, "/"); err != nil {
+		t.Fatalf("homepage not served at /: %v", err)
+	}
+}
+
 func TestWritePageRejectsInvalidDocumentBeforeCreatingRevision(t *testing.T) {
 	ctx := context.Background()
 	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))

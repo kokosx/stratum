@@ -48,7 +48,9 @@ type Querier interface {
 	GetSessionUser(ctx context.Context, tokenHash string) (GetSessionUserRow, error)
 	GetSiteIconMediaID(ctx context.Context) (sql.NullString, error)
 	GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, error)
+	GetSiteSocialMediaID(ctx context.Context) (sql.NullString, error)
 	GetThemeCustomization(ctx context.Context, themeID string) (ThemeCustomization, error)
+	GetTwitterSite(ctx context.Context) (string, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	HasAdmin(ctx context.Context) (bool, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
@@ -62,17 +64,27 @@ type Querier interface {
 	ListNavigationLocationsForMenu(ctx context.Context, menuID string) ([]string, error)
 	ListNavigationMenus(ctx context.Context) ([]NavigationMenu, error)
 	ListPublishedPagesForNavigation(ctx context.Context) ([]ListPublishedPagesForNavigationRow, error)
+	// Every redirect route whose target is the given path. Slug changes use this to
+	// flatten redirect chains: when /a -> /b exists and /b moves to /c, this query
+	// finds /a so it can be retargeted straight to /c.
+	ListRedirectsToTarget(ctx context.Context, redirectTo sql.NullString) ([]Route, error)
 	ListRoutesForEntry(ctx context.Context, entryID sql.NullString) ([]Route, error)
-	// Returns every publicly published entry that owns an entry-type route. Drafts,
-	// private/trash entries, redirect routes, admin/preview URLs and unpublished
-	// entries are excluded by the joins and filters below. The published revision
-	// timestamp drives <lastmod> so a newer draft does not change the sitemap.
+	// Returns every URL that belongs in the sitemap: published and active entries
+	// of public content types that own an entry-type route and resolve as
+	// indexable. Drafts (no published revision), private/trash entries,
+	// non-public content types, redirect/system routes, admin/preview URLs and
+	// noindex revisions are all excluded by the joins and filters below.
+	// <lastmod> comes from the published revision timestamp, so a newer draft
+	// never changes the sitemap.
 	ListSitemapEntries(ctx context.Context) ([]ListSitemapEntriesRow, error)
 	SeedEntry(ctx context.Context, arg SeedEntryParams) error
 	SeedEntryRevision(ctx context.Context, arg SeedEntryRevisionParams) error
 	SeedPublishedRevision(ctx context.Context, arg SeedPublishedRevisionParams) error
 	SeedRoute(ctx context.Context, arg SeedRouteParams) error
 	SeedSiteSettings(ctx context.Context, arg SeedSiteSettingsParams) error
+	// Records the FIRST publication of an Entry. Later re-publishes must never
+	// move it: structured data uses it as the stable datePublished.
+	SetFirstPublishedAtIfNull(ctx context.Context, arg SetFirstPublishedAtIfNullParams) error
 	SetPublishedRevision(ctx context.Context, arg SetPublishedRevisionParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
@@ -81,7 +93,9 @@ type Querier interface {
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error
 	UpdateSiteIconMediaID(ctx context.Context, siteIconMediaID sql.NullString) error
 	UpdateSiteSettings(ctx context.Context, arg UpdateSiteSettingsParams) error
+	UpdateSiteSocialMediaID(ctx context.Context, siteSocialMediaID sql.NullString) error
 	UpdateSiteTitle(ctx context.Context, arg UpdateSiteTitleParams) error
+	UpdateTwitterSite(ctx context.Context, twitterSite string) error
 	UpsertNavigationLocation(ctx context.Context, arg UpsertNavigationLocationParams) error
 	UpsertThemeCustomization(ctx context.Context, arg UpsertThemeCustomizationParams) error
 }

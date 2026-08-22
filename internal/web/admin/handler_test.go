@@ -18,6 +18,7 @@ import (
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
+	publicweb "github.com/kokosx/stratum/internal/web/public"
 )
 
 func TestPageTemplateSafelyEmbedsEditorBootstrap(t *testing.T) {
@@ -122,6 +123,11 @@ func newTestHandler(t *testing.T) (*Handler, *auth.Service) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	publicHandler, err := publicweb.NewHandler(queries, registry, themeRuntime, newTestMedia(t, queries))
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler.SetDocumentPreviewRenderer(publicHandler.RenderEditableDocument)
 	return handler, service
 }
 

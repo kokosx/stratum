@@ -90,6 +90,11 @@ func (h *Handler) saveAppearance(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err)
 		return
 	}
+	if h.runtime != nil {
+		if rerr := h.runtime.ReloadTheme(r.Context()); rerr != nil {
+			log.Printf("reload theme runtime: %v", rerr)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "customization": h.themes.Current()})
 }
@@ -125,6 +130,9 @@ func (h *Handler) previewAppearance(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, err)
 		return
 	}
+	// Appearance previews are never indexed (defense in depth: the admin
+	// handler already sends this header for every /admin response).
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(page)

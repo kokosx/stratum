@@ -5,10 +5,14 @@
 {{ define "header" }}
 <header class="site-header site-header--{{ setting .Theme.Settings "header.layout" }} site-header--width-{{ setting .Theme.Settings "header.width" }} site-header--logo-{{ setting .Theme.Settings "header.logoPosition" }}{{ if setting .Theme.Settings "header.sticky" }} is-sticky{{ end }}{{ if setting .Theme.Settings "header.border" }} has-border{{ end }} shadow--{{ setting .Theme.Settings "header.shadow" }}">
   <div class="site-header__inner st-container st-container--{{ setting .Theme.Settings "header.width" }}">
-    <a class="site-brand" href="/">
-      {{ if setting .Theme.Settings "header.showSiteTitle" }}<span class="site-title">{{ .Site.Title }}</span>{{ end }}
-      {{ if and (setting .Theme.Settings "header.showTagline") .Site.Tagline }}<span class="site-tagline">{{ .Site.Tagline }}</span>{{ end }}
-    </a>
+    {{ $showTitle := and (setting .Theme.Settings "header.showSiteTitle") .Site.Title }}
+    {{ $showTagline := and (setting .Theme.Settings "header.showTagline") .Site.Tagline }}
+    {{ $hasBrand := or .Site.LogoURL $showTitle $showTagline }}
+    {{ if $hasBrand }}<a class="site-brand" href="{{ if .Site.SiteURL }}{{ .Site.SiteURL }}{{ else }}/{{ end }}">
+      {{ if .Site.LogoURL }}<img class="site-logo" src="{{ .Site.LogoURL }}" alt="{{ if .Site.Title }}{{ .Site.Title }} logo{{ else }}Site logo{{ end }}"{{ if .Site.LogoWidth }} width="{{ .Site.LogoWidth }}"{{ end }}{{ if .Site.LogoHeight }} height="{{ .Site.LogoHeight }}"{{ end }}>{{ end }}
+      {{ if $showTitle }}<span class="site-title">{{ .Site.Title }}</span>{{ end }}
+      {{ if $showTagline }}<span class="site-tagline">{{ .Site.Tagline }}</span>{{ end }}
+    </a>{{ end }}
     {{ $primary := index .Navigation "primary" }}{{ if $primary.Items }}
       <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation"><span class="sr-only">Toggle navigation</span><span aria-hidden="true">☰</span></button>
       <div id="primary-navigation" class="primary-navigation mobile--{{ setting .Theme.Settings "navigation.mobileStyle" }}">

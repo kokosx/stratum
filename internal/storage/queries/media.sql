@@ -30,9 +30,9 @@ DELETE FROM media WHERE id = ?;
 
 -- name: CreateMediaVariant :one
 INSERT INTO media_variants (
-    id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at
+    id, media_id, kind, storage_key, mime_type, width, height, file_size, content_hash, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListMediaVariants :many
@@ -53,10 +53,13 @@ SELECT
     + (
         SELECT COUNT(*) FROM site_settings
         WHERE site_icon_media_id = sqlc.arg('id')
+           OR site_logo_media_id = sqlc.arg('id')
+           OR site_social_media_id = sqlc.arg('id')
     )
     + (
-        SELECT COUNT(*) FROM entries
+        SELECT COUNT(*) FROM entry_revisions
         WHERE featured_media_id = sqlc.arg('id')
+           OR social_media_id = sqlc.arg('id')
     )
 AS usage_count;
 
@@ -66,4 +69,20 @@ SELECT site_icon_media_id FROM site_settings WHERE id = 1;
 -- name: UpdateSiteIconMediaID :exec
 UPDATE site_settings
 SET site_icon_media_id = ?, updated_at = unixepoch()
+WHERE id = 1;
+
+-- name: GetSiteSocialMediaID :one
+SELECT site_social_media_id FROM site_settings WHERE id = 1;
+
+-- name: UpdateSiteSocialMediaID :exec
+UPDATE site_settings
+SET site_social_media_id = ?, updated_at = unixepoch()
+WHERE id = 1;
+
+-- name: GetTwitterSite :one
+SELECT twitter_site FROM site_settings WHERE id = 1;
+
+-- name: UpdateTwitterSite :exec
+UPDATE site_settings
+SET twitter_site = ?, updated_at = unixepoch()
 WHERE id = 1;

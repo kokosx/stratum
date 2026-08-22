@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -27,6 +29,13 @@ type Registry struct {
 	reloadMu      sync.Mutex
 	snapshot      atomic.Pointer[snapshot]
 	mediaProvider rendering.MediaProvider
+
+	// prepared caches the rendered-ready document per published revision. A
+	// published revision is immutable, so its PreparedDocument is valid until
+	// the block registry changes (tracked by generation).
+	preparedMu sync.Mutex
+	prepared   map[string]*rendering.PreparedDocument
+	generation atomic.Uint64
 }
 
 type snapshot struct {
@@ -34,6 +43,7 @@ type snapshot struct {
 	definitions map[BlockKey]*Definition
 	catalog     []EditorDefinition
 	styles      string
+	blockStyles map[rendering.BlockKey]string
 }
 
 // NewRegistry loads the initial renderer snapshot. provider is optional; when
@@ -64,6 +74,7 @@ func (r *Registry) Reload(ctx context.Context) error {
 	compiled := make(map[BlockKey]*Definition, len(definitions))
 	catalog := make([]EditorDefinition, 0, len(definitions))
 	styles := ""
+	blockStyles := make(map[rendering.BlockKey]string)
 	for _, stored := range definitions {
 		blockName := stored.Namespace + "/" + stored.Name
 		if !blockNamePattern.MatchString(blockName) {
@@ -96,6 +107,7 @@ func (r *Registry) Reload(ctx context.Context) error {
 		}
 		if definition.Styles != "" {
 			styles += fmt.Sprintf("/* %s@%d */\n%s\n", blockName, stored.Version, definition.Styles)
+			blockStyles[rendering.BlockKey{Name: blockName, Version: int(stored.Version)}] = definition.Styles
 		}
 	}
 
@@ -104,8 +116,124 @@ func (r *Registry) Reload(ctx context.Context) error {
 		return fmt.Errorf("build block renderer: %w", err)
 	}
 
-	r.snapshot.Store(&snapshot{renderer: renderer, definitions: compiled, catalog: catalog, styles: styles})
+	r.snapshot.Store(&snapshot{renderer: renderer, definitions: compiled, catalog: catalog, styles: styles, blockStyles: blockStyles})
+	r.generation.Add(1)
+	r.preparedMu.Lock()
+	r.prepared = make(map[string]*rendering.PreparedDocument)
+	r.preparedMu.Unlock()
 	return nil
+}
+
+// Generation returns the current block-registry generation. It is included in
+// cache keys so a blocks change invalidates prepared documents.
+func (r *Registry) Generation() uint64 {
+	return r.generation.Load()
+}
+
+// Prepare validates a document, applies block defaults, and returns the
+// render-ready PreparedDocument. It is the single place defaults and validation
+// happen for the public render path.
+func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument, error) {
+	current := r.snapshot.Load()
+	if current == nil {
+		return nil, fmt.Errorf("block registry is not initialized")
+	}
+	if err := current.validateDocument(doc); err != nil {
+		return nil, err
+	}
+	nodes := make([]rendering.PreparedNode, 0, len(doc.Nodes))
+	for _, node := range doc.Nodes {
+		prepared, err := current.prepareNode(node)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, prepared)
+	}
+	prepared := &rendering.PreparedDocument{Nodes: nodes}
+	used := make(map[rendering.BlockKey]bool)
+	var firstAuto, firstHigh string
+	var visit func([]rendering.PreparedNode)
+	visit = func(items []rendering.PreparedNode) {
+		for _, node := range items {
+			used[rendering.BlockKey{Name: node.Block, Version: node.Version}] = true
+			if node.Block == "core/image" && imageEligible(node) {
+				priority, _ := node.Settings["priority"].(string)
+				// Existing revisions used eager as the manual opt-in. Keep that
+				// explicit intent until the author changes the new priority field.
+				if priority == "auto" {
+					if eager, _ := node.Settings["eager"].(bool); eager {
+						priority = "high"
+					}
+				}
+				if priority == "high" && firstHigh == "" {
+					firstHigh = node.ID
+				}
+				if priority == "auto" && firstAuto == "" {
+					firstAuto = node.ID
+				}
+			}
+			visit(node.Children)
+		}
+	}
+	visit(nodes)
+	for key := range used {
+		prepared.UsedBlocks = append(prepared.UsedBlocks, key)
+	}
+	sort.Slice(prepared.UsedBlocks, func(i, j int) bool {
+		if prepared.UsedBlocks[i].Name == prepared.UsedBlocks[j].Name {
+			return prepared.UsedBlocks[i].Version < prepared.UsedBlocks[j].Version
+		}
+		return prepared.UsedBlocks[i].Name < prepared.UsedBlocks[j].Name
+	})
+	if firstHigh != "" {
+		prepared.LCPCandidate = firstHigh
+	} else {
+		prepared.LCPCandidate = firstAuto
+	}
+	return prepared, nil
+}
+
+// PreparedCache returns a cached PreparedDocument for a published revision,
+// preparing and caching it on first use. revisionID uniquely identifies the
+// immutable revision; the entry is dropped automatically when the registry
+// generation changes.
+func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*rendering.PreparedDocument, error) {
+	if revisionID != "" {
+		gen := r.generation.Load()
+		key := revisionID
+		r.preparedMu.Lock()
+		if r.prepared == nil {
+			r.prepared = make(map[string]*rendering.PreparedDocument)
+		}
+		if pd, ok := r.prepared[key]; ok {
+			r.preparedMu.Unlock()
+			return pd, nil
+		}
+		r.preparedMu.Unlock()
+		pd, err := r.Prepare(doc)
+		if err != nil {
+			return nil, err
+		}
+		r.preparedMu.Lock()
+		r.prepared[key] = pd
+		_ = gen
+		r.preparedMu.Unlock()
+		return pd, nil
+	}
+	return r.Prepare(doc)
+}
+
+// RenderPrepared renders a PreparedDocument through the current renderer without
+// any JSON decoding or defaults processing. The single LCP candidate chosen at
+// prepare time is bound here, so exactly one image node renders eager with
+// fetchpriority=high regardless of which pipeline supplies the context.
+func (r *Registry) RenderPrepared(ctx context.Context, pd *rendering.PreparedDocument, rc rendering.RenderContext) (template.HTML, error) {
+	current := r.snapshot.Load()
+	if current == nil {
+		return "", fmt.Errorf("block registry is not initialized")
+	}
+	rc.LCPNodeID = pd.LCPCandidate
+	return current.renderer.RenderPreparedDocumentContext(ctx, pd, rc)
 }
 
 // RenderDocument renders using one consistent registry snapshot.
@@ -179,6 +307,28 @@ func (r *Registry) Styles() string {
 		return ""
 	}
 	return current.styles
+}
+
+// StylesFor returns each used block definition stylesheet once, in stable order.
+func (r *Registry) StylesFor(keys []rendering.BlockKey) string {
+	current := r.snapshot.Load()
+	if current == nil {
+		return ""
+	}
+	var styles strings.Builder
+	for _, key := range keys {
+		if css := current.blockStyles[key]; css != "" {
+			styles.WriteString(css)
+			styles.WriteByte('\n')
+		}
+	}
+	return styles.String()
+}
+
+func imageEligible(node rendering.PreparedNode) bool {
+	mediaID, _ := node.Props["mediaId"].(string)
+	decorative, _ := node.Settings["decorative"].(bool)
+	return mediaID != "" && !decorative
 }
 
 func nullString(value sql.NullString) string {

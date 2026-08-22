@@ -30,20 +30,32 @@
 
   grid.addEventListener("click", (e) => {
     const card = e.target.closest("[data-media-card]");
-    if (card) showDetail(card.dataset.mediaId);
+    if (card) selectCard(card);
   });
+
+  // P2.61: visible, keyboard-reachable selected state.
+  function selectCard(card) {
+    grid.querySelectorAll(".media-card.is-selected").forEach((c) => {
+      c.classList.remove("is-selected");
+      c.setAttribute("aria-pressed", "false");
+    });
+    card.classList.add("is-selected");
+    card.setAttribute("aria-pressed", "true");
+    showDetail(card.dataset.mediaId);
+  }
 
   function addCard(asset) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "media-card";
+    btn.setAttribute("aria-pressed", "false");
     btn.dataset.mediaCard = asset.id;
     btn.dataset.mediaId = asset.id;
     btn.innerHTML =
       `<span class="media-thumb"><img src="${asset.url}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${asset.original}'"></span>` +
       `<span class="media-card__name">${escapeHtml(asset.filename)}</span>`;
     grid.prepend(btn);
-    showDetail(asset.id);
+    selectCard(btn);
   }
 
   async function showDetail(id) {

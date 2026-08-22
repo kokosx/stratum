@@ -11,7 +11,7 @@ import (
 )
 
 const getSiteSettings = `-- name: GetSiteSettings :one
-SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, created_at, updated_at
+SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, site_social_media_id, twitter_site, site_represents, created_at, updated_at
 FROM site_settings
 WHERE id = 1
 `
@@ -37,6 +37,9 @@ type GetSiteSettingsRow struct {
 	TitleSeparator       string         `json:"title_separator"`
 	SiteLogoMediaID      sql.NullString `json:"site_logo_media_id"`
 	SocialLinks          sql.NullString `json:"social_links"`
+	SiteSocialMediaID    sql.NullString `json:"site_social_media_id"`
+	TwitterSite          string         `json:"twitter_site"`
+	SiteRepresents       string         `json:"site_represents"`
 	CreatedAt            int64          `json:"created_at"`
 	UpdatedAt            int64          `json:"updated_at"`
 }
@@ -65,6 +68,9 @@ func (q *Queries) GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, erro
 		&i.TitleSeparator,
 		&i.SiteLogoMediaID,
 		&i.SocialLinks,
+		&i.SiteSocialMediaID,
+		&i.TwitterSite,
+		&i.SiteRepresents,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -91,6 +97,9 @@ SET
     speculation_mode = ?,
     speculation_eagerness = ?,
     title_separator = ?,
+    site_social_media_id = ?,
+    twitter_site = ?,
+    site_represents = ?,
     updated_at = ?
 WHERE id = 1
 `
@@ -113,6 +122,9 @@ type UpdateSiteSettingsParams struct {
 	SpeculationMode      string         `json:"speculation_mode"`
 	SpeculationEagerness string         `json:"speculation_eagerness"`
 	TitleSeparator       string         `json:"title_separator"`
+	SiteSocialMediaID    sql.NullString `json:"site_social_media_id"`
+	TwitterSite          string         `json:"twitter_site"`
+	SiteRepresents       string         `json:"site_represents"`
 	UpdatedAt            int64          `json:"updated_at"`
 }
 
@@ -135,6 +147,9 @@ func (q *Queries) UpdateSiteSettings(ctx context.Context, arg UpdateSiteSettings
 		arg.SpeculationMode,
 		arg.SpeculationEagerness,
 		arg.TitleSeparator,
+		arg.SiteSocialMediaID,
+		arg.TwitterSite,
+		arg.SiteRepresents,
 		arg.UpdatedAt,
 	)
 	return err

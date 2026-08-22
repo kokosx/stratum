@@ -11,7 +11,8 @@
 .cz-toolbar__brand h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
 .cz-toolbar__brand p { margin: 1px 0 0; color: #667085; font-size: 11px; }
 .cz-toolbar__preview-ctrl { display: flex; align-items: center; gap: 10px; margin-left: auto; min-width: 0; }
-.cz-preview-path select { padding: 6px 28px 6px 10px; border: 1px solid #d0d5dd; border-radius: 7px; background: #fff; font: inherit; font-size: 12px; color: #344054; appearance: none; cursor: pointer; max-width: 220px; }
+.cz-preview-path select { padding: 6px 28px 6px 10px; border: 1px solid #d0d5dd; border-radius: 7px; font: inherit; font-size: 12px; color: #344054; appearance: none; cursor: pointer; max-width: 220px; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23475467' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 9px center; }
+.cz-ctrl select { appearance: auto; }
 .cz-preview-path select:focus-visible { outline: 2px solid #84adff; outline-offset: 1px; }
 .cz-viewports { display: flex; padding: 3px; border-radius: 8px; background: #f2f4f7; gap: 2px; flex-shrink: 0; }
 .cz-viewports button { display: flex; align-items: center; justify-content: center; border: 0; border-radius: 6px; padding: 6px 8px; background: transparent; color: #667085; cursor: pointer; transition: background .15s, color .15s, box-shadow .15s; }

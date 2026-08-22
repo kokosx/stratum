@@ -56,6 +56,16 @@
         </div>
 
         <div class="form-field">
+          <label for="site_represents">Site represents</label>
+          <select id="site_represents" name="site_represents">
+            <option value="organization" {{ if ne .Content.Form.SiteRepresents "person" }}selected{{ end }}>Organization</option>
+            <option value="person" {{ if eq .Content.Form.SiteRepresents "person" }}selected{{ end }}>Person</option>
+          </select>
+          <p class="field-desc">Who the site stands for, used as the publisher in structured data (JSON-LD).</p>
+          {{ $e := index .Content.Errors "site_represents" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
           <span class="field-label">Site Icon (favicon)</span>
           <input type="hidden" name="site_icon_media_id" id="site_icon_media_id" value="{{ .Content.Form.SiteIconMediaID }}">
           <div class="site-icon-field">
@@ -142,6 +152,30 @@
           <input type="text" id="title_separator" name="title_separator" value="{{ .Content.Form.TitleSeparator }}" maxlength="8" autocomplete="off">
           <p class="field-desc">Used by the theme to build titles like <code>Page Title – Site Name</code>.</p>
         </div>
+
+        <div class="form-field">
+          <span class="field-label">Default social image</span>
+          <input type="hidden" name="site_social_media_id" id="site_social_media_id" value="{{ .Content.Form.SiteSocialMediaID }}">
+          <div class="site-icon-field">
+            <div class="site-icon-preview" id="site-social-preview">
+              {{ if .Content.SiteSocialPreview }}<img src="{{ .Content.SiteSocialPreview }}" alt="">{{ end }}
+            </div>
+            <div class="site-icon-actions">
+              <button type="button" class="button" id="site-social-choose">Choose image</button>
+              <button type="button" class="button button-danger" id="site-social-remove" {{ if not .Content.Form.SiteSocialMediaID }}hidden{{ end }}>Remove</button>
+            </div>
+          </div>
+          <p class="field-desc">Fallback used when an entry has no Social Image or Featured Image. The CMS crops it to 1200×630 for Facebook, LinkedIn and X and serves the dedicated <code>/social</code> derivative.</p>
+          {{ if .Content.SiteSocialWarning }}<p class="form-warning">{{ .Content.SiteSocialWarning }}</p>{{ end }}
+          {{ $e := index .Content.Errors "site_social_media_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
+
+        <div class="form-field">
+          <label for="twitter_site">X (Twitter) handle</label>
+          <input type="text" id="twitter_site" name="twitter_site" value="{{ .Content.Form.TwitterSite }}" placeholder="@handle" autocomplete="off">
+          <p class="field-desc">Optional. Used for <code>twitter:site</code>. Leave empty to omit.</p>
+          {{ $e := index .Content.Errors "twitter_site" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+        </div>
       </section>
 
       <section id="section-performance" class="panel settings-section">
@@ -190,26 +224,54 @@
   const removeBtn = document.getElementById('site-icon-remove');
   const chooseBtn = document.getElementById('site-icon-choose');
   const form = document.getElementById('settings-form');
-  if (!chooseBtn) return;
-  function markDirty() {
-    if (form) form.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  chooseBtn.addEventListener('click', () => {
-    window.openMediaPicker({
-      onSelect: (asset) => {
-        input.value = asset.id;
-        preview.innerHTML = '<img src="' + asset.url + '" alt="">';
-        removeBtn.hidden = false;
-        markDirty();
-      }
+  if (chooseBtn) {
+    function markDirty() {
+      if (form) form.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    chooseBtn.addEventListener('click', () => {
+      window.openMediaPicker({
+        onSelect: (asset) => {
+          input.value = asset.id;
+          preview.innerHTML = '<img src="' + asset.url + '" alt="">';
+          removeBtn.hidden = false;
+          markDirty();
+        }
+      });
     });
-  });
-  removeBtn.addEventListener('click', () => {
-    input.value = '';
-    preview.innerHTML = '';
-    removeBtn.hidden = true;
-    markDirty();
-  });
+    removeBtn.addEventListener('click', () => {
+      input.value = '';
+      preview.innerHTML = '';
+      removeBtn.hidden = true;
+      markDirty();
+    });
+  }
+  const socialInput = document.getElementById('site_social_media_id');
+  const socialPreview = document.getElementById('site-social-preview');
+  const socialRemove = document.getElementById('site-social-remove');
+  const socialChoose = document.getElementById('site-social-choose');
+  if (socialChoose) {
+    function markDirty2() {
+      if (form) form.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    socialChoose.addEventListener('click', () => {
+      window.openMediaPicker({
+        onSelect: (asset) => {
+          socialInput.value = asset.id;
+          // Prefer social variant preview when available, fall back to thumb.
+          var url = asset.socialUrl || asset.url || '/media/' + asset.id + '/social';
+          socialPreview.innerHTML = '<img src="' + url + '" alt="">';
+          socialRemove.hidden = false;
+          markDirty2();
+        }
+      });
+    });
+    socialRemove.addEventListener('click', () => {
+      socialInput.value = '';
+      socialPreview.innerHTML = '';
+      socialRemove.hidden = true;
+      markDirty2();
+    });
+  }
 })();
 </script>
 <script src="/admin/static/admin/settings.js" defer></script>

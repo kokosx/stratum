@@ -9,21 +9,24 @@
   <link rel="stylesheet" href="/admin/static/admin.css">
   <link rel="stylesheet" href="/admin/static/editor/editor.css">
   <link rel="stylesheet" href="/admin/static/appearance/customizer.css">
-  <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.2/bundles/datastar.js"></script>
+  <script type="module" src="/admin/static/admin/datastar.js"></script>
 </head>
 <body>
   <div class="admin">
-    <aside class="sidebar">
+    <button class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="admin-sidebar" aria-label="Toggle navigation">
+      <span aria-hidden="true">&#9776;</span>
+    </button>
+    <aside id="admin-sidebar" class="sidebar">
       <a class="brand" href="/admin">Stratum</a>
       <nav aria-label="Admin navigation">
         <ul class="menu">
-          <li><a href="/admin" class="{{ if eq .ActiveMenu "dashboard" }}active{{ end }}">Dashboard</a></li>
-          <li><a href="/admin/pages" class="{{ if eq .ActiveMenu "pages" }}active{{ end }}">Pages</a></li>
-          <li><a href="/admin/posts" class="{{ if eq .ActiveMenu "posts" }}active{{ end }}">Posts</a></li>
-          <li><a href="/admin/appearance" class="{{ if eq .ActiveMenu "appearance" }}active{{ end }}">Appearance</a></li>
-          <li><a href="/admin/media" class="{{ if eq .ActiveMenu "media" }}active{{ end }}">Media</a></li>
-          <li class="menu-child"><a href="/admin/menus" class="{{ if eq .ActiveMenu "menus" }}active{{ end }}">Menus</a></li>
-          <li><a href="/admin/settings" class="{{ if eq .ActiveMenu "settings" }}active{{ end }}">Settings</a></li>
+          <li><a href="/admin" {{ if eq .ActiveMenu "dashboard" }}class="active" aria-current="page"{{ end }}>Dashboard</a></li>
+          <li><a href="/admin/pages" {{ if eq .ActiveMenu "pages" }}class="active" aria-current="page"{{ end }}>Pages</a></li>
+          <li><a href="/admin/posts" {{ if eq .ActiveMenu "posts" }}class="active" aria-current="page"{{ end }}>Posts</a></li>
+          <li><a href="/admin/appearance" {{ if eq .ActiveMenu "appearance" }}class="active" aria-current="page"{{ end }}>Appearance</a></li>
+          <li><a href="/admin/media" {{ if eq .ActiveMenu "media" }}class="active" aria-current="page"{{ end }}>Media</a></li>
+          <li><a href="/admin/menus" {{ if eq .ActiveMenu "menus" }}class="active" aria-current="page"{{ end }}>Menus</a></li>
+          <li><a href="/admin/settings" {{ if eq .ActiveMenu "settings" }}class="active" aria-current="page"{{ end }}>Settings</a></li>
         </ul>
       </nav>
     </aside>
@@ -39,8 +42,26 @@
       <div id="admin-toast-region" class="toast-region" aria-live="polite"></div>
     </main>
   </div>
+  <script>
+    // P1.47: Mobile admin sidebar toggle
+    document.querySelector('.sidebar-toggle')?.addEventListener('click', function() {
+      var sidebar = document.getElementById('admin-sidebar');
+      var open = this.getAttribute('aria-expanded') !== 'true';
+      this.setAttribute('aria-expanded', String(open));
+      sidebar.classList.toggle('is-open', open);
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      var toggle = document.querySelector('.sidebar-toggle');
+      if (toggle.getAttribute('aria-expanded') === 'true') {
+        toggle.setAttribute('aria-expanded', 'false');
+        document.getElementById('admin-sidebar').classList.remove('is-open');
+        toggle.focus();
+      }
+    });
+  </script>
   <script src="/admin/static/admin/toast.js"></script>
   <script src="/admin/static/admin/media-picker.js" defer></script>
-  </body>
+</body>
 </html>
 {{ end }}

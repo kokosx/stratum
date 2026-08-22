@@ -1,5 +1,6 @@
 {{ define "content" }}
 <div class="page-heading"><h1>{{ .Content.Heading }}</h1><a class="button button-primary" href="{{ .Content.NewURL }}">Add New</a></div>
+<div class="list-table-wrap">
 <table class="list-table">
   <thead>
     <tr><th>Title</th><th>Slug</th><th>Status</th><th>Updated</th><th>View</th></tr>
@@ -18,4 +19,5 @@
     {{ end }}
   </tbody>
 </table>
+</div>
 {{ end }}

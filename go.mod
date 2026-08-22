@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
 	github.com/ebitengine/purego v0.9.1 // indirect
 	github.com/tursodatabase/turso-go-platform-libs v0.7.2 // indirect
 	golang.org/x/sys v0.47.0 // indirect

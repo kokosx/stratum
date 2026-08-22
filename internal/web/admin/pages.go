@@ -33,7 +33,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := readEntryInput(r)
 	if err != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), DocumentJSON: postedDocument(r), Error: err.Error(), ShowSEO: true}, "pages")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), DocumentJSON: postedDocument(r), Error: err.Error(), ShowSEO: true}, "pages")
 		return
 	}
 	user, err := h.currentUser(r)
@@ -47,8 +47,11 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create page: %v", err)
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, DocumentJSON: input.documentJSON, Error: entryWriteError(err), ShowSEO: true}, "pages")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), DocumentJSON: input.documentJSON, Error: entryWriteError(err), ShowSEO: true}, "pages")
 		return
+	}
+	if r.FormValue("publish") != "" && h.runtime != nil {
+		h.runtime.InvalidateContent()
 	}
 	if r.FormValue("publish") != "" {
 		h.setFlash(w, "Page published.")
@@ -67,20 +70,27 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 	status, publicURL := h.entryEditorStatus(r, entry)
 	settings, _ := h.queries.GetSiteSettings(r.Context())
 	h.renderEntryForm(w, r, entryFormData{
-		Heading:       "Edit Page",
-		Action:        "/admin/pages/" + entry.ID,
-		PublishAction: "/admin/pages/" + entry.ID + "/publish",
-		BackURL:       "/admin/pages",
-		Title:         revision.Title,
-		Slug:          entry.Slug,
-		DocumentJSON:  revision.DocumentJson,
-		CanonicalURL:  stringValue(revision.CanonicalUrl),
-		SiteURL:       settings.SiteUrl,
-		PublicPath:    h.entryPublicPath(r, entry.ID),
-		Dirty:         "Saved",
-		Status:        status,
-		PublicURL:     publicURL,
-		ShowSEO:       true,
+		Heading:         "Edit Page",
+		Action:          "/admin/pages/" + entry.ID,
+		PublishAction:   "/admin/pages/" + entry.ID + "/publish",
+		BackURL:         "/admin/pages",
+		Title:           revision.Title,
+		Slug:            entry.Slug,
+		Excerpt:         stringValue(revision.Excerpt),
+		SEOTitle:        stringValue(revision.SeoTitle),
+		SEODescription:  stringValue(revision.SeoDescription),
+		CanonicalURL:    stringValue(revision.CanonicalUrl),
+		FeaturedMediaID: stringValue(revision.FeaturedMediaID),
+		SocialMediaID:   stringValue(revision.SocialMediaID),
+		RobotsIndex:     robotsFormValue(revision.SeoRobotsIndex),
+		RobotsFollow:    robotsFormValue(revision.SeoRobotsFollow),
+		SiteURL:         settings.SiteUrl,
+		PublicPath:      h.entryPublicPath(r, entry.ID),
+		DocumentJSON:    revision.DocumentJson,
+		Dirty:           "Saved",
+		Status:          status,
+		PublicURL:       publicURL,
+		ShowSEO:         true,
 	}, "pages")
 }
 
@@ -153,6 +163,11 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 		return
 	}
 	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, publish)
+	if saveErr == nil && publish && h.runtime != nil {
+		// A new published revision (and possibly a route change) changes the
+		// rendered public pages, sitemap and robots.
+		h.runtime.InvalidateContent()
+	}
 	if isDatastarRequest(r) {
 		h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, saveErr)
 		return
@@ -173,21 +188,25 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 // an inline error message. Used by the no-JS fallback path.
 func (h *Handler) renderEntryError(w http.ResponseWriter, r *http.Request, contentType, activeMenu, entryID string, input entryInput, saveErr error) {
 	data := entryFormData{
-		Heading:        "Edit " + contentTypeTitle(contentType),
-		Action:         "/" + activeMenu + "/" + entryID,
-		PublishAction:  "/" + activeMenu + "/" + entryID + "/publish",
-		BackURL:        "/" + activeMenu,
-		Title:          input.title,
-		Slug:           input.slug,
-		Excerpt:        input.excerpt,
-		SEOTitle:       input.seoTitle,
-		SEODescription: input.seoDescription,
-		CanonicalURL:   input.canonicalURL,
-		DocumentJSON:   input.documentJSON,
-		Error:          entryWriteError(saveErr),
-		Dirty:          "Unsaved",
-		Status:         "Draft",
-		ShowSEO:        true,
+		Heading:         "Edit " + contentTypeTitle(contentType),
+		Action:          "/admin/" + activeMenu + "/" + entryID,
+		PublishAction:   "/admin/" + activeMenu + "/" + entryID + "/publish",
+		BackURL:         "/admin/" + activeMenu,
+		Title:           input.title,
+		Slug:            input.slug,
+		Excerpt:         input.excerpt,
+		SEOTitle:        input.seoTitle,
+		SEODescription:  input.seoDescription,
+		CanonicalURL:    input.canonicalURL,
+		FeaturedMediaID: input.featuredMediaID,
+		SocialMediaID:   input.socialMediaID,
+		RobotsIndex:     robotsInputFormValue(input.robotsIndex),
+		RobotsFollow:    robotsInputFormValue(input.robotsFollow),
+		DocumentJSON:    input.documentJSON,
+		Error:           entryWriteError(saveErr),
+		Dirty:           "Unsaved",
+		Status:          "Draft",
+		ShowSEO:         true,
 	}
 	if contentType == postContentType {
 		data.ShowExcerpt = true

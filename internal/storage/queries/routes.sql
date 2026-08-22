@@ -32,3 +32,12 @@ WHERE id = ?;
 -- name: DeleteRoute :exec
 DELETE FROM routes
 WHERE id = ?;
+
+-- name: ListRedirectsToTarget :many
+-- Every redirect route whose target is the given path. Slug changes use this to
+-- flatten redirect chains: when /a -> /b exists and /b moves to /c, this query
+-- finds /a so it can be retargeted straight to /c.
+SELECT *
+FROM routes
+WHERE route_type = 'redirect'
+  AND redirect_to = ?;

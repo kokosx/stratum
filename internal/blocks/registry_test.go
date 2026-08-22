@@ -50,6 +50,31 @@ func TestRegistryFailedReloadKeepsCurrentSnapshot(t *testing.T) {
 	assertRendered(t, registry, "<p>working</p>")
 }
 
+func TestPrepareSelectsOneNonDecorativeImageForLCP(t *testing.T) {
+	image := blockDefinition(`<img>`)
+	image.Name = "image"
+	image.SchemaJson = `{"schemaVersion":1,"props":{"type":"object","properties":{"mediaId":{"type":"string","default":""}}},"settings":{"type":"object","properties":{"decorative":{"type":"boolean","default":false},"priority":{"type":"string","enum":["auto","high","normal"],"default":"auto"}}},"children":{"mode":"none"},"editor":{}}`
+	image.Styles = sql.NullString{String: ".image{}", Valid: true}
+	registry, err := NewRegistry(context.Background(), &definitionStore{definitions: []db.BlockDefinition{image}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := document.Decode([]byte(`{"version":1,"nodes":[{"id":"decorative","block":"core/image","version":1,"props":{"mediaId":"a"},"settings":{"decorative":true}},{"id":"normal","block":"core/image","version":1,"props":{"mediaId":"b"},"settings":{"priority":"normal"}},{"id":"first","block":"core/image","version":1,"props":{"mediaId":"c"},"settings":{}},{"id":"high","block":"core/image","version":1,"props":{"mediaId":"d"},"settings":{"priority":"high"}},{"id":"other-high","block":"core/image","version":1,"props":{"mediaId":"e"},"settings":{"priority":"high"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := registry.Prepare(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.LCPCandidate != "high" {
+		t.Fatalf("LCPCandidate = %q, want first manual high image", prepared.LCPCandidate)
+	}
+	if len(prepared.UsedBlocks) != 1 || prepared.UsedBlocks[0].Name != "core/image" {
+		t.Fatalf("UsedBlocks = %#v, want core/image once", prepared.UsedBlocks)
+	}
+}
+
 func blockDefinition(blockTemplate string) db.BlockDefinition {
 	return db.BlockDefinition{
 		Namespace: "core", Name: "text", Version: 1, RendererType: "template",

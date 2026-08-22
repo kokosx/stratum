@@ -184,6 +184,71 @@ func TestSettingsSaveIsAtomic(t *testing.T) {
 	}
 }
 
+// TestSettingsHomepageKeepsPageURL verifies that a page which becomes the
+// homepage stays reachable at its own slug (via a 301 redirect to "/") instead
+// of silently losing its public URL.
+func TestSettingsHomepageKeepsPageURL(t *testing.T) {
+	h, queries := newSettingsHandler(t)
+	ctx := context.Background()
+	// seed-home is the initial homepage at "/"; seed-about lives at /about.
+	form := settingsForm{
+		SiteTitle: "Atomic", SiteURL: "https://example.com",
+		Language: "en", Timezone: "UTC", RobotsMode: "managed",
+		IndexingEnabled: true, SitemapEnabled: true,
+		HomepageEntryID: "seed-about", SpeculationMode: "off", SpeculationEagerness: "conservative",
+	}
+	if err := h.persistSettings(ctx, mustCurrent(t, queries), form); err != nil {
+		t.Fatal(err)
+	}
+	if entry, err := queries.GetPublishedEntryByPath(ctx, "/"); err != nil || entry.ID != "seed-about" {
+		t.Fatalf("/ should serve seed-about: err=%v id=%q", err, entry.ID)
+	}
+	// The page's own URL must still work: /about is now a 301 redirect to "/".
+	route, err := queries.GetRouteByPath(ctx, "/about")
+	if err != nil || route.RouteType != "redirect" || !route.RedirectTo.Valid || route.RedirectTo.String != "/" {
+		t.Fatalf("/about should be a 301 redirect to /: err=%v route=%+v", err, route)
+	}
+	// The previous homepage got its slug route back with no stale redirect left
+	// at /home.
+	if entry, err := queries.GetPublishedEntryByPath(ctx, "/home"); err != nil || entry.ID != "seed-home" {
+		t.Fatalf("/home should serve seed-home: err=%v id=%q", err, entry.ID)
+	}
+}
+
+// TestSettingsClearHomepageRestoresPageURL verifies that removing the homepage
+// deletes the "/" route, clears the slug redirect and restores the page's own
+// entry route at /<slug>.
+func TestSettingsClearHomepageRestoresPageURL(t *testing.T) {
+	h, queries := newSettingsHandler(t)
+	ctx := context.Background()
+	set := settingsForm{
+		SiteTitle: "Atomic", SiteURL: "https://example.com",
+		Language: "en", Timezone: "UTC", RobotsMode: "managed",
+		IndexingEnabled: true, SitemapEnabled: true,
+		HomepageEntryID: "seed-about", SpeculationMode: "off", SpeculationEagerness: "conservative",
+	}
+	if err := h.persistSettings(ctx, mustCurrent(t, queries), set); err != nil {
+		t.Fatal(err)
+	}
+	clear := set
+	clear.HomepageEntryID = ""
+	if err := h.persistSettings(ctx, mustCurrent(t, queries), clear); err != nil {
+		t.Fatal(err)
+	}
+	// seed-about is back at its own entry route, not a redirect.
+	if entry, err := queries.GetPublishedEntryByPath(ctx, "/about"); err != nil || entry.ID != "seed-about" {
+		t.Fatalf("/about should serve seed-about again: err=%v id=%q", err, entry.ID)
+	}
+	route, err := queries.GetRouteByPath(ctx, "/about")
+	if err != nil || route.RouteType != "entry" || !route.EntryID.Valid || route.EntryID.String != "seed-about" {
+		t.Fatalf("/about should be an entry route owned by seed-about: err=%v route=%+v", err, route)
+	}
+	// No stale homepage route remains.
+	if _, err := queries.GetRouteByPath(ctx, "/"); err == nil {
+		t.Fatal("stale homepage route at / was not removed")
+	}
+}
+
 // TestDatastarSettingsSaveReturnsFragment verifies the save responds with a
 // Datastar SSE patch (no full page reload) and echoes the saved values.
 func TestDatastarSettingsSaveReturnsFragment(t *testing.T) {

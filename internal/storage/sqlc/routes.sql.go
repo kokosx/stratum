@@ -100,6 +100,48 @@ func (q *Queries) GetRouteByPath(ctx context.Context, path string) (Route, error
 	return i, err
 }
 
+const listRedirectsToTarget = `-- name: ListRedirectsToTarget :many
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at
+FROM routes
+WHERE route_type = 'redirect'
+  AND redirect_to = ?
+`
+
+// Every redirect route whose target is the given path. Slug changes use this to
+// flatten redirect chains: when /a -> /b exists and /b moves to /c, this query
+// finds /a so it can be retargeted straight to /c.
+func (q *Queries) ListRedirectsToTarget(ctx context.Context, redirectTo sql.NullString) ([]Route, error) {
+	rows, err := q.db.QueryContext(ctx, listRedirectsToTarget, redirectTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Route{}
+	for rows.Next() {
+		var i Route
+		if err := rows.Scan(
+			&i.ID,
+			&i.Path,
+			&i.EntryID,
+			&i.RouteType,
+			&i.RedirectTo,
+			&i.RedirectStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRoutesForEntry = `-- name: ListRoutesForEntry :many
 SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at
 FROM routes

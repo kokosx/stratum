@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/rendering"
 )
 
 // documentWithDefaults creates a render-only copy. Defaults make older valid
@@ -49,6 +50,49 @@ func (s *snapshot) applyNodeDefaults(node *document.Node) error {
 		}
 	}
 	return nil
+}
+
+// prepareNode builds a PreparedNode: it decodes props/settings, applies schema
+// defaults once, and recursively prepares children. The result carries ready
+// maps so the renderer never decodes or marshals JSON again.
+func (s *snapshot) prepareNode(node document.Node) (rendering.PreparedNode, error) {
+	definition := s.definitions[BlockKey{Name: node.Block, Version: int64(node.Version)}]
+	props, err := decodeJSONValue(node.Props, map[string]any{})
+	if err != nil {
+		return rendering.PreparedNode{}, err
+	}
+	settings, err := decodeJSONValue(node.Settings, map[string]any{})
+	if err != nil {
+		return rendering.PreparedNode{}, err
+	}
+	if definition != nil {
+		applyDefaults(definition.Schema.Props, props)
+		applyDefaults(definition.Schema.Settings, settings)
+	}
+	propMap, _ := props.(map[string]any)
+	if propMap == nil {
+		propMap = map[string]any{}
+	}
+	settingMap, _ := settings.(map[string]any)
+	if settingMap == nil {
+		settingMap = map[string]any{}
+	}
+	children := make([]rendering.PreparedNode, 0, len(node.Children))
+	for _, child := range node.Children {
+		prepared, err := s.prepareNode(child)
+		if err != nil {
+			return rendering.PreparedNode{}, err
+		}
+		children = append(children, prepared)
+	}
+	return rendering.PreparedNode{
+		ID:       node.ID,
+		Block:    node.Block,
+		Version:  node.Version,
+		Props:    propMap,
+		Settings: settingMap,
+		Children: children,
+	}, nil
 }
 
 func applyDefaults(schema ValueSchema, value any) {

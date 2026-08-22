@@ -16,8 +16,10 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
+html[data-appearance="light"] { color-scheme: light; }
+html[data-appearance="dark"] { color-scheme: dark; }
+
 html {
-  color-scheme: light dark;
   scroll-behavior: smooth;
   -webkit-text-size-adjust: 100%;
 }
@@ -45,6 +47,22 @@ img, svg, video { max-width: 100%; height: auto; }
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 
+/* Skip link: hidden until focused, then pinned to the top-left. */
+.skip-link {
+  position: absolute;
+  left: var(--st-space-sm);
+  top: var(--st-space-sm);
+  z-index: 100;
+  padding: var(--st-space-sm) var(--st-space-md);
+  background: var(--st-color-primary);
+  color: var(--st-color-primary-contrast);
+  border-radius: var(--st-radius-sm);
+  text-decoration: none;
+  transform: translateY(-150%);
+  transition: transform 0.15s ease;
+}
+.skip-link:focus { transform: translateY(0); outline: 3px solid var(--st-color-focus); outline-offset: 2px; }
+
 a { color: var(--st-link-color); }
 a:hover { color: var(--st-link-hover-color); }
 
@@ -71,17 +89,17 @@ h1, h2, h3, h4, h5, h6 {
   margin: 0;
 }
 h1 {
-  font-size: clamp(2.25rem, 1rem + 3.2vw, var(--st-h1-size));
+  font-size: clamp(1.75rem, 0.5rem + 4.5vw, var(--st-h1-size));
   line-height: 1.08;
   letter-spacing: -0.02em;
 }
 h2 {
-  font-size: clamp(1.75rem, 1rem + 2.2vw, var(--st-h2-size));
+  font-size: clamp(1.4rem, 0.5rem + 3vw, var(--st-h2-size));
   line-height: 1.14;
   letter-spacing: -0.01em;
 }
 h3 {
-  font-size: clamp(1.4rem, 1rem + 1.4vw, var(--st-h3-size));
+  font-size: clamp(1.15rem, 0.5rem + 2vw, var(--st-h3-size));
   line-height: 1.18;
 }
 h4 { font-size: clamp(1.15rem, 1rem + 0.8vw, 1.4rem); line-height: 1.25; }
@@ -192,12 +210,14 @@ p { margin: 0; }
 }
 .site-brand {
   display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
   color: var(--st-color-heading);
   text-decoration: none;
   font-weight: var(--st-heading-weight);
 }
+.site-logo { display: block; max-height: calc(var(--st-header-height) - var(--st-space-lg)); width: auto; }
 .site-title { font-family: var(--st-font-heading); font-size: 1.2rem; font-weight: var(--st-heading-weight); line-height: 1.1; }
 .site-tagline { color: var(--st-color-text-muted); font-size: var(--st-small-size); font-weight: 400; }
 
@@ -209,8 +229,8 @@ p { margin: 0; }
 }
 .site-header--centered .site-brand { align-items: center; text-align: center; }
 .site-header--stacked .site-brand { align-items: center; text-align: center; }
-.site-header--split .site-header__inner { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
-.site-header--split .primary-navigation { grid-column: 2; }
+.site-header--split .site-header__inner { display: grid; grid-template-columns: auto 1fr; align-items: center; }
+.site-header--split .primary-navigation { grid-column: 2; justify-self: end; margin-left: 0; }
 .site-header--minimal .site-header__inner { min-height: calc(var(--st-header-height) * 0.8); }
 .site-header--logo-center .site-brand { align-items: center; text-align: center; }
 .site-header--logo-right .site-header__inner { justify-content: flex-start; }
@@ -252,17 +272,19 @@ p { margin: 0; }
 .site-navigation--align-right > ul { justify-content: flex-end; }
 .site-navigation--align-center > ul { justify-content: center; }
 
-/* Parent link + chevron are one inline-flex unit. */
+/* Parent link + chevron form one inline-flex control so the current/hover
+   visual treatment wraps both as a single unit. */
 .site-navigation .menu-item {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0.2em;
+  gap: 0.35em;
 }
 .menu-item > a, .menu-label {
   display: inline-flex;
   align-items: center;
   gap: 0.2em;
+  min-height: 40px;
   padding-block: var(--st-space-sm);
   color: inherit;
   text-decoration: none;
@@ -273,21 +295,27 @@ p { margin: 0; }
 
 /* Current / ancestor states. */
 .site-navigation .menu-item--current > a { color: var(--st-color-primary); }
-.site-navigation--plain .menu-item--current > a {
-  background: var(--st-color-surface-muted);
-  border-radius: var(--st-radius-pill);
-  padding-inline: var(--st-space-sm);
+/* Plain current is a strong, subtle treatment — never a stray pill. */
+.site-navigation--plain .menu-item--current {
+  box-shadow: inset 0 -2px 0 var(--st-color-primary);
+  border-radius: 0;
 }
+.site-navigation--plain .menu-item--current > a,
+.site-navigation--plain .menu-item--current > .submenu-toggle { color: var(--st-color-primary); font-weight: 600; }
 .site-navigation--underline .menu-item > a { border-bottom: 2px solid transparent; border-radius: 0; }
 .site-navigation--underline .menu-item > a:hover { color: var(--st-color-primary); }
-.site-navigation--underline .menu-item--current > a { border-color: var(--st-color-primary); }
+.site-navigation--underline .menu-item--current > a { border-color: var(--st-color-primary); color: var(--st-color-primary); }
+/* Pill current wraps the whole link + chevron unit as one pill. */
+.site-navigation--pill .menu-item { border-radius: var(--st-radius-pill); }
 .site-navigation--pill .menu-item > a { border-radius: var(--st-radius-pill); padding-inline: var(--st-space-md); }
-.site-navigation--pill .menu-item > a:hover { background: var(--st-color-surface-muted); }
-.site-navigation--pill .menu-item--current > a { background: var(--st-color-surface-muted); color: var(--st-color-primary); }
+.site-navigation--pill .menu-item:hover { background: var(--st-color-surface-muted); }
+.site-navigation--pill .menu-item--current { background: var(--st-color-surface-muted); }
+.site-navigation--pill .menu-item--current > a { color: var(--st-color-primary); }
 .menu-item--ancestor > a { color: var(--st-color-text); }
 .menu-item--ancestor > a:hover { color: var(--st-color-primary); }
 
 /* Dropdown indicator (chevron) */
+.st-dropdown-indicator--false .submenu-toggle { display: none; }
 .submenu-toggle {
   display: inline-flex;
   align-items: center;
@@ -296,8 +324,10 @@ p { margin: 0; }
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: 2px;
-  margin-inline-start: 0;
+  padding: var(--st-space-sm);
+  margin-inline-start: -0.2em;
+  min-width: 40px;
+  min-height: 40px;
   line-height: 1;
   border-radius: var(--st-radius-sm);
 }
@@ -314,7 +344,7 @@ p { margin: 0; }
   z-index: 30;
   min-width: 200px;
   max-width: min(280px, 80vw);
-  margin: var(--st-space-xs) 0 0;
+  margin: 0;
   padding: var(--st-space-xs);
   list-style: none;
   background: var(--st-color-surface);
@@ -452,6 +482,7 @@ p { margin: 0; }
   align-items: center;
   justify-content: center;
   gap: 0.5em;
+  min-height: 40px;
   font-family: var(--st-font-body);
   font-size: 1rem;
   line-height: 1.2;
@@ -463,10 +494,18 @@ p { margin: 0; }
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
+.stratum-button:active { transform: translateY(1px); }
+.stratum-button:focus-visible { outline: 3px solid var(--st-color-focus); outline-offset: 2px; }
+.stratum-button[disabled],
+.stratum-button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 .stratum-button-primary { background: var(--st-color-primary); color: var(--st-color-primary-contrast); }
 .stratum-button-primary:hover { background: var(--st-color-primary-hover); color: var(--st-color-primary-contrast); }
-.stratum-button-secondary { background: var(--st-color-secondary); color: var(--st-color-primary-contrast); }
-.stratum-button-secondary:hover { background: var(--st-color-secondary-hover); color: var(--st-color-primary-contrast); }
+.stratum-button-secondary { background: var(--st-color-secondary); color: var(--st-color-secondary-contrast, var(--st-color-primary-contrast)); }
+.stratum-button-secondary:hover { background: var(--st-color-secondary-hover); color: var(--st-color-secondary-contrast, var(--st-color-primary-contrast)); }
 .stratum-button-outline {
   border-color: var(--st-color-primary);
   color: var(--st-color-primary);
@@ -476,27 +515,41 @@ p { margin: 0; }
 .stratum-button-ghost { color: var(--st-color-primary); background: transparent; }
 .stratum-button-ghost:hover { background: var(--st-color-surface-muted); }
 
-/* Theme-level primary/secondary style options from the Customizer. */
-.st-buttons-primary--outline .stratum-button-primary,
-.st-buttons-secondary--outline .stratum-button-secondary {
+/* Theme-level primary/secondary style options from the Customizer. A secondary
+   variant must use the secondary palette, never the primary colour. */
+.st-buttons-primary--outline .stratum-button-primary {
   border-color: currentColor;
   background: transparent;
   color: var(--st-color-primary);
 }
-.st-buttons-primary--outline .stratum-button-primary:hover,
-.st-buttons-secondary--outline .stratum-button-secondary:hover {
+.st-buttons-primary--outline .stratum-button-primary:hover {
   background: var(--st-color-primary);
   color: var(--st-color-primary-contrast);
 }
-.st-buttons-primary--soft .stratum-button-primary,
-.st-buttons-secondary--soft .stratum-button-secondary {
+.st-buttons-secondary--outline .stratum-button-secondary {
+  border-color: var(--st-color-secondary);
+  background: transparent;
+  color: var(--st-color-secondary);
+}
+.st-buttons-secondary--outline .stratum-button-secondary:hover {
+  background: var(--st-color-secondary);
+  color: var(--st-color-secondary-contrast, var(--st-color-primary-contrast));
+}
+.st-buttons-primary--soft .stratum-button-primary {
   background: color-mix(in srgb, var(--st-color-primary) 14%, transparent);
   color: var(--st-color-primary);
 }
-.st-buttons-primary--soft .stratum-button-primary:hover,
-.st-buttons-secondary--soft .stratum-button-secondary:hover {
+.st-buttons-primary--soft .stratum-button-primary:hover {
   background: color-mix(in srgb, var(--st-color-primary) 22%, transparent);
   color: var(--st-color-primary);
+}
+.st-buttons-secondary--soft .stratum-button-secondary {
+  background: color-mix(in srgb, var(--st-color-secondary) 14%, transparent);
+  color: var(--st-color-secondary);
+}
+.st-buttons-secondary--soft .stratum-button-secondary:hover {
+  background: color-mix(in srgb, var(--st-color-secondary) 22%, transparent);
+  color: var(--st-color-secondary);
 }
 
 .stratum-button-size-sm { padding: 0.45rem 0.85rem; font-size: var(--st-small-size); }
@@ -643,15 +696,20 @@ p { margin: 0; }
   align-items: center;
   justify-content: space-between;
   gap: var(--st-space-md);
+  min-height: 44px;
   width: 100%;
-  padding: var(--st-space-md) var(--st-space-sm);
+  padding: var(--st-space-sm) var(--st-space-md);
   cursor: pointer;
   font-family: var(--st-font-heading);
   font-weight: var(--st-heading-weight);
   font-size: 1.05rem;
   color: var(--st-color-heading);
   list-style: none;
+  border-radius: var(--st-radius-sm);
+  transition: background-color 0.15s ease;
 }
+.stratum-accordion-trigger:hover { background: var(--st-color-surface-muted); }
+.stratum-accordion-trigger:focus-visible { outline: 3px solid var(--st-color-focus); outline-offset: -2px; }
 .stratum-accordion-trigger::-webkit-details-marker { display: none; }
 .stratum-accordion-trigger::after {
   content: "";
@@ -793,4 +851,28 @@ p { margin: 0; }
   width: min(86vw, 360px);
   overflow: auto;
   box-shadow: var(--st-shadow-lg);
+}
+/* Backdrop behind the mobile drawer. */
+.nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  background: rgba(16, 24, 40, 0.45);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.nav-backdrop[hidden] { display: none; }
+
+/* ----------------------------------------------------------------------------
+   Reduced motion: respect users who ask for less animation.
+   ---------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .submenu-toggle span { transition: none; }
 }

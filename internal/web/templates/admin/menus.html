@@ -91,7 +91,7 @@
 
     <div class="form-actions"><button class="button button-primary" type="submit" name="action" value="save" data-on:click__prevent="@post('/admin/menus/{{ .ID }}?action=save', {contentType: 'form'})">Save Menu</button></div>
   </form>
-  <form method="post" action="/admin/menus/{{ .ID }}/delete" class="delete-menu-form">
+  <form method="post" action="/admin/menus/{{ .ID }}/delete" class="delete-menu-form" onsubmit="return confirm('Delete this menu and all of its items? This cannot be undone.');">
     <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
     <button class="danger-link" type="submit">Delete menu</button>
   </form>

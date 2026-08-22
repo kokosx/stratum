@@ -5,13 +5,19 @@ import "context"
 // MediaView is the resolver output the block templates consume. The renderer
 // never touches storage or the database directly; it asks the MediaProvider to
 // turn a mediaId into the URLs and dimensions needed for an <img>.
+//
+// Src/SrcSet are the native-format fallback candidates (largest responsive
+// variant, or the original when the asset has none). WebPSrcSet lists the
+// generated WebP derivatives; it is empty unless WebP variants exist, and
+// templates use it to emit a <picture> source only when there is one.
 type MediaView struct {
-	ID     string
-	Src    string
-	SrcSet string
-	Width  int
-	Height int
-	Alt    string
+	ID         string
+	Src        string
+	SrcSet     string
+	WebPSrcSet string
+	Width      int
+	Height     int
+	Alt        string
 }
 
 // MediaProvider resolves a media asset id into a MediaView. It is implemented by

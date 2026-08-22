@@ -16,6 +16,10 @@ type Storage interface {
 	Read(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
 	Exists(ctx context.Context, key string) bool
+	// Open returns a seekable handle to a stored blob plus its size. It lets the
+	// media handler stream a derivative (Range requests, no full read into RAM)
+	// instead of loading the entire file.
+	Open(ctx context.Context, key string) (*os.File, int64, error)
 }
 
 // LocalStorage keeps blobs under a root directory split into originals/ and
@@ -89,4 +93,23 @@ func (s *LocalStorage) Exists(ctx context.Context, key string) bool {
 	}
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// Open opens a stored blob for streaming. The caller must close the returned
+// file. Size is the file's byte length used for Content-Length and Range.
+func (s *LocalStorage) Open(ctx context.Context, key string) (*os.File, int64, error) {
+	path, err := s.safePath(key)
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, 0, err
+	}
+	return f, info.Size(), nil
 }

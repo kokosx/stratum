@@ -53,7 +53,7 @@ func (q *Queries) DeleteEntry(ctx context.Context, id string) error {
 }
 
 const getEntry = `-- name: GetEntry :one
-SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at
 FROM entries
 WHERE id = ?
 LIMIT 1
@@ -73,12 +73,13 @@ func (q *Queries) GetEntry(ctx context.Context, id string) (Entry, error) {
 		&i.UpdatedAt,
 		&i.PublishedAt,
 		&i.FeaturedMediaID,
+		&i.FirstPublishedAt,
 	)
 	return i, err
 }
 
 const getEntryBySlug = `-- name: GetEntryBySlug :one
-SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at
 FROM entries
 WHERE content_type_id = ?
   AND slug = ?
@@ -104,6 +105,7 @@ func (q *Queries) GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) 
 		&i.UpdatedAt,
 		&i.PublishedAt,
 		&i.FeaturedMediaID,
+		&i.FirstPublishedAt,
 	)
 	return i, err
 }
@@ -177,6 +179,25 @@ func (q *Queries) ListEntriesByContentType(ctx context.Context, contentTypeID st
 		return nil, err
 	}
 	return items, nil
+}
+
+const setFirstPublishedAtIfNull = `-- name: SetFirstPublishedAtIfNull :exec
+UPDATE entries
+SET first_published_at = ?
+WHERE id = ?
+  AND first_published_at IS NULL
+`
+
+type SetFirstPublishedAtIfNullParams struct {
+	FirstPublishedAt sql.NullInt64 `json:"first_published_at"`
+	ID               string        `json:"id"`
+}
+
+// Records the FIRST publication of an Entry. Later re-publishes must never
+// move it: structured data uses it as the stable datePublished.
+func (q *Queries) SetFirstPublishedAtIfNull(ctx context.Context, arg SetFirstPublishedAtIfNullParams) error {
+	_, err := q.db.ExecContext(ctx, setFirstPublishedAtIfNull, arg.FirstPublishedAt, arg.ID)
+	return err
 }
 
 const setPublishedRevision = `-- name: SetPublishedRevision :exec

@@ -33,7 +33,10 @@ func setupSite(t *testing.T) (*Handler, *db.Queries) {
 		t.Fatal(err)
 	}
 	queries := db.New(database.DB)
-	registry, err := blocks.NewRegistry(ctx, queries)
+	// The media service backs both the block renderer (MediaProvider) and the
+	// handler, mirroring the production runtime wiring.
+	mediaService := newTestMedia(t, queries)
+	registry, err := blocks.NewRegistry(ctx, queries, mediaService)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +44,7 @@ func setupSite(t *testing.T) (*Handler, *db.Queries) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := NewHandler(queries, registry, themeRuntime, newTestMedia(t, queries))
+	handler, err := NewHandler(queries, registry, themeRuntime, mediaService)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +52,14 @@ func setupSite(t *testing.T) (*Handler, *db.Queries) {
 }
 
 // setSettings overwrites the singleton site_settings row.
+// When handler is non-nil it reloads the site snapshot so the public handler
+// sees the new settings immediately (mirrors the admin write path).
 func setSettings(t *testing.T, queries *db.Queries, patch func(*db.UpdateSiteSettingsParams)) {
+	t.Helper()
+	setSettingsWithHandler(t, nil, queries, patch)
+}
+
+func setSettingsWithHandler(t *testing.T, handler *Handler, queries *db.Queries, patch func(*db.UpdateSiteSettingsParams)) {
 	t.Helper()
 	ctx := context.Background()
 	current, err := queries.GetSiteSettings(ctx)
@@ -74,11 +84,19 @@ func setSettings(t *testing.T, queries *db.Queries, patch func(*db.UpdateSiteSet
 		SpeculationMode:      current.SpeculationMode,
 		SpeculationEagerness: current.SpeculationEagerness,
 		TitleSeparator:       current.TitleSeparator,
+		SiteSocialMediaID:    current.SiteSocialMediaID,
+		TwitterSite:          current.TwitterSite,
+		SiteRepresents:       current.SiteRepresents,
 		UpdatedAt:            current.UpdatedAt,
 	}
 	patch(&params)
 	if err := queries.UpdateSiteSettings(ctx, params); err != nil {
 		t.Fatal(err)
+	}
+	if handler != nil {
+		if err := handler.Hub().ReloadSite(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -115,7 +133,7 @@ func seedEntry(t *testing.T, queries *db.Queries, id, contentType, slug, path, s
 
 func TestSitemapDisabledReturns404(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) { p.SitemapEnabled = 0 })
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) { p.SitemapEnabled = 0 })
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sitemap.xml", nil))
 	if rec.Code != http.StatusNotFound {
@@ -125,7 +143,7 @@ func TestSitemapDisabledReturns404(t *testing.T) {
 
 func TestSitemapEnabledIncludesPublicEntries(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.SiteUrl = "https://example.com"
 		p.SitemapEnabled = 1
 	})
@@ -156,7 +174,7 @@ func TestSitemapEnabledIncludesPublicEntries(t *testing.T) {
 
 func TestSitemapExcludesNonPublic(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.SiteUrl = "https://example.com"
 		p.SitemapEnabled = 1
 	})
@@ -183,7 +201,7 @@ func TestSitemapExcludesNonPublic(t *testing.T) {
 
 func TestSitemapUsesPublishedRevisionTimestamp(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.SiteUrl = "https://example.com"
 		p.SitemapEnabled = 1
 	})
@@ -207,7 +225,7 @@ func TestSitemapUsesPublishedRevisionTimestamp(t *testing.T) {
 
 func TestRobotsManagedIndexingEnabled(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.SiteUrl = "https://example.com"
 		p.IndexingEnabled = 1
 		p.SitemapEnabled = 1
@@ -230,7 +248,7 @@ func TestRobotsManagedIndexingEnabled(t *testing.T) {
 
 func TestRobotsManagedIndexingDisabled(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.SiteUrl = "https://example.com"
 		p.IndexingEnabled = 0
 		p.SitemapEnabled = 1
@@ -247,7 +265,7 @@ func TestRobotsManagedIndexingDisabled(t *testing.T) {
 func TestRobotsCustomReturnedExactly(t *testing.T) {
 	handler, queries := setupSite(t)
 	custom := "User-agent: *\nDisallow: /secret/\n"
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.RobotsMode = "custom"
 		p.RobotsCustom = custom
 	})
@@ -261,7 +279,7 @@ func TestRobotsCustomReturnedExactly(t *testing.T) {
 func TestRobotsSitemapDeclarationOnlyWhenAppropriate(t *testing.T) {
 	handler, queries := setupSite(t)
 	// Indexing on but sitemap disabled and no site URL -> no Sitemap line.
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.IndexingEnabled = 1
 		p.SitemapEnabled = 0
 		p.RobotsMode = "managed"
@@ -275,7 +293,7 @@ func TestRobotsSitemapDeclarationOnlyWhenAppropriate(t *testing.T) {
 
 func TestIndexingDisabledAddsXRobotsTag(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) { p.IndexingEnabled = 0 })
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) { p.IndexingEnabled = 0 })
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusOK {
@@ -291,7 +309,7 @@ func TestIndexingDisabledAddsXRobotsTag(t *testing.T) {
 
 func TestCanonicalGeneratedFromSiteURL(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) { p.SiteUrl = "https://example.com" })
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) { p.SiteUrl = "https://example.com" })
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/about", nil))
 	if !strings.Contains(rec.Body.String(), `<link rel="canonical" href="https://example.com/about">`) {
@@ -301,7 +319,7 @@ func TestCanonicalGeneratedFromSiteURL(t *testing.T) {
 
 func TestCanonicalOverrideWins(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) { p.SiteUrl = "https://example.com" })
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) { p.SiteUrl = "https://example.com" })
 	ctx := context.Background()
 	seedEntry(t, queries, "canon", "page", "canon", "/canon", "active", "canon-r1", 1, "Canon", 200, true)
 	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
@@ -326,7 +344,7 @@ func TestCanonicalOverrideWins(t *testing.T) {
 
 func TestSpeculationDisabledNoScript(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) { p.SpeculationMode = "off" })
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) { p.SpeculationMode = "off" })
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/about", nil))
 	if strings.Contains(rec.Body.String(), "speculationrules") {
@@ -336,7 +354,7 @@ func TestSpeculationDisabledNoScript(t *testing.T) {
 
 func TestSpeculationEnabledValidJSON(t *testing.T) {
 	handler, queries := setupSite(t)
-	setSettings(t, queries, func(p *db.UpdateSiteSettingsParams) {
+	setSettingsWithHandler(t, handler, queries, func(p *db.UpdateSiteSettingsParams) {
 		p.SpeculationMode = "prefetch"
 		p.SpeculationEagerness = "conservative"
 	})

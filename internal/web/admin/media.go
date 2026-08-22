@@ -17,6 +17,7 @@ type mediaJSON struct {
 	Filename    string `json:"filename"`
 	URL         string `json:"url"`
 	Original    string `json:"original"`
+	SocialURL   string `json:"socialUrl"`
 	Mime        string `json:"mime"`
 	Size        int64  `json:"size"`
 	Width       int    `json:"width"`
@@ -45,8 +46,9 @@ func toMediaJSON(a *media.Asset) mediaJSON {
 	return mediaJSON{
 		ID:          a.ID,
 		Filename:    a.OriginalFilename,
-		URL:         "/media/" + a.ID + "/480",
+		URL:         a.ThumbURL(),
 		Original:    "/media/" + a.ID + "/original",
+		SocialURL:   "/media/" + a.ID + "/social",
 		Mime:        a.MimeType,
 		Size:        a.FileSize,
 		Width:       a.Width,
@@ -134,6 +136,9 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, status, err)
 		return
 	}
+	if h.runtime != nil {
+		h.runtime.InvalidateMedia(asset.ID)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "asset": toMediaJSON(asset)})
 }
@@ -192,6 +197,9 @@ func (h *Handler) updateMedia(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if h.runtime != nil {
+		h.runtime.InvalidateMedia(id)
+	}
 	if isDatastarRequest(r) {
 		writeSSE(w,
 			patchElementsEvent("inner", "#media-detail-alt", template.HTMLEscapeString(r.FormValue("alt_text"))),
@@ -236,6 +244,9 @@ func (h *Handler) deleteMedia(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONError(w, http.StatusInternalServerError, err)
 		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateMedia(id)
 	}
 	if isDatastarRequest(r) {
 		writeSSE(w,

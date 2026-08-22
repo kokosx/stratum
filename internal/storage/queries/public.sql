@@ -5,7 +5,7 @@ SELECT
     e.slug,
     e.status,
     e.published_at,
-    e.featured_media_id,
+    e.first_published_at,
 
     r.id AS revision_id,
     r.title,
@@ -13,7 +13,11 @@ SELECT
     r.document_json,
     r.seo_title,
     r.seo_description,
-    r.canonical_url
+    r.canonical_url,
+    r.featured_media_id,
+    r.social_media_id,
+    r.seo_robots_index,
+    r.seo_robots_follow
 
 FROM routes rt
 

@@ -50,6 +50,11 @@ func (h *Handler) createMenu(w http.ResponseWriter, r *http.Request) {
 		h.renderMenus(w, r, "", err.Error())
 		return
 	}
+	if h.runtime != nil {
+		if rerr := h.runtime.ReloadNavigation(r.Context()); rerr != nil {
+			log.Printf("reload navigation runtime: %v", rerr)
+		}
+	}
 	h.setFlash(w, "Menu created.")
 	http.Redirect(w, r, "/admin/menus?menu="+menu.ID, http.StatusSeeOther)
 }
@@ -66,6 +71,11 @@ func (h *Handler) deleteMenu(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
+	}
+	if h.runtime != nil {
+		if rerr := h.runtime.ReloadNavigation(r.Context()); rerr != nil {
+			log.Printf("reload navigation runtime: %v", rerr)
+		}
 	}
 	h.setFlash(w, "Menu deleted.")
 	http.Redirect(w, r, "/admin/menus", http.StatusSeeOther)
@@ -153,6 +163,11 @@ func (h *Handler) updateMenu(w http.ResponseWriter, r *http.Request) {
 		}
 		h.renderMenus(w, r, menuID, err.Error())
 		return
+	}
+	if h.runtime != nil {
+		if rerr := h.runtime.ReloadNavigation(r.Context()); rerr != nil {
+			log.Printf("reload navigation runtime: %v", rerr)
+		}
 	}
 	if isDatastarRequest(r) {
 		h.renderMenuEditorFragment(w, r, menuID, "", "Menu saved.")

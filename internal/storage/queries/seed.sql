@@ -15,7 +15,7 @@ ON CONFLICT(id) DO NOTHING;
 
 -- name: SeedPublishedRevision :exec
 UPDATE entries
-SET published_revision_id = ?, published_at = ?, updated_at = ?
+SET published_revision_id = ?, published_at = ?, first_published_at = ?, updated_at = ?
 WHERE id = ?
   AND published_revision_id IS NULL;
 

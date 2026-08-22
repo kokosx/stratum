@@ -75,7 +75,7 @@ func (q *Queries) SeedEntryRevision(ctx context.Context, arg SeedEntryRevisionPa
 
 const seedPublishedRevision = `-- name: SeedPublishedRevision :exec
 UPDATE entries
-SET published_revision_id = ?, published_at = ?, updated_at = ?
+SET published_revision_id = ?, published_at = ?, first_published_at = ?, updated_at = ?
 WHERE id = ?
   AND published_revision_id IS NULL
 `
@@ -83,6 +83,7 @@ WHERE id = ?
 type SeedPublishedRevisionParams struct {
 	PublishedRevisionID sql.NullString `json:"published_revision_id"`
 	PublishedAt         sql.NullInt64  `json:"published_at"`
+	FirstPublishedAt    sql.NullInt64  `json:"first_published_at"`
 	UpdatedAt           int64          `json:"updated_at"`
 	ID                  string         `json:"id"`
 }
@@ -91,6 +92,7 @@ func (q *Queries) SeedPublishedRevision(ctx context.Context, arg SeedPublishedRe
 	_, err := q.db.ExecContext(ctx, seedPublishedRevision,
 		arg.PublishedRevisionID,
 		arg.PublishedAt,
+		arg.FirstPublishedAt,
 		arg.UpdatedAt,
 		arg.ID,
 	)

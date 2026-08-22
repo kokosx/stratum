@@ -69,8 +69,14 @@ func TestDraftSeoDoesNotLeakToPublic(t *testing.T) {
 		SpeculationMode:      settings.SpeculationMode,
 		SpeculationEagerness: settings.SpeculationEagerness,
 		TitleSeparator:       settings.TitleSeparator,
+		SiteSocialMediaID:    settings.SiteSocialMediaID,
+		TwitterSite:          settings.TwitterSite,
+		SiteRepresents:       settings.SiteRepresents,
 		UpdatedAt:            settings.UpdatedAt,
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Hub().ReloadSite(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +142,7 @@ func TestDraftSeoDoesNotLeakToPublic(t *testing.T) {
 
 	published := render()
 	for _, want := range []string{
-		"<title>Published SEO Title · StratumCMS</title>",
+		"<title>Published SEO Title – StratumCMS</title>",
 		`<meta name="description" content="Published description.">`,
 		`<link rel="canonical" href="https://example.com/seo-page">`,
 	} {
@@ -162,7 +168,7 @@ func TestDraftSeoDoesNotLeakToPublic(t *testing.T) {
 
 	draft := render()
 	for _, want := range []string{
-		"<title>Published SEO Title · StratumCMS</title>",
+		"<title>Published SEO Title – StratumCMS</title>",
 		`<meta name="description" content="Published description.">`,
 		`<link rel="canonical" href="https://example.com/seo-page">`,
 	} {

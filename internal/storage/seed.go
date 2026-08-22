@@ -55,7 +55,7 @@ func (d *Database) Seed(ctx context.Context) error {
 			return fmt.Errorf("seed %s revision: %w", entry.slug, err)
 		}
 		if err := queries.SeedPublishedRevision(ctx, db.SeedPublishedRevisionParams{
-			PublishedRevisionID: sql.NullString{String: entry.revisionID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entry.id,
+			PublishedRevisionID: sql.NullString{String: entry.revisionID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, FirstPublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entry.id,
 		}); err != nil {
 			return fmt.Errorf("publish seeded %s revision: %w", entry.slug, err)
 		}

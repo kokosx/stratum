@@ -17,6 +17,7 @@ import (
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
+	"github.com/kokosx/stratum/internal/runtimehub"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
 	webassets "github.com/kokosx/stratum/internal/web"
@@ -40,7 +41,9 @@ type Handler struct {
 	navigation         *navigation.Service
 	navigationLoader   *navigation.Loader
 	themes             *themes.Runtime
+	runtime            *runtimehub.Runtime
 	previewRenderer    func(context.Context, string, string, map[string]any, string) ([]byte, error)
+	documentPreview    func(context.Context, RenderInput) ([]byte, error)
 }
 
 type LayoutData struct {
@@ -51,7 +54,18 @@ type LayoutData struct {
 	Content    any
 }
 
-func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry, themeRuntime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
+func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry, themeRuntime *themes.Runtime, mediaService *media.Service, runtimes ...*runtimehub.Runtime) (*Handler, error) {
+	var runtime *runtimehub.Runtime
+	if len(runtimes) > 0 {
+		runtime = runtimes[0]
+	}
+	if runtime == nil {
+		var err error
+		runtime, err = runtimehub.New(queries, blockRegistry, themeRuntime, mediaService)
+		if err != nil {
+			return nil, err
+		}
+	}
 	templateFS, err := fs.Sub(webassets.Assets, "templates/admin")
 	if err != nil {
 		return nil, fmt.Errorf("admin templates: %w", err)
@@ -113,6 +127,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		navigation:         navigation.NewService(database, queries),
 		navigationLoader:   navigation.NewLoader(queries),
 		themes:             themeRuntime,
+		runtime:            runtime,
 	}, nil
 }
 
@@ -163,7 +178,12 @@ func (h *Handler) Routes() http.Handler {
 	mux.Handle("GET /admin/static/", http.StripPrefix("/admin/static/", http.FileServer(http.FS(staticFS))))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
+		// The admin UI must never be indexed. robots.txt is not a security or
+		// indexing guarantee, so every admin response also sends the header.
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		// The media upload endpoint carries large multipart bodies (~12 MB),
+		// so it must not inherit the small global admin POST body limit.
+		if r.Method == http.MethodPost && r.URL.Path != "/admin/media/upload" {
 			r.Body = http.MaxBytesReader(w, r.Body, maxAdminRequestBody)
 		}
 		mux.ServeHTTP(w, r)
@@ -201,6 +221,12 @@ func (h *Handler) validCSRF(r *http.Request) bool {
 
 func (h *Handler) SetPreviewRenderer(renderer func(context.Context, string, string, map[string]any, string) ([]byte, error)) {
 	h.previewRenderer = renderer
+}
+
+// SetDocumentPreviewRenderer wires the shared public rendering pipeline into
+// the block editor preview so it matches the live frontend exactly.
+func (h *Handler) SetDocumentPreviewRenderer(renderer func(context.Context, RenderInput) ([]byte, error)) {
+	h.documentPreview = renderer
 }
 
 const flashCookieName = "stratum_flash"

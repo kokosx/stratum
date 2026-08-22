@@ -19,9 +19,13 @@ JOIN entries e
     ON e.id = rt.entry_id
 JOIN entry_revisions r
     ON r.id = e.published_revision_id
+JOIN content_types ct
+    ON ct.id = e.content_type_id
 WHERE rt.route_type = 'entry'
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND ct.public = 1
+  AND (r.seo_robots_index IS NULL OR r.seo_robots_index != 0)
 ORDER BY rt.path
 `
 
@@ -31,10 +35,13 @@ type ListSitemapEntriesRow struct {
 	Lastmod     int64  `json:"lastmod"`
 }
 
-// Returns every publicly published entry that owns an entry-type route. Drafts,
-// private/trash entries, redirect routes, admin/preview URLs and unpublished
-// entries are excluded by the joins and filters below. The published revision
-// timestamp drives <lastmod> so a newer draft does not change the sitemap.
+// Returns every URL that belongs in the sitemap: published and active entries
+// of public content types that own an entry-type route and resolve as
+// indexable. Drafts (no published revision), private/trash entries,
+// non-public content types, redirect/system routes, admin/preview URLs and
+// noindex revisions are all excluded by the joins and filters below.
+// <lastmod> comes from the published revision timestamp, so a newer draft
+// never changes the sitemap.
 func (q *Queries) ListSitemapEntries(ctx context.Context) ([]ListSitemapEntriesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSitemapEntries)
 	if err != nil {

@@ -30,10 +30,13 @@ SELECT
     + (
         SELECT COUNT(*) FROM site_settings
         WHERE site_icon_media_id = ?1
+           OR site_logo_media_id = ?1
+           OR site_social_media_id = ?1
     )
     + (
-        SELECT COUNT(*) FROM entries
+        SELECT COUNT(*) FROM entry_revisions
         WHERE featured_media_id = ?1
+           OR social_media_id = ?1
     )
 AS usage_count
 `
@@ -114,22 +117,23 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Mediu
 
 const createMediaVariant = `-- name: CreateMediaVariant :one
 INSERT INTO media_variants (
-    id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at
+    id, media_id, kind, storage_key, mime_type, width, height, file_size, content_hash, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at, content_hash
 `
 
 type CreateMediaVariantParams struct {
-	ID         string        `json:"id"`
-	MediaID    string        `json:"media_id"`
-	Kind       string        `json:"kind"`
-	StorageKey string        `json:"storage_key"`
-	MimeType   string        `json:"mime_type"`
-	Width      sql.NullInt64 `json:"width"`
-	Height     sql.NullInt64 `json:"height"`
-	FileSize   int64         `json:"file_size"`
-	CreatedAt  int64         `json:"created_at"`
+	ID          string        `json:"id"`
+	MediaID     string        `json:"media_id"`
+	Kind        string        `json:"kind"`
+	StorageKey  string        `json:"storage_key"`
+	MimeType    string        `json:"mime_type"`
+	Width       sql.NullInt64 `json:"width"`
+	Height      sql.NullInt64 `json:"height"`
+	FileSize    int64         `json:"file_size"`
+	ContentHash string        `json:"content_hash"`
+	CreatedAt   int64         `json:"created_at"`
 }
 
 func (q *Queries) CreateMediaVariant(ctx context.Context, arg CreateMediaVariantParams) (MediaVariant, error) {
@@ -142,6 +146,7 @@ func (q *Queries) CreateMediaVariant(ctx context.Context, arg CreateMediaVariant
 		arg.Width,
 		arg.Height,
 		arg.FileSize,
+		arg.ContentHash,
 		arg.CreatedAt,
 	)
 	var i MediaVariant
@@ -155,6 +160,7 @@ func (q *Queries) CreateMediaVariant(ctx context.Context, arg CreateMediaVariant
 		&i.Height,
 		&i.FileSize,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -205,7 +211,7 @@ func (q *Queries) GetMedia(ctx context.Context, id string) (Medium, error) {
 }
 
 const getMediaVariant = `-- name: GetMediaVariant :one
-SELECT id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at FROM media_variants WHERE media_id = ? AND kind = ?
+SELECT id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at, content_hash FROM media_variants WHERE media_id = ? AND kind = ?
 `
 
 type GetMediaVariantParams struct {
@@ -226,6 +232,7 @@ func (q *Queries) GetMediaVariant(ctx context.Context, arg GetMediaVariantParams
 		&i.Height,
 		&i.FileSize,
 		&i.CreatedAt,
+		&i.ContentHash,
 	)
 	return i, err
 }
@@ -239,6 +246,28 @@ func (q *Queries) GetSiteIconMediaID(ctx context.Context) (sql.NullString, error
 	var site_icon_media_id sql.NullString
 	err := row.Scan(&site_icon_media_id)
 	return site_icon_media_id, err
+}
+
+const getSiteSocialMediaID = `-- name: GetSiteSocialMediaID :one
+SELECT site_social_media_id FROM site_settings WHERE id = 1
+`
+
+func (q *Queries) GetSiteSocialMediaID(ctx context.Context) (sql.NullString, error) {
+	row := q.db.QueryRowContext(ctx, getSiteSocialMediaID)
+	var site_social_media_id sql.NullString
+	err := row.Scan(&site_social_media_id)
+	return site_social_media_id, err
+}
+
+const getTwitterSite = `-- name: GetTwitterSite :one
+SELECT twitter_site FROM site_settings WHERE id = 1
+`
+
+func (q *Queries) GetTwitterSite(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTwitterSite)
+	var twitter_site string
+	err := row.Scan(&twitter_site)
+	return twitter_site, err
 }
 
 const listMedia = `-- name: ListMedia :many
@@ -290,7 +319,7 @@ func (q *Queries) ListMedia(ctx context.Context, arg ListMediaParams) ([]Medium,
 }
 
 const listMediaVariants = `-- name: ListMediaVariants :many
-SELECT id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at FROM media_variants WHERE media_id = ? ORDER BY kind
+SELECT id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at, content_hash FROM media_variants WHERE media_id = ? ORDER BY kind
 `
 
 func (q *Queries) ListMediaVariants(ctx context.Context, mediaID string) ([]MediaVariant, error) {
@@ -312,6 +341,7 @@ func (q *Queries) ListMediaVariants(ctx context.Context, mediaID string) ([]Medi
 			&i.Height,
 			&i.FileSize,
 			&i.CreatedAt,
+			&i.ContentHash,
 		); err != nil {
 			return nil, err
 		}
@@ -365,5 +395,27 @@ WHERE id = 1
 
 func (q *Queries) UpdateSiteIconMediaID(ctx context.Context, siteIconMediaID sql.NullString) error {
 	_, err := q.db.ExecContext(ctx, updateSiteIconMediaID, siteIconMediaID)
+	return err
+}
+
+const updateSiteSocialMediaID = `-- name: UpdateSiteSocialMediaID :exec
+UPDATE site_settings
+SET site_social_media_id = ?, updated_at = unixepoch()
+WHERE id = 1
+`
+
+func (q *Queries) UpdateSiteSocialMediaID(ctx context.Context, siteSocialMediaID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, updateSiteSocialMediaID, siteSocialMediaID)
+	return err
+}
+
+const updateTwitterSite = `-- name: UpdateTwitterSite :exec
+UPDATE site_settings
+SET twitter_site = ?, updated_at = unixepoch()
+WHERE id = 1
+`
+
+func (q *Queries) UpdateTwitterSite(ctx context.Context, twitterSite string) error {
+	_, err := q.db.ExecContext(ctx, updateTwitterSite, twitterSite)
 	return err
 }

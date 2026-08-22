@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/kokosx/stratum/internal/blocks"
@@ -21,7 +22,12 @@ type App struct {
 }
 
 func New(ctx context.Context) (*App, error) {
-	database, err := storage.Open("data/stratum.db")
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+
+	database, err := storage.Open(filepath.Join(dataDir, "stratum.db"))
 	if err != nil {
 		return nil, fmt.Errorf("open storage: %w", err)
 	}
@@ -33,7 +39,7 @@ func New(ctx context.Context) (*App, error) {
 
 	queries := db.New(database.DB)
 
-	storageRoot := filepath.Join("data", "media")
+	storageRoot := filepath.Join(dataDir, "media")
 	mediaStore, err := media.NewLocalStorage(storageRoot)
 	if err != nil {
 		database.Close()

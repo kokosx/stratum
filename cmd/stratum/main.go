@@ -6,12 +6,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
+	"github.com/kokosx/stratum/internal/runtimehub"
 )
 
 func main() {
@@ -42,20 +45,32 @@ func main() {
 		if err := application.Blocks.Reload(ctx); err != nil {
 			log.Fatal(err)
 		}
-		log.Println("Development seed data is ready at http://localhost:8080/")
+		log.Println("Development seed data is ready")
 	case "serve":
-		serve(application)
+		if err := serve(application); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
 	}
 }
 
-func serve(application *app.App) {
+func serve(application *app.App) error {
 	authService, err := auth.NewService(application.Database.DB, application.Queries, os.Getenv("STRATUM_ENV") == "production")
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("auth service: %w", err)
 	}
 	if setupCode := authService.SetupCode(); setupCode != "" {
-		log.Printf("StratumCMS is not configured. Open http://localhost:8080/admin/setup with setup code: %s", setupCode)
+		log.Printf("StratumCMS is not configured. Open /admin/setup with setup code: %s", setupCode)
 	}
+	hub, err := runtimehub.New(
+		application.Queries,
+		application.Blocks,
+		application.Themes,
+		application.Media,
+	)
+	if err != nil {
+		return fmt.Errorf("runtime hub: %w", err)
+	}
+
 	adminHandler, err := adminweb.NewHandler(
 		application.Database.DB,
 		application.Queries,
@@ -63,29 +78,40 @@ func serve(application *app.App) {
 		application.Blocks,
 		application.Themes,
 		application.Media,
+		hub,
 	)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("admin handler: %w", err)
 	}
 
-	publicHandler, err := publicweb.NewHandler(
-		application.Queries,
-		application.Blocks,
-		application.Themes,
-		application.Media,
-	)
+	publicHandler, err := publicweb.NewHandlerWithHub(hub)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("public handler: %w", err)
 	}
 	adminHandler.SetPreviewRenderer(publicHandler.RenderPreview)
+	adminHandler.SetDocumentPreviewRenderer(publicHandler.RenderEditableDocument)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		if err := application.Database.Ping(r.Context()); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	mux.Handle("/admin", adminHandler.Routes())
 	mux.Handle("/admin/", adminHandler.Routes())
 	mux.Handle("/", publicHandler)
 
+	addr := os.Getenv("STRATUM_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+
 	server := &http.Server{
-		Addr:              ":8080",
+		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -93,8 +119,23 @@ func serve(application *app.App) {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	log.Println("Stratum running on http://localhost:8080")
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-stop
+		log.Println("Received shutdown signal, draining connections...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("graceful shutdown failed: %v", err)
+		}
+	}()
+
+	log.Printf("Stratum running on http://%s", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal(err)
+		return err
 	}
+	log.Println("Stopped")
+	return nil
 }

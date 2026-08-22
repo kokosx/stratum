@@ -56,6 +56,14 @@ UPDATE entries
 SET published_revision_id = ?, status = 'active', published_at = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: SetFirstPublishedAtIfNull :exec
+-- Records the FIRST publication of an Entry. Later re-publishes must never
+-- move it: structured data uses it as the stable datePublished.
+UPDATE entries
+SET first_published_at = ?
+WHERE id = ?
+  AND first_published_at IS NULL;
+
 -- name: DeleteEntry :exec
 DELETE FROM entries
 WHERE id = ?;

@@ -36,14 +36,16 @@ type blockData struct {
 	Settings map[string]any
 	Children template.HTML
 	Context  RenderContext
+	Priority bool
 }
 
 // RenderContext carries request-time data that dynamic blocks bind to (the
 // current Entry and Site settings). It is the same for every node in a document.
 // In the editor preview it is empty, so dynamic blocks fall back to placeholders.
 type RenderContext struct {
-	Site  SiteContext
-	Entry EntryContext
+	Site      SiteContext
+	Entry     EntryContext
+	LCPNodeID string
 }
 
 // SiteSocialLink is a single configured social profile surfaced by the Social
@@ -55,10 +57,15 @@ type SiteSocialLink struct {
 }
 
 type SiteContext struct {
-	Name        string
-	Tagline     string
-	URL         string
-	LogoURL     string
+	Name    string
+	Tagline string
+	URL     string
+	LogoURL string
+	// LogoWidth/LogoHeight carry the logo asset's intrinsic dimensions when
+	// known, so theme and logo-block <img> tags can reserve layout space
+	// (no CLS). Zero means unknown; templates omit the attributes.
+	LogoWidth   int
+	LogoHeight  int
 	SocialLinks []SiteSocialLink
 }
 
@@ -149,7 +156,7 @@ func (r *Renderer) RenderDocument(doc *document.Document) (template.HTML, error)
 func (r *Renderer) RenderDocumentContext(doc *document.Document, rc RenderContext) (template.HTML, error) {
 	var out strings.Builder
 	for _, node := range doc.Nodes {
-		rendered, err := r.renderNode(node, rc)
+		rendered, err := r.renderNode(context.Background(), node, rc)
 		if err != nil {
 			return "", err
 		}
@@ -158,7 +165,7 @@ func (r *Renderer) RenderDocumentContext(doc *document.Document, rc RenderContex
 	return template.HTML(out.String()), nil
 }
 
-func (r *Renderer) renderNode(node document.Node, rc RenderContext) (template.HTML, error) {
+func (r *Renderer) renderNode(ctx context.Context, node document.Node, rc RenderContext) (template.HTML, error) {
 	key := blockKey{name: node.Block, version: int64(node.Version)}
 	tmpl, ok := r.blocks[key]
 	if !ok {
@@ -176,7 +183,7 @@ func (r *Renderer) renderNode(node document.Node, rc RenderContext) (template.HT
 
 	var children strings.Builder
 	for _, child := range node.Children {
-		rendered, err := r.renderNode(child, rc)
+		rendered, err := r.renderNode(ctx, child, rc)
 		if err != nil {
 			return "", err
 		}
@@ -185,6 +192,44 @@ func (r *Renderer) renderNode(node document.Node, rc RenderContext) (template.HT
 
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, blockData{Props: props, Settings: settings, Children: template.HTML(children.String()), Context: rc}); err != nil {
+		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
+	}
+	return template.HTML(out.String()), nil
+}
+
+// RenderPreparedDocumentContext renders a PreparedDocument without any JSON
+// decoding or defaults processing. It is the fast path used for published pages
+// after the document has been prepared once and cached.
+func (r *Renderer) RenderPreparedDocumentContext(ctx context.Context, pd *PreparedDocument, rc RenderContext) (template.HTML, error) {
+	var out strings.Builder
+	for i := range pd.Nodes {
+		rendered, err := r.renderPreparedNode(ctx, pd.Nodes[i], rc)
+		if err != nil {
+			return "", err
+		}
+		out.WriteString(string(rendered))
+	}
+	return template.HTML(out.String()), nil
+}
+
+func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc RenderContext) (template.HTML, error) {
+	key := blockKey{name: node.Block, version: int64(node.Version)}
+	tmpl, ok := r.blocks[key]
+	if !ok {
+		return "", fmt.Errorf("block definition not found: %s@%d", node.Block, node.Version)
+	}
+
+	var children strings.Builder
+	for i := range node.Children {
+		rendered, err := r.renderPreparedNode(ctx, node.Children[i], rc)
+		if err != nil {
+			return "", err
+		}
+		children.WriteString(string(rendered))
+	}
+
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, blockData{Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: node.ID == rc.LCPNodeID}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	return template.HTML(out.String()), nil

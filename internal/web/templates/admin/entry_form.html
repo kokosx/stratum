@@ -2,6 +2,10 @@
 <form id="stratum-editor-form" class="block-editor" method="post" action="{{ .Content.Action }}">
   <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
   <input id="document-json" type="hidden" name="document_json" value="">
+  <input type="hidden" name="featured_media_id" id="entry-featured-media-id" value="{{ .Content.FeaturedMediaID }}">
+  <input type="hidden" name="social_media_id" id="entry-social-media-id" value="{{ .Content.SocialMediaID }}">
+  <input type="hidden" name="seo_robots_index" value="{{ .Content.RobotsIndex }}">
+  <input type="hidden" name="seo_robots_follow" value="{{ .Content.RobotsFollow }}">
   <header class="editor-topbar">
     <div class="editor-metadata">
       <label>Title<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
@@ -35,7 +39,17 @@
     </aside>
   </div>
   <section class="editor-preview-panel">
-    <div class="editor-panel-heading"><h2>Preview</h2><button id="refresh-preview" class="button" type="button">Refresh</button></div>
+    <div class="editor-preview-toolbar">
+      <div class="editor-mode-group">
+        <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
+        <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
+      </div>
+      <div class="editor-device-group">
+        <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
+        <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>
+        <button class="editor-device-btn" type="button" data-width="375px">Mobile</button>
+      </div>
+    </div>
     <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
   </section>
   {{ if .Content.ShowSEO }}
@@ -58,6 +72,7 @@
           <input id="entry-canonical-url" name="canonical_url" value="{{ .Content.CanonicalURL }}" placeholder="https://example.com/path or /path">
           <span class="editor-field-meta"><span class="seo-hint">Optional. Absolute http(s) URL or a root-relative path.</span></span>
         </label>
+        <p id="canonical-warning" class="form-warning" role="alert" hidden>This canonical URL points to a different domain. External canonicals are allowed (for example for syndicated content) — make sure this is intentional.</p>
         <div class="seo-serp" aria-label="Search result preview">
           <div class="seo-serp-title" id="serp-title"></div>
           <div class="seo-serp-url" id="serp-url"></div>
@@ -65,23 +80,54 @@
         </div>
       </div>
     </details>
+    <details class="editor-social-details" open>
+      <summary>Social</summary>
+      <div class="editor-social-fields">
+        <div class="form-field">
+          <span class="field-label">Social Image</span>
+          <div class="social-image-field">
+            <div class="social-image-preview" id="entry-social-preview">
+              {{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="field-desc">No Social Image selected</span>{{ end }}
+            </div>
+            <div class="social-image-actions">
+              <button type="button" class="button" id="entry-social-choose">Choose image</button>
+              <button type="button" class="button button-danger" id="entry-social-remove" {{ if not .Content.SocialMediaID }}hidden{{ end }}>Remove</button>
+            </div>
+          </div>
+          <p class="field-desc">Without selection the Featured Image is used, falling back to the global default social image. The image is cropped to 1200×630.</p>
+        </div>
+
+        <div class="social-previews" aria-label="Social previews">
+          <div class="social-preview social-preview--facebook">
+            <h4>Facebook / LinkedIn</h4>
+            <div class="social-card" style="border:1px solid #dadde1;border-radius:8px;overflow:hidden;max-width:500px;background:#fff;">
+              <div id="social-preview-fb-image" style="width:100%;aspect-ratio:1200/630;background:#f0f2f5;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                {{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}
+              </div>
+              <div style="padding:10px 12px;background:#f0f2f5;">
+                <div id="social-preview-fb-url" class="social-card__url" style="font-size:12px;color:#606770;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+                <div id="social-preview-fb-title" class="social-card__title" style="font-size:16px;font-weight:600;color:#1d2129;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+                <div id="social-preview-fb-desc" class="social-card__desc" style="font-size:14px;color:#606770;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="social-preview social-preview--twitter" style="margin-top:16px;">
+            <h4>X (Twitter)</h4>
+            <div class="social-card social-card--twitter" style="border:1px solid #e1e8ed;border-radius:12px;overflow:hidden;max-width:500px;background:#fff;">
+              <div id="social-preview-tw-image" style="width:100%;aspect-ratio:1200/630;background:#f7f9f9;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+                {{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}
+              </div>
+              <div style="padding:12px;">
+                <div id="social-preview-tw-title" class="social-card__title" style="font-size:15px;font-weight:700;color:#0f1419;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+                <div id="social-preview-tw-desc" class="social-card__desc" style="font-size:14px;color:#536471;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"></div>
+                <div id="social-preview-tw-url" class="social-card__url" style="font-size:13px;color:#536471;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
   </section>
-  <style>
-    .editor-seo-details { border: 1px solid var(--st-border, #d9dee5); border-radius: 6px; padding: 0 .75rem .75rem; }
-    .editor-seo-details > summary { cursor: pointer; font-weight: 600; padding: .5rem 0; }
-    .editor-seo-fields { display: flex; flex-direction: column; gap: .75rem; }
-    .editor-field { display: flex; flex-direction: column; gap: .25rem; }
-    .editor-field-label { font-weight: 600; font-size: .9rem; }
-    .editor-field input, .editor-field textarea { font: inherit; padding: .4rem .5rem; border: 1px solid var(--st-border, #d9dee5); border-radius: 4px; }
-    .editor-field-meta { font-size: .8rem; color: #5b6573; }
-    .seo-counter { font-variant-numeric: tabular-nums; }
-    .seo-counter.is-over { color: #b42318; font-weight: 600; }
-    .seo-hint { color: #5b6573; }
-    .seo-serp { margin-top: .25rem; padding: .75rem; border: 1px solid var(--st-border, #d9dee5); border-radius: 6px; background: #fbfcfe; font-family: Arial, Helvetica, sans-serif; }
-    .seo-serp-title { color: #1a0dab; font-size: 1.05rem; line-height: 1.3; }
-    .seo-serp-url { color: #006621; font-size: .82rem; margin: .15rem 0; word-break: break-all; }
-    .seo-serp-description { color: #333; font-size: .85rem; line-height: 1.4; }
-  </style>
   <script>
     (function () {
       var panel = document.querySelector('.editor-seo-panel');
@@ -89,6 +135,7 @@
       var titleInput = document.getElementById('entry-seo-title');
       var descInput = document.getElementById('entry-seo-description');
       var canonicalInput = document.getElementById('entry-canonical-url');
+      var canonicalWarning = document.getElementById('canonical-warning');
       var titleEntry = document.getElementById('entry-title');
       var excerptEntry = document.getElementById('entry-excerpt');
       var titleCount = document.getElementById('seo-title-count');
@@ -98,9 +145,37 @@
       var serpDesc = document.getElementById('serp-description');
       var siteURL = panel.getAttribute('data-site-url') || '';
       var publicPath = panel.getAttribute('data-public-path') || '/';
+      var socialInput = document.getElementById('entry-social-media-id');
+      var featuredInput = document.getElementById('entry-featured-media-id');
+      var socialPreview = document.getElementById('entry-social-preview');
+      var socialChoose = document.getElementById('entry-social-choose');
+      var socialRemove = document.getElementById('entry-social-remove');
+      var fbImage = document.getElementById('social-preview-fb-image');
+      var fbTitle = document.getElementById('social-preview-fb-title');
+      var fbDesc = document.getElementById('social-preview-fb-desc');
+      var fbUrl = document.getElementById('social-preview-fb-url');
+      var twImage = document.getElementById('social-preview-tw-image');
+      var twTitle = document.getElementById('social-preview-tw-title');
+      var twDesc = document.getElementById('social-preview-tw-desc');
+      var twUrl = document.getElementById('social-preview-tw-url');
 
       function stripTrailingSlash(value) { return value.replace(/\/+$/, ''); }
 
+      function resolvedTitle() {
+        return titleInput.value.trim() || (titleEntry ? titleEntry.value.trim() : '') || 'Untitled';
+      }
+      function resolvedDesc() {
+        return descInput.value.trim() || (excerptEntry ? excerptEntry.value.trim() : '') || 'No description yet.';
+      }
+      function resolvedUrl() {
+        var override = canonicalInput.value.trim();
+        if (override) {
+          if (/^https?:\/\//i.test(override)) return override;
+          if (override.charAt(0) === '/') return stripTrailingSlash(siteURL) + override;
+          return override;
+        }
+        return stripTrailingSlash(siteURL) + publicPath;
+      }
       function updateCounts() {
         if (titleCount) {
           var n = titleInput.value.length;
@@ -114,34 +189,92 @@
         }
       }
 
-      function updateSerp() {
-        var title = titleInput.value.trim() || (titleEntry ? titleEntry.value.trim() : '') || 'Untitled';
-        serpTitle.textContent = title;
-        var desc = descInput.value.trim() || (excerptEntry ? excerptEntry.value.trim() : '') || 'No description yet.';
-        serpDesc.textContent = desc;
-        var override = canonicalInput.value.trim();
-        var url;
-        if (override) {
-          if (/^https?:\/\//i.test(override)) {
-            url = override;
-          } else if (override.charAt(0) === '/') {
-            url = stripTrailingSlash(siteURL) + override;
-          } else {
-            url = override;
-          }
-        } else {
-          url = stripTrailingSlash(siteURL) + publicPath;
+      function updateCanonicalWarning() {
+        if (!canonicalWarning) return;
+        var value = canonicalInput.value.trim();
+        var external = false;
+        if (/^https?:\/\//i.test(value) && siteURL) {
+          try {
+            var siteHost = new URL(siteURL).hostname;
+            var canonicalHost = new URL(value).hostname;
+            external = !!siteHost && !!canonicalHost && siteHost !== canonicalHost;
+          } catch (e) { external = false; }
         }
-        serpURL.textContent = url;
+        canonicalWarning.hidden = !external;
+      }
+
+      function updateSerp() {
+        var title = resolvedTitle();
+        serpTitle.textContent = title;
+        var desc = resolvedDesc();
+        serpDesc.textContent = desc;
+        serpURL.textContent = resolvedUrl();
+        updateCanonicalWarning();
+      }
+
+      function updateSocialPreview() {
+        var title = resolvedTitle();
+        var desc = resolvedDesc();
+        var url = resolvedUrl();
+        // URL display in previews (host only for FB)
+        var urlForDisplay = url.replace(/^https?:\/\//, '');
+        if (fbTitle) fbTitle.textContent = title;
+        if (fbDesc) fbDesc.textContent = desc;
+        if (fbUrl) fbUrl.textContent = urlForDisplay;
+        if (twTitle) twTitle.textContent = title;
+        if (twDesc) twDesc.textContent = desc;
+        if (twUrl) twUrl.textContent = urlForDisplay;
+        // Image handling: social → featured fallback is visual only; server decides final fallback.
+        var imageId = socialInput ? socialInput.value.trim() : '';
+        var fallbackId = featuredInput ? featuredInput.value.trim() : '';
+        var chosenId = imageId || fallbackId;
+        var imageSrc = chosenId ? '/media/' + chosenId + '/social' : '';
+        // Fallback to original if social variant missing: try social then original via onerror.
+        function setPreviewImage(container, src) {
+          if (!container) return;
+          if (!src) {
+            container.innerHTML = '<span style="color:#8a8d91;">No image</span>';
+            return;
+          }
+          // If social variant 404s, browser will show broken image but we keep placeholder text fallback via onerror.
+          container.innerHTML = '<img src="' + src + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.onerror=null;this.src=\'' + src.replace('/social', '/original') + '\';">';
+        }
+        setPreviewImage(fbImage, imageSrc);
+        setPreviewImage(twImage, imageSrc);
+        // Picker preview
+        if (socialPreview) {
+          if (imageId) {
+            socialPreview.innerHTML = '<img src="/media/' + imageId + '/social" alt="" style="max-width:100%;height:auto;" onerror="this.onerror=null;this.src=\'/media/' + imageId + '/original\';">';
+          } else {
+            socialPreview.innerHTML = '<span class="field-desc">No Social Image selected — Featured Image/global fallback will be used.</span>';
+          }
+        }
+        if (socialRemove) socialRemove.hidden = !imageId;
       }
 
       [titleInput, descInput, canonicalInput].forEach(function (el) {
-        if (el) el.addEventListener('input', function () { updateCounts(); updateSerp(); });
+        if (el) el.addEventListener('input', function () { updateCounts(); updateSerp(); updateSocialPreview(); });
       });
-      if (titleEntry) titleEntry.addEventListener('input', updateSerp);
-      if (excerptEntry) excerptEntry.addEventListener('input', updateSerp);
+      if (titleEntry) titleEntry.addEventListener('input', function(){ updateSerp(); updateSocialPreview(); });
+      if (excerptEntry) excerptEntry.addEventListener('input', function(){ updateSerp(); updateSocialPreview(); });
+      if (socialChoose) {
+        socialChoose.addEventListener('click', function(){
+          if (!window.openMediaPicker) return;
+          window.openMediaPicker({ onSelect: function(asset){
+            if (socialInput) socialInput.value = asset.id;
+            updateSocialPreview();
+          }});
+        });
+      }
+      if (socialRemove) {
+        socialRemove.addEventListener('click', function(){
+          if (socialInput) socialInput.value = '';
+          updateSocialPreview();
+        });
+      }
       updateCounts();
       updateSerp();
+      updateSocialPreview();
     })();
   </script>
   {{ end }}

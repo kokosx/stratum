@@ -50,17 +50,22 @@ type Asset struct {
 	Variants         []Variant
 }
 
-// Variant is one generated derivative of an asset (a responsive size, a favicon
-// size, a future AVIF, ...). kind is the URL slug used to serve it.
+// Variant is one generated derivative of an asset (a responsive size, its WebP
+// twin, a favicon size, a future AVIF, ...). kind is the URL slug used to serve
+// it; responsive WebP twins carry a ".webp" suffix (e.g. "480.webp").
+// ContentHash is a short digest of the stored bytes: resolvers append it to
+// variant URLs (?v=...) so regenerated derivatives are never served stale from
+// an immutable-cached URL.
 type Variant struct {
-	ID         string
-	MediaID    string
-	Kind       string
-	StorageKey string
-	MimeType   string
-	Width      int
-	Height     int
-	FileSize   int64
+	ID          string
+	MediaID     string
+	Kind        string
+	StorageKey  string
+	MimeType    string
+	Width       int
+	Height      int
+	FileSize    int64
+	ContentHash string
 }
 
 // Usage describes where an asset is referenced, for the delete-confirmation UI.

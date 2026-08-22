@@ -47,32 +47,38 @@ type Entry struct {
 	UpdatedAt           int64          `json:"updated_at"`
 	PublishedAt         sql.NullInt64  `json:"published_at"`
 	FeaturedMediaID     sql.NullString `json:"featured_media_id"`
+	FirstPublishedAt    sql.NullInt64  `json:"first_published_at"`
 }
 
 type EntryRevision struct {
-	ID             string         `json:"id"`
-	EntryID        string         `json:"entry_id"`
-	RevisionNumber int64          `json:"revision_number"`
-	Title          string         `json:"title"`
-	Excerpt        sql.NullString `json:"excerpt"`
-	DocumentJson   string         `json:"document_json"`
-	SeoTitle       sql.NullString `json:"seo_title"`
-	SeoDescription sql.NullString `json:"seo_description"`
-	CreatedBy      sql.NullString `json:"created_by"`
-	CreatedAt      int64          `json:"created_at"`
-	CanonicalUrl   sql.NullString `json:"canonical_url"`
+	ID              string         `json:"id"`
+	EntryID         string         `json:"entry_id"`
+	RevisionNumber  int64          `json:"revision_number"`
+	Title           string         `json:"title"`
+	Excerpt         sql.NullString `json:"excerpt"`
+	DocumentJson    string         `json:"document_json"`
+	SeoTitle        sql.NullString `json:"seo_title"`
+	SeoDescription  sql.NullString `json:"seo_description"`
+	CreatedBy       sql.NullString `json:"created_by"`
+	CreatedAt       int64          `json:"created_at"`
+	CanonicalUrl    sql.NullString `json:"canonical_url"`
+	FeaturedMediaID sql.NullString `json:"featured_media_id"`
+	SocialMediaID   sql.NullString `json:"social_media_id"`
+	SeoRobotsIndex  sql.NullInt64  `json:"seo_robots_index"`
+	SeoRobotsFollow sql.NullInt64  `json:"seo_robots_follow"`
 }
 
 type MediaVariant struct {
-	ID         string        `json:"id"`
-	MediaID    string        `json:"media_id"`
-	Kind       string        `json:"kind"`
-	StorageKey string        `json:"storage_key"`
-	MimeType   string        `json:"mime_type"`
-	Width      sql.NullInt64 `json:"width"`
-	Height     sql.NullInt64 `json:"height"`
-	FileSize   int64         `json:"file_size"`
-	CreatedAt  int64         `json:"created_at"`
+	ID          string        `json:"id"`
+	MediaID     string        `json:"media_id"`
+	Kind        string        `json:"kind"`
+	StorageKey  string        `json:"storage_key"`
+	MimeType    string        `json:"mime_type"`
+	Width       sql.NullInt64 `json:"width"`
+	Height      sql.NullInt64 `json:"height"`
+	FileSize    int64         `json:"file_size"`
+	CreatedAt   int64         `json:"created_at"`
+	ContentHash string        `json:"content_hash"`
 }
 
 type Medium struct {
@@ -161,6 +167,9 @@ type SiteSetting struct {
 	SiteIconMediaID      sql.NullString `json:"site_icon_media_id"`
 	SiteLogoMediaID      sql.NullString `json:"site_logo_media_id"`
 	SocialLinks          sql.NullString `json:"social_links"`
+	SiteSocialMediaID    sql.NullString `json:"site_social_media_id"`
+	TwitterSite          string         `json:"twitter_site"`
+	SiteRepresents       string         `json:"site_represents"`
 }
 
 type ThemeCustomization struct {

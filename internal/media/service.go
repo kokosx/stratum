@@ -3,28 +3,113 @@ package media
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kokosx/stratum/internal/rendering"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
+// mediaViewCache caches resolved rendering.MediaView values by media id. Each
+// entry depends only on the media row and its variants, which change only on
+// upload, metadata update, variant regeneration, or delete — so the cache is
+// invalidated by id. It removes the N+1 GetMedia/ListMediaVariants queries that
+// block image rendering used to issue.
+type mediaViewCache struct {
+	mu    sync.RWMutex
+	views map[string]rendering.MediaView
+}
+
+// faviconViewCache caches the generated site-icon URLs per asset.
+type faviconViewCache struct {
+	mu    sync.RWMutex
+	views map[string]rendering.FaviconView
+}
+
 // Service is the media domain entry point. It validates uploads, stores blobs in
 // the Storage backend, persists metadata, and resolves assets for rendering.
 type Service struct {
 	queries *db.Queries
 	store   Storage
+	views   *mediaViewCache
+	favicon *faviconViewCache
 }
 
 func NewService(queries *db.Queries, store Storage) *Service {
-	return &Service{queries: queries, store: store}
+	return &Service{queries: queries, store: store, views: &mediaViewCache{views: make(map[string]rendering.MediaView)}, favicon: &faviconViewCache{views: make(map[string]rendering.FaviconView)}}
+}
+
+// InvalidateView drops the cached rendering view for one asset. Called after
+// metadata updates, variant regeneration, favicon rebuilds, or deletes.
+func (s *Service) InvalidateView(id string) {
+	s.views.invalidate(id)
+	s.favicon.invalidate(id)
+}
+
+// InvalidateAllViews drops every cached view. Used on bulk changes.
+func (s *Service) InvalidateAllViews() {
+	s.views.invalidateAll()
+	s.favicon.invalidateAll()
+}
+
+func (c *mediaViewCache) get(id string) (rendering.MediaView, bool) {
+	c.mu.RLock()
+	v, ok := c.views[id]
+	c.mu.RUnlock()
+	return v, ok
+}
+
+func (c *mediaViewCache) set(id string, v rendering.MediaView) {
+	c.mu.Lock()
+	c.views[id] = v
+	c.mu.Unlock()
+}
+
+func (c *mediaViewCache) invalidate(id string) {
+	c.mu.Lock()
+	delete(c.views, id)
+	c.mu.Unlock()
+}
+
+func (c *mediaViewCache) invalidateAll() {
+	c.mu.Lock()
+	c.views = make(map[string]rendering.MediaView)
+	c.mu.Unlock()
+}
+
+func (c *faviconViewCache) get(id string) (rendering.FaviconView, bool) {
+	c.mu.RLock()
+	v, ok := c.views[id]
+	c.mu.RUnlock()
+	return v, ok
+}
+
+func (c *faviconViewCache) set(id string, v rendering.FaviconView) {
+	c.mu.Lock()
+	c.views[id] = v
+	c.mu.Unlock()
+}
+
+func (c *faviconViewCache) invalidate(id string) {
+	c.mu.Lock()
+	delete(c.views, id)
+	c.mu.Unlock()
+}
+
+func (c *faviconViewCache) invalidateAll() {
+	c.mu.Lock()
+	c.views = make(map[string]rendering.FaviconView)
+	c.mu.Unlock()
 }
 
 // Upload ingests an image: verifies its real format, stores the original and
@@ -90,21 +175,30 @@ func (s *Service) Upload(ctx context.Context, originalName, authorID string, r i
 	}
 
 	for _, v := range processed.Variants {
-		vkey := "generated/" + mediaID + "-" + strconv.Itoa(v.Width) + extForMime(v.Mime)
+		kind := v.Kind
+		if kind == "" {
+			kind = strconv.Itoa(v.Width)
+		}
+		vid := mediaID + "-v" + kind
+		if kind == socialKind {
+			vid = mediaID + "-social"
+		}
+		vkey := "generated/" + mediaID + "-" + kind + extForMime(v.Mime)
 		if err := s.store.Put(ctx, vkey, v.Data); err != nil {
 			s.rollback(ctx, mediaID, origKey)
 			return nil, fmt.Errorf("store variant: %w", err)
 		}
 		if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
-			ID:         mediaID + "-v" + strconv.Itoa(v.Width),
-			MediaID:    mediaID,
-			Kind:       strconv.Itoa(v.Width),
-			StorageKey: vkey,
-			MimeType:   v.Mime,
-			Width:      sql.NullInt64{Int64: int64(v.Width), Valid: true},
-			Height:     sql.NullInt64{Int64: int64(v.Height), Valid: true},
-			FileSize:   int64(len(v.Data)),
-			CreatedAt:  now,
+			ID:          vid,
+			MediaID:     mediaID,
+			Kind:        kind,
+			StorageKey:  vkey,
+			MimeType:    v.Mime,
+			Width:       sql.NullInt64{Int64: int64(v.Width), Valid: true},
+			Height:      sql.NullInt64{Int64: int64(v.Height), Valid: true},
+			FileSize:    int64(len(v.Data)),
+			ContentHash: contentHash(v.Data),
+			CreatedAt:   now,
 		}); err != nil {
 			s.rollback(ctx, mediaID, origKey)
 			return nil, fmt.Errorf("create variant row: %w", err)
@@ -155,7 +249,7 @@ func (s *Service) List(ctx context.Context, limit, offset int) ([]Asset, error) 
 
 // UpdateMetadata edits the human-authored fields of an asset.
 func (s *Service) UpdateMetadata(ctx context.Context, id, alt, title, caption, description string) error {
-	return s.queries.UpdateMediaMetadata(ctx, db.UpdateMediaMetadataParams{
+	err := s.queries.UpdateMediaMetadata(ctx, db.UpdateMediaMetadataParams{
 		AltText:     alt,
 		Title:       title,
 		Caption:     caption,
@@ -163,6 +257,11 @@ func (s *Service) UpdateMetadata(ctx context.Context, id, alt, title, caption, d
 		UpdatedAt:   time.Now().Unix(),
 		ID:          id,
 	})
+	if err != nil {
+		return err
+	}
+	s.InvalidateView(id)
+	return nil
 }
 
 // CountUsage reports how many places reference the asset (content revisions and
@@ -186,6 +285,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		_ = s.store.Delete(ctx, v.StorageKey)
 	}
 	_ = s.store.Delete(ctx, m.StorageKey)
+	s.InvalidateView(id)
 	return s.queries.DeleteMedia(ctx, id)
 }
 
@@ -206,6 +306,31 @@ func (s *Service) ReadVariant(ctx context.Context, id, kind string) ([]byte, str
 	}
 	data, err := s.store.Read(ctx, v.StorageKey)
 	return data, v.MimeType, err
+}
+
+// OpenVariant returns a seekable, closable handle to a stored derivative for
+// streaming (Range requests, no full read into RAM). The caller must close it.
+func (s *Service) OpenVariant(ctx context.Context, id, kind string) (*os.File, int64, string, error) {
+	if kind == "" || kind == "original" {
+		m, err := s.queries.GetMedia(ctx, id)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		f, size, err := s.store.Open(ctx, m.StorageKey)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		return f, size, m.MimeType, nil
+	}
+	v, err := s.queries.GetMediaVariant(ctx, db.GetMediaVariantParams{MediaID: id, Kind: kind})
+	if err != nil {
+		return nil, 0, "", err
+	}
+	f, size, err := s.store.Open(ctx, v.StorageKey)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	return f, size, v.MimeType, nil
 }
 
 // GenerateFaviconVariants (re)builds the square favicon sizes from the asset. It
@@ -239,25 +364,33 @@ func (s *Service) GenerateFaviconVariants(ctx context.Context, id string) error 
 			return err
 		}
 		if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
-			ID:         id + "-fav-" + strconv.Itoa(size),
-			MediaID:    id,
-			Kind:       "favicon-" + strconv.Itoa(size),
-			StorageKey: key,
-			MimeType:   mime,
-			Width:      sql.NullInt64{Int64: int64(size), Valid: true},
-			Height:     sql.NullInt64{Int64: int64(size), Valid: true},
-			FileSize:   int64(len(bytes)),
-			CreatedAt:  now,
+			ID:          id + "-fav-" + strconv.Itoa(size),
+			MediaID:     id,
+			Kind:        "favicon-" + strconv.Itoa(size),
+			StorageKey:  key,
+			MimeType:    mime,
+			Width:       sql.NullInt64{Int64: int64(size), Valid: true},
+			Height:      sql.NullInt64{Int64: int64(size), Valid: true},
+			FileSize:    int64(len(bytes)),
+			ContentHash: contentHash(bytes),
+			CreatedAt:   now,
 		}); err != nil {
 			return err
 		}
 	}
+	s.favicon.invalidate(id)
 	return nil
 }
 
 // MediaView implements rendering.MediaProvider, resolving an asset id into the
-// URLs and dimensions a block template needs.
+// URLs and dimensions a block template needs. Src/SrcSet resolve the
+// native-format responsive variants (falling back to the original), and
+// WebPSrcSet resolves the WebP derivative set so templates can emit a
+// <picture> source only when one exists.
 func (s *Service) MediaView(ctx context.Context, id string) (rendering.MediaView, bool) {
+	if view, ok := s.views.get(id); ok {
+		return view, true
+	}
 	m, err := s.queries.GetMedia(ctx, id)
 	if err != nil {
 		return rendering.MediaView{}, false
@@ -274,40 +407,77 @@ func (s *Service) MediaView(ctx context.Context, id string) (rendering.MediaView
 		Height: intVal(m.Height),
 	}
 
-	type respVariant struct {
-		width int
-		url   string
-	}
-	resp := make([]respVariant, 0, len(variants))
+	native := make([]respVariant, 0, len(variants))
+	webp := make([]respVariant, 0, len(variants))
 	defaultWidth := 0
+	defaultURL := ""
 	for _, v := range variants {
+		if w := parseWebPKind(v.Kind); w > 0 {
+			webp = append(webp, respVariant{width: w, url: variantURL(m.ID, v.Kind, v.ContentHash)})
+			continue
+		}
 		w := parseIntKind(v.Kind)
 		if w <= 0 {
 			continue
 		}
-		url := "/media/" + m.ID + "/" + v.Kind
-		resp = append(resp, respVariant{width: w, url: url})
+		url := variantURL(m.ID, v.Kind, v.ContentHash)
+		native = append(native, respVariant{width: w, url: url})
 		if w > defaultWidth {
 			defaultWidth = w
+			defaultURL = url
 		}
 	}
-	sort.Slice(resp, func(i, j int) bool { return resp[i].width < resp[j].width })
-	for _, r := range resp {
-		if view.SrcSet != "" {
-			view.SrcSet += ", "
-		}
-		view.SrcSet += r.url + " " + strconv.Itoa(r.width) + "w"
-	}
-	if defaultWidth > 0 {
-		view.Src = "/media/" + m.ID + "/" + strconv.Itoa(defaultWidth)
+	sort.Slice(native, func(i, j int) bool { return native[i].width < native[j].width })
+	sort.Slice(webp, func(i, j int) bool { return webp[i].width < webp[j].width })
+	view.SrcSet = joinSrcSet(native)
+	view.WebPSrcSet = joinSrcSet(webp)
+	if defaultURL != "" {
+		view.Src = defaultURL
 	} else {
 		view.Src = "/media/" + m.ID + "/original"
 	}
+	s.views.set(id, view)
 	return view, true
+}
+
+// respVariant is one srcset candidate: derivative width and its public URL.
+type respVariant struct {
+	width int
+	url   string
+}
+
+// variantURL builds the public URL for a derivative. Variants whose bytes can
+// be regenerated carry their content hash as ?v= so new bytes never hide
+// behind an immutable-cached URL. Originals are write-once and stay unversioned.
+func variantURL(mediaID, kind, hash string) string {
+	if hash == "" {
+		return "/media/" + mediaID + "/" + kind
+	}
+	return "/media/" + mediaID + "/" + kind + "?v=" + hash
+}
+
+func joinSrcSet(items []respVariant) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, r := range items {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(r.url)
+		b.WriteString(" ")
+		b.WriteString(strconv.Itoa(r.width))
+		b.WriteString("w")
+	}
+	return b.String()
 }
 
 // FaviconView returns the generated site-icon URLs for the theme <head>.
 func (s *Service) FaviconView(ctx context.Context, id string) (rendering.FaviconView, bool) {
+	if view, ok := s.favicon.get(id); ok {
+		return view, true
+	}
 	variants, err := s.queries.ListMediaVariants(ctx, id)
 	if err != nil {
 		return rendering.FaviconView{}, false
@@ -336,10 +506,131 @@ func (s *Service) FaviconView(ctx context.Context, id string) (rendering.Favicon
 	if !found {
 		return rendering.FaviconView{}, false
 	}
+	s.favicon.set(id, view)
 	return view, true
 }
 
+// SocialImage is the resolved OG/Twitter image view. URL is still relative
+// (/media/<id>/social) so callers can absolutize it with the site origin.
+// Width/Height/Type are taken from the actual variant when present, so the
+// theme can emit og:image:width/height/type and og:image:alt without guessing.
+type SocialImage struct {
+	URL    string
+	Width  int
+	Height int
+	Type   string
+	Alt    string
+}
+
+// SocialView resolves the dedicated social preview derivative for an asset.
+// It prefers the 1200x630 "social" variant and falls back to the largest
+// responsive variant or the original when that variant is missing (older rows,
+// GIFs, tiny sources). The returned URL is always relative.
+func (s *Service) SocialView(ctx context.Context, id string) (SocialImage, bool) {
+	if id == "" {
+		return SocialImage{}, false
+	}
+	m, err := s.queries.GetMedia(ctx, id)
+	if err != nil {
+		return SocialImage{}, false
+	}
+	variants, err := s.queries.ListMediaVariants(ctx, id)
+	if err != nil {
+		return SocialImage{}, false
+	}
+	// Prefer the dedicated social preview variant.
+	for _, v := range variants {
+		if v.Kind == socialKind {
+			w := intVal(v.Width)
+			h := intVal(v.Height)
+			if w == 0 {
+				w = socialWidth
+			}
+			if h == 0 {
+				h = socialHeight
+			}
+			return SocialImage{URL: variantURL(id, socialKind, v.ContentHash), Width: w, Height: h, Type: v.MimeType, Alt: m.AltText}, true
+		}
+	}
+	// Fallback: largest native responsive variant (never a ".webp" slug —
+	// crawlers fetch og:image without content negotiation), otherwise original.
+	bestW := 0
+	var best *db.MediaVariant
+	for i := range variants {
+		w := parseIntKind(variants[i].Kind)
+		if w > bestW {
+			bestW = w
+			best = &variants[i]
+		}
+	}
+	if best != nil {
+		return SocialImage{URL: variantURL(id, best.Kind, best.ContentHash), Width: intVal(best.Width), Height: intVal(best.Height), Type: best.MimeType, Alt: m.AltText}, true
+	}
+	// Tiny image or GIF with no variants: fall back to original.
+	w := intVal(m.Width)
+	h := intVal(m.Height)
+	t := m.MimeType
+	if t == "" {
+		t = "image/jpeg"
+	}
+	return SocialImage{URL: "/media/" + id + "/original", Width: w, Height: h, Type: t, Alt: m.AltText}, true
+}
+
+// GenerateSocialVariant (re)builds the 1200x630 social preview from the stored
+// original. It is used for backfilling older assets or after a focal-point
+// change. The focal point is accepted now so a future UI can persist it without
+// changing the storage contract.
+func (s *Service) GenerateSocialVariant(ctx context.Context, id string, focal FocalPoint) error {
+	m, err := s.queries.GetMedia(ctx, id)
+	if err != nil {
+		return err
+	}
+	data, err := s.store.Read(ctx, m.StorageKey)
+	if err != nil {
+		return err
+	}
+	bytes, mime, err := GenerateSocialVariant(data, focal)
+	if err != nil {
+		return err
+	}
+	// Remove any existing social variant first.
+	if existing, err := s.queries.GetMediaVariant(ctx, db.GetMediaVariantParams{MediaID: id, Kind: socialKind}); err == nil {
+		_ = s.store.Delete(ctx, existing.StorageKey)
+		_ = s.queries.DeleteMediaVariant(ctx, existing.ID)
+	}
+	key := "generated/" + id + "-" + socialKind + extForMime(mime)
+	if err := s.store.Put(ctx, key, bytes); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
+		ID:          id + "-social",
+		MediaID:     id,
+		Kind:        socialKind,
+		StorageKey:  key,
+		MimeType:    mime,
+		Width:       sql.NullInt64{Int64: socialWidth, Valid: true},
+		Height:      sql.NullInt64{Int64: socialHeight, Valid: true},
+		FileSize:    int64(len(bytes)),
+		ContentHash: contentHash(bytes),
+		CreatedAt:   now,
+	}); err != nil {
+		_ = s.store.Delete(ctx, key)
+		return err
+	}
+	s.InvalidateView(id)
+	return nil
+}
+
 // --- helpers ---
+
+// contentHash returns a short hex digest of the derivative bytes. It is stored
+// on the variant row and appended to resolved URLs (?v=...) so regenerated
+// derivatives get fresh immutable-cached URLs instead of serving stale bytes.
+func contentHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:12]
+}
 
 func randomToken(n int) (string, error) {
 	b := make([]byte, n)
@@ -369,14 +660,15 @@ func assetFromModel(m db.Medium, variants []db.MediaVariant) *Asset {
 	}
 	for _, v := range variants {
 		a.Variants = append(a.Variants, Variant{
-			ID:         v.ID,
-			MediaID:    v.MediaID,
-			Kind:       v.Kind,
-			StorageKey: v.StorageKey,
-			MimeType:   v.MimeType,
-			Width:      intVal(v.Width),
-			Height:     intVal(v.Height),
-			FileSize:   v.FileSize,
+			ID:          v.ID,
+			MediaID:     v.MediaID,
+			Kind:        v.Kind,
+			StorageKey:  v.StorageKey,
+			MimeType:    v.MimeType,
+			Width:       intVal(v.Width),
+			Height:      intVal(v.Height),
+			FileSize:    v.FileSize,
+			ContentHash: v.ContentHash,
 		})
 	}
 	return a
@@ -387,6 +679,29 @@ func intVal(v sql.NullInt64) int {
 		return int(v.Int64)
 	}
 	return 0
+}
+
+// ThumbURL returns a URL suitable for a small preview/thumbnail. It prefers the
+// smallest generated responsive variant and falls back to the original when no
+// responsive variants exist (GIFs, or images smaller than the smallest
+// responsive width). It never assumes a fixed variant width exists.
+func (a *Asset) ThumbURL() string {
+	bestKind := ""
+	bestWidth := 0
+	for _, v := range a.Variants {
+		w, err := strconv.Atoi(v.Kind)
+		if err != nil {
+			continue
+		}
+		if bestKind == "" || w < bestWidth {
+			bestKind = v.Kind
+			bestWidth = w
+		}
+	}
+	if bestKind != "" {
+		return "/media/" + a.ID + "/" + bestKind
+	}
+	return "/media/" + a.ID + "/original"
 }
 
 func nullStr(v sql.NullString) string {
@@ -402,6 +717,21 @@ func parseIntKind(kind string) int {
 	}
 	n, err := strconv.Atoi(kind)
 	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// parseWebPKind returns the pixel width of a WebP derivative kind such as
+// "480.webp", or 0 when kind is not a WebP responsive variant. Keeping these
+// separate from parseIntKind lets resolvers pick native-format candidates
+// (e.g. the og:image fallback) without ever selecting a ".webp" slug.
+func parseWebPKind(kind string) int {
+	if !strings.HasSuffix(kind, webpKindExt) {
+		return 0
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(kind, webpKindExt))
+	if err != nil || n <= 0 {
 		return 0
 	}
 	return n

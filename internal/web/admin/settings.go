@@ -12,8 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/site"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/structured"
 )
 
 const maxSettingsFieldLen = 200
@@ -24,8 +26,11 @@ type settingsForm struct {
 	SiteURL              string
 	Language             string
 	Timezone             string
+	SiteRepresents       string // "organization" or "person"
 	HomepageEntryID      string
 	SiteIconMediaID      string
+	SiteSocialMediaID    string
+	TwitterSite          string
 	IndexingEnabled      bool
 	SitemapEnabled       bool
 	RobotsMode           string
@@ -37,16 +42,18 @@ type settingsForm struct {
 }
 
 type settingsData struct {
-	Form             settingsForm
-	Pages            []pageOption
-	Errors           map[string]string
-	Notice           string
-	CSRFToken        string
-	SiteURLWarning   bool
-	SitemapPublicURL string
-	SiteIconPreview  string
-	SiteIconWarning  string
-	Errored          bool
+	Form               settingsForm
+	Pages              []pageOption
+	Errors             map[string]string
+	Notice             string
+	CSRFToken          string
+	SiteURLWarning     bool
+	SitemapPublicURL   string
+	SiteIconPreview    string
+	SiteIconWarning    string
+	SiteSocialPreview  string
+	SiteSocialWarning  string
+	Errored            bool
 	// DisableSave controls the Save Changes button. It is false on the full
 	// page (and on validation errors) so the form still submits without JS; it
 	// is true only in the post-save Datastar fragment, where JS re-enables it on
@@ -73,8 +80,9 @@ func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	iconID, _ := h.queries.GetSiteIconMediaID(r.Context())
+	socialID, _ := h.queries.GetSiteSocialMediaID(r.Context())
 	data := settingsData{
-		Form:       formFromRow(row, iconID.String),
+		Form:       formFromRow(row, iconID.String, socialID.String),
 		Pages:      h.listPageOptions(r),
 		Errors:     map[string]string{},
 		CSRFToken:  token,
@@ -88,6 +96,17 @@ func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
 					data.SiteIconWarning = "The image is not square; it will be center-cropped for the favicon."
 				} else if asset.Width < 512 {
 					data.SiteIconWarning = "The image is small (" + strconv.Itoa(asset.Width) + "px); use at least 512×512 for crisp favicons."
+				}
+			}
+		}
+	}
+	if socialID.Valid {
+		// Preview prefers the dedicated 1200x630 social variant, falling back to thumb.
+		data.SiteSocialPreview = "/media/" + socialID.String + "/social"
+		if asset, aerr := h.media.Get(r.Context(), socialID.String); aerr == nil {
+			if asset.Width > 0 && asset.Height > 0 {
+				if asset.Width < 1200 || asset.Height < 630 {
+					data.SiteSocialWarning = "The image is small (" + strconv.Itoa(asset.Width) + "×" + strconv.Itoa(asset.Height) + "); use at least 1200×630 for a crisp social preview."
 				}
 			}
 		}
@@ -155,13 +174,34 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		h.renderSettingsPage(w, r, data)
 		return
 	}
+	if err := h.applySiteSocial(r.Context(), form.SiteSocialMediaID); err != nil {
+		log.Printf("save site social image: %v", err)
+		data.Errors["_"] = "Could not update the social image."
+		data.Errored = true
+		if isDatastarRequest(r) {
+			h.renderSettingsFragment(w, r, data, "")
+			return
+		}
+		h.renderSettingsPage(w, r, data)
+		return
+	}
+
+	// The publish-facing runtime caches depend on site settings: reload the
+	// snapshot and drop the full-page, sitemap and robots caches.
+	if h.runtime != nil {
+		if rerr := h.runtime.ReloadSite(r.Context()); rerr != nil {
+			log.Printf("reload site runtime: %v", rerr)
+		}
+	}
 
 	saved, err := h.queries.GetSiteSettings(r.Context())
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	data.Form = formFromRow(saved, form.SiteIconMediaID)
+	socialID, _ := h.queries.GetSiteSocialMediaID(r.Context())
+	iconID, _ := h.queries.GetSiteIconMediaID(r.Context())
+	data.Form = formFromRow(saved, iconID.String, socialID.String)
 	data.Errors = map[string]string{}
 	h.populateSettingsURLs(r, &data, saved)
 
@@ -235,6 +275,41 @@ func (h *Handler) applySiteIcon(ctx context.Context, newIcon string) error {
 	return nil
 }
 
+// applySiteSocial updates the global social image. It regenerates the
+// 1200x630 preview variant when a new image is chosen so the OG fallback is
+// always available.
+func (h *Handler) applySiteSocial(ctx context.Context, newSocial string) error {
+	current, err := h.queries.GetSiteSocialMediaID(ctx)
+	if err != nil {
+		return err
+	}
+	changed := (newSocial != "") != current.Valid || (current.Valid && current.String != newSocial)
+	if !changed {
+		// Even when unchanged, ensure the social preview derivative exists for
+		// older assets that were uploaded before the social pipeline existed.
+		if newSocial != "" {
+			if _, gerr := h.queries.GetMediaVariant(ctx, db.GetMediaVariantParams{MediaID: newSocial, Kind: "social"}); gerr != nil {
+				_ = h.media.GenerateSocialVariant(ctx, newSocial, media.FocalPoint{X: 0.5, Y: 0.5})
+			}
+		}
+		return nil
+	}
+	null := sql.NullString{}
+	if newSocial != "" {
+		null = sql.NullString{String: newSocial, Valid: true}
+	}
+	if err := h.queries.UpdateSiteSocialMediaID(ctx, null); err != nil {
+		return err
+	}
+	if newSocial != "" {
+		if err := h.media.GenerateSocialVariant(ctx, newSocial, media.FocalPoint{X: 0.5, Y: 0.5}); err != nil {
+			// Non-fatal: the original can still be served if variant generation fails.
+			_ = err
+		}
+	}
+	return nil
+}
+
 // persistSettings applies the validated form inside a single transaction,
 // updating the homepage route when it changed and writing the settings row.
 // Either everything commits or nothing does.
@@ -259,6 +334,12 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 	if newHome != "" {
 		homepageMode = "page"
 	}
+	// The column is CHECK-constrained; forms posted before the setting existed
+	// carry an empty value which defaults to organization here.
+	siteRepresents := form.SiteRepresents
+	if siteRepresents != structured.RepresentsOrganization && siteRepresents != structured.RepresentsPerson {
+		siteRepresents = structured.RepresentsOrganization
+	}
 	normalizedURL, urlErr := site.ValidateSiteURL(form.SiteURL)
 	if urlErr != nil {
 		return urlErr
@@ -281,6 +362,9 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 		SpeculationMode:      form.SpeculationMode,
 		SpeculationEagerness: form.SpeculationEagerness,
 		TitleSeparator:       form.TitleSeparator,
+		SiteSocialMediaID:    strToNullString(form.SiteSocialMediaID),
+		TwitterSite:          strings.TrimSpace(form.TwitterSite),
+		SiteRepresents:       siteRepresents,
 		UpdatedAt:            time.Now().Unix(),
 	})
 	if err != nil {
@@ -291,15 +375,28 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 
 // applyHomepageRoute keeps the chosen homepage page served at "/" and restores
 // the previous homepage page's "/slug" route. Each page keeps exactly one
-// entry-type route.
+// entry-type route; the page's own slug URL is preserved as a 301 redirect to
+// "/" so setting a page as the index never breaks its existing public link.
 func (h *Handler) applyHomepageRoute(ctx context.Context, queries *db.Queries, oldHome, newHome string, now int64) error {
-	if oldHome != "" {
+	if oldHome != "" && oldHome != newHome {
 		entry, err := queries.GetEntry(ctx, oldHome)
 		if err == nil && entry.ContentTypeID == "page" {
+			slugPath := "/" + entry.Slug
+			// Free the slug path before the entry reclaims it: drop any redirect
+			// left there by the homepage assignment (or an earlier slug change).
+			if stale, rerr := queries.GetRouteByPath(ctx, slugPath); rerr == nil {
+				if !stale.EntryID.Valid {
+					if delErr := queries.DeleteRoute(ctx, stale.ID); delErr != nil {
+						return delErr
+					}
+				}
+			} else if !errors.Is(rerr, sql.ErrNoRows) {
+				return rerr
+			}
 			route, rerr := queries.GetEntryRoute(ctx, strToNullString(oldHome))
-			if rerr == nil {
+			if rerr == nil && route.Path != slugPath {
 				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-					ID: route.ID, Path: "/" + entry.Slug, EntryID: strToNullString(oldHome),
+					ID: route.ID, Path: slugPath, EntryID: strToNullString(oldHome),
 					RouteType: "entry", UpdatedAt: now,
 				}); err != nil {
 					return err
@@ -337,9 +434,18 @@ func (h *Handler) applyHomepageRoute(ctx context.Context, queries *db.Queries, o
 	if err != nil {
 		return err
 	}
-	return queries.UpdateRoute(ctx, db.UpdateRouteParams{
+	oldPath := route.Path
+	if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
 		ID: route.ID, Path: "/", EntryID: strToNullString(newHome), RouteType: "entry", UpdatedAt: now,
-	})
+	}); err != nil {
+		return err
+	}
+	// The page's own URL must keep working once it becomes the index: redirect
+	// the old path to "/" so existing links and search indexes survive.
+	if oldPath != "" && oldPath != "/" {
+		return h.upsertRedirectRoute(ctx, queries, oldPath, "/", now)
+	}
+	return nil
 }
 
 func (h *Handler) listPageOptions(r *http.Request) []pageOption {
@@ -401,15 +507,18 @@ func (h *Handler) renderSettingsFragment(w http.ResponseWriter, r *http.Request,
 	writeSSE(w, events...)
 }
 
-func formFromRow(row db.GetSiteSettingsRow, siteIconMediaID string) settingsForm {
+func formFromRow(row db.GetSiteSettingsRow, siteIconMediaID, siteSocialMediaID string) settingsForm {
 	return settingsForm{
 		SiteTitle:            row.SiteTitle,
 		Tagline:              row.SiteTagline,
 		SiteURL:              row.SiteUrl,
 		Language:             row.Language,
 		Timezone:             row.Timezone,
+		SiteRepresents:       siteRepresentsFormValue(row.SiteRepresents),
 		HomepageEntryID:      nullStringToStr(row.HomepageEntryID),
 		SiteIconMediaID:      siteIconMediaID,
+		SiteSocialMediaID:    siteSocialMediaID,
+		TwitterSite:          row.TwitterSite,
 		IndexingEnabled:      row.IndexingEnabled != 0,
 		SitemapEnabled:       row.SitemapEnabled != 0,
 		RobotsMode:           row.RobotsMode,
@@ -429,8 +538,11 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 		SiteURL:              r.FormValue("site_url"),
 		Language:             strings.TrimSpace(r.FormValue("language")),
 		Timezone:             strings.TrimSpace(r.FormValue("timezone")),
+		SiteRepresents:       siteRepresentsFormValue(r.FormValue("site_represents")),
 		HomepageEntryID:      strings.TrimSpace(r.FormValue("homepage_entry_id")),
 		SiteIconMediaID:      strings.TrimSpace(r.FormValue("site_icon_media_id")),
+		SiteSocialMediaID:    strings.TrimSpace(r.FormValue("site_social_media_id")),
+		TwitterSite:          strings.TrimSpace(r.FormValue("twitter_site")),
 		IndexingEnabled:      r.FormValue("indexing_enabled") == "on",
 		SitemapEnabled:       r.FormValue("sitemap_enabled") == "on",
 		RobotsMode:           strings.TrimSpace(r.FormValue("robots_mode")),
@@ -476,6 +588,9 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 	if form.RobotsMode != "managed" && form.RobotsMode != "custom" {
 		errors["robots_mode"] = "Robots mode must be managed or custom."
 	}
+	if form.SiteRepresents != structured.RepresentsOrganization && form.SiteRepresents != structured.RepresentsPerson {
+		errors["site_represents"] = "Site represents must be Organization or Person."
+	}
 	if err := site.ValidateRobotsSize(form.RobotsCustom); err != nil {
 		errors["robots_custom"] = err.Error()
 	}
@@ -493,6 +608,20 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 			errors["site_icon_media_id"] = "Selected image is no longer available."
 		}
 	}
+	if form.SiteSocialMediaID != "" {
+		if _, err := h.media.Get(r.Context(), form.SiteSocialMediaID); err != nil {
+			errors["site_social_media_id"] = "Selected image is no longer available."
+		}
+	}
+	if form.TwitterSite != "" && len(form.TwitterSite) > 200 {
+		errors["twitter_site"] = "Twitter handle is too long."
+	}
+	if form.TwitterSite != "" && !(strings.HasPrefix(form.TwitterSite, "@") || strings.HasPrefix(form.TwitterSite, "http://") || strings.HasPrefix(form.TwitterSite, "https://")) {
+		// Allow handles with or without @, or full URLs. If it contains a space, reject.
+		if strings.Contains(form.TwitterSite, " ") {
+			errors["twitter_site"] = "Twitter handle must not contain spaces."
+		}
+	}
 	return form, errors
 }
 
@@ -501,6 +630,17 @@ func nullStringToStr(value sql.NullString) string {
 		return value.String
 	}
 	return ""
+}
+
+// siteRepresentsFormValue normalizes the "Site represents" choice. An empty
+// value (forms posted before the setting existed) defaults to organization;
+// anything unrecognized passes through so validation reports it.
+func siteRepresentsFormValue(value string) string {
+	v := strings.TrimSpace(strings.ToLower(value))
+	if v == "" {
+		return structured.RepresentsOrganization
+	}
+	return v
 }
 
 func strToNullString(value string) sql.NullString {

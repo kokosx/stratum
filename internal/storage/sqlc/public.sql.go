@@ -17,7 +17,7 @@ SELECT
     e.slug,
     e.status,
     e.published_at,
-    e.featured_media_id,
+    e.first_published_at,
 
     r.id AS revision_id,
     r.title,
@@ -25,7 +25,11 @@ SELECT
     r.document_json,
     r.seo_title,
     r.seo_description,
-    r.canonical_url
+    r.canonical_url,
+    r.featured_media_id,
+    r.social_media_id,
+    r.seo_robots_index,
+    r.seo_robots_follow
 
 FROM routes rt
 
@@ -43,19 +47,23 @@ LIMIT 1
 `
 
 type GetPublishedEntryByPathRow struct {
-	ID              string         `json:"id"`
-	ContentTypeID   string         `json:"content_type_id"`
-	Slug            string         `json:"slug"`
-	Status          string         `json:"status"`
-	PublishedAt     sql.NullInt64  `json:"published_at"`
-	FeaturedMediaID sql.NullString `json:"featured_media_id"`
-	RevisionID      string         `json:"revision_id"`
-	Title           string         `json:"title"`
-	Excerpt         sql.NullString `json:"excerpt"`
-	DocumentJson    string         `json:"document_json"`
-	SeoTitle        sql.NullString `json:"seo_title"`
-	SeoDescription  sql.NullString `json:"seo_description"`
-	CanonicalUrl    sql.NullString `json:"canonical_url"`
+	ID               string         `json:"id"`
+	ContentTypeID    string         `json:"content_type_id"`
+	Slug             string         `json:"slug"`
+	Status           string         `json:"status"`
+	PublishedAt      sql.NullInt64  `json:"published_at"`
+	FirstPublishedAt sql.NullInt64  `json:"first_published_at"`
+	RevisionID       string         `json:"revision_id"`
+	Title            string         `json:"title"`
+	Excerpt          sql.NullString `json:"excerpt"`
+	DocumentJson     string         `json:"document_json"`
+	SeoTitle         sql.NullString `json:"seo_title"`
+	SeoDescription   sql.NullString `json:"seo_description"`
+	CanonicalUrl     sql.NullString `json:"canonical_url"`
+	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	SocialMediaID    sql.NullString `json:"social_media_id"`
+	SeoRobotsIndex   sql.NullInt64  `json:"seo_robots_index"`
+	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 }
 
 func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error) {
@@ -67,7 +75,7 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.Slug,
 		&i.Status,
 		&i.PublishedAt,
-		&i.FeaturedMediaID,
+		&i.FirstPublishedAt,
 		&i.RevisionID,
 		&i.Title,
 		&i.Excerpt,
@@ -75,6 +83,10 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.SeoTitle,
 		&i.SeoDescription,
 		&i.CanonicalUrl,
+		&i.FeaturedMediaID,
+		&i.SocialMediaID,
+		&i.SeoRobotsIndex,
+		&i.SeoRobotsFollow,
 	)
 	return i, err
 }
