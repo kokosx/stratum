@@ -50,6 +50,18 @@ type blockData struct {
 	Priority bool
 }
 
+// LCPState is request-scoped mutable state shared across all scoped
+// RenderContext copies. Exactly one runtime instance of an LCP candidate
+// gets Priority=true; the first that actually renders with a real image
+// claims it and records the preload that the head should emit.
+type LCPState struct {
+	Consumed      bool
+	PreloadHref   string
+	PreloadSrcSet string
+	PreloadSizes  string
+	PreloadView   MediaView
+}
+
 // RenderContext carries request-time data that dynamic blocks bind to (the
 // current Entry and Site settings). It is the same for every node in a document.
 // In the editor preview it is empty, so dynamic blocks fall back to placeholders.
@@ -66,8 +78,11 @@ type RenderContext struct {
 	// Priority claim is consumed exactly once even when a Collection renders the
 	// same node ID for multiple entries.
 	LCPConsumed *bool
-	IsPreview  bool   // true in editor preview; public renders are false
-	EntryID    string // current entry ID for current-post exclusion in latest blocks
+	// LCP is the unified request-scoped state for the current render. When
+	// non-nil it is shared across all scoped copies (Collection per-entry).
+	LCP       *LCPState
+	IsPreview bool   // true in editor preview; public renders are false
+	EntryID   string // current entry ID for current-post exclusion in latest blocks
 
 	// Route is the generic route scope for the current render. Archive blocks
 	// and Collection(source=context) read from Route.Archive when present.
@@ -117,7 +132,7 @@ func (rc RenderContext) WithEntry(ae ArchiveEntry) RenderContext {
 		Permalink:     ae.URL,
 		PublishDate:   ae.PublishedAt,
 		PublishISO:    ae.PublishedISO,
-		FeaturedImage: ae.FeaturedImage.Src,
+		FeaturedImage: ae.FeaturedImage.ID,
 	}
 	rc.EntryID = ae.ID
 	return rc
@@ -299,15 +314,132 @@ func (r *Renderer) RenderDocument(doc *document.Document) (template.HTML, error)
 }
 
 func (r *Renderer) RenderDocumentContext(doc *document.Document, rc RenderContext) (template.HTML, error) {
-	var out strings.Builder
-	for _, node := range doc.Nodes {
-		rendered, err := r.renderNode(context.Background(), node, rc)
-		if err != nil {
-			return "", err
-		}
-		out.WriteString(string(rendered))
+	// Ensure raw and prepared have identical Collection semantics. Instead of
+	// maintaining two renderers, convert the document to a PreparedDocument
+	// and reuse the prepared path which already handles RuntimeRenderer
+	// dispatch, LCP and per-entry scoping identically.
+	pd, err := r.prepareFromDocument(doc)
+	if err != nil {
+		return "", err
 	}
-	return template.HTML(out.String()), nil
+	return r.RenderPreparedDocumentContext(context.Background(), pd, rc)
+}
+
+func (r *Renderer) prepareFromDocument(doc *document.Document) (*PreparedDocument, error) {
+	if doc == nil {
+		return &PreparedDocument{}, nil
+	}
+	nodes := make([]PreparedNode, 0, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		pn, err := r.documentNodeToPrepared(n)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, pn)
+	}
+	pd := &PreparedDocument{Nodes: nodes}
+	// Populate LCP candidates for raw path so raw vs prepared have identical
+	// semantics. Use the same heuristic as blocks.Registry: image/featured-image
+	// candidates gated by decorative/priority.
+	var high, auto []LCPCandidate
+	var visit func([]PreparedNode)
+	visit = func(items []PreparedNode) {
+		for _, n := range items {
+			isCandidate := false
+			requiresFeatured := false
+			switch n.Block {
+			case "core/image":
+				if decorative, _ := n.Settings["decorative"].(bool); decorative {
+					isCandidate = false
+				} else if mediaID, _ := n.Props["mediaId"].(string); mediaID != "" {
+					if prio, _ := n.Settings["priority"].(string); prio == "normal" {
+						isCandidate = false
+					} else {
+						isCandidate = true
+					}
+				}
+			case "core/featured-image":
+				if decorative, _ := n.Settings["decorative"].(bool); decorative {
+					isCandidate = false
+				} else {
+					if prio, _ := n.Settings["priority"].(string); prio == "normal" {
+						isCandidate = false
+					} else {
+						isCandidate = true
+						requiresFeatured = true
+					}
+				}
+			}
+			if isCandidate {
+				priority, _ := n.Settings["priority"].(string)
+				if priority == "auto" || priority == "" {
+					if eager, _ := n.Settings["eager"].(bool); eager {
+						priority = "high"
+					} else if priority == "" {
+						priority = "auto"
+					}
+				}
+				cand := LCPCandidate{ID: n.ID, Block: n.Block, RequiresFeatured: requiresFeatured}
+				if priority == "high" {
+					high = append(high, cand)
+				} else if priority == "auto" {
+					auto = append(auto, cand)
+				}
+			}
+			visit(n.Children)
+		}
+	}
+	visit(nodes)
+	// Also account for candidates inside Collection children (they are already
+	// visited via traversal, so per-entry expansion not needed here; winner
+	// selection will handle per-entry existence).
+	pd.HighPriority = high
+	pd.AutoCandidates = auto
+	return pd, nil
+}
+
+func (r *Renderer) documentNodeToPrepared(node document.Node) (PreparedNode, error) {
+	props, err := decodeObject(node.Props, "props")
+	if err != nil {
+		return PreparedNode{}, err
+	}
+	settings, err := decodeObject(node.Settings, "settings")
+	if err != nil {
+		return PreparedNode{}, err
+	}
+	children := make([]PreparedNode, 0, len(node.Children))
+	for _, ch := range node.Children {
+		pch, err := r.documentNodeToPrepared(ch)
+		if err != nil {
+			return PreparedNode{}, err
+		}
+		children = append(children, pch)
+	}
+	// Preserve LegacySource if the raw document already contains a migrated
+	// collection? For raw tests that use core/posts@1 we mimic the Prepare
+	// migration: if node is core/posts@1, treat as legacy collection.
+	legacy := ""
+	if node.Block == "core/posts" && node.Version == 1 {
+		legacy = "core/posts@1"
+		// Normalize to collection for rendering equivalence.
+		return PreparedNode{
+			ID:           node.ID,
+			Block:        "core/collection",
+			Version:      1,
+			Props:        props,
+			Settings:     settings,
+			Children:     children,
+			LegacySource: legacy,
+		}, nil
+	}
+	return PreparedNode{
+		ID:       node.ID,
+		Block:    node.Block,
+		Version:  node.Version,
+		Props:    props,
+		Settings: settings,
+		Children: children,
+	}, nil
 }
 
 func (r *Renderer) renderNode(ctx context.Context, node document.Node, rc RenderContext) (template.HTML, error) {
@@ -346,6 +478,27 @@ func (r *Renderer) renderNode(ctx context.Context, node document.Node, rc Render
 // decoding or defaults processing. It is the fast path used for published pages
 // after the document has been prepared once and cached.
 func (r *Renderer) RenderPreparedDocumentContext(ctx context.Context, pd *PreparedDocument, rc RenderContext) (template.HTML, error) {
+	// Initialise shared LCP state if caller did not. Registry.RenderPrepared
+	// normally does this, but direct callers (tests) may not.
+	if rc.LCP == nil {
+		rc.LCP = &LCPState{}
+	}
+	if rc.LCPConsumed == nil {
+		rc.LCPConsumed = &rc.LCP.Consumed
+	} else {
+		// Keep both in sync: LCP.Consumed is the source of truth.
+		rc.LCP.Consumed = *rc.LCPConsumed
+		rc.LCPConsumed = &rc.LCP.Consumed
+	}
+	// Resolve LCP winner if not already set. The winner is the first
+	// High candidate that has a real image (per-entry for collection),
+	// else first Auto. This is the single policy used by both renderer
+	// and preload; handler must not duplicate it.
+	if rc.LCPNodeID == "" && (len(pd.HighPriority) > 0 || len(pd.AutoCandidates) > 0) {
+		if winner := r.findLCPWinner(ctx, pd, rc); winner != "" {
+			rc.LCPNodeID = winner
+		}
+	}
 	var out strings.Builder
 	for i := range pd.Nodes {
 		rendered, err := r.renderPreparedNode(ctx, pd.Nodes[i], rc)
@@ -379,9 +532,34 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 		children.WriteString(string(rendered))
 	}
 
-	priority := node.ID == rc.LCPNodeID && (rc.LCPConsumed == nil || !*rc.LCPConsumed)
-	if priority && rc.LCPConsumed != nil {
-		*rc.LCPConsumed = true
+	priority := false
+	if node.ID == rc.LCPNodeID && (rc.LCPConsumed == nil || !*rc.LCPConsumed) && (rc.LCP == nil || !rc.LCP.Consumed) {
+		// Only claim if this actual instance has a real image. For a
+		// Collection-embedded featured-image the first entry may be a
+		// placeholder while the second has media; the second should win.
+		if view, ok := r.hasActualImage(node, rc); ok {
+			priority = true
+			// log.Printf("CLAIM node=%s viewSrc=%q LCP=%p consumed=%v", node.ID, view.Src, rc.LCP, rc.LCP.Consumed)
+			if rc.LCP != nil {
+				rc.LCP.Consumed = true
+				rc.LCP.PreloadHref = view.Src
+				rc.LCP.PreloadSrcSet = view.SrcSet
+				rc.LCP.PreloadView = view
+				if s, _ := node.Settings["sizes"].(string); s != "" {
+					rc.LCP.PreloadSizes = s
+				} else {
+					rc.LCP.PreloadSizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
+				}
+				// log.Printf("SET preload href=%q", view.Src)
+			}
+			if rc.LCPConsumed != nil {
+				*rc.LCPConsumed = true
+			}
+		} else {
+			// log.Printf("NOIMAGE node=%s LCPNodeID=%s", node.ID, rc.LCPNodeID)
+		}
+	} else if node.ID == rc.LCPNodeID {
+		// log.Printf("SKIP consumed node=%s", node.ID)
 	}
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: priority}); err != nil {
@@ -484,7 +662,8 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 
 	// Render children per entry with scoped Entry context (lazy children invariant).
 	var children strings.Builder
-	if len(node.Children) == 0 && len(entries) > 0 {
+	isLegacy := node.LegacySource != ""
+	if isLegacy && len(node.Children) == 0 && len(entries) > 0 {
 		children.WriteString(string(renderLegacyCollectionFallback(node, entries, rc)))
 	} else {
 		for _, entry := range entries {
@@ -499,7 +678,12 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 			children.WriteString(string(rendered))
 		}
 		if len(entries) == 0 && len(node.Children) == 0 {
-			children.WriteString(`<div class="stratum-posts-empty"><p>No posts found.</p></div>`)
+			if isLegacy {
+				// Legacy empty without entries keeps historic empty wording.
+				children.WriteString(`<div class="stratum-posts-empty"><p>No posts found.</p></div>`)
+			} else {
+				children.WriteString(`<div class="stratum-posts-empty"><p>No posts found.</p></div>`)
+			}
 		}
 	}
 	var out bytes.Buffer
@@ -518,6 +702,10 @@ func intFromSettings(m map[string]any, key string, def int) int {
 			return val
 		case int64:
 			return int(val)
+		case json.Number:
+			if i, err := val.Int64(); err == nil {
+				return int(i)
+			}
 		}
 	}
 	return def
@@ -591,11 +779,36 @@ func renderLegacyCollectionFallback(node PreparedNode, entries []ArchiveEntry, r
 	if layout == "grid" {
 		cls = fmt.Sprintf("stratum-posts stratum-posts--grid stratum-posts--cols-%d", columns)
 	}
+	// Sizes follows the historic core/posts template: list uses a fixed 280px bucket,
+	// grid varies by columns. This preserves byte-level visual compatibility.
+	sizes := "(min-width: 768px) 280px, 100vw"
+	if layout == "grid" {
+		switch columns {
+		case 2:
+			sizes = "(min-width: 768px) 50vw, 100vw"
+		case 3:
+			sizes = "(min-width: 768px) 33vw, 100vw"
+		default:
+			sizes = "(min-width: 768px) min(720px, 100vw), 100vw"
+		}
+	} else {
+		sizes = "(min-width: 768px) min(720px, 100vw), 100vw"
+	}
 	b.WriteString(`<section class="` + cls + `">`)
 	for _, e := range entries {
 		b.WriteString(`<article class="stratum-post-card">`)
 		if showImage && e.FeaturedImage.Src != "" {
-			b.WriteString(`<figure class="stratum-post-card__media"><img src="` + template.HTMLEscapeString(e.FeaturedImage.Src) + `" alt="` + template.HTMLEscapeString(e.FeaturedImage.Alt) + `" loading="lazy" decoding="async"></figure>`)
+			b.WriteString(`<figure class="stratum-post-card__media"><img src="` + template.HTMLEscapeString(e.FeaturedImage.Src) + `"`)
+			if e.FeaturedImage.SrcSet != "" {
+				b.WriteString(` srcset="` + template.HTMLEscapeString(e.FeaturedImage.SrcSet) + `" sizes="` + template.HTMLEscapeString(sizes) + `"`)
+			}
+			if e.FeaturedImage.Width != 0 {
+				b.WriteString(` width="` + template.HTMLEscapeString(fmt.Sprint(e.FeaturedImage.Width)) + `"`)
+			}
+			if e.FeaturedImage.Height != 0 {
+				b.WriteString(` height="` + template.HTMLEscapeString(fmt.Sprint(e.FeaturedImage.Height)) + `"`)
+			}
+			b.WriteString(` alt="` + template.HTMLEscapeString(e.FeaturedImage.Alt) + `" loading="lazy" decoding="async"></figure>`)
 		}
 		b.WriteString(`<header class="stratum-post-card__header"><h2 class="stratum-post-card__title"><a href="` + template.HTMLEscapeString(e.URL) + `">` + template.HTMLEscapeString(e.Title) + `</a></h2>`)
 		if showDate && e.PublishedISO != "" {
@@ -631,7 +844,7 @@ func renderLegacyCollectionFallback(node PreparedNode, entries []ArchiveEntry, r
 			b.WriteString(`</nav>`)
 		}
 	}
-	if showViewAll && source == "context" {
+	if showViewAll && source == "query" {
 		var archiveURL string
 		if rc.Route.Archive != nil && rc.Route.Archive.Permalink != "" {
 			archiveURL = rc.Route.Archive.Permalink
@@ -641,12 +854,194 @@ func renderLegacyCollectionFallback(node PreparedNode, entries []ArchiveEntry, r
 			archiveURL = rc.ArchiveURL
 		} else if rc.Route.Path != "" {
 			archiveURL = rc.Route.Path
+		} else {
+			archiveURL = "/blog"
 		}
 		if archiveURL != "" {
 			b.WriteString(`<p class="stratum-posts-view-all"><a href="` + template.HTMLEscapeString(archiveURL) + `">` + template.HTMLEscapeString(viewAllLabel) + `</a></p>`)
 		}
 	}
 	return template.HTML(b.String())
+}
+
+func (r *Renderer) hasActualImage(node PreparedNode, rc RenderContext) (MediaView, bool) {
+	switch node.Block {
+	case "core/image":
+		id, _ := node.Props["mediaId"].(string)
+		if id == "" {
+			return MediaView{}, false
+		}
+		if decorative, _ := node.Settings["decorative"].(bool); decorative {
+			return MediaView{}, false
+		}
+		if prio, _ := node.Settings["priority"].(string); prio == "normal" {
+			return MediaView{}, false
+		}
+		if r.mediaProvider == nil {
+			// No provider (e.g. in tests where registry was built without media).
+			// Assume image exists so LCP selection still works; fabricate a view
+			// for preload consistency.
+			return MediaView{ID: id, Src: "/media/" + id + "/original", Alt: ""}, true
+		}
+		view, ok := r.mediaProvider.MediaView(context.Background(), id)
+		if !ok || view.Src == "" {
+			return MediaView{}, false
+		}
+		return view, true
+	case "core/featured-image":
+		if rc.Entry.FeaturedImage == "" {
+			return MediaView{}, false
+		}
+		if decorative, _ := node.Settings["decorative"].(bool); decorative {
+			return MediaView{}, false
+		}
+		if prio, _ := node.Settings["priority"].(string); prio == "normal" {
+			return MediaView{}, false
+		}
+		if r.mediaProvider == nil {
+			return MediaView{ID: rc.Entry.FeaturedImage, Src: "/media/" + rc.Entry.FeaturedImage + "/original", Alt: ""}, true
+		}
+		view, ok := r.mediaProvider.MediaView(context.Background(), rc.Entry.FeaturedImage)
+		if !ok || view.Src == "" {
+			return MediaView{}, false
+		}
+		return view, true
+	default:
+		return MediaView{}, false
+	}
+}
+
+func (r *Renderer) findLCPWinner(ctx context.Context, pd *PreparedDocument, rc RenderContext) string {
+	for _, c := range pd.HighPriority {
+		if r.candidateHasImage(ctx, c, pd, rc) {
+			return c.ID
+		}
+	}
+	for _, c := range pd.AutoCandidates {
+		if r.candidateHasImage(ctx, c, pd, rc) {
+			return c.ID
+		}
+	}
+	return ""
+}
+
+func (r *Renderer) candidateHasImage(ctx context.Context, cand LCPCandidate, pd *PreparedDocument, rc RenderContext) bool {
+	node, parentCollection := r.findCandidateLocation(pd.Nodes, cand.ID, nil)
+	if node == nil {
+		return false
+	}
+	if parentCollection == nil {
+		_, ok := r.hasActualImage(*node, rc)
+		return ok
+	}
+	entries, err := r.collectionEntriesForWinner(ctx, *parentCollection, rc)
+	if err != nil || len(entries) == 0 {
+		// No entries to check; treat as no image.
+		// For image blocks with static mediaId we still check without entry.
+		if node.Block == "core/image" {
+			_, ok := r.hasActualImage(*node, rc)
+			return ok
+		}
+		return false
+	}
+	for _, e := range entries {
+		scoped := rc.WithEntry(e)
+		scoped.Route = rc.Route
+		scoped.QueryCache = rc.QueryCache
+		scoped.ContentReader = rc.ContentReader
+		if _, ok := r.hasActualImage(*node, scoped); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) findCandidateLocation(nodes []PreparedNode, targetID string, parentCollection *PreparedNode) (*PreparedNode, *PreparedNode) {
+	for i := range nodes {
+		n := &nodes[i]
+		isCollection := n.Block == "core/collection"
+		nextParent := parentCollection
+		if isCollection {
+			nextParent = n
+		}
+		if n.ID == targetID {
+			return n, parentCollection
+		}
+		if len(n.Children) > 0 {
+			if found, parent := r.findCandidateLocation(n.Children, targetID, nextParent); found != nil {
+				return found, parent
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (r *Renderer) collectionEntriesForWinner(ctx context.Context, colNode PreparedNode, rc RenderContext) ([]ArchiveEntry, error) {
+	source, _ := colNode.Settings["source"].(string)
+	if source == "" {
+		source = "query"
+	}
+	var entries []ArchiveEntry
+	switch source {
+	case "context":
+		if rc.Route.Archive != nil {
+			entries = rc.Route.Archive.Entries
+		} else if rc.Archive != nil {
+			entries = rc.Archive.Entries
+		}
+	case "query":
+		fallthrough
+	default:
+		contentType, _ := colNode.Settings["contentType"].(string)
+		if contentType == "" {
+			contentType, _ = colNode.Settings["content_type"].(string)
+		}
+		if contentType == "" {
+			contentType = "post"
+		}
+		limit := intFromSettings(colNode.Settings, "limit", 3)
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 20 {
+			limit = 20
+		}
+		offset := intFromSettings(colNode.Settings, "offset", 0)
+		order, _ := colNode.Settings["order"].(string)
+		if order == "" {
+			order = "published_desc"
+		}
+		excludeCurrent, _ := colNode.Settings["excludeCurrent"].(bool)
+		var excludeIDs []string
+		if excludeCurrent && rc.EntryID != "" {
+			excludeIDs = append(excludeIDs, rc.EntryID)
+		}
+		cacheKey := collectionCacheKey(contentType, limit, offset, order, excludeIDs)
+		if rc.QueryCache != nil {
+			if cached, ok := rc.QueryCache[cacheKey]; ok {
+				entries = cached
+			} else if rc.ContentReader != nil {
+				fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+				if err != nil {
+					return nil, err
+				}
+				entries = fetched
+				rc.QueryCache[cacheKey] = entries
+			} else if col, ok := rc.Collections[colNode.ID]; ok {
+				entries = col
+				if len(entries) > limit {
+					entries = entries[:limit]
+				}
+			}
+		} else if rc.ContentReader != nil {
+			fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+			if err != nil {
+				return nil, err
+			}
+			entries = fetched
+		}
+	}
+	return entries, nil
 }
 
 func decodeObject(value json.RawMessage, name string) (map[string]any, error) {

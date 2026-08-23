@@ -11,7 +11,9 @@ import (
 
 type Querier interface {
 	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
+	ClearLayoutTemplateParent(ctx context.Context, arg ClearLayoutTemplateParentParams) error
 	ClearLayoutTemplatePublishedRevision(ctx context.Context, arg ClearLayoutTemplatePublishedRevisionParams) error
+	CountEntries(ctx context.Context) (int64, error)
 	CountMedia(ctx context.Context) (int64, error)
 	CountMediaUsage(ctx context.Context, id sql.NullString) (int64, error)
 	CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error)
@@ -48,6 +50,7 @@ type Querier interface {
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetLatestLayoutTemplateRevision(ctx context.Context, templateID string) (LayoutTemplateRevision, error)
 	GetLayoutTemplate(ctx context.Context, id string) (LayoutTemplate, error)
+	GetLayoutTemplateChain(ctx context.Context, id string) ([]GetLayoutTemplateChainRow, error)
 	GetLayoutTemplateRevision(ctx context.Context, id string) (LayoutTemplateRevision, error)
 	GetLayoutTemplateWithPublishedRevision(ctx context.Context, id string) (GetLayoutTemplateWithPublishedRevisionRow, error)
 	GetMedia(ctx context.Context, id string) (Medium, error)
@@ -101,8 +104,13 @@ type Querier interface {
 	// <lastmod> comes from the published revision timestamp, so a newer draft
 	// never changes the sitemap.
 	ListSitemapEntries(ctx context.Context) ([]ListSitemapEntriesRow, error)
+	SeedArchiveRoute(ctx context.Context, arg SeedArchiveRouteParams) error
 	SeedEntry(ctx context.Context, arg SeedEntryParams) error
 	SeedEntryRevision(ctx context.Context, arg SeedEntryRevisionParams) error
+	SeedEntryWithLayout(ctx context.Context, arg SeedEntryWithLayoutParams) error
+	SeedNavigationItem(ctx context.Context, arg SeedNavigationItemParams) error
+	SeedNavigationLocation(ctx context.Context, arg SeedNavigationLocationParams) error
+	SeedNavigationMenu(ctx context.Context, arg SeedNavigationMenuParams) error
 	SeedPublishedRevision(ctx context.Context, arg SeedPublishedRevisionParams) error
 	SeedRoute(ctx context.Context, arg SeedRouteParams) error
 	SeedSiteSettings(ctx context.Context, arg SeedSiteSettingsParams) error
@@ -115,6 +123,7 @@ type Querier interface {
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
 	UpdateLayoutTemplate(ctx context.Context, arg UpdateLayoutTemplateParams) error
+	UpdateLayoutTemplateParent(ctx context.Context, arg UpdateLayoutTemplateParentParams) error
 	UpdateMediaMetadata(ctx context.Context, arg UpdateMediaMetadataParams) error
 	UpdateNavigationMenu(ctx context.Context, arg UpdateNavigationMenuParams) error
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error

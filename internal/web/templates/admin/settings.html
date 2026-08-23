@@ -43,14 +43,26 @@
 
         <div class="form-field">
           <label for="language">Language</label>
-          <input type="text" id="language" name="language" value="{{ .Content.Form.Language }}" placeholder="en" autocomplete="off">
-          <p class="field-desc">Language tag, e.g. <code>en</code>, <code>pl</code> or <code>en-US</code>. Sets <code>&lt;html lang&gt;</code>.</p>
+          <select id="language" name="language">
+            {{ $curLang := .Content.Form.Language }}
+            {{ range .Content.LanguageOptions }}
+              <option value="{{ .Value }}" {{ if eq .Value $curLang }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>
+            {{ end }}
+            {{ if not .Content.LanguageIsInOptions }}<option value="{{ $curLang }}" selected>{{ $curLang }} — custom</option>{{ end }}
+          </select>
+          <p class="field-desc">Sets <code>&lt;html lang&gt;</code>. Choose a language; custom valid codes are preserved.</p>
           {{ $e := index .Content.Errors "language" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
         </div>
 
         <div class="form-field">
           <label for="timezone">Timezone</label>
-          <input type="text" id="timezone" name="timezone" value="{{ .Content.Form.Timezone }}" placeholder="UTC" autocomplete="off">
+          <select id="timezone" name="timezone">
+            {{ $curTZ := .Content.Form.Timezone }}
+            {{ range .Content.TimezoneOptions }}
+              <option value="{{ .Value }}" {{ if eq .Value $curTZ }}selected{{ end }}>{{ .Label }}</option>
+            {{ end }}
+            {{ if not .Content.TimezoneIsInOptions }}<option value="{{ $curTZ }}" selected>{{ $curTZ }} — custom</option>{{ end }}
+          </select>
           <p class="field-desc">IANA timezone, e.g. <code>Europe/Warsaw</code>.</p>
           {{ $e := index .Content.Errors "timezone" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
         </div>
@@ -141,8 +153,7 @@
 
         <div class="form-field">
           <label class="check-row">
-            <input type="checkbox" name="indexing_enabled" value="on" {{ if .Content.Form.IndexingEnabled }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="checkbox" name="indexing_enabled" value="on" {{ if .Content.Form.IndexingEnabled }}checked{{ end }}>
             Allow search engines to index this site
           </label>
           <p class="form-warning">This does not make the site private. It only asks search engines not to index it.</p>
@@ -150,8 +161,7 @@
 
         <div class="form-field">
           <label class="check-row">
-            <input type="checkbox" name="sitemap_enabled" value="on" {{ if .Content.Form.SitemapEnabled }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="checkbox" name="sitemap_enabled" value="on" {{ if .Content.Form.SitemapEnabled }}checked{{ end }}>
             Enable XML Sitemap
           </label>
           {{ if .Content.SitemapPublicURL }}
@@ -164,13 +174,11 @@
         <div class="form-field">
           <span class="field-label">Robots.txt mode</span>
           <label class="check-row">
-            <input type="radio" name="robots_mode" value="managed" {{ if eq .Content.Form.RobotsMode "managed" }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="radio" name="robots_mode" value="managed" {{ if eq .Content.Form.RobotsMode "managed" }}checked{{ end }}>
             Managed
           </label>
           <label class="check-row">
-            <input type="radio" name="robots_mode" value="custom" {{ if eq .Content.Form.RobotsMode "custom" }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="radio" name="robots_mode" value="custom" {{ if eq .Content.Form.RobotsMode "custom" }}checked{{ end }}>
             Custom
           </label>
         </div>
@@ -220,8 +228,7 @@
 
         <div class="form-field">
           <label class="check-row">
-            <input type="checkbox" name="speculation_enabled" value="on" {{ if .Content.Form.SpeculationEnabled }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="checkbox" name="speculation_enabled" value="on" {{ if .Content.Form.SpeculationEnabled }}checked{{ end }}>
             Enable Speculation Rules (Navigation Preloading)
           </label>
           <p class="field-desc">Lets supporting browsers preload likely next pages, making navigation feel faster.</p>

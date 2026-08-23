@@ -186,7 +186,28 @@ func (h *Handler) renderMenus(w http.ResponseWriter, r *http.Request, selectedID
 		return
 	}
 	if selectedID == "" && len(menus) > 0 {
-		selectedID = menus[0].ID
+		// Prefer the menu assigned to the primary location; never arbitrarily choose Footer via alphabetical sort.
+		if locs, err := h.queries.ListNavigationLocations(r.Context()); err == nil {
+			primaryID := ""
+			for _, loc := range locs {
+				if loc.Location == "primary" {
+					primaryID = loc.MenuID
+					break
+				}
+			}
+			if primaryID != "" {
+				// Verify it still exists
+				for _, m := range menus {
+					if m.ID == primaryID {
+						selectedID = primaryID
+						break
+					}
+				}
+			}
+		}
+		if selectedID == "" {
+			selectedID = menus[0].ID
+		}
 	}
 	data := menusData{Menus: menus, Error: formError}
 	if selectedID != "" {

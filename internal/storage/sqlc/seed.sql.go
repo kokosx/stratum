@@ -10,6 +10,44 @@ import (
 	"database/sql"
 )
 
+const countEntries = `-- name: CountEntries :one
+SELECT COUNT(*) FROM entries
+`
+
+func (q *Queries) CountEntries(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEntries)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const seedArchiveRoute = `-- name: SeedArchiveRoute :exec
+INSERT INTO routes (id, path, entry_id, route_type, content_type_id, created_at, updated_at)
+VALUES (?, ?, ?, 'archive', ?, ?, ?)
+ON CONFLICT(path) DO NOTHING
+`
+
+type SeedArchiveRouteParams struct {
+	ID            string         `json:"id"`
+	Path          string         `json:"path"`
+	EntryID       sql.NullString `json:"entry_id"`
+	ContentTypeID sql.NullString `json:"content_type_id"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
+}
+
+func (q *Queries) SeedArchiveRoute(ctx context.Context, arg SeedArchiveRouteParams) error {
+	_, err := q.db.ExecContext(ctx, seedArchiveRoute,
+		arg.ID,
+		arg.Path,
+		arg.EntryID,
+		arg.ContentTypeID,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const seedEntry = `-- name: SeedEntry :exec
 INSERT INTO entries (
     id, content_type_id, slug, status, created_at, updated_at, published_at
@@ -69,6 +107,109 @@ func (q *Queries) SeedEntryRevision(ctx context.Context, arg SeedEntryRevisionPa
 		arg.SeoTitle,
 		arg.SeoDescription,
 		arg.CreatedAt,
+	)
+	return err
+}
+
+const seedEntryWithLayout = `-- name: SeedEntryWithLayout :exec
+INSERT INTO entries (id, content_type_id, slug, status, created_at, updated_at, published_at)
+VALUES (?, ?, ?, 'active', ?, ?, ?)
+ON CONFLICT(id) DO NOTHING
+`
+
+type SeedEntryWithLayoutParams struct {
+	ID            string        `json:"id"`
+	ContentTypeID string        `json:"content_type_id"`
+	Slug          string        `json:"slug"`
+	CreatedAt     int64         `json:"created_at"`
+	UpdatedAt     int64         `json:"updated_at"`
+	PublishedAt   sql.NullInt64 `json:"published_at"`
+}
+
+func (q *Queries) SeedEntryWithLayout(ctx context.Context, arg SeedEntryWithLayoutParams) error {
+	_, err := q.db.ExecContext(ctx, seedEntryWithLayout,
+		arg.ID,
+		arg.ContentTypeID,
+		arg.Slug,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+		arg.PublishedAt,
+	)
+	return err
+}
+
+const seedNavigationItem = `-- name: SeedNavigationItem :exec
+INSERT INTO navigation_items (id, menu_id, parent_id, position, label, target_type, entry_id, url, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO NOTHING
+`
+
+type SeedNavigationItemParams struct {
+	ID         string         `json:"id"`
+	MenuID     string         `json:"menu_id"`
+	ParentID   sql.NullString `json:"parent_id"`
+	Position   int64          `json:"position"`
+	Label      string         `json:"label"`
+	TargetType string         `json:"target_type"`
+	EntryID    sql.NullString `json:"entry_id"`
+	Url        sql.NullString `json:"url"`
+	CreatedAt  int64          `json:"created_at"`
+	UpdatedAt  int64          `json:"updated_at"`
+}
+
+func (q *Queries) SeedNavigationItem(ctx context.Context, arg SeedNavigationItemParams) error {
+	_, err := q.db.ExecContext(ctx, seedNavigationItem,
+		arg.ID,
+		arg.MenuID,
+		arg.ParentID,
+		arg.Position,
+		arg.Label,
+		arg.TargetType,
+		arg.EntryID,
+		arg.Url,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const seedNavigationLocation = `-- name: SeedNavigationLocation :exec
+INSERT INTO navigation_locations (location, menu_id)
+VALUES (?, ?)
+ON CONFLICT(location) DO NOTHING
+`
+
+type SeedNavigationLocationParams struct {
+	Location string `json:"location"`
+	MenuID   string `json:"menu_id"`
+}
+
+func (q *Queries) SeedNavigationLocation(ctx context.Context, arg SeedNavigationLocationParams) error {
+	_, err := q.db.ExecContext(ctx, seedNavigationLocation, arg.Location, arg.MenuID)
+	return err
+}
+
+const seedNavigationMenu = `-- name: SeedNavigationMenu :exec
+INSERT INTO navigation_menus (id, name, slug, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(id) DO NOTHING
+`
+
+type SeedNavigationMenuParams struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func (q *Queries) SeedNavigationMenu(ctx context.Context, arg SeedNavigationMenuParams) error {
+	_, err := q.db.ExecContext(ctx, seedNavigationMenu,
+		arg.ID,
+		arg.Name,
+		arg.Slug,
+		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	return err
 }
@@ -133,17 +274,26 @@ SET
     site_tagline = 'A modern self-hosted CMS',
     homepage_mode = 'page',
     homepage_entry_id = ?,
+    posts_page_entry_id = ?,
+    posts_base_path = ?,
     updated_at = ?
 WHERE id = 1
   AND homepage_entry_id IS NULL
 `
 
 type SeedSiteSettingsParams struct {
-	HomepageEntryID sql.NullString `json:"homepage_entry_id"`
-	UpdatedAt       int64          `json:"updated_at"`
+	HomepageEntryID  sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID sql.NullString `json:"posts_page_entry_id"`
+	PostsBasePath    string         `json:"posts_base_path"`
+	UpdatedAt        int64          `json:"updated_at"`
 }
 
 func (q *Queries) SeedSiteSettings(ctx context.Context, arg SeedSiteSettingsParams) error {
-	_, err := q.db.ExecContext(ctx, seedSiteSettings, arg.HomepageEntryID, arg.UpdatedAt)
+	_, err := q.db.ExecContext(ctx, seedSiteSettings,
+		arg.HomepageEntryID,
+		arg.PostsPageEntryID,
+		arg.PostsBasePath,
+		arg.UpdatedAt,
+	)
 	return err
 }

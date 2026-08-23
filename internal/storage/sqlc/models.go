@@ -78,6 +78,7 @@ type LayoutTemplate struct {
 	PublishedRevisionID sql.NullString `json:"published_revision_id"`
 	CreatedAt           int64          `json:"created_at"`
 	UpdatedAt           int64          `json:"updated_at"`
+	ParentTemplateID    sql.NullString `json:"parent_template_id"`
 }
 
 type LayoutTemplateRevision struct {

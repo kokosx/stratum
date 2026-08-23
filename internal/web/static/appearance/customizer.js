@@ -14,10 +14,25 @@
     previewPath: bootstrap.previewPath || '/',
     viewport: 'desktop',
     search: '',
+    activeTab: 'site-styles',
   };
 
   const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const changed = (key) => !equal(state.settings[key], defaults[key]);
+
+  function settingsForPreset(preset) {
+    const next = structuredClone(defaults);
+    Object.assign(next, structuredClone(preset.values));
+    return next;
+  }
+  function activePresetId() {
+    if (state.customCSS && state.customCSS.trim() !== '') return null;
+    for (const p of schema.presets) {
+      const eff = settingsForPreset(p);
+      if (equal(eff, state.settings)) return p.id;
+    }
+    return null;
+  }
 
   function setDirty() {
     state.dirty = !equal(state.settings, saved.settings) || state.customCSS !== saved.customCSS;
@@ -31,6 +46,13 @@
     footer: '&#9660;', buttons: '&#9654;', links: '&#8734;', advanced: '&#9881;',
   };
 
+  const TAB_GROUPS = {
+    'site-styles': ['colors','typography','spacing','shape','layout','buttons','links'],
+    'header': ['header','navigation','topbar'],
+    'footer': ['footer'],
+    'advanced': ['advanced'],
+  };
+
   const groupsEl = document.querySelector('#cz-groups');
   const presetsEl = document.querySelector('#cz-presets');
   const searchInput = document.querySelector('#cz-search');
@@ -40,6 +62,7 @@
   const frameWrap = document.querySelector('.cz-preview__frame');
   const loadingEl = document.querySelector('#cz-loading');
   const previewPageSelect = document.querySelector('#cz-preview-page');
+  const tabButtons = document.querySelectorAll('.cz-tabs [data-tab]');
   let lastScrollY = 0;
 
   let previewTimer;
@@ -48,12 +71,26 @@
 
   function renderPresets() {
     if (!schema.presets?.length) { presetsEl.replaceChildren(); return; }
-    presetsEl.innerHTML = '<p class="cz-presets__title">Presets</p><div class="cz-presets__grid" id="cz-presets-grid"></div>';
+    if (state.search.trim() === '' && state.activeTab !== 'site-styles') {
+      presetsEl.replaceChildren();
+      return;
+    }
+    const activeId = activePresetId();
+    let title = 'Presets';
+    if (!activeId) {
+      const hasCustom = !equal(state.settings, defaults) || (state.customCSS && state.customCSS.trim() !== '');
+      if (hasCustom) title = 'Presets — Custom';
+    } else {
+      const active = schema.presets.find(p => p.id === activeId);
+      if (active) title = `Presets — ${active.label}`;
+    }
+    presetsEl.innerHTML = `<p class="cz-presets__title">${title}</p><div class="cz-presets__grid" id="cz-presets-grid"></div>`;
     const grid = presetsEl.querySelector('#cz-presets-grid');
     schema.presets.forEach((preset) => {
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = 'cz-preset-card';
+      card.className = 'cz-preset-card' + (preset.id === activeId ? ' active' : '');
+      card.setAttribute('aria-pressed', String(preset.id === activeId));
       const colors = extractPresetColors(preset);
       const swatch = document.createElement('div');
       swatch.className = 'cz-preset-card__swatch';
@@ -63,7 +100,9 @@
       label.textContent = preset.label;
       card.append(swatch, label);
       card.addEventListener('click', () => {
-        Object.assign(state.settings, structuredClone(preset.values));
+        state.settings = settingsForPreset(preset);
+        // Presets are visual starting points, not patches: customCSS is left as-is but active detection requires it empty
+        // For a clean preset switch, we keep customCSS; if user wants pure preset they can Reset first
         setDirty(); renderGroups(); schedulePreview();
       });
       grid.append(card);
@@ -82,10 +121,34 @@
     return colors;
   }
 
+  function groupsForActiveTab() {
+    const filter = state.search.toLowerCase().trim();
+    if (filter) {
+      // Search shows matching groups across all tabs
+      return schema.groups.filter((group) => {
+        const groupSettings = Object.entries(schema.settings).filter(([, s]) => s.ui.group === group.id);
+        return groupSettings.some(([key, s]) => s.ui.label.toLowerCase().includes(filter) || key.toLowerCase().includes(filter) || (s.ui.description || '').toLowerCase().includes(filter));
+      });
+    }
+    const allowed = TAB_GROUPS[state.activeTab] || [];
+    return schema.groups.filter((g) => allowed.includes(g.id));
+  }
+
   function renderGroups() {
     const filter = state.search.toLowerCase().trim();
+    const visibleGroups = groupsForActiveTab();
     groupsEl.replaceChildren();
-    schema.groups.forEach((group) => {
+    // If search, show hint
+    if (filter && visibleGroups.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'cz-field__desc';
+      empty.style.padding = '14px';
+      empty.textContent = 'No settings match your search.';
+      groupsEl.append(empty);
+      renderPresets();
+      return;
+    }
+    visibleGroups.forEach((group) => {
       const groupSettings = Object.entries(schema.settings).filter(([, s]) => s.ui.group === group.id);
       const visibleSettings = filter
         ? groupSettings.filter(([key, s]) => s.ui.label.toLowerCase().includes(filter) || key.toLowerCase().includes(filter) || (s.ui.description || '').toLowerCase().includes(filter))
@@ -152,6 +215,7 @@
       wrapper.append(header, body);
       groupsEl.append(wrapper);
     });
+    renderPresets();
   }
 
   function renderField(key, setting) {
@@ -184,8 +248,84 @@
       field.append(desc);
     }
 
+    // Special handling for logo media picker
+    if (key === 'header.logoMediaID') {
+      field.append(buildLogoPicker(key, setting));
+      return field;
+    }
+
     field.append(buildControl(key, setting));
     return field;
+  }
+
+  function buildLogoPicker(key, setting) {
+    const box = document.createElement('div');
+    box.className = 'cz-ctrl';
+    const current = state.settings[key] || '';
+    const preview = document.createElement('div');
+    preview.style.display = 'flex';
+    preview.style.alignItems = 'center';
+    preview.style.gap = '8px';
+    preview.style.marginBottom = '8px';
+    if (current) {
+      const img = document.createElement('img');
+      img.src = '/media/' + encodeURIComponent(current) + '/original';
+      img.alt = '';
+      img.style.maxWidth = '120px';
+      img.style.maxHeight = '48px';
+      img.style.border = '1px solid #e1e4ea';
+      img.style.borderRadius = '6px';
+      img.onerror = () => { img.style.display = 'none'; };
+      preview.append(img);
+      const idLabel = document.createElement('code');
+      idLabel.textContent = current;
+      idLabel.style.fontSize = '11px';
+      idLabel.style.color = '#667085';
+      idLabel.style.wordBreak = 'break-all';
+      preview.append(idLabel);
+    } else {
+      const empty = document.createElement('span');
+      empty.textContent = 'No logo selected';
+      empty.style.fontSize = '12px';
+      empty.style.color = '#667085';
+      preview.append(empty);
+    }
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.gap = '8px';
+    const chooseBtn = document.createElement('button');
+    chooseBtn.type = 'button';
+    chooseBtn.className = 'cz-btn cz-btn--ghost cz-btn--sm';
+    chooseBtn.textContent = current ? 'Change logo' : 'Choose logo';
+    chooseBtn.addEventListener('click', () => {
+      if (window.openMediaPicker) {
+        window.openMediaPicker({
+          onSelect: (asset) => {
+            update(key, asset.id);
+          }
+        });
+      } else {
+        const input = prompt('Enter media ID for logo:', current);
+        if (input !== null) update(key, input.trim());
+      }
+    });
+    actions.append(chooseBtn);
+    if (current) {
+      const clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'cz-btn cz-btn--ghost cz-btn--sm';
+      clearBtn.textContent = 'Remove';
+      clearBtn.addEventListener('click', () => update(key, ''));
+      actions.append(clearBtn);
+    }
+    box.append(preview, actions);
+    // Hidden input for form fallback
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.id = 'setting-' + key;
+    hidden.value = current;
+    box.append(hidden);
+    return box;
   }
 
   function buildControl(key, setting) {
@@ -432,6 +572,17 @@
     state.search = searchInput.value;
     renderGroups();
   });
+
+  tabButtons.forEach((btn) => btn.addEventListener('click', () => {
+    state.activeTab = btn.dataset.tab;
+    state.expandedGroup = null;
+    tabButtons.forEach((b) => {
+      const active = b === btn;
+      b.classList.toggle('is-active', active);
+      b.setAttribute('aria-selected', String(active));
+    });
+    renderGroups();
+  }));
 
   window.addEventListener('beforeunload', (e) => { if (state.dirty) e.preventDefault(); });
 

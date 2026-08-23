@@ -130,6 +130,9 @@ NOT NULL
 
 Do not manually edit generated `sqlc` files.
 
+> Once a migration has landed, its contents are immutable.
+> Any schema/index correction must be a new forward migration.
+
 Current core tables:
 
 ```text

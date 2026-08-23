@@ -28,6 +28,18 @@ var (
 	// ErrInUse means the asset is referenced by content and cannot be deleted
 	// without an explicit force flag.
 	ErrInUse = errors.New("media: asset is still used by content")
+	// ErrMalformed means the file is malformed or cannot be parsed.
+	ErrMalformed = errors.New("media: malformed file")
+	// ErrInvalidImage means the file contains invalid image data.
+	ErrInvalidImage = errors.New("media: invalid image data")
+	// ErrDimensionsTooLarge means the image dimensions exceed the allowed limit.
+	ErrDimensionsTooLarge = errors.New("media: image dimensions too large")
+	// ErrTooManyPixels means the image has too many pixels.
+	ErrTooManyPixels = errors.New("media: image has too many pixels")
+	// ErrSVGUnsafe means the SVG contains unsafe or unsupported content.
+	ErrSVGUnsafe = errors.New("media: SVG upload rejected: the file contains unsupported or unsafe elements")
+	// ErrDerivativeFailed means variant generation failed.
+	ErrDerivativeFailed = errors.New("media: derivative generation failed")
 )
 
 // Asset is the full media record with its generated variants attached.

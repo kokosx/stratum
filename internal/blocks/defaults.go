@@ -56,6 +56,10 @@ func (s *snapshot) applyNodeDefaults(node *document.Node) error {
 // defaults once, and recursively prepares children. The result carries ready
 // maps so the renderer never decodes or marshals JSON again.
 func (s *snapshot) prepareNode(node document.Node) (rendering.PreparedNode, error) {
+	return s.prepareNodeWithLegacy(node, nil)
+}
+
+func (s *snapshot) prepareNodeWithLegacy(node document.Node, legacyIDs map[string]bool) (rendering.PreparedNode, error) {
 	definition := s.definitions[BlockKey{Name: node.Block, Version: int64(node.Version)}]
 	props, err := decodeJSONValue(node.Props, map[string]any{})
 	if err != nil {
@@ -79,19 +83,24 @@ func (s *snapshot) prepareNode(node document.Node) (rendering.PreparedNode, erro
 	}
 	children := make([]rendering.PreparedNode, 0, len(node.Children))
 	for _, child := range node.Children {
-		prepared, err := s.prepareNode(child)
+		prepared, err := s.prepareNodeWithLegacy(child, legacyIDs)
 		if err != nil {
 			return rendering.PreparedNode{}, err
 		}
 		children = append(children, prepared)
 	}
+	legacySource := ""
+	if legacyIDs != nil && legacyIDs[node.ID] {
+		legacySource = "core/posts@1"
+	}
 	return rendering.PreparedNode{
-		ID:       node.ID,
-		Block:    node.Block,
-		Version:  node.Version,
-		Props:    propMap,
-		Settings: settingMap,
-		Children: children,
+		ID:           node.ID,
+		Block:        node.Block,
+		Version:      node.Version,
+		Props:        propMap,
+		Settings:     settingMap,
+		Children:     children,
+		LegacySource: legacySource,
 	}, nil
 }
 

@@ -2,13 +2,16 @@ package media
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"image"
 	_ "image/gif"
 	"image/jpeg"
 	"image/png"
 	"io"
+	"regexp"
 	"strconv"
+	"strings"
 
 	webp "github.com/HugoSmits86/nativewebp"
 	"golang.org/x/image/draw"
@@ -96,17 +99,140 @@ type VariantBytes struct {
 	Data   []byte
 }
 
+// isSVG reports whether data looks like an SVG document.
+func isSVG(data []byte) bool {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return false
+	}
+	// Strip BOM
+	trimmed = strings.TrimPrefix(trimmed, "\xEF\xBB\xBF")
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "<?xml") {
+		// Must contain <svg
+		return strings.Contains(lower, "<svg")
+	}
+	return strings.HasPrefix(lower, "<svg")
+}
+
+// sanitizeSVG parses and validates SVG, rejecting unsafe content.
+// It uses a denylist approach for dangerous elements/attributes and
+// validates XML well-formedness. On success it returns the sanitized bytes
+// (currently the original if safe, as we strip nothing but validate).
+func sanitizeSVG(data []byte) ([]byte, error) {
+	// Check well-formed XML
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.Strict = true
+	dangerousElements := map[string]bool{
+		"script": true, "foreignobject": true, "iframe": true, "object": true, "embed": true, "link": true, "meta": true, "style": true, // style can contain @import
+	}
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%w: malformed SVG: %v", ErrMalformed, err)
+		}
+		switch el := tok.(type) {
+		case xml.StartElement:
+			name := strings.ToLower(el.Name.Local)
+			if dangerousElements[name] {
+				return nil, fmt.Errorf("%w: disallowed element <%s>", ErrSVGUnsafe, name)
+			}
+			for _, attr := range el.Attr {
+				attrName := strings.ToLower(attr.Name.Local)
+				attrVal := strings.ToLower(attr.Value)
+				// Event handlers
+				if strings.HasPrefix(attrName, "on") {
+					return nil, fmt.Errorf("%w: event handler attribute %q is not allowed", ErrSVGUnsafe, attr.Name.Local)
+				}
+				if strings.Contains(attrVal, "javascript:") {
+					return nil, fmt.Errorf("%w: javascript: URL is not allowed", ErrSVGUnsafe)
+				}
+				if attrName == "href" || attrName == "xlink:href" || strings.HasSuffix(attrName, "href") {
+					if strings.HasPrefix(strings.TrimSpace(attrVal), "data:text/html") || strings.HasPrefix(strings.TrimSpace(attrVal), "data:application") {
+						return nil, fmt.Errorf("%w: unsafe data URL", ErrSVGUnsafe)
+					}
+					// Allow internal fragment (#) and relative, but reject external http with potential tracking? We allow http for images but flag?
+					// For now, reject external http(s) to avoid remote resource loading (per spec: no arbitrary remote resource loading)
+					if strings.HasPrefix(attrVal, "http://") || strings.HasPrefix(attrVal, "https://") {
+						// Allow if it's an image? But spec says no arbitrary remote resource loading, so reject.
+						return nil, fmt.Errorf("%w: external resource %q is not allowed", ErrSVGUnsafe, attr.Value)
+					}
+				}
+			}
+		}
+	}
+	// Also check for javascript: case-insensitive in raw data as fallback
+	lower := strings.ToLower(string(data))
+	if strings.Contains(lower, "javascript:") {
+		return nil, fmt.Errorf("%w: javascript: URL is not allowed", ErrSVGUnsafe)
+	}
+	// If we reach here, consider safe. Return original (preserve safe vector graphics).
+	return data, nil
+}
+
+var svgDimensionRe = regexp.MustCompile(`(?i)(?:width|height)\s*=\s*["']?\s*(\d+(?:\.\d+)?)`)
+
+func parseSVGDimensions(data []byte) (int, int) {
+	// Try to parse width/height from SVG attributes, fallback to viewBox
+	matches := svgDimensionRe.FindAllStringSubmatch(string(data), 2)
+	var w, h int
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		val, _ := strconv.ParseFloat(m[1], 64)
+		if strings.Contains(strings.ToLower(m[0]), "width") && w == 0 {
+			w = int(val)
+		} else if strings.Contains(strings.ToLower(m[0]), "height") && h == 0 {
+			h = int(val)
+		}
+	}
+	if w > 0 && h > 0 {
+		return w, h
+	}
+	// Try viewBox="0 0 100 100"
+	re := regexp.MustCompile(`(?i)viewBox\s*=\s*["']\s*[\d\.\-]+\s+[\d\.\-]+\s+([\d\.]+)\s+([\d\.]+)\s*["']`)
+	if m := re.FindStringSubmatch(string(data)); len(m) == 3 {
+		vw, _ := strconv.ParseFloat(m[1], 64)
+		vh, _ := strconv.ParseFloat(m[2], 64)
+		return int(vw), int(vh)
+	}
+	return w, h
+}
+
 // ProcessImage verifies the real format of data (never trusting the extension),
 // and produces resized derivatives. GIFs are returned unchanged (animation is
 // preserved); raster images get responsive variants plus a WebP derivative set
-// (always for PNG/WebP sources, size-gated for JPEG sources).
+// (always for PNG/WebP sources, size-gated for JPEG sources). SVGs are
+// sanitized and returned as vector-only assets.
 func ProcessImage(data []byte) (*Processed, error) {
 	if len(data) == 0 {
-		return nil, fmt.Errorf("media: empty upload")
+		return nil, fmt.Errorf("%w: empty upload", ErrMalformed)
+	}
+	if int64(len(data)) > maxImageBytes {
+		return nil, ErrTooLarge
+	}
+	// SVG handling first (before image.DecodeConfig which would fail for SVG)
+	if isSVG(data) {
+		sanitized, err := sanitizeSVG(data)
+		if err != nil {
+			return nil, err
+		}
+		w, h := parseSVGDimensions(sanitized)
+		if w > maxImageDimension || h > maxImageDimension {
+			return nil, ErrDimensionsTooLarge
+		}
+		if int64(w)*int64(h) > maxImagePixels && w > 0 && h > 0 {
+			return nil, ErrTooManyPixels
+		}
+		return &Processed{Original: sanitized, Format: "svg", Width: w, Height: h, Variants: nil}, nil
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("media: cannot read image: %w", err)
+		return nil, fmt.Errorf("%w: cannot read image: %v", ErrMalformed, err)
 	}
 	if !allowedFormats[format] {
 		return nil, ErrUnsupportedFormat
@@ -115,10 +241,10 @@ func ProcessImage(data []byte) (*Processed, error) {
 	// Reject absurd resolutions before the (expensive) full decode. DecodeConfig
 	// only reads the header, so this is a cheap decompression-bomb guard.
 	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxImageDimension || cfg.Height > maxImageDimension {
-		return nil, fmt.Errorf("media: image dimensions too large")
+		return nil, ErrDimensionsTooLarge
 	}
 	if int64(cfg.Width)*int64(cfg.Height) > maxImagePixels {
-		return nil, fmt.Errorf("media: image has too many pixels")
+		return nil, ErrTooManyPixels
 	}
 
 	// GIFs keep their original bytes; resizing would drop the animation.
@@ -127,6 +253,9 @@ func ProcessImage(data []byte) (*Processed, error) {
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot decode image: %v", ErrInvalidImage, err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("media: cannot decode image: %w", err)
 	}

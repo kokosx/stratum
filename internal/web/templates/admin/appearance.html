@@ -50,12 +50,19 @@
         <input id="cz-search" type="search" placeholder="Search settings&hellip;" autocomplete="off" aria-label="Search settings">
       </div>
 
+      <nav class="cz-tabs" role="tablist" aria-label="Customizer sections">
+        <button type="button" role="tab" data-tab="site-styles" aria-selected="true" class="is-active">Site Styles</button>
+        <button type="button" role="tab" data-tab="header" aria-selected="false">Header</button>
+        <button type="button" role="tab" data-tab="footer" aria-selected="false">Footer</button>
+        <button type="button" role="tab" data-tab="advanced" aria-selected="false">Advanced</button>
+      </nav>
+
       <div id="cz-presets" class="cz-presets"></div>
 
       <nav id="cz-groups" class="cz-groups" aria-label="Setting groups"></nav>
 
       <div class="cz-panel__footer">
-        <button id="appearance-reset-all" class="cz-btn cz-btn--ghost cz-btn--sm" type="button">Reset all to defaults</button>
+        <button id="appearance-reset-all" class="cz-btn cz-btn--ghost cz-btn--sm" type="button">Reset to theme defaults</button>
       </div>
     </aside>
 

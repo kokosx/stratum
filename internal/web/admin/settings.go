@@ -65,7 +65,21 @@ type settingsData struct {
 	// page (and on validation errors) so the form still submits without JS; it
 	// is true only in the post-save Datastar fragment, where JS re-enables it on
 	// edit. This preserves progressive enhancement.
-	DisableSave bool
+	DisableSave            bool
+	LanguageOptions        []languageOption
+	LanguageIsInOptions    bool
+	TimezoneOptions        []timezoneOption
+	TimezoneIsInOptions    bool
+}
+
+type languageOption struct {
+	Value string
+	Label string
+}
+
+type timezoneOption struct {
+	Value string
+	Label string
 }
 
 type pageOption struct {
@@ -89,13 +103,19 @@ func (h *Handler) settings(w http.ResponseWriter, r *http.Request) {
 	}
 	iconID, _ := h.queries.GetSiteIconMediaID(r.Context())
 	socialID, _ := h.queries.GetSiteSocialMediaID(r.Context())
+	langOpts := languageOptions()
+	tzOpts := timezoneOptions()
 	data := settingsData{
 		Form:       formFromRow(row, iconID.String, socialID.String),
 		Pages:      h.listPageOptions(r),
 		Errors:     map[string]string{},
 		CSRFToken:  token,
 		DisableSave: false,
+		LanguageOptions: langOpts,
+		TimezoneOptions: tzOpts,
 	}
+	data.LanguageIsInOptions = isLanguageInOptions(data.Form.Language, langOpts)
+	data.TimezoneIsInOptions = isTimezoneInOptions(data.Form.Timezone, tzOpts)
 	if iconID.Valid {
 		data.SiteIconPreview = "/media/" + iconID.String + "/180"
 		if asset, aerr := h.media.Get(r.Context(), iconID.String); aerr == nil {
@@ -144,7 +164,11 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form, fieldErrors := h.parseSettingsForm(r)
-	data := settingsData{Form: form, Pages: h.listPageOptions(r), Errors: fieldErrors, CSRFToken: r.FormValue("csrf_token")}
+	langOpts := languageOptions()
+	tzOpts := timezoneOptions()
+	data := settingsData{Form: form, Pages: h.listPageOptions(r), Errors: fieldErrors, CSRFToken: r.FormValue("csrf_token"), LanguageOptions: langOpts, TimezoneOptions: tzOpts}
+	data.LanguageIsInOptions = isLanguageInOptions(form.Language, langOpts)
+	data.TimezoneIsInOptions = isTimezoneInOptions(form.Timezone, tzOpts)
 	h.populateSettingsURLs(r, &data, current)
 
 	if len(fieldErrors) > 0 {
@@ -211,6 +235,8 @@ func (h *Handler) saveSettings(w http.ResponseWriter, r *http.Request) {
 	iconID, _ := h.queries.GetSiteIconMediaID(r.Context())
 	data.Form = formFromRow(saved, iconID.String, socialID.String)
 	data.Errors = map[string]string{}
+	data.LanguageIsInOptions = isLanguageInOptions(data.Form.Language, data.LanguageOptions)
+	data.TimezoneIsInOptions = isTimezoneInOptions(data.Form.Timezone, data.TimezoneOptions)
 	h.populateSettingsURLs(r, &data, saved)
 
 	if isDatastarRequest(r) {
@@ -258,7 +284,9 @@ func (h *Handler) robotsPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 // applySiteIcon updates the Site Icon column when it changed and regenerates the
-// favicon variants from the chosen asset. An empty value clears the icon.
+// favicon variants from the chosen asset. It is atomic: the database is only
+// updated after the required variants have been generated and verified, so a
+// failure leaves the previous working icon intact.
 func (h *Handler) applySiteIcon(ctx context.Context, newIcon string) error {
 	current, err := h.queries.GetSiteIconMediaID(ctx)
 	if err != nil {
@@ -268,17 +296,33 @@ func (h *Handler) applySiteIcon(ctx context.Context, newIcon string) error {
 	if !changed {
 		return nil
 	}
+	// Validate and generate before touching the site_settings row.
+	if newIcon != "" {
+		// Quick validation: asset must exist and not be SVG
+		if asset, aerr := h.media.Get(ctx, newIcon); aerr == nil {
+			if asset.MimeType == "image/svg+xml" {
+				return fmt.Errorf("This image cannot be used as a Site Icon: SVG is not supported for favicons. Choose a square raster image (PNG, JPEG, WebP or GIF) of at least 512×512")
+			}
+			if asset.Width > 0 && asset.Height > 0 && asset.Width != asset.Height {
+				// Allow but warn; generation will center-crop.
+			}
+		} else {
+			return fmt.Errorf("Selected image is no longer available")
+		}
+		if err := h.media.GenerateFaviconVariants(ctx, newIcon); err != nil {
+			// Preserve previous working icon; wrap with actionable message
+			if errors.Is(err, media.ErrSVGUnsafe) {
+				return fmt.Errorf("This image cannot be used as a Site Icon: SVG is not supported for favicons")
+			}
+			return fmt.Errorf("Site Icon generation failed: %w", err)
+		}
+	}
 	null := sql.NullString{}
 	if newIcon != "" {
 		null = sql.NullString{String: newIcon, Valid: true}
 	}
 	if err := h.queries.UpdateSiteIconMediaID(ctx, null); err != nil {
 		return err
-	}
-	if newIcon != "" {
-		if err := h.media.GenerateFaviconVariants(ctx, newIcon); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -1069,6 +1113,67 @@ func boolToInt(value bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+func languageOptions() []languageOption {
+	return []languageOption{
+		{Value: "en", Label: "English"},
+		{Value: "en-US", Label: "English (United States)"},
+		{Value: "en-GB", Label: "English (United Kingdom)"},
+		{Value: "pl", Label: "Polski"},
+		{Value: "de", Label: "Deutsch"},
+		{Value: "fr", Label: "Français"},
+		{Value: "es", Label: "Español"},
+		{Value: "it", Label: "Italiano"},
+		{Value: "pt", Label: "Português"},
+		{Value: "nl", Label: "Nederlands"},
+		{Value: "ja", Label: "日本語"},
+		{Value: "zh", Label: "中文"},
+		{Value: "ru", Label: "Русский"},
+		{Value: "uk", Label: "Українська"},
+		{Value: "cs", Label: "Čeština"},
+	}
+}
+
+func timezoneOptions() []timezoneOption {
+	// Human-readable list of common IANA zones. Full list would be huge; this covers major regions
+	// and the server can still preserve any valid custom zone via the fallback option.
+	return []timezoneOption{
+		{Value: "UTC", Label: "UTC — Coordinated Universal Time"},
+		{Value: "Europe/Warsaw", Label: "Europe/Warsaw — Warsaw"},
+		{Value: "Europe/Berlin", Label: "Europe/Berlin — Berlin"},
+		{Value: "Europe/Paris", Label: "Europe/Paris — Paris"},
+		{Value: "Europe/London", Label: "Europe/London — London"},
+		{Value: "Europe/Rome", Label: "Europe/Rome — Rome"},
+		{Value: "Europe/Madrid", Label: "Europe/Madrid — Madrid"},
+		{Value: "Europe/Prague", Label: "Europe/Prague — Prague"},
+		{Value: "America/New_York", Label: "America/New_York — New York"},
+		{Value: "America/Chicago", Label: "America/Chicago — Chicago"},
+		{Value: "America/Los_Angeles", Label: "America/Los_Angeles — Los Angeles"},
+		{Value: "America/Sao_Paulo", Label: "America/Sao_Paulo — São Paulo"},
+		{Value: "Asia/Tokyo", Label: "Asia/Tokyo — Tokyo"},
+		{Value: "Asia/Shanghai", Label: "Asia/Shanghai — Shanghai"},
+		{Value: "Asia/Dubai", Label: "Asia/Dubai — Dubai"},
+		{Value: "Australia/Sydney", Label: "Australia/Sydney — Sydney"},
+	}
+}
+
+func isLanguageInOptions(val string, opts []languageOption) bool {
+	for _, o := range opts {
+		if o.Value == val {
+			return true
+		}
+	}
+	return false
+}
+
+func isTimezoneInOptions(val string, opts []timezoneOption) bool {
+	for _, o := range opts {
+		if o.Value == val {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) validatePostsPageAssignment(ctx context.Context, qtx *db.Queries, entryID string) error {

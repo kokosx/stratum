@@ -11,6 +11,10 @@ type PreparedNode struct {
 	Props    map[string]any
 	Settings map[string]any
 	Children []PreparedNode
+	// LegacySource is non-empty when this node originated as a legacy block
+	// (e.g. core/posts@1) and was migrated in-memory to a runtime block.
+	// It is runtime-only metadata, never persisted to the revision.
+	LegacySource string
 }
 
 // LCPCandidate describes one image block discovered during prepare that may

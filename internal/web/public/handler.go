@@ -242,7 +242,11 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 	// runs only on miss.
 	resolver := routing.NewResolver(h.queries)
 	resolved, err := resolver.Resolve(ctx, path)
-	if err == nil {
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return pagecache.Entry{}, err
+		}
+	} else {
 		if resolved.Pagination.IsPagination {
 			base := resolved.Pagination.BasePath
 			pg := resolved.Pagination.Page
@@ -323,6 +327,7 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
 	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 	rc.EntryID = entry.ID
+	rc.LCP = &rendering.LCPState{}
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("render document: %w", err)
@@ -490,6 +495,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	}
 	var content template.HTML
 	var usedBlocks []rendering.BlockKey
+	var archiveRC rendering.RenderContext
 	if prepared != nil {
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
 		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
@@ -499,21 +505,23 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		if shellRow != nil {
 			rc.EntryID = shellRow.ID
 		}
+		rc.LCP = &rendering.LCPState{}
 		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
 		if cerr != nil {
 			return pagecache.Entry{}, fmt.Errorf("render archive shell: %w", cerr)
 		}
 		content = c
 		usedBlocks = prepared.UsedBlocks
+		archiveRC = rc
 	} else {
 		// Shell-less fallback: render a minimal Collection so theme can stay .Content-only.
 		rc := rendering.RenderContext{
-			Site: rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
-			Route: rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination},
-			Mode: rendering.ModePublic,
+			Site:          rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
+			Route:         rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination},
+			Mode:          rendering.ModePublic,
 			ContentReader: &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media},
-			QueryCache: make(map[string][]rendering.ArchiveEntry),
-			Archive: archCtx,
+			QueryCache:    make(map[string][]rendering.ArchiveEntry),
+			Archive:       archCtx,
 		}
 		if siteSnap.LogoMediaID != "" && h.media != nil {
 			if view, ok := h.media.MediaView(context.Background(), siteSnap.LogoMediaID); ok {
@@ -562,18 +570,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, resolved, siteIcon)
 	if prepared != nil {
-		// LCP for archive shell document (uses full RC)
-		// Build a minimal RC for LCP (needs featured flag)
-		hasFeatured := false
-		if shellRow != nil && stringValue(shellRow.FeaturedMediaID) != "" {
-			hasFeatured = true
-		}
-		tmpRC := rendering.RenderContext{Entry: rendering.EntryContext{FeaturedImage: ""}}
-		if hasFeatured {
-			tmpRC.Entry.FeaturedImage = stringValue(shellRow.FeaturedMediaID)
-		}
-		_ = tmpRC
-		head.Preloads = h.lcpPreloads(ctx, prepared, h.archiveRenderContext(siteSnap, shellRow, archivePath, &rendering.ArchiveContext{Entries: archiveEntries, Pagination: rendering.PaginationContext{Current: pageNum, TotalPages: totalPages, PreviousURL: prev, NextURL: next}, Permalink: archivePath}, origin))
+		head.Preloads = h.lcpPreloads(ctx, prepared, archiveRC)
 	}
 
 	_, themeCSS, themeJS := h.hub.Assets.URLs()
@@ -821,9 +818,44 @@ func (h *Handler) headView(siteSnap *site.Snapshot, resolved seo.Resolved, siteI
 			Enabled:   siteSnap.SpeculationRulesJSON != "",
 			Mode:      siteSnap.SpeculationMode,
 			Eagerness: siteSnap.SpeculationEagerness,
-			RulesJSON: template.JS(siteSnap.SpeculationRulesJSON),
+			RulesJSON: template.HTML(siteSnap.SpeculationRulesJSON),
 		},
 		SiteIcon: siteIcon,
+		OpenGraph: themes.OpenGraphView{
+			Title:       resolved.OpenGraph.Title,
+			Description: resolved.OpenGraph.Description,
+			URL:         resolved.OpenGraph.URL,
+			Type:        resolved.OpenGraph.Type,
+			Image:       resolved.OpenGraph.Image,
+			ImageSecure: resolved.OpenGraph.ImageSecure,
+			ImageWidth:  resolved.OpenGraph.ImageWidth,
+			ImageHeight: resolved.OpenGraph.ImageHeight,
+			ImageType:   resolved.OpenGraph.ImageType,
+			ImageAlt:    resolved.OpenGraph.ImageAlt,
+			SiteName:    resolved.OpenGraph.SiteName,
+			Locale:      resolved.OpenGraph.Locale,
+		},
+		Twitter: themes.TwitterView{
+			Card:        resolved.Twitter.Card,
+			Title:       resolved.Twitter.Title,
+			Description: resolved.Twitter.Description,
+			Image:       resolved.Twitter.Image,
+			ImageAlt:    resolved.Twitter.ImageAlt,
+			Site:        resolved.Twitter.Site,
+		},
+		StructuredData: template.JS(resolved.StructuredData),
+		Alternates: func() []themes.AlternateView {
+			out := make([]themes.AlternateView, 0, len(resolved.Alternates))
+			for _, a := range resolved.Alternates {
+				out = append(out, themes.AlternateView{Href: a.Href, HrefLang: a.HrefLang, Type: a.Type})
+			}
+			return out
+		}(),
+		SEO: themes.SEOView{
+			Title:       resolved.Title,
+			Description: resolved.Description,
+			Canonical:   resolved.Canonical,
+			Robots:      resolved.Robots,
 			OpenGraph: themes.OpenGraphView{
 				Title:       resolved.OpenGraph.Title,
 				Description: resolved.OpenGraph.Description,
@@ -847,46 +879,11 @@ func (h *Handler) headView(siteSnap *site.Snapshot, resolved seo.Resolved, siteI
 				Site:        resolved.Twitter.Site,
 			},
 			StructuredData: template.JS(resolved.StructuredData),
-			Alternates: func() []themes.AlternateView {
-				out := make([]themes.AlternateView, 0, len(resolved.Alternates))
-				for _, a := range resolved.Alternates {
-					out = append(out, themes.AlternateView{Href: a.Href, HrefLang: a.HrefLang, Type: a.Type})
-				}
-				return out
-			}(),
-			SEO: themes.SEOView{
-				Title:       resolved.Title,
-				Description: resolved.Description,
-				Canonical:   resolved.Canonical,
-				Robots:      resolved.Robots,
-				OpenGraph: themes.OpenGraphView{
-					Title:       resolved.OpenGraph.Title,
-					Description: resolved.OpenGraph.Description,
-					URL:         resolved.OpenGraph.URL,
-					Type:        resolved.OpenGraph.Type,
-					Image:       resolved.OpenGraph.Image,
-					ImageSecure: resolved.OpenGraph.ImageSecure,
-					ImageWidth:  resolved.OpenGraph.ImageWidth,
-					ImageHeight: resolved.OpenGraph.ImageHeight,
-					ImageType:   resolved.OpenGraph.ImageType,
-					ImageAlt:    resolved.OpenGraph.ImageAlt,
-					SiteName:    resolved.OpenGraph.SiteName,
-					Locale:      resolved.OpenGraph.Locale,
-				},
-				Twitter: themes.TwitterView{
-					Card:        resolved.Twitter.Card,
-					Title:       resolved.Twitter.Title,
-					Description: resolved.Twitter.Description,
-					Image:       resolved.Twitter.Image,
-					ImageAlt:    resolved.Twitter.ImageAlt,
-					Site:        resolved.Twitter.Site,
-				},
-				StructuredData: template.JS(resolved.StructuredData),
-				Favicon:        siteIcon,
-			},
-		}
-		return head
+			Favicon:        siteIcon,
+		},
 	}
+	return head
+}
 
 // --- The shared editor/preview pipeline (bypasses the page cache) ---
 
@@ -1002,6 +999,9 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 	if rc.Archive != nil {
 		rc.Route = rendering.RouteContext{Path: path, IsArchive: true, ContentType: "post", Archive: rc.Archive}
+	}
+	if rc.LCP == nil {
+		rc.LCP = &rendering.LCPState{}
 	}
 	prepared, err := h.blocks.Prepare(effectiveDoc)
 	if err != nil {
@@ -1342,134 +1342,24 @@ func (h *Handler) enrichSocialImage(ctx context.Context, siteSnap *site.Snapshot
 	return resolved
 }
 
-// lcpPreloads emits at most one image preload for the FINAL LCP candidate
-// chosen the same way as the renderer: explicit high that exists, then first
-// auto that exists. It supports both core/image and core/featured-image
-// (the latter resolved via rc.Entry.FeaturedImage). When the candidate lives
-// inside a Collection, the preload uses the first entry's featured image.
+// lcpPreloads returns the single preload recorded during rendering.
+// The renderer records the actual LCP image that claimed Priority=true
+// (first eligible candidate that had a real image, per-instance for
+// Collection). This is the single source of truth; handler does not
+// duplicate LCP selection.
 func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedDocument, rc rendering.RenderContext) []themes.ImagePreload {
-	if prepared == nil || h.media == nil {
-		return nil
-	}
-	hasFeatured := rc.Entry.FeaturedImage != ""
-	// If outer has no featured but archive/context has entries with featured,
-	// consider that for collections.
-	if !hasFeatured {
-		if rc.Route.Archive != nil && len(rc.Route.Archive.Entries) > 0 {
-			for _, e := range rc.Route.Archive.Entries {
-				if e.FeaturedImage.Src != "" {
-					hasFeatured = true
-					break
-				}
-			}
-		} else if rc.Archive != nil && len(rc.Archive.Entries) > 0 {
-			for _, e := range rc.Archive.Entries {
-				if e.FeaturedImage.Src != "" {
-					hasFeatured = true
-					break
-				}
-			}
+	if rc.LCP != nil && rc.LCP.PreloadHref != "" {
+		sizes := rc.LCP.PreloadSizes
+		if strings.TrimSpace(sizes) == "" {
+			sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
 		}
+		return []themes.ImagePreload{{
+			Href:   rc.LCP.PreloadHref,
+			SrcSet: rc.LCP.PreloadSrcSet,
+			Sizes:  sizes,
+		}}
 	}
-	candID := prepared.ResolveLCP(hasFeatured)
-	if candID == "" {
-		return nil
-	}
-	var find func([]rendering.PreparedNode) *rendering.PreparedNode
-	find = func(nodes []rendering.PreparedNode) *rendering.PreparedNode {
-		for i := range nodes {
-			if nodes[i].ID == candID {
-				return &nodes[i]
-			}
-			if child := find(nodes[i].Children); child != nil {
-				return child
-			}
-		}
-		return nil
-	}
-	node := find(prepared.Nodes)
-	if node == nil {
-		return nil
-	}
-	// Detect if candidate is inside a collection.
-	isInsideCollection := false
-	var contains func([]rendering.PreparedNode) bool
-	contains = func(nodes []rendering.PreparedNode) bool {
-		for _, n := range nodes {
-			if n.Block == "core/collection" {
-				var has func([]rendering.PreparedNode) bool
-				has = func(ch []rendering.PreparedNode) bool {
-					for _, c := range ch {
-						if c.ID == candID {
-							return true
-						}
-						if has(c.Children) {
-							return true
-						}
-					}
-					return false
-				}
-				if has(n.Children) {
-					return true
-				}
-			}
-			if contains(n.Children) {
-				return true
-			}
-		}
-		return false
-	}
-	isInsideCollection = contains(prepared.Nodes)
-
-	var mediaID string
-	if node.Block == "core/featured-image" {
-		if isInsideCollection {
-			// First entry's featured image
-			if rc.Route.Archive != nil && len(rc.Route.Archive.Entries) > 0 && rc.Route.Archive.Entries[0].FeaturedImage.Src != "" {
-				mediaID = rc.Route.Archive.Entries[0].FeaturedImage.Src
-				// Map src back to media ID if needed; use first entry's underlying ID via media lookup?
-				// Prefer ID from archive entry: need media ID, not Src. Search for matching view.
-				// Fallback: use outer featured if src lookup fails.
-				if rc.Route.Archive.Entries[0].FeaturedImage.Src != "" {
-					// Find mediaID by reverse? Use FeaturedImage.Src's media ID from archive entry's source: we have view, use its underlying?
-					// ArchiveEntry stores MediaView, not ID. Use first entry's FeaturedImage Src's ID via media view reverse not needed – use ID via archiveEntries' mediaID not stored, so fallback to using outer logic but with first entry's Src directly.
-					// Instead, directly use view from archive entry.
-					view := rc.Route.Archive.Entries[0].FeaturedImage
-					sizes, _ := node.Settings["sizes"].(string)
-					if strings.TrimSpace(sizes) == "" {
-						sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
-					}
-					return []themes.ImagePreload{{Href: view.Src, SrcSet: view.SrcSet, Sizes: sizes}}
-				}
-			} else if rc.Archive != nil && len(rc.Archive.Entries) > 0 && rc.Archive.Entries[0].FeaturedImage.Src != "" {
-				view := rc.Archive.Entries[0].FeaturedImage
-				sizes, _ := node.Settings["sizes"].(string)
-				if strings.TrimSpace(sizes) == "" {
-					sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
-				}
-				return []themes.ImagePreload{{Href: view.Src, SrcSet: view.SrcSet, Sizes: sizes}}
-			}
-		}
-		mediaID = rc.Entry.FeaturedImage
-	} else if node.Block == "core/image" {
-		mediaID, _ = node.Props["mediaId"].(string)
-	}
-	if mediaID == "" {
-		return nil
-	}
-	view, ok := h.media.MediaView(ctx, mediaID)
-	if !ok || view.Src == "" {
-		return nil
-	}
-	sizes, _ := node.Settings["sizes"].(string)
-	if strings.TrimSpace(sizes) == "" {
-		sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
-	}
-	return []themes.ImagePreload{{
-		Href:   view.Src,
-		SrcSet: view.SrcSet,
-		Sizes:  sizes,
-	}}
+	return nil
 }
 
 // renderThemedDocument renders a document as a fully themed page: it prepares
@@ -1477,6 +1367,9 @@ func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedD
 // runtime. The live public frontend and the editor previews share this exact
 // path, so they cannot drift apart.
 func (h *Handler) renderThemedDocument(ctx context.Context, siteSnap *site.Snapshot, doc *document.Document, rc rendering.RenderContext, resolved seo.Resolved, path string, temporary map[string]any, customCSS *string) ([]byte, string, error) {
+	if rc.LCP == nil {
+		rc.LCP = &rendering.LCPState{}
+	}
 	prepared, err := h.blocks.Prepare(doc)
 	if err != nil {
 		return nil, "", fmt.Errorf("prepare document: %w", err)

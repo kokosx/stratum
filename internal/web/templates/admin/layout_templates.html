@@ -5,7 +5,7 @@
 <div class="list-table-wrap">
 <table class="list-table">
   <thead>
-    <tr><th>Name</th><th>Content Type</th><th>Status</th><th>Default</th><th>Actions</th></tr>
+    <tr><th>Name</th><th>Content Type</th><th>Status</th><th>Default</th><th>Parent</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {{ range .Content.Templates }}
@@ -13,11 +13,12 @@
       <td><a href="/admin/appearance/templates/{{ .ID }}/edit">{{ .Name }}</a></td>
       <td>{{ .ContentTypeName }}</td>
       <td>{{ .Status }}</td>
-      <td>{{ if .IsDefault }}✓{{ end }}</td>
+      <td>{{ if .IsDefault }}✓ Default{{ end }}</td>
+      <td>{{ if .ParentName }}{{ .ParentName }}{{ else }}<span class="muted">—</span>{{ end }}</td>
       <td><a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a></td>
     </tr>
     {{ else }}
-    <tr><td colspan="5" class="muted">No templates yet. Create a reusable layout for Pages or Posts.</td></tr>
+    <tr><td colspan="6" class="muted">No templates yet. Create a reusable layout for Pages or Posts.</td></tr>
     {{ end }}
   </tbody>
 </table>

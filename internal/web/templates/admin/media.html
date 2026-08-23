@@ -4,6 +4,9 @@
     <h1>Media Library</h1>
     <button type="button" class="button button-primary" id="media-upload">Upload</button>
   </header>
+  <div class="media-capabilities" style="margin:8px 0 16px;padding:10px 14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#475467;">
+    <strong>Accepted:</strong> JPEG, PNG, GIF, WebP, SVG (sanitized). <strong>Max:</strong> 10 MB, 20,000 px per side, 100 MP total. SVG is sanitized — scripts, event handlers, foreignObject and external resources are rejected. SVG cannot be used for favicons or social images (raster only).
+  </div>
 
   <div class="media-layout">
     <div class="media-grid" id="media-grid">

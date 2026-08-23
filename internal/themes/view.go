@@ -116,12 +116,14 @@ type ImagePreload struct {
 
 // SpeculationView exposes the safe, server-generated Speculation Rules payload.
 // RulesJSON is produced with encoding/json and must never be built by string
-// concatenation.
+// concatenation. It is stored as template.HTML so html/template does not escape
+// the JSON quotes when rendering inside <script type="speculationrules">.
+// The tag type is not "text/javascript", so template.JS would still be escaped.
 type SpeculationView struct {
 	Enabled   bool
 	Mode      string
 	Eagerness string
-	RulesJSON template.JS
+	RulesJSON template.HTML
 }
 
 type ThemeView struct {

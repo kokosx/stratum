@@ -1,6 +1,6 @@
 -- name: CreateLayoutTemplate :exec
-INSERT INTO layout_templates (id, name, content_type_id, published_revision_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO layout_templates (id, name, content_type_id, published_revision_id, parent_template_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetLayoutTemplate :one
 SELECT *
@@ -32,6 +32,16 @@ ORDER BY name, id;
 -- name: UpdateLayoutTemplate :exec
 UPDATE layout_templates
 SET name = ?, updated_at = ?
+WHERE id = ?;
+
+-- name: UpdateLayoutTemplateParent :exec
+UPDATE layout_templates
+SET parent_template_id = ?, updated_at = ?
+WHERE id = ?;
+
+-- name: ClearLayoutTemplateParent :exec
+UPDATE layout_templates
+SET parent_template_id = NULL, updated_at = ?
 WHERE id = ?;
 
 -- name: SetLayoutTemplatePublishedRevision :exec
@@ -96,6 +106,23 @@ SELECT
     t.name,
     t.content_type_id,
     t.published_revision_id,
+    t.parent_template_id,
+    t.created_at,
+    t.updated_at,
+    r.id AS revision_id,
+    r.document_json
+FROM layout_templates t
+JOIN layout_template_revisions r ON r.id = t.published_revision_id
+WHERE t.id = ?
+LIMIT 1;
+
+-- name: GetLayoutTemplateChain :many
+SELECT
+    t.id,
+    t.name,
+    t.content_type_id,
+    t.published_revision_id,
+    t.parent_template_id,
     t.created_at,
     t.updated_at,
     r.id AS revision_id,

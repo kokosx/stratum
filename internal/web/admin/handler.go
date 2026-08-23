@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/runtimehub"
+	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
 	webassets "github.com/kokosx/stratum/internal/web"
@@ -322,6 +324,19 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 		token, err := h.auth.Setup(r.Context(), r.FormValue("setup_code"), r.FormValue("site_title"), r.FormValue("email"), r.FormValue("password"))
 		if err == nil {
 			h.setSessionCookie(w, token)
+			// Seed starter content on a genuinely fresh installation only.
+			// Seed is transactional, idempotent during setup, and never overwrites user content.
+			func() {
+				d := &storage.Database{DB: h.database}
+				if err := d.Seed(r.Context()); err != nil {
+					log.Printf("seed starter content: %v", err)
+				} else if h.runtime != nil {
+					// New routes and settings need a runtime reload.
+					_ = h.runtime.ReloadSite(r.Context())
+					_ = h.runtime.ReloadNavigation(r.Context())
+					_ = h.blocks.Reload(r.Context())
+				}
+			}()
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
 			return
 		}

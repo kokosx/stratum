@@ -131,8 +131,17 @@ func TestBlogV1HappyPath(t *testing.T) {
 		t.Fatalf("home entry not found: %v", err)
 	}
 
-	// 2. Create + Publish Page "Blog" slug=blog with posts block
-	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
+	// 2. Create + Publish Page "Blog" with posts block (use a unique slug to avoid colliding with seeded /blog)
+	// Seed creates a blog page at /blog; remove it so this test can create its own and verify routing from scratch.
+	if e, err := queries.GetEntry(ctx, "seed-blog"); err == nil {
+		t.Logf("deleting seeded blog entry %s slug=%s", e.ID, e.Slug)
+		_ = queries.DeleteEntry(ctx, "seed-blog")
+	}
+	if rt, rerr := queries.GetRouteByPath(ctx, "/blog"); rerr == nil {
+		t.Logf("deleting leftover route at /blog type=%s entry=%v", rt.RouteType, rt.EntryID)
+		_ = queries.DeleteRoute(ctx, rt.ID)
+	}
+createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(1100 * time.Millisecond)
 	blogEntry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	if err != nil {
@@ -149,7 +158,7 @@ func TestBlogV1HappyPath(t *testing.T) {
 		t.Fatalf("archive route /blog not found: %v", err)
 	}
 	if rt.RouteType != "archive" {
-		t.Fatalf("archive route type = %s, want archive", rt.RouteType)
+		t.Fatalf("archive route type = %s, want archive (entry %s, redirect %v, path %s)", rt.RouteType, rt.EntryID.String, rt.RedirectTo.String, rt.Path)
 	}
 	if !rt.EntryID.Valid || rt.EntryID.String != blogEntry.ID {
 		t.Fatalf("archive entry_id = %v, want %s", rt.EntryID, blogEntry.ID)

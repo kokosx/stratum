@@ -141,13 +141,13 @@ h1 { margin: 0 0 24px; font-size: 28px; font-weight: 600; }
 /* P1.49: Standard keyboard focus */
 :focus-visible { outline: 3px solid var(--adm-focus); outline-offset: 2px; }
 
-/* Settings control panel */
+/* Settings control panel — horizontal tabs, no sidebar-inside-sidebar */
 .settings-shell { display: grid; gap: 24px; }
-.settings-layout { display: grid; grid-template-columns: 200px 1fr; gap: 24px; align-items: start; }
-.settings-nav { position: sticky; top: 32px; display: grid; gap: 2px; }
-.settings-nav__link { padding: 10px 14px; border-radius: 3px; color: #50575e; text-decoration: none; font-weight: 600; }
-.settings-nav__link:hover { background: #f6f7f7; color: #1d2327; }
-.settings-nav__link.is-active { background: #e8f0f7; color: #135e96; }
+.settings-layout { display: grid; gap: 24px; align-items: start; }
+.settings-nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; background: #f6f7f7; border: 1px solid #dcdcde; border-radius: 6px; }
+.settings-nav__link { padding: 8px 14px; border-radius: 4px; color: #50575e; text-decoration: none; font-weight: 600; font-size: 13px; border: 1px solid transparent; }
+.settings-nav__link:hover { background: #fff; color: #1d2327; border-color: #dcdcde; }
+.settings-nav__link.is-active { background: #fff; color: #135e96; border-color: #c3c4c7; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 .settings-content { display: grid; gap: 24px; min-width: 0; }
 .settings-section { display: grid; gap: 18px; scroll-margin-top: 24px; }
 .settings-section h2 { margin: 0 0 4px; font-size: 18px; }
@@ -164,7 +164,7 @@ h1 { margin: 0 0 24px; font-size: 28px; font-weight: 600; }
 .check-row input { margin: 0; }
 .robots-preview { margin: 0; padding: 12px; background: #1d2327; color: #f0f0f1; border-radius: 3px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; max-height: 260px; overflow: auto; }
 .settings-savebar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 14px 0; background: linear-gradient(to top, #f0f0f1 70%, rgba(240,240,241,0)); }
-@media (max-width: 720px) { .settings-layout { grid-template-columns: 1fr; } .settings-nav { position: static; grid-auto-flow: column; overflow-x: auto; } }
+@media (max-width: 720px) { .settings-nav { overflow-x: auto; flex-wrap: nowrap; } }
 
 /* Media Library */
 .media-shell { display: grid; gap: 20px; }

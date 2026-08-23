@@ -9,13 +9,15 @@
   </div>
 
   {{ if .Content.Menus }}
-    <form class="menu-selector" method="get" action="/admin/menus">
+    <div class="menu-selector">
       <label for="menu-select">Select a menu to edit</label>
-      <select id="menu-select" name="menu">
+      <select id="menu-select" name="menu" onchange="window.location.href='/admin/menus?menu='+encodeURIComponent(this.value)">
         {{ range .Content.Menus }}<option value="{{ .ID }}" {{ if and $.Content.Selected (eq .ID $.Content.Selected.ID) }}selected{{ end }}>{{ .Name }}</option>{{ end }}
       </select>
-      <button class="button" type="submit">Select</button>
-    </form>
+      <noscript>
+        <form method="get" action="/admin/menus" style="display:inline"><input type="hidden" name="menu" id="menu-noscript"><button class="button" type="submit">Select</button></form>
+      </noscript>
+    </div>
   {{ end }}
 
   {{ template "menu-editor" . }}

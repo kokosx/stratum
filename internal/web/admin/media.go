@@ -105,7 +105,8 @@ func (h *Handler) mediaListJSON(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadMedia handles a multipart image upload and returns JSON for the picker or
-// library. It is CSRF-protected.
+// library. It is CSRF-protected. Both the Media Library and picker share this
+// single validation pipeline so errors are consistent.
 func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	if !h.validCSRF(r) {
 		writeJSONError(w, http.StatusForbidden, errors.New("invalid security token"))
@@ -113,7 +114,7 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		writeJSONError(w, http.StatusBadRequest, errors.New("upload too large or malformed"))
+		writeJSONError(w, http.StatusBadRequest, errors.New("upload too large or malformed: ensure the file is under 10 MB"))
 		return
 	}
 	file, header, err := r.FormFile("file")
@@ -127,12 +128,21 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	asset, err := h.media.Upload(r.Context(), header.Filename, user.ID, file)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, media.ErrTooLarge) || errors.Is(err, media.ErrUnsupportedFormat) {
+		// All known domain errors are user-actionable (400); only storage failures are 500.
+		if errors.Is(err, media.ErrTooLarge) ||
+			errors.Is(err, media.ErrUnsupportedFormat) ||
+			errors.Is(err, media.ErrMalformed) ||
+			errors.Is(err, media.ErrInvalidImage) ||
+			errors.Is(err, media.ErrDimensionsTooLarge) ||
+			errors.Is(err, media.ErrTooManyPixels) ||
+			errors.Is(err, media.ErrSVGUnsafe) ||
+			errors.Is(err, media.ErrDerivativeFailed) {
 			status = http.StatusBadRequest
 		} else {
 			log.Printf("upload media: %v", err)
 			status = http.StatusInternalServerError
 		}
+		// Ensure the frontend receives the useful backend message (e.g. SVG unsafe).
 		writeJSONError(w, status, err)
 		return
 	}

@@ -340,6 +340,9 @@ func (s *Service) GenerateFaviconVariants(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
+	if m.MimeType == "image/svg+xml" {
+		return fmt.Errorf("SVG cannot be used as a Site Icon: %w", ErrSVGUnsafe)
+	}
 	data, err := s.store.Read(ctx, m.StorageKey)
 	if err != nil {
 		return err
@@ -585,6 +588,9 @@ func (s *Service) GenerateSocialVariant(ctx context.Context, id string, focal Fo
 	if err != nil {
 		return err
 	}
+	if m.MimeType == "image/svg+xml" {
+		return fmt.Errorf("SVG cannot be used for social preview: %w", ErrSVGUnsafe)
+	}
 	data, err := s.store.Read(ctx, m.StorageKey)
 	if err != nil {
 		return err
@@ -747,6 +753,8 @@ func mimeForFormat(format string) string {
 		return "image/gif"
 	case "webp":
 		return "image/webp"
+	case "svg":
+		return "image/svg+xml"
 	default:
 		return "application/octet-stream"
 	}
@@ -762,6 +770,8 @@ func extForFormat(format string) string {
 		return ".gif"
 	case "webp":
 		return ".webp"
+	case "svg":
+		return ".svg"
 	default:
 		return ""
 	}
@@ -777,6 +787,8 @@ func extForMime(mime string) string {
 		return ".gif"
 	case "image/webp":
 		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
 	default:
 		return ""
 	}

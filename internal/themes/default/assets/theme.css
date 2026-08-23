@@ -10,7 +10,13 @@
 /* Private helpers (merged into :root alongside the runtime tokens). */
 :root {
   --st-gutter: clamp(1rem, 5vw, var(--st-page-padding));
-  --st-flow: var(--st-space-md);
+  --st-prose-width: 720px;
+  --st-archive-width: 860px;
+  --st-flow-tight: var(--st-space-sm);
+  --st-flow-content: var(--st-space-md);
+  --st-flow-group: var(--st-space-xl);
+  --st-flow-section: var(--st-space-2xl);
+  --st-flow-major: var(--st-space-3xl);
   --st-control-radius: var(--st-radius-md);
 }
 
@@ -30,7 +36,7 @@ body {
   flex-direction: column;
   min-height: 100vh;
   min-height: 100dvh;
-  background: var(--st-layout-background);
+  background: var(--st-color-background, var(--st-layout-background));
   color: var(--st-color-text);
   font-family: var(--st-font-body);
   font-size: var(--st-body-size);
@@ -79,7 +85,7 @@ a:hover { color: var(--st-link-hover-color); }
 }
 
 /* ----------------------------------------------------------------------------
-   Typography
+   Typography — refined hierarchy
    ---------------------------------------------------------------------------- */
 h1, h2, h3, h4, h5, h6 {
   color: var(--st-color-heading);
@@ -87,32 +93,35 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: var(--st-heading-weight);
   line-height: 1.12;
   margin: 0;
+  text-wrap: balance;
 }
 h1 {
-  font-size: clamp(1.75rem, 0.5rem + 4.5vw, var(--st-h1-size));
-  line-height: 1.08;
-  letter-spacing: -0.02em;
+  font-size: clamp(2rem, 1rem + 3.5vw, var(--st-h1-size));
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  font-weight: calc(var(--st-heading-weight) + 50);
 }
 h2 {
-  font-size: clamp(1.4rem, 0.5rem + 3vw, var(--st-h2-size));
-  line-height: 1.14;
-  letter-spacing: -0.01em;
+  font-size: clamp(1.5rem, 0.8rem + 2.2vw, var(--st-h2-size));
+  line-height: 1.15;
+  letter-spacing: -0.015em;
 }
 h3 {
-  font-size: clamp(1.15rem, 0.5rem + 2vw, var(--st-h3-size));
-  line-height: 1.18;
+  font-size: clamp(1.15rem, 0.6rem + 1.4vw, var(--st-h3-size));
+  line-height: 1.2;
+  font-weight: 650;
 }
-h4 { font-size: clamp(1.15rem, 1rem + 0.8vw, 1.4rem); line-height: 1.25; }
-h5 { font-size: 1.05rem; line-height: 1.3; }
-h6 { font-size: 0.95rem; line-height: 1.35; }
+h4 { font-size: clamp(1.1rem, 1rem + 0.6vw, 1.3rem); line-height: 1.25; font-weight: 650; }
+h5 { font-size: 1.05rem; line-height: 1.3; font-weight: 600; }
+h6 { font-size: 0.95rem; line-height: 1.35; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--st-color-text-muted); }
 small { font-size: var(--st-small-size); }
-p { margin: 0; }
+p { margin: 0; line-height: var(--st-body-line-height); }
 
 /* ----------------------------------------------------------------------------
    Layout containers
-   content  -> normal prose width
-   wide     -> wider sections
-   full     -> edge-to-edge (still respects the page gutter for safety)
+   content  -> normal pages/cards/layouts (1080–1200)
+   wide     -> hero, grids (1280–1440)
+   prose    -> long-form text (680–760)
    ---------------------------------------------------------------------------- */
 .st-container {
   width: 100%;
@@ -131,8 +140,7 @@ p { margin: 0; }
   min-width: 0;
   margin-inline: auto;
   padding-inline: var(--st-gutter);
-  /* Natural growth only: a gentle breathing room, never an artificial push. */
-  padding-block: clamp(2rem, 5vw, var(--st-space-2xl));
+  padding-block: clamp(2.5rem, 5vw, 4rem);
   overflow-wrap: break-word;
 }
 
@@ -141,20 +149,62 @@ p { margin: 0; }
 .site-main > .stratum-heading,
 .site-main > .stratum-text,
 .site-main > .stratum-quote,
-.site-main > .stratum-divider {
+.site-main > .stratum-divider,
+.site-main > .stratum-btn-wrap {
   width: 100%;
-  max-width: var(--st-content-width);
+  max-width: var(--st-prose-width);
 }
 .site-main > .stratum-heading.stratum-align-center,
 .site-main > .stratum-text.stratum-align-center,
 .site-main > .stratum-btn-wrap.stratum-align-center {
   margin-inline: auto;
 }
+.site-main > .stratum-text.stratum-align-center {
+  max-width: 640px;
+}
+/* Hero muted wide should feel substantial — content 720-850, not 1300 */
+.stratum-section-bg-muted.stratum-section-width-wide .stratum-heading {
+  max-width: 760px;
+  margin-inline: auto;
+}
+.stratum-section-bg-muted.stratum-section-width-wide .stratum-text {
+  max-width: 640px;
+  margin-inline: auto;
+}
 
-/* Vertical rhythm between sibling blocks. */
-.site-main > * + * { margin-top: var(--st-flow); }
-.stratum-section > * + * { margin-top: var(--st-flow); }
+/* Vertical rhythm — container owns gap, not arbitrary margins */
+.site-main > * + * { margin-top: var(--st-flow-major); }
+.site-main > .stratum-text + .stratum-text { margin-top: 1em; }
+.site-main > .stratum-heading + .stratum-text { margin-top: 0.7em; }
+.site-main > .stratum-text + .stratum-heading,
+.site-main > .stratum-callout + .stratum-heading,
+.site-main > .stratum-list + .stratum-heading { margin-top: 2.6em; }
+.site-main > .stratum-text + .stratum-callout { margin-top: 1.6em; }
+.site-main > .stratum-list + .stratum-divider,
+.site-main > .stratum-divider + .stratum-text,
+.site-main > .stratum-divider + .stratum-heading { margin-top: 2.2em; }
+.site-main > .stratum-text + .stratum-btn-wrap,
+.site-main > .stratum-callout + .stratum-btn-wrap { margin-top: 1.8em; }
+.site-main > .stratum-section + .stratum-section { margin-top: 0; } /* Section owns its own padding, not margin */
+.stratum-section > * + * { margin-top: var(--st-flow-content); }
+/* Tighter relationships */
+.stratum-heading + .stratum-text,
+.stratum-entry-title + .stratum-entry-excerpt,
+.stratum-heading + .stratum-entry-excerpt { margin-top: var(--st-flow-tight); }
+.stratum-text + .stratum-btn-wrap,
+.stratum-text + .stratum-button,
+.stratum-entry-excerpt + .stratum-entry-link { margin-top: var(--st-flow-content); }
+.stratum-heading + .stratum-grid,
+.stratum-text + .stratum-grid,
+.stratum-stack + .stratum-grid { margin-top: var(--st-flow-group); }
+
+/* Stack, Grid, Card own their internal gaps — do not double-add */
+.stratum-stack { gap: var(--st-space-md); }
+.stratum-stack > * { margin-top: 0 !important; }
+.stratum-grid { gap: var(--st-space-lg); }
+.stratum-grid > * { margin-top: 0 !important; }
 .stratum-card > * + * { margin-top: var(--st-space-sm); }
+.stratum-card .stratum-heading + .stratum-text { margin-top: var(--st-space-sm); }
 .stratum-accordion-content > * + * { margin-top: var(--st-space-sm); }
 
 /* ----------------------------------------------------------------------------
@@ -186,7 +236,7 @@ p { margin: 0; }
 .site-topbar .submenu-toggle { display: none; }
 
 /* ----------------------------------------------------------------------------
-   Header
+   Header — refined
    ---------------------------------------------------------------------------- */
 .site-header {
   position: relative;
@@ -207,31 +257,37 @@ p { margin: 0; }
   gap: var(--st-space-xl);
   min-height: var(--st-header-height);
   padding-block: var(--st-space-sm);
+  max-width: var(--st-wide-width);
+  margin-inline: auto;
+  padding-inline: var(--st-gutter);
+  width: 100%;
 }
 .site-brand {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   color: var(--st-color-heading);
   text-decoration: none;
   font-weight: var(--st-heading-weight);
+  letter-spacing: -0.01em;
 }
 .site-logo { display: block; max-height: calc(var(--st-header-height) - var(--st-space-lg)); width: auto; }
-.site-title { font-family: var(--st-font-heading); font-size: 1.2rem; font-weight: var(--st-heading-weight); line-height: 1.1; }
-.site-tagline { color: var(--st-color-text-muted); font-size: var(--st-small-size); font-weight: 400; }
+.site-title { font-family: var(--st-font-heading); font-size: 1.25rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.015em; }
+.site-tagline { color: var(--st-color-text-muted); font-size: var(--st-small-size); font-weight: 400; margin-top: 2px; }
 
 .site-header--centered .site-header__inner,
 .site-header--stacked .site-header__inner {
   flex-direction: column;
   justify-content: center;
   gap: var(--st-space-md);
+  text-align: center;
 }
 .site-header--centered .site-brand { align-items: center; text-align: center; }
 .site-header--stacked .site-brand { align-items: center; text-align: center; }
 .site-header--split .site-header__inner { display: grid; grid-template-columns: auto 1fr; align-items: center; }
 .site-header--split .primary-navigation { grid-column: 2; justify-self: end; margin-left: 0; }
-.site-header--minimal .site-header__inner { min-height: calc(var(--st-header-height) * 0.8); }
+.site-header--minimal .site-header__inner { min-height: calc(var(--st-header-height) * 0.85); }
 .site-header--logo-center .site-brand { align-items: center; text-align: center; }
 .site-header--logo-right .site-header__inner { justify-content: flex-start; }
 .site-header--logo-right .site-brand { align-items: flex-end; text-align: right; margin-left: auto; }
@@ -254,9 +310,9 @@ p { margin: 0; }
 }
 
 /* ----------------------------------------------------------------------------
-   Navigation (primary)
+   Navigation (primary) — refined spacing and current state
    ---------------------------------------------------------------------------- */
-.site-navigation { font-size: var(--st-nav-font-size); font-weight: var(--st-nav-font-weight); }
+.site-navigation { font-size: var(--st-nav-font-size); font-weight: var(--st-nav-font-weight); letter-spacing: -0.01em; }
 .site-navigation > ul {
   display: flex;
   flex-wrap: wrap;
@@ -290,6 +346,7 @@ p { margin: 0; }
   text-decoration: none;
   border-radius: var(--st-radius-sm);
   white-space: nowrap;
+  transition: color 0.15s ease;
 }
 .menu-item > a:hover { color: var(--st-color-heading); }
 
@@ -301,7 +358,7 @@ p { margin: 0; }
   border-radius: 0;
 }
 .site-navigation--plain .menu-item--current > a,
-.site-navigation--plain .menu-item--current > .submenu-toggle { color: var(--st-color-primary); font-weight: 600; }
+.site-navigation--plain .menu-item--current > .submenu-toggle { color: var(--st-color-primary); font-weight: 650; }
 .site-navigation--underline .menu-item > a { border-bottom: 2px solid transparent; border-radius: 0; }
 .site-navigation--underline .menu-item > a:hover { color: var(--st-color-primary); }
 .site-navigation--underline .menu-item--current > a { border-color: var(--st-color-primary); color: var(--st-color-primary); }
@@ -368,14 +425,15 @@ p { margin: 0; }
 .submenu .menu-item--current > a { color: var(--st-color-primary); }
 
 /* ----------------------------------------------------------------------------
-   Footer — compact, hierarchy-driven, its own presentation context.
+   Footer — refined, hierarchy-driven
    ---------------------------------------------------------------------------- */
 .site-footer {
   flex-shrink: 0;
-  padding-block: var(--st-footer-spacing);
+  padding-block: clamp(2.5rem, 5vw, var(--st-footer-spacing));
   background: var(--st-footer-background);
   color: var(--st-footer-text);
   font-size: var(--st-small-size);
+  line-height: 1.6;
 }
 .site-footer a { color: var(--st-footer-text); text-decoration: none; }
 .site-footer a:hover { color: var(--st-color-primary); text-decoration: underline; }
@@ -384,7 +442,11 @@ p { margin: 0; }
 .site-footer__inner {
   display: flex;
   flex-direction: column;
-  gap: var(--st-space-md);
+  gap: var(--st-space-lg);
+  max-width: var(--st-wide-width);
+  margin-inline: auto;
+  padding-inline: var(--st-gutter);
+  width: 100%;
 }
 .site-footer__main {
   display: flex;
@@ -400,12 +462,12 @@ p { margin: 0; }
   justify-content: space-between;
   gap: var(--st-space-md);
   padding-top: var(--st-space-md);
-  border-top: 1px solid color-mix(in srgb, var(--st-footer-text) 18%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--st-footer-text) 14%, transparent);
   font-size: var(--st-small-size);
 }
 .footer-brand { display: grid; gap: var(--st-space-xs); }
-.footer-brand strong { font-size: 1rem; color: var(--st-footer-text); }
-.footer-brand span { color: color-mix(in srgb, var(--st-footer-text) 70%, transparent); }
+.footer-brand strong { font-size: 1rem; color: var(--st-footer-text); letter-spacing: -0.01em; }
+.footer-brand span { color: color-mix(in srgb, var(--st-footer-text) 65%, transparent); font-size: 0.9em; }
 
 /* Footer menus never inherit header dropdown / pill treatment. */
 .footer-navigation ul, .legal-navigation ul {
@@ -424,12 +486,13 @@ p { margin: 0; }
 .legal-navigation .menu-label {
   display: inline-flex;
   align-items: center;
-  padding: 2px 0;
+  padding: 3px 0;
   color: var(--st-footer-text);
   border-radius: 0;
+  font-weight: 450;
 }
 .footer-navigation .menu-item > a:hover,
-.legal-navigation .menu-item > a:hover { color: var(--st-color-primary); }
+.legal-navigation .menu-item > a:hover { color: var(--st-footer-text); text-decoration: underline; text-underline-offset: 3px; }
 .footer-navigation .submenu-toggle,
 .legal-navigation .submenu-toggle { display: none; }
 .footer-navigation .submenu,
@@ -449,8 +512,8 @@ p { margin: 0; }
 .legal-navigation .submenu .menu-item > a { padding: 2px 0; }
 
 /* Legal menu is smaller / subtler. */
-.legal-navigation { font-size: 0.85em; }
-.legal-navigation ul { gap: var(--st-space-sm); }
+.legal-navigation { font-size: 0.85em; opacity: 0.9; }
+.legal-navigation ul { gap: var(--st-space-md); }
 
 /* Footer layouts */
 .site-footer--columns .site-footer__main {
@@ -475,16 +538,16 @@ p { margin: 0; }
 .legal--center .site-footer__legal { justify-content: center; }
 
 /* ----------------------------------------------------------------------------
-   Buttons
+   Buttons — refined
    ---------------------------------------------------------------------------- */
 .stratum-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5em;
-  min-height: 40px;
+  min-height: 42px;
   font-family: var(--st-font-body);
-  font-size: 1rem;
+  font-size: 0.95rem;
   line-height: 1.2;
   padding: var(--st-button-padding-y) var(--st-button-padding-x);
   border: 2px solid transparent;
@@ -492,7 +555,7 @@ p { margin: 0; }
   font-weight: var(--st-button-font-weight);
   text-decoration: none;
   cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
 .stratum-button:active { transform: translateY(1px); }
 .stratum-button:focus-visible { outline: 3px solid var(--st-color-focus); outline-offset: 2px; }
@@ -553,14 +616,20 @@ p { margin: 0; }
 }
 
 .stratum-button-size-sm { padding: 0.45rem 0.85rem; font-size: var(--st-small-size); }
-.stratum-button-size-lg { padding: 0.8rem 1.5rem; font-size: 1.1rem; }
+.stratum-button-size-lg { padding: 0.85rem 1.6rem; font-size: 1rem; letter-spacing: -0.01em; }
 .stratum-button-full { display: flex; width: 100%; }
 
 .stratum-btn-wrap { margin: 0; }
 .stratum-btn-wrap-full { display: block; }
+.stratum-btn-group { display: flex; gap: var(--st-space-sm); flex-wrap: wrap; }
+.stratum-btn-group.stratum-btn-group-dir-vertical { flex-direction: column; }
 .stratum-align-left { text-align: left; }
 .stratum-align-center { text-align: center; }
 .stratum-align-right { text-align: right; }
+/* Center-aligned button groups should actually center their buttons */
+.stratum-section-align-center .stratum-btn-group,
+.stratum-stack-align-center .stratum-btn-group,
+.stratum-align-center .stratum-btn-group { justify-content: center; }
 
 /* ----------------------------------------------------------------------------
    Tone helpers
@@ -571,17 +640,17 @@ p { margin: 0; }
 .stratum-tone-accent { color: var(--st-color-primary); }
 
 /* ----------------------------------------------------------------------------
-   Section
+   Section — generous, token-driven
    ---------------------------------------------------------------------------- */
 .stratum-section { margin-inline: auto; width: 100%; min-width: 0; }
 .stratum-section-width-content { max-width: var(--st-content-width); }
 .stratum-section-width-wide { max-width: var(--st-wide-width); }
 .stratum-section-width-full { max-width: none; }
 .stratum-section-vspace-none { padding-block: 0; }
-.stratum-section-vspace-sm { padding-block: var(--st-space-lg); }
-.stratum-section-vspace-md { padding-block: clamp(2.5rem, 5vw, var(--st-section-spacing)); }
-.stratum-section-vspace-lg { padding-block: clamp(3.5rem, 6vw, var(--st-space-3xl)); }
-.stratum-section-vspace-xl { padding-block: clamp(5rem, 8vw, 10rem); }
+.stratum-section-vspace-sm { padding-block: clamp(2.5rem, 4vw, 3rem); }
+.stratum-section-vspace-md { padding-block: clamp(4rem, 6vw, 5.5rem); }
+.stratum-section-vspace-lg { padding-block: clamp(5.5rem, 7vw, 7rem); }
+.stratum-section-vspace-xl { padding-block: clamp(7rem, 9vw, 9rem); }
 .stratum-section-hpad-none { padding-inline: 0; }
 .stratum-section-hpad-sm { padding-inline: var(--st-space-md); }
 .stratum-section-hpad-md { padding-inline: var(--st-space-lg); }
@@ -601,7 +670,7 @@ p { margin: 0; }
 .stratum-section-minh-screen { min-height: 100vh; }
 
 /* ----------------------------------------------------------------------------
-   Stack
+   Stack — refined
    ---------------------------------------------------------------------------- */
 .stratum-stack { display: flex; min-width: 0; }
 .stratum-stack-dir-vertical { flex-direction: column; }
@@ -625,7 +694,7 @@ p { margin: 0; }
 .stratum-stack > * { min-width: 0; }
 
 /* ----------------------------------------------------------------------------
-   Grid
+   Grid — refined gaps
    ---------------------------------------------------------------------------- */
 .stratum-grid { display: grid; min-width: 0; }
 .stratum-grid-cols-1 { grid-template-columns: 1fr; }
@@ -646,27 +715,61 @@ p { margin: 0; }
 .stratum-grid > * { min-width: 0; }
 
 /* ----------------------------------------------------------------------------
-   Card
+   Card — comfortable, consistent
    ---------------------------------------------------------------------------- */
 .stratum-card {
   background: var(--st-color-surface);
   border-radius: var(--st-card-radius, var(--st-radius-md));
   overflow: hidden;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-.stratum-card-default { border: var(--st-border-width) var(--st-border-style) var(--st-color-border); }
+.stratum-card-default { border: 1px solid var(--st-color-border); }
 .stratum-card-outlined { border: 2px solid var(--st-color-border); }
 .stratum-card-elevated { border: none; box-shadow: var(--st-shadow-md); }
-.stratum-card-muted { background: var(--st-color-surface-muted); border: none; }
-.stratum-card-pad-sm { padding: var(--st-space-md); }
-.stratum-card-pad-md { padding: var(--st-space-lg); }
-.stratum-card-pad-lg { padding: var(--st-space-xl); }
+.stratum-card-muted { background: var(--st-color-surface-muted); border: 1px solid transparent; }
+.stratum-card-pad-sm { padding: var(--st-space-lg); }
+.stratum-card-pad-md { padding: clamp(1.5rem, 2.5vw, 2rem); }
+.stratum-card-pad-lg { padding: clamp(2rem, 3vw, 2.5rem); }
 .stratum-card-radius-sm { border-radius: var(--st-radius-sm); }
 .stratum-card-radius-md { border-radius: var(--st-radius-md); }
 .stratum-card-radius-lg { border-radius: var(--st-radius-lg); }
 .stratum-card-align-start { text-align: left; }
 .stratum-card-align-center { text-align: center; }
 .stratum-card-align-end { text-align: right; }
+.stratum-card .stratum-heading { line-height: 1.25; }
+.stratum-card .stratum-text { line-height: 1.6; color: var(--st-color-text-muted); }
+
+/* ----------------------------------------------------------------------------
+   Collection / Archive — polished default
+   ---------------------------------------------------------------------------- */
+.stratum-collection {
+  display: grid;
+  gap: clamp(2rem, 4vw, 3rem);
+  width: 100%;
+}
+/* Archive list should be deliberately narrow and centered for readability */
+.site-main .stratum-collection {
+  max-width: var(--st-archive-width);
+  margin-inline: auto;
+}
+.stratum-collection > .stratum-stack {
+  padding-block: var(--st-space-lg);
+  border-bottom: 1px solid var(--st-color-border);
+  gap: var(--st-space-sm);
+}
+.stratum-collection > .stratum-stack:last-child { border-bottom: none; }
+.stratum-collection .stratum-entry-title {
+  font-size: clamp(1.25rem, 1rem + 1vw, 1.5rem);
+  line-height: 1.25;
+  margin: 0;
+}
+.stratum-collection .stratum-entry-title a { color: var(--st-color-heading); text-decoration: none; }
+.stratum-collection .stratum-entry-title a:hover { color: var(--st-color-primary); text-decoration: underline; text-underline-offset: 3px; }
+.stratum-collection .stratum-entry-date { font-size: var(--st-small-size); color: var(--st-color-text-muted); letter-spacing: 0.01em; }
+.stratum-collection .stratum-entry-excerpt { color: var(--st-color-text-muted); line-height: 1.65; max-width: 65ch; }
+.stratum-collection .stratum-entry-link { font-weight: 600; font-size: 0.95rem; margin-top: var(--st-space-sm); }
 
 /* ----------------------------------------------------------------------------
    Accordion
@@ -746,7 +849,7 @@ p { margin: 0; }
 /* ----------------------------------------------------------------------------
    Quote
    ---------------------------------------------------------------------------- */
-.stratum-quote { margin: 0; max-width: var(--st-content-width); }
+.stratum-quote { margin: 0; max-width: var(--st-prose-width); }
 .stratum-quote-simple { border: none; padding-left: var(--st-space-lg); border-left: 3px solid var(--st-color-border); }
 .stratum-quote-bordered { border-left: 4px solid var(--st-color-primary); padding-left: var(--st-space-lg); }
 .stratum-quote-large { border: none; text-align: center; padding: var(--st-space-xl) var(--st-space-lg); }
@@ -760,7 +863,7 @@ p { margin: 0; }
 /* ----------------------------------------------------------------------------
    Heading block (expanded)
    ---------------------------------------------------------------------------- */
-.stratum-heading { margin: 0; line-height: 1.12; overflow-wrap: break-word; }
+.stratum-heading { margin: 0; line-height: 1.12; overflow-wrap: break-word; text-wrap: balance; }
 .stratum-heading-size-sm { font-size: clamp(1.25rem, 1rem + 1vw, var(--st-h3-size)); }
 .stratum-heading-size-md { font-size: clamp(1.5rem, 1rem + 1.6vw, var(--st-h2-size)); }
 .stratum-heading-size-lg { font-size: clamp(2rem, 1rem + 3vw, var(--st-h1-size)); }
@@ -774,9 +877,9 @@ p { margin: 0; }
    Text block (expanded)
    ---------------------------------------------------------------------------- */
 .stratum-text { margin: 0; overflow-wrap: break-word; }
-.stratum-text-size-sm { font-size: var(--st-small-size); }
-.stratum-text-size-md { font-size: inherit; }
-.stratum-text-size-lg { font-size: 1.15rem; line-height: 1.6; }
+.stratum-text-size-sm { font-size: var(--st-small-size); line-height: 1.6; }
+.stratum-text-size-md { font-size: inherit; line-height: 1.7; }
+.stratum-text-size-lg { font-size: 1.15rem; line-height: 1.7; }
 .stratum-maxw-narrow { max-width: 38rem; }
 
 /* ============================================================================
@@ -792,17 +895,20 @@ p { margin: 0; }
 }
 
 @media (max-width: 800px) {
+  :root { --st-archive-width: 100%; }
   .site-footer__main { flex-wrap: wrap; align-items: center; gap: var(--st-space-md); }
   .site-footer__legal { flex-direction: row; align-items: center; gap: var(--st-space-md); }
   .legal--left .site-footer__legal { flex-direction: row; align-items: center; }
   .site-footer--columns .footer-navigation > ul { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
   .stratum-grid-cols-3, .stratum-grid-cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .stratum-collection { gap: var(--st-space-xl); }
 }
 
 @media (max-width: 640px) {
   .stratum-stack-dir-horizontal { flex-direction: column; }
   .stratum-stack-dir-horizontal.stratum-stack-align-stretch { align-items: stretch; }
   .stratum-grid-cols-2 { grid-template-columns: 1fr; }
+  :root { --st-gutter: 1rem; }
 }
 
 @media (max-width: 480px) {

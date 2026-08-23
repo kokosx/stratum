@@ -30,6 +30,13 @@ func TestPostsPageSlugSyncOnPublish(t *testing.T) {
 		t.Fatalf("home entry not found: %v", err)
 	}
 
+	// Seed creates a blog page at /blog; remove it so this test can create its own and verify routing from scratch.
+	if _, err := queries.GetEntry(ctx, "seed-blog"); err == nil {
+		_ = queries.DeleteEntry(ctx, "seed-blog")
+	}
+	if rt, rerr := queries.GetRouteByPath(ctx, "/blog"); rerr == nil {
+		_ = queries.DeleteRoute(ctx, rt.ID)
+	}
 	// Create Blog page slug=blog with archive block
 	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(100 * time.Millisecond)
