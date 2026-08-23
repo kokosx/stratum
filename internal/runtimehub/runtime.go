@@ -122,9 +122,10 @@ func (h *Runtime) InvalidateMediaAll() {
 
 // InvalidateContent is called after a publish, unpublish, route change, or
 // trash. The published document and route changed, so the page cache, sitemap,
-// and robots must all be rebuilt.
+// robots and feed must all be rebuilt.
 func (h *Runtime) InvalidateContent() {
 	h.Pages.InvalidateAll()
 	h.Sitemap.Invalidate()
 	h.Robots.Invalidate()
+	h.Feed.Invalidate()
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/seo"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
@@ -64,6 +65,9 @@ type entryFormData struct {
 	ShowExcerpt     bool
 	ShowSEO         bool
 	ShowFeatured    bool
+	IsPostsPage     bool
+	PostsPagePath   string
+	PostsPageWarning string
 }
 
 // editorStatusView holds the values rendered into the editor status region via
@@ -222,8 +226,29 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		return fmt.Errorf("create entry revision: %w", err)
 	}
 	if publish {
-		if err := h.upsertEntryRoute(ctx, qtx, entryID, "/"+input.slug, now); err != nil {
+		// Validate posts-page shell: only one paginated archive Posts block.
+		if err := validatePostsBlocksForPublish(ctx, qtx, entryID, doc); err != nil {
 			return err
+		}
+		// Central routing policy: compute the public path via seo.EntryPath.
+		settings, _ := qtx.GetSiteSettings(ctx)
+		postsBase := ""
+		if settings.PostsBasePath != "" {
+			postsBase = settings.PostsBasePath
+		}
+		computedPath := seo.EntryPath(contentType, input.slug, postsBase)
+		// If this entry is the current Posts Page shell, its route is the archive
+		// route (type=archive) at PostsBase, not a normal entry route derived from slug.
+		// Publishing the shell must not move or create an entry route; the archive
+		// document alone is updated.
+		isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entryID
+		if isPostsPage && contentType == "page" {
+			// Ensure the shell revision is published but keep the archive route intact.
+			// No route mutation here; reading routes own the archive conversion.
+		} else {
+			if err := h.upsertEntryRoute(ctx, qtx, entryID, computedPath, now); err != nil {
+				return err
+			}
 		}
 		// Record the first publication before it can be overwritten: published_at
 		// moves on every re-publish, but structured data needs a stable
@@ -482,6 +507,55 @@ func normalizeSchemaMode(v string) string {
 }
 
 func postedDocument(r *http.Request) string { return r.FormValue("document_json") }
+
+// validatePostsBlocksForPublish enforces that a Posts Page shell contains at
+// most one paginated archive Posts block. Two paginated listings sharing the
+// same archive URL would be ambiguous, so the publish is rejected.
+func validatePostsBlocksForPublish(ctx context.Context, qtx *db.Queries, entryID string, doc *document.Document) error {
+	settings, err := qtx.GetSiteSettings(ctx)
+	if err != nil {
+		return nil // no settings → not a posts page, no validation
+	}
+	if !settings.PostsPageEntryID.Valid || settings.PostsPageEntryID.String != entryID {
+		return nil
+	}
+	if doc == nil {
+		return nil
+	}
+	count := 0
+	var walk func([]document.Node)
+	walk = func(nodes []document.Node) {
+		for _, n := range nodes {
+			if n.Block == "core/posts" {
+				// Default source is archive, default pagination is true.
+				source := "archive"
+				pagination := true
+				if len(n.Settings) > 0 {
+					var s map[string]any
+					if json.Unmarshal(n.Settings, &s) == nil {
+						if v, ok := s["source"].(string); ok && v != "" {
+							source = v
+						}
+						if v, ok := s["pagination"].(bool); ok {
+							pagination = v
+						}
+					}
+				}
+				if source == "archive" && pagination {
+					count++
+				}
+			}
+			if len(n.Children) > 0 {
+				walk(n.Children)
+			}
+		}
+	}
+	walk(doc.Nodes)
+	if count > 1 {
+		return errors.New("Only one paginated archive Posts block can be used on a Posts Page.")
+	}
+	return nil
+}
 
 func randomID() (string, error) {
 	bytes := make([]byte, 16)

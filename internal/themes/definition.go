@@ -67,8 +67,6 @@ func (d *Definition) Render(view PageView) ([]byte, error) {
 
 func (d *Definition) resolveTarget(view PageView) string {
 	switch view.Kind {
-	case PageKindHome:
-		return firstPresent(d.template, "home.html", "single-page.html", "single.html", "layout.html")
 	case PageKindArchive:
 		if view.ContentType == "post" {
 			return firstPresent(d.template, "archive-post.html", "archive.html", "layout.html")

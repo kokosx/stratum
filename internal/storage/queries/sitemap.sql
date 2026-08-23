@@ -23,3 +23,6 @@ WHERE rt.route_type = 'entry'
   AND ct.public = 1
   AND (r.seo_robots_index IS NULL OR r.seo_robots_index != 0)
 ORDER BY rt.path;
+
+-- name: ListSitemapArchiveRoutes :many
+SELECT path FROM routes WHERE route_type = 'archive' ORDER BY path;

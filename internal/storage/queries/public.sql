@@ -34,6 +34,34 @@ WHERE rt.path = ?
 
 LIMIT 1;
 
+-- name: GetPublishedEntryByID :one
+SELECT
+    e.id,
+    e.content_type_id,
+    e.slug,
+    e.status,
+    e.published_at,
+    e.first_published_at,
+    r.id AS revision_id,
+    r.title,
+    r.excerpt,
+    r.document_json,
+    r.seo_title,
+    r.seo_description,
+    r.canonical_url,
+    r.featured_media_id,
+    r.social_media_id,
+    r.seo_robots_index,
+    r.seo_robots_follow,
+    r.schema_mode
+FROM entries e
+JOIN entry_revisions r
+    ON r.id = e.published_revision_id
+WHERE e.id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+LIMIT 1;
+
 -- name: CountPublishedEntriesByContentType :one
 SELECT COUNT(*)
 FROM entries e

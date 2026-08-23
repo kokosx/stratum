@@ -9,6 +9,33 @@ import (
 	"context"
 )
 
+const listSitemapArchiveRoutes = `-- name: ListSitemapArchiveRoutes :many
+SELECT path FROM routes WHERE route_type = 'archive' ORDER BY path
+`
+
+func (q *Queries) ListSitemapArchiveRoutes(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSitemapArchiveRoutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		items = append(items, path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSitemapEntries = `-- name: ListSitemapEntries :many
 SELECT
     rt.path AS route_path,

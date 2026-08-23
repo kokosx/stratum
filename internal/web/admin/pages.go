@@ -3,11 +3,14 @@ package admin
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"html"
 	"log"
 	"net/http"
 
+	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/seo"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
@@ -70,30 +73,76 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 	}
 	status, publicURL := h.entryEditorStatus(r, entry)
 	settings, _ := h.queries.GetSiteSettings(r.Context())
+	isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entry.ID
+	postsPath := ""
+	warning := ""
+	if isPostsPage {
+		if settings.HomepageMode == "latest_posts" {
+			postsPath = "/"
+		} else {
+			postsPath = seo.PostsArchivePath(settings.PostsBasePath)
+			if postsPath == "" {
+				postsPath = seo.DefaultPostsBase
+			}
+		}
+		// Check if published/lastest revision contains an archive Posts block
+		hasArchiveBlock := false
+		if doc, dErr := document.Decode([]byte(revision.DocumentJson)); dErr == nil {
+			var walk func([]document.Node)
+			walk = func(nodes []document.Node) {
+				for _, n := range nodes {
+					if n.Block == "core/posts" {
+						source := "archive"
+						if len(n.Settings) > 0 {
+							var s map[string]any
+							if json.Unmarshal(n.Settings, &s) == nil {
+								if v, ok := s["source"].(string); ok && v != "" {
+									source = v
+								}
+							}
+						}
+						if source == "archive" {
+							hasArchiveBlock = true
+						}
+					}
+					if len(n.Children) > 0 {
+						walk(n.Children)
+					}
+				}
+			}
+			walk(doc.Nodes)
+		}
+		if !hasArchiveBlock {
+			warning = "This Posts Page does not contain an Archive Posts block. The archive list will not be visible."
+		}
+	}
 	h.renderEntryForm(w, r, entryFormData{
-		Heading:         "Edit Page",
-		Action:          "/admin/pages/" + entry.ID,
-		PublishAction:   "/admin/pages/" + entry.ID + "/publish",
-		BackURL:         "/admin/pages",
-		Title:           revision.Title,
-		Slug:            entry.Slug,
-		Excerpt:         stringValue(revision.Excerpt),
-		SEOTitle:        stringValue(revision.SeoTitle),
-		SEODescription:  stringValue(revision.SeoDescription),
-		CanonicalURL:    stringValue(revision.CanonicalUrl),
-		FeaturedMediaID: stringValue(revision.FeaturedMediaID),
-		SocialMediaID:   stringValue(revision.SocialMediaID),
-		RobotsIndex:     robotsFormValue(revision.SeoRobotsIndex),
-		RobotsFollow:    robotsFormValue(revision.SeoRobotsFollow),
-		SchemaMode:      revision.SchemaMode,
-		SiteURL:         settings.SiteUrl,
-		PublicPath:      h.entryPublicPath(r, entry.ID),
-		DocumentJSON:    revision.DocumentJson,
-		Dirty:           "Saved",
-		Status:          status,
-		PublicURL:       publicURL,
-		ShowSEO:         true,
-		ShowFeatured:    true,
+		Heading:          "Edit Page",
+		Action:           "/admin/pages/" + entry.ID,
+		PublishAction:    "/admin/pages/" + entry.ID + "/publish",
+		BackURL:          "/admin/pages",
+		Title:            revision.Title,
+		Slug:             entry.Slug,
+		Excerpt:          stringValue(revision.Excerpt),
+		SEOTitle:         stringValue(revision.SeoTitle),
+		SEODescription:   stringValue(revision.SeoDescription),
+		CanonicalURL:     stringValue(revision.CanonicalUrl),
+		FeaturedMediaID:  stringValue(revision.FeaturedMediaID),
+		SocialMediaID:    stringValue(revision.SocialMediaID),
+		RobotsIndex:      robotsFormValue(revision.SeoRobotsIndex),
+		RobotsFollow:     robotsFormValue(revision.SeoRobotsFollow),
+		SchemaMode:       revision.SchemaMode,
+		SiteURL:          settings.SiteUrl,
+		PublicPath:       h.entryPublicPath(r, entry.ID),
+		DocumentJSON:     revision.DocumentJson,
+		Dirty:            "Saved",
+		Status:           status,
+		PublicURL:        publicURL,
+		ShowSEO:          true,
+		ShowFeatured:     true,
+		IsPostsPage:      isPostsPage,
+		PostsPagePath:    postsPath,
+		PostsPageWarning: warning,
 	}, "pages")
 }
 

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -151,18 +152,49 @@ func TestEmptyButtonNeverRenders(t *testing.T) {
 }
 
 // TestImageCenterAlignmentVerified confirms the cascade centres a block image.
+// Blocks CSS is fingerprinted per page (UsedBlocks), so we publish a page
+// containing an image block and fetch its blocks.*.css URL from the HTML.
 func TestImageCenterAlignmentVerified(t *testing.T) {
-	server, _, _, _, cleanup := newIntegrationServer(t)
+	server, queries, _, service, cleanup := newIntegrationServer(t)
 	defer cleanup()
-	client := newClient(t)
-	resp := getPath(t, client, server.URL, "/stratum/blocks.css")
-	// Legacy path redirects to fingerprinted URL; follow it.
-	if resp.StatusCode == http.StatusFound {
-		loc := resp.Header.Get("Location")
-		resp.Body.Close()
-		resp = getPath(t, client, server.URL, loc)
+	ctx := context.Background()
+	client := setupAndLogin(t, server.URL, service)
+
+	imgDoc := `{"version":1,"nodes":[{"id":"s1","block":"core/section","version":1,"props":{},"settings":{"width":"content","verticalSpacing":"md","horizontalPadding":"md","align":"left","background":"default","minHeight":"auto","anchorID":""},"children":[{"id":"img1","block":"core/image","version":1,"props":{"mediaId":"00000000-0000-0000-0000-000000000000","alt":"test"},"settings":{"align":"center"}}]}]}`
+
+	createForm := url.Values{
+		"title":         {"Image Test"},
+		"slug":          {"image-test"},
+		"document_json": {imgDoc},
+		"csrf_token":    {csrfToken(t, client, server.URL, "/admin/pages/new")},
 	}
-	css := bodyString(t, resp)
+	cr := postForm(t, client, server.URL, "/admin/pages", createForm)
+	cr.Body.Close()
+	entry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "image-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishForm := url.Values{
+		"title":         {"Image Test"},
+		"slug":          {"image-test"},
+		"document_json": {imgDoc},
+		"csrf_token":    {csrfToken(t, client, server.URL, "/admin/pages/"+entry.ID+"/edit")},
+	}
+	pr := postForm(t, client, server.URL, "/admin/pages/"+entry.ID+"/publish", publishForm)
+	pr.Body.Close()
+
+	publicResp := getPath(t, client, server.URL, "/image-test")
+	if publicResp.StatusCode != http.StatusOK {
+		t.Fatalf("published page status = %d", publicResp.StatusCode)
+	}
+	html := bodyString(t, publicResp)
+	re := regexp.MustCompile(`/stratum/blocks\.[a-f0-9]+\.css`)
+	match := re.FindString(html)
+	if match == "" {
+		t.Fatalf("no fingerprinted blocks CSS found in HTML: %s", html)
+	}
+	cssResp := getPath(t, client, server.URL, match)
+	css := bodyString(t, cssResp)
 	if !strings.Contains(css, ".stratum-image-align-center img{margin-inline:auto}") {
 		t.Fatalf("image center alignment rule missing from blocks.css: %s", css)
 	}

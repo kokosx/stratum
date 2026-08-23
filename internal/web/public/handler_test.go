@@ -102,7 +102,7 @@ func TestDefaultThemeReceivesPrimaryAndFooterNavigation(t *testing.T) {
 		stylesheetResponse = httptest.NewRecorder()
 		handler.ServeHTTP(stylesheetResponse, stylesheetRequest)
 	}
-	for _, want := range []string{"--st-color-primary: #123456;", "--st-content-width: 1234px;"} {
+	for _, want := range []string{"--st-color-primary:#123456", "--st-content-width:1234px"} {
 		if !strings.Contains(stylesheetResponse.Body.String(), want) {
 			t.Errorf("theme stylesheet missing %q in %q", want, stylesheetResponse.Body.String())
 		}

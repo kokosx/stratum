@@ -27,6 +27,82 @@ func (q *Queries) CountPublishedEntriesByContentType(ctx context.Context, conten
 	return count, err
 }
 
+const getPublishedEntryByID = `-- name: GetPublishedEntryByID :one
+SELECT
+    e.id,
+    e.content_type_id,
+    e.slug,
+    e.status,
+    e.published_at,
+    e.first_published_at,
+    r.id AS revision_id,
+    r.title,
+    r.excerpt,
+    r.document_json,
+    r.seo_title,
+    r.seo_description,
+    r.canonical_url,
+    r.featured_media_id,
+    r.social_media_id,
+    r.seo_robots_index,
+    r.seo_robots_follow,
+    r.schema_mode
+FROM entries e
+JOIN entry_revisions r
+    ON r.id = e.published_revision_id
+WHERE e.id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+LIMIT 1
+`
+
+type GetPublishedEntryByIDRow struct {
+	ID               string         `json:"id"`
+	ContentTypeID    string         `json:"content_type_id"`
+	Slug             string         `json:"slug"`
+	Status           string         `json:"status"`
+	PublishedAt      sql.NullInt64  `json:"published_at"`
+	FirstPublishedAt sql.NullInt64  `json:"first_published_at"`
+	RevisionID       string         `json:"revision_id"`
+	Title            string         `json:"title"`
+	Excerpt          sql.NullString `json:"excerpt"`
+	DocumentJson     string         `json:"document_json"`
+	SeoTitle         sql.NullString `json:"seo_title"`
+	SeoDescription   sql.NullString `json:"seo_description"`
+	CanonicalUrl     sql.NullString `json:"canonical_url"`
+	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	SocialMediaID    sql.NullString `json:"social_media_id"`
+	SeoRobotsIndex   sql.NullInt64  `json:"seo_robots_index"`
+	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
+	SchemaMode       string         `json:"schema_mode"`
+}
+
+func (q *Queries) GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getPublishedEntryByID, id)
+	var i GetPublishedEntryByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.ContentTypeID,
+		&i.Slug,
+		&i.Status,
+		&i.PublishedAt,
+		&i.FirstPublishedAt,
+		&i.RevisionID,
+		&i.Title,
+		&i.Excerpt,
+		&i.DocumentJson,
+		&i.SeoTitle,
+		&i.SeoDescription,
+		&i.CanonicalUrl,
+		&i.FeaturedMediaID,
+		&i.SocialMediaID,
+		&i.SeoRobotsIndex,
+		&i.SeoRobotsFollow,
+		&i.SchemaMode,
+	)
+	return i, err
+}
+
 const getPublishedEntryByPath = `-- name: GetPublishedEntryByPath :one
 SELECT
     e.id,

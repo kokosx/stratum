@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -15,12 +16,12 @@ import (
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
-	"io"
 )
 
 func mustJSON(value string) string {
@@ -64,11 +65,15 @@ func newIntegrationServer(t *testing.T) (*httptest.Server, *db.Queries, *storage
 	}
 	mediaService := media.NewService(queries, store)
 
-	adminHandler, err := adminweb.NewHandler(database.DB, queries, service, registry, themeRuntime, mediaService)
+	hub, err := runtimehub.New(queries, registry, themeRuntime, mediaService)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicHandler, err := publicweb.NewHandler(queries, registry, themeRuntime, mediaService)
+	adminHandler, err := adminweb.NewHandler(database.DB, queries, service, registry, themeRuntime, mediaService, hub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicHandler, err := publicweb.NewHandlerWithHub(hub)
 	if err != nil {
 		t.Fatal(err)
 	}

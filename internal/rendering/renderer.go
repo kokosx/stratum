@@ -32,6 +32,7 @@ type blockKey struct {
 }
 
 type blockData struct {
+	ID       string
 	Props    map[string]any
 	Settings map[string]any
 	Children template.HTML
@@ -43,9 +44,40 @@ type blockData struct {
 // current Entry and Site settings). It is the same for every node in a document.
 // In the editor preview it is empty, so dynamic blocks fall back to placeholders.
 type RenderContext struct {
-	Site      SiteContext
-	Entry     EntryContext
-	LCPNodeID string
+	Site       SiteContext
+	Entry      EntryContext
+	Archive    *ArchiveContext
+	Collections map[string][]ArchiveEntry
+	ArchiveURL string // URL of the post archive (for view-all links in latest mode)
+	LCPNodeID  string
+}
+
+// ArchiveContext is the typed archive listing supplied to core/posts source=archive.
+// Nil on single renders; non-nil on archive renders.
+type ArchiveContext struct {
+	Entries    []ArchiveEntry
+	Pagination PaginationContext
+	Permalink  string // canonical archive path for this page (e.g. "/blog" or "/blog/page/2")
+}
+
+// ArchiveEntry is one post card, already resolved via routes.
+type ArchiveEntry struct {
+	ID            string
+	Title         string
+	Excerpt       string
+	URL           string
+	PublishedAt   string
+	PublishedISO  string
+	FeaturedImage MediaView
+}
+
+// PaginationContext carries pagination state pre-built from site settings.
+type PaginationContext struct {
+	Current     int
+	TotalPages  int
+	TotalItems  int64
+	PreviousURL string
+	NextURL     string
 }
 
 // SiteSocialLink is a single configured social profile surfaced by the Social
@@ -191,7 +223,7 @@ func (r *Renderer) renderNode(ctx context.Context, node document.Node, rc Render
 	}
 
 	var out bytes.Buffer
-	if err := tmpl.Execute(&out, blockData{Props: props, Settings: settings, Children: template.HTML(children.String()), Context: rc}); err != nil {
+	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: props, Settings: settings, Children: template.HTML(children.String()), Context: rc}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	return template.HTML(out.String()), nil
@@ -229,7 +261,7 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 	}
 
 	var out bytes.Buffer
-	if err := tmpl.Execute(&out, blockData{Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: node.ID == rc.LCPNodeID}); err != nil {
+	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: node.ID == rc.LCPNodeID}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	return template.HTML(out.String()), nil

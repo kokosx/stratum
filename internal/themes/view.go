@@ -149,7 +149,9 @@ type PageView struct {
 	ContentType string // "page" | "post" — used for template resolution
 	// Kind tells the theme what kind of page this is for deterministic template choice.
 	Kind PageKind
-	// Archive is populated for archive and home-latest-posts renders.
+	// IsFrontPage is true when this is the site front page (homepage).
+	IsFrontPage bool
+	// Archive is populated for archive renders (including homepage latest-posts).
 	Archive ArchiveView
 	// PreviewCSS is generated exclusively by Theme Runtime after server-side
 	// validation. Public renders leave it empty and use /stratum/theme.css.
@@ -164,7 +166,6 @@ type PageKind string
 const (
 	PageKindSingle  PageKind = "single"
 	PageKindArchive PageKind = "archive"
-	PageKindHome    PageKind = "home"
 )
 
 // ArchiveView is the typed contract passed to the theme for any post listing

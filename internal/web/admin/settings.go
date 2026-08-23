@@ -67,9 +67,10 @@ type settingsData struct {
 }
 
 type pageOption struct {
-	ID    string
-	Title string
-	Path  string
+	ID       string
+	Title    string
+	Path     string
+	Disabled bool
 }
 
 // settings renders the Site Settings control panel.
@@ -469,47 +470,199 @@ func (h *Handler) applyHomepageRoute(ctx context.Context, queries *db.Queries, o
 // applyReadingRoutes is the single transactional writer for homepage mode,
 // homepage page, posts page and posts base path. It maintains:
 // - / entry route (or redirect) for homepage
-// - one archive route (type=archive) at the effective archive root
-// - redirects for base changes (flattening chains) and old post URLs
-// - conflict detection (no silent overwrite of page routes)
+// - one archive route (type=archive) at the effective archive root, optionally
+//   pointing at a shell Page (entry_id = Posts Page ID)
+// - no duplicate single route for a Page that is the archive shell
+// - redirects for base changes and shell swaps (flattening chains)
 func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, oldHome, newHome, oldPosts, newPosts, oldBase, newBase string, now int64) error {
-	// Homepage (reuses the existing safe logic)
 	if oldHome != newHome {
 		if err := h.applyHomepageRoute(ctx, queries, oldHome, newHome, now); err != nil {
 			return err
 		}
 	}
-
 	if newBase == "" {
 		newBase = seo.DefaultPostsBase
 	}
 	if err := seo.ValidatePostsBasePath(newBase); err != nil {
 		return err
 	}
-
 	isLatest := newHome == ""
 	archPath := "/"
 	if !isLatest {
 		archPath = seo.PostsArchivePath(newBase)
 	}
+	oldArch := seo.PostsArchivePath(oldBase)
+	if oldBase == "" {
+		oldArch = archPath
+	}
 
-	// Conflict check for archive mount (pages must not be silently replaced)
-	if archPath != "/" {
-		if rt, rerr := queries.GetRouteByPath(ctx, archPath); rerr == nil && rt.RouteType == "entry" && rt.EntryID.Valid {
-			if ent, eerr := queries.GetEntry(ctx, rt.EntryID.String); eerr == nil {
-				return fmt.Errorf("The Posts URL base %s conflicts with Page %s.", archPath, ent.Slug)
+	// ---------- Posts page shell removal (oldPosts -> not shell) ----------
+	if oldPosts != "" && oldPosts != newPosts {
+		// Demote the previous shell: archive route at old location keeps archive
+		// type but loses its entry_id; the page itself regains a normal entry route.
+		oldEntry, err := queries.GetEntry(ctx, oldPosts)
+		if err == nil && oldEntry.ContentTypeID == "page" {
+			// Find the archive route that currently points at this entry (could be
+			// at oldArch or at archPath if base changed)
+			var archRoute *db.Route
+			for _, path := range []string{oldArch, archPath} {
+				if rt, rerr := queries.GetRouteByPath(ctx, path); rerr == nil && rt.RouteType == "archive" && rt.EntryID.Valid && rt.EntryID.String == oldPosts {
+					tmp := rt
+					archRoute = &tmp
+					break
+				}
 			}
-			return fmt.Errorf("The Posts URL base %s conflicts with an existing route.", archPath)
+			if archRoute != nil {
+				// Keep the archive at its current path but as shell-less
+				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+					ID: archRoute.ID, Path: archRoute.Path, EntryID: sql.NullString{Valid: false}, RouteType: "archive", UpdatedAt: now,
+				}); err != nil {
+					return err
+				}
+			}
+			// Restore normal page route at /{slug}
+			slugPath := "/" + oldEntry.Slug
+			if rt, rerr := queries.GetRouteByPath(ctx, slugPath); rerr == nil && !rt.EntryID.Valid {
+				// stale redirect there – clear it so the entry can reclaim the path
+				if delErr := queries.DeleteRoute(ctx, rt.ID); delErr != nil {
+					return delErr
+				}
+			} else if rerr == nil && rt.EntryID.Valid && rt.EntryID.String != oldPosts {
+				// different entry owns the slug – should not happen; skip restore
+			} else {
+				// Create or ensure entry route at slug path
+				if _, rerr := queries.GetEntryRoute(ctx, strToNullString(oldPosts)); errors.Is(rerr, sql.ErrNoRows) {
+					id, _ := randomID()
+					_ = queries.CreateRoute(ctx, db.CreateRouteParams{
+						ID: id, Path: slugPath, EntryID: strToNullString(oldPosts), RouteType: "entry", CreatedAt: now, UpdatedAt: now,
+					})
+				} else if rerr == nil {
+					// Entry route still points at archive path – move it back to slug path
+					if ar, arErr := queries.GetEntryRoute(ctx, strToNullString(oldPosts)); arErr == nil && ar.Path != slugPath {
+						if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{ID: ar.ID, Path: slugPath, EntryID: strToNullString(oldPosts), RouteType: "entry", UpdatedAt: now}); err != nil {
+							return err
+						}
+					}
+				}
+			}
 		}
 	}
 
-	// Base change → redirects + remap post entry routes (no chains)
-	if oldBase != "" && oldBase != newBase {
-		oldArch := seo.PostsArchivePath(oldBase)
-		if oldArch != archPath {
-			if err := h.upsertRedirectRoute(ctx, queries, oldArch, archPath, now); err != nil {
+	// ---------- Posts page shell addition (newPosts becomes shell) ----------
+	if newPosts != "" && newPosts != oldPosts {
+		newEntry, err := queries.GetEntry(ctx, newPosts)
+		if err != nil || newEntry.ContentTypeID != "page" {
+			return errors.New("posts page must be a Page")
+		}
+		if newEntry.Status == "trash" {
+			return errors.New("posts page must not be trashed")
+		}
+		// Shell must not equal homepage
+		if newPosts == newHome && newHome != "" {
+			return errors.New("Homepage and Posts page must be different")
+		}
+		slugPath := "/" + newEntry.Slug
+
+		// Conflict check: archive path must not be occupied by a different entry's route
+		if archPath != "/" {
+			if rt, rerr := queries.GetRouteByPath(ctx, archPath); rerr == nil && rt.RouteType == "entry" && rt.EntryID.Valid && rt.EntryID.String != newPosts {
+				return fmt.Errorf("The Posts URL base %s conflicts with Page %s.", archPath, newEntry.Slug)
+			}
+		}
+
+		// Promote the page's route to archive at archPath
+		// Cases:
+		//  - page already owns archPath as entry (slug == blog && base /blog) -> convert that route
+		//  - page owns slugPath entry -> move it to archPath as archive + redirect
+		//  - archive already exists shell-less -> adopt it
+		//  - else create new archive
+
+		// Handle case where page's entry route is at slugPath and archPath is different
+		// We need to free slugPath later with a redirect to archPath.
+		needsSlugRedirect := false
+		if slugPath != archPath {
+			if er, rerr := queries.GetEntryRoute(ctx, strToNullString(newPosts)); rerr == nil {
+				if er.Path == slugPath {
+					needsSlugRedirect = true
+				} else if er.Path != archPath {
+					// entry route at some other path (previous slug)
+					needsSlugRedirect = true
+				}
+			}
+		}
+
+		if rt, rerr := queries.GetRouteByPath(ctx, archPath); errors.Is(rerr, sql.ErrNoRows) {
+			// No archive there – try to move the page's entry route
+			if er, rerr2 := queries.GetEntryRoute(ctx, strToNullString(newPosts)); rerr2 == nil {
+				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+					ID: er.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", UpdatedAt: now,
+				}); err != nil {
+					return err
+				}
+			} else {
+				id, _ := randomID()
+				if err := queries.CreateRoute(ctx, db.CreateRouteParams{
+					ID: id, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", CreatedAt: now, UpdatedAt: now,
+				}); err != nil {
+					return err
+				}
+			}
+		} else if rerr == nil && rt.RouteType == "archive" {
+			if !rt.EntryID.Valid {
+				// shell-less archive – adopt it
+				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+					ID: rt.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", UpdatedAt: now,
+				}); err != nil {
+					return err
+				}
+			} else if rt.EntryID.String != newPosts {
+				// different shell already occupies (should have been demoted)
+				return fmt.Errorf("The Posts URL base %s is already used as archive shell.", archPath)
+			}
+			// If entry still has a separate entry route at slugPath, remove it (it will redirect)
+			if slugPath != archPath {
+				if er, rerr2 := queries.GetEntryRoute(ctx, strToNullString(newPosts)); rerr2 == nil && er.Path != archPath {
+					if err := queries.DeleteRoute(ctx, er.ID); err != nil {
+						return err
+					}
+				}
+			}
+		} else if rerr == nil && rt.RouteType == "entry" {
+			// entry-occupied path – only allowed if it's the same entry becoming archive
+			if !rt.EntryID.Valid || rt.EntryID.String != newPosts {
+				return fmt.Errorf("The Posts URL base %s conflicts with an existing route.", archPath)
+			}
+			if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+				ID: rt.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", UpdatedAt: now,
+			}); err != nil {
 				return err
 			}
+		}
+		if needsSlugRedirect && slugPath != archPath && slugPath != "/" {
+			if err := h.upsertRedirectRoute(ctx, queries, slugPath, archPath, now); err != nil {
+				return err
+			}
+		}
+	}
+
+	// ---------- Base change handling (post routes + shell archive move) ----------
+	if oldBase != "" && oldBase != newBase && oldArch != archPath {
+		// Move shell archive if it exists at oldArch
+		if rt, rerr := queries.GetRouteByPath(ctx, oldArch); rerr == nil && rt.RouteType == "archive" {
+			// Archive at old base – move to new base, preserving shell entry_id
+			if existing, er := queries.GetRouteByPath(ctx, archPath); er == nil && existing.RouteType == "archive" {
+				// Already an archive at new path (shell already handled) – just redirect old
+			} else {
+				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+					ID: rt.ID, Path: archPath, EntryID: rt.EntryID, RouteType: "archive", UpdatedAt: now,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		// Redirect old archive path to new (for shell-less or already-moved case)
+		if err := h.upsertRedirectRoute(ctx, queries, oldArch, archPath, now); err != nil {
+			return err
 		}
 		// Remap published posts that lived under old base
 		posts, _ := queries.ListEntriesByContentType(ctx, "post")
@@ -521,25 +674,46 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			if rerr != nil {
 				continue
 			}
-			if !strings.HasPrefix(rt.Path, oldArch) && oldArch != "/" {
+			// Only remap if old path is under oldArch prefix
+			if oldArch == "/" {
+				// homepage archive at root – posts base was root? posts were at /{slug} – now should be at archPath/{slug}
+				// This case occurs when moving from latest_posts home (posts at "/") to static home with /blog base: very rare.
+				// Only remap if new path differs
+				newP := seo.EntryPath("post", p.Slug, newBase)
+				if newP == rt.Path {
+					continue
+				}
+				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+					ID: rt.ID, Path: newP, EntryID: strToNullString(p.ID), RouteType: "entry", UpdatedAt: now,
+				}); err != nil {
+					return err
+				}
+				if err := h.upsertRedirectRoute(ctx, queries, rt.Path, newP, now); err != nil {
+					return err
+				}
+				continue
+			}
+			if !strings.HasPrefix(rt.Path, oldArch+"/") && rt.Path != oldArch {
 				continue
 			}
 			newP := seo.EntryPath("post", p.Slug, newBase)
 			if newP == rt.Path {
 				continue
 			}
+			// Capture old path before update for redirect
+			oldPath := rt.Path
 			if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
 				ID: rt.ID, Path: newP, EntryID: strToNullString(p.ID), RouteType: "entry", UpdatedAt: now,
 			}); err != nil {
 				return err
 			}
-			if err := h.upsertRedirectRoute(ctx, queries, rt.Path, newP, now); err != nil {
+			if err := h.upsertRedirectRoute(ctx, queries, oldPath, newP, now); err != nil {
 				return err
 			}
 		}
 	}
 
-	// Ensure archive route exists at the mount point
+	// Ensure archive route exists at the mount point (if not already handled by shell logic)
 	if rt, rerr := queries.GetRouteByPath(ctx, archPath); errors.Is(rerr, sql.ErrNoRows) {
 		id, _ := randomID()
 		if err := queries.CreateRoute(ctx, db.CreateRouteParams{
@@ -548,7 +722,6 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			return err
 		}
 	} else if rerr == nil && rt.RouteType != "archive" && archPath != "/" {
-		// promote to archive (home apply should have cleared / entry)
 		if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
 			ID: rt.ID, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", UpdatedAt: now,
 		}); err != nil {
@@ -563,9 +736,6 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			return err
 		}
 	}
-
-	_ = oldPosts
-	_ = newPosts // posts page changes only affect which published revision we read for intro/SEO; no route mutation
 	return nil
 }
 
@@ -587,7 +757,8 @@ func (h *Handler) listPageOptions(r *http.Request) []pageOption {
 		if entry.PublishedRevisionID.Valid && entry.PublicPath.Valid {
 			path = entry.PublicPath.String
 		}
-		options = append(options, pageOption{ID: entry.ID, Title: title, Path: path})
+		disabled := !entry.PublishedRevisionID.Valid
+		options = append(options, pageOption{ID: entry.ID, Title: title, Path: path, Disabled: disabled})
 	}
 	return options
 }
@@ -714,7 +885,14 @@ func (h *Handler) parseSettingsForm(r *http.Request) (settingsForm, map[string]s
 		entry, err := h.queries.GetEntry(r.Context(), form.HomepageEntryID)
 		if err != nil || entry.ContentTypeID != "page" {
 			errors["homepage_entry_id"] = "Homepage must be an existing Page."
+		} else if entry.Status == "trash" {
+			errors["homepage_entry_id"] = "Homepage must not be trashed."
+		} else if !entry.PublishedRevisionID.Valid {
+			errors["homepage_entry_id"] = "Homepage must be published before it can be used."
 		}
+	}
+	if form.HomepageEntryID != "" && form.PostsPageEntryID != "" && form.HomepageEntryID == form.PostsPageEntryID {
+		errors["posts_page_entry_id"] = "Homepage and Posts page must be different."
 	}
 	if form.PostsPageEntryID != "" {
 		entry, err := h.queries.GetEntry(r.Context(), form.PostsPageEntryID)

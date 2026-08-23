@@ -89,13 +89,11 @@
         <div class="form-field">
           <span class="field-label">Homepage displays</span>
           <label class="check-row">
-            <input type="radio" name="homepage_mode_choice" value="latest" {{ if eq .Content.Form.HomepageEntryID "" }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="radio" name="homepage_mode_choice" value="latest" {{ if eq .Content.Form.HomepageEntryID "" }}checked{{ end }} id="homepage-mode-latest">
             Latest posts
           </label>
           <label class="check-row">
-            <input type="radio" name="homepage_mode_choice" value="page" {{ if ne .Content.Form.HomepageEntryID "" }}checked{{ end }}
-                   data-on:change__prevent="@post('/admin/settings', {contentType:'form'})">
+            <input type="radio" name="homepage_mode_choice" value="page" {{ if ne .Content.Form.HomepageEntryID "" }}checked{{ end }} id="homepage-mode-page">
             A static page
           </label>
         </div>
@@ -103,8 +101,9 @@
         <div class="form-field" {{ if eq .Content.Form.HomepageEntryID "" }}hidden{{ end }} id="homepage-page-field">
           <label for="homepage_entry_id">Homepage</label>
           <select id="homepage_entry_id" name="homepage_entry_id">
+            <option value="">— Select —</option>
             {{ range .Content.Pages }}
-            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.HomepageEntryID }}selected{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}</option>
+            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.HomepageEntryID }}selected{{ end }} {{ if .Disabled }}disabled{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}{{ if .Disabled }} — draft{{ end }}</option>
             {{ end }}
           </select>
           <p class="field-desc">Published page shown at <code>/</code>.</p>
@@ -116,10 +115,10 @@
           <select id="posts_page_entry_id" name="posts_page_entry_id">
             <option value="">— None —</option>
             {{ range .Content.Pages }}
-            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.PostsPageEntryID }}selected{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}</option>
+            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.PostsPageEntryID }}selected{{ end }} {{ if .Disabled }}disabled{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}{{ if .Disabled }} — draft{{ end }}</option>
             {{ end }}
           </select>
-          <p class="field-desc">Published page whose content becomes the archive intro at the Posts URL base.</p>
+          <p class="field-desc">The selected Page becomes the editable layout for your Posts archive. Add a Posts block to choose where the listing appears.</p>
           {{ $e := index .Content.Errors "posts_page_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
         </div>
 
@@ -309,6 +308,17 @@
       socialRemove.hidden = true;
       markDirty2();
     });
+  }
+  // Reading: Homepage displays radio toggles homepage select visibility locally (no auto-POST)
+  const hpLatest = document.getElementById('homepage-mode-latest');
+  const hpPage = document.getElementById('homepage-mode-page');
+  const hpField = document.getElementById('homepage-page-field');
+  if (hpLatest && hpPage && hpField) {
+    function syncHomepageVisibility() {
+      hpField.hidden = hpLatest.checked;
+    }
+    hpLatest.addEventListener('change', syncHomepageVisibility);
+    hpPage.addEventListener('change', syncHomepageVisibility);
   }
 })();
 </script>

@@ -44,6 +44,7 @@ type Querier interface {
 	GetMediaVariant(ctx context.Context, arg GetMediaVariantParams) (MediaVariant, error)
 	GetNavigationMenu(ctx context.Context, id string) (NavigationMenu, error)
 	GetNavigationMenuBySlug(ctx context.Context, slug string) (NavigationMenu, error)
+	GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error)
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
 	GetRouteByPath(ctx context.Context, path string) (Route, error)
 	GetSessionUser(ctx context.Context, tokenHash string) (GetSessionUserRow, error)
@@ -71,6 +72,7 @@ type Querier interface {
 	// finds /a so it can be retargeted straight to /c.
 	ListRedirectsToTarget(ctx context.Context, redirectTo sql.NullString) ([]Route, error)
 	ListRoutesForEntry(ctx context.Context, entryID sql.NullString) ([]Route, error)
+	ListSitemapArchiveRoutes(ctx context.Context) ([]string, error)
 	// Returns every URL that belongs in the sitemap: published and active entries
 	// of public content types that own an entry-type route and resolve as
 	// indexable. Drafts (no published revision), private/trash entries,

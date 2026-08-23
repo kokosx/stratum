@@ -32,12 +32,13 @@
   <link rel="stylesheet" href="{{ .Assets.ThemeCSS }}">
   {{ if .PreviewCSS }}<style id="stratum-preview-theme">{{ .PreviewCSS }}</style>{{ end }}
   {{ if .Assets.ThemeJS }}<script src="{{ .Assets.ThemeJS }}" defer></script>{{ end }}
+  {{ if .Head.Alternates }}{{ range .Head.Alternates }}<link rel="alternate"{{ if .Type }} type="{{ .Type }}"{{ end }}{{ if .HrefLang }} hreflang="{{ .HrefLang }}"{{ end }} href="{{ .Href }}">{{ end }}{{ end }}
 </head>
 <body class="st-links--{{ setting .Theme.Settings "links.style" }} st-buttons-primary--{{ setting .Theme.Settings "buttons.primaryStyle" }} st-buttons-secondary--{{ setting .Theme.Settings "buttons.secondaryStyle" }} st-dropdown-indicator--{{ setting .Theme.Settings "navigation.showDropdownIndicator" }}">
   <a class="skip-link" href="#content">Skip to content</a>
   {{ template "topbar" . }}
   {{ template "header" . }}
-  <main id="content" class="site-main st-container st-container--content">{{ .Content }}</main>
+  <main id="content" class="site-main st-container st-container--content">{{ if .Content }}{{ .Content }}{{ else if eq .Kind "archive" }}{{ if .Archive.Title }}<header class="archive-header"><h1>{{ .Archive.Title }}</h1>{{ if .Archive.Description }}<p class="archive-desc">{{ .Archive.Description }}</p>{{ end }}</header>{{ end }}{{ if .Archive.Entries }}<section class="post-list">{{ range .Archive.Entries }}<article class="post-card">{{ if .FeaturedImage.Src }}<figure class="post-card__media"><img src="{{ .FeaturedImage.Src }}"{{ if .FeaturedImage.SrcSet }} srcset="{{ .FeaturedImage.SrcSet }}" sizes="(min-width:768px) 280px, 100vw"{{ end }}{{ if .FeaturedImage.Width }} width="{{ .FeaturedImage.Width }}"{{ end }}{{ if .FeaturedImage.Height }} height="{{ .FeaturedImage.Height }}"{{ end }} alt="{{ .FeaturedImage.Alt }}" loading="lazy" decoding="async"></figure>{{ end }}<header><h2><a href="{{ .URL }}">{{ .Title }}</a></h2>{{ if .PublishedISO }}<time datetime="{{ .PublishedISO }}">{{ .PublishedAt }}</time>{{ end }}</header>{{ if .Excerpt }}<p class="excerpt">{{ .Excerpt }}</p>{{ end }}</article>{{ end }}</section>{{ else }}<div class="stratum-posts-empty"><p>No posts found.</p></div>{{ end }}{{ if gt .Archive.Pagination.TotalPages 1 }}<nav aria-label="Pagination" class="pagination">{{ if .Archive.Pagination.PreviousURL }}<a href="{{ .Archive.Pagination.PreviousURL }}" rel="prev">← Previous</a>{{ end }}<span>Page {{ .Archive.Pagination.Current }} of {{ .Archive.Pagination.TotalPages }}</span>{{ if .Archive.Pagination.NextURL }}<a href="{{ .Archive.Pagination.NextURL }}" rel="next">Next →</a>{{ end }}</nav>{{ end }}{{ end }}</main>
   {{ template "footer" . }}
 </body>
 </html>{{ end }}
