@@ -10,6 +10,8 @@ import (
 )
 
 type Querier interface {
+	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
+	ClearLayoutTemplatePublishedRevision(ctx context.Context, arg ClearLayoutTemplatePublishedRevisionParams) error
 	CountMedia(ctx context.Context) (int64, error)
 	CountMediaUsage(ctx context.Context, id sql.NullString) (int64, error)
 	CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error)
@@ -17,6 +19,8 @@ type Querier interface {
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
 	CreateEntryRevision(ctx context.Context, arg CreateEntryRevisionParams) error
+	CreateLayoutTemplate(ctx context.Context, arg CreateLayoutTemplateParams) error
+	CreateLayoutTemplateRevision(ctx context.Context, arg CreateLayoutTemplateRevisionParams) error
 	CreateMedia(ctx context.Context, arg CreateMediaParams) (Medium, error)
 	CreateMediaVariant(ctx context.Context, arg CreateMediaVariantParams) (MediaVariant, error)
 	CreateNavigationItem(ctx context.Context, arg CreateNavigationItemParams) error
@@ -35,17 +39,23 @@ type Querier interface {
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
 	GetContentType(ctx context.Context, id string) (ContentType, error)
+	GetContentTypeWithDefault(ctx context.Context, id string) (ContentType, error)
 	GetEntry(ctx context.Context, id string) (Entry, error)
 	GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) (Entry, error)
 	GetEntryRevision(ctx context.Context, id string) (EntryRevision, error)
 	GetEntryRoute(ctx context.Context, entryID sql.NullString) (Route, error)
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
+	GetLatestLayoutTemplateRevision(ctx context.Context, templateID string) (LayoutTemplateRevision, error)
+	GetLayoutTemplate(ctx context.Context, id string) (LayoutTemplate, error)
+	GetLayoutTemplateRevision(ctx context.Context, id string) (LayoutTemplateRevision, error)
+	GetLayoutTemplateWithPublishedRevision(ctx context.Context, id string) (GetLayoutTemplateWithPublishedRevisionRow, error)
 	GetMedia(ctx context.Context, id string) (Medium, error)
 	GetMediaVariant(ctx context.Context, arg GetMediaVariantParams) (MediaVariant, error)
 	GetNavigationMenu(ctx context.Context, id string) (NavigationMenu, error)
 	GetNavigationMenuBySlug(ctx context.Context, slug string) (NavigationMenu, error)
 	GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error)
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
+	GetPublishedLayoutTemplateRevision(ctx context.Context, id string) (LayoutTemplateRevision, error)
 	GetRouteByPath(ctx context.Context, path string) (Route, error)
 	GetSessionUser(ctx context.Context, tokenHash string) (GetSessionUserRow, error)
 	GetSiteIconMediaID(ctx context.Context) (sql.NullString, error)
@@ -59,6 +69,9 @@ type Querier interface {
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
+	ListLayoutTemplateRevisions(ctx context.Context, templateID string) ([]LayoutTemplateRevision, error)
+	ListLayoutTemplates(ctx context.Context) ([]LayoutTemplate, error)
+	ListLayoutTemplatesByContentType(ctx context.Context, contentTypeID string) ([]LayoutTemplate, error)
 	ListMedia(ctx context.Context, arg ListMediaParams) ([]Medium, error)
 	ListMediaVariants(ctx context.Context, mediaID string) ([]MediaVariant, error)
 	ListNavigationItemsByMenu(ctx context.Context, menuID string) ([]ListNavigationItemsByMenuRow, error)
@@ -66,6 +79,7 @@ type Querier interface {
 	ListNavigationLocationsForMenu(ctx context.Context, menuID string) ([]string, error)
 	ListNavigationMenus(ctx context.Context) ([]NavigationMenu, error)
 	ListPublishedEntriesByContentType(ctx context.Context, arg ListPublishedEntriesByContentTypeParams) ([]ListPublishedEntriesByContentTypeRow, error)
+	ListPublishedLayoutTemplatesByContentType(ctx context.Context, contentTypeID string) ([]LayoutTemplate, error)
 	ListPublishedPagesForNavigation(ctx context.Context) ([]ListPublishedPagesForNavigationRow, error)
 	// Every redirect route whose target is the given path. Slug changes use this to
 	// flatten redirect chains: when /a -> /b exists and /b moves to /c, this query
@@ -86,12 +100,15 @@ type Querier interface {
 	SeedPublishedRevision(ctx context.Context, arg SeedPublishedRevisionParams) error
 	SeedRoute(ctx context.Context, arg SeedRouteParams) error
 	SeedSiteSettings(ctx context.Context, arg SeedSiteSettingsParams) error
+	SetContentTypeDefaultLayoutTemplate(ctx context.Context, arg SetContentTypeDefaultLayoutTemplateParams) error
 	// Records the FIRST publication of an Entry. Later re-publishes must never
 	// move it: structured data uses it as the stable datePublished.
 	SetFirstPublishedAtIfNull(ctx context.Context, arg SetFirstPublishedAtIfNullParams) error
+	SetLayoutTemplatePublishedRevision(ctx context.Context, arg SetLayoutTemplatePublishedRevisionParams) error
 	SetPublishedRevision(ctx context.Context, arg SetPublishedRevisionParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
+	UpdateLayoutTemplate(ctx context.Context, arg UpdateLayoutTemplateParams) error
 	UpdateMediaMetadata(ctx context.Context, arg UpdateMediaMetadataParams) error
 	UpdateNavigationMenu(ctx context.Context, arg UpdateNavigationMenuParams) error
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error

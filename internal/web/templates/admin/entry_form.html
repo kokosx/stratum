@@ -4,6 +4,8 @@
   <input id="document-json" type="hidden" name="document_json" value="">
   <input type="hidden" name="featured_media_id" id="entry-featured-media-id" value="{{ .Content.FeaturedMediaID }}">
   <input type="hidden" name="social_media_id" id="entry-social-media-id" value="{{ .Content.SocialMediaID }}">
+  <input type="hidden" name="entry_id" id="entry-id" value="{{ .Content.EntryID }}">
+  <input type="hidden" name="content_type_id" id="entry-content-type" value="{{ .Content.ContentTypeID }}">
   <header class="editor-topbar">
     <div class="editor-metadata">
       <label>Title<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
@@ -25,6 +27,15 @@
         </div>
       </div>
       {{ end }}
+      <div class="form-field">
+        <label class="field-label" for="entry-layout-template">Template</label>
+        <select id="entry-layout-template" name="layout_template_id">
+          <option value="" {{ if eq .Content.LayoutTemplateID "" }}selected{{ end }}>Direct content</option>
+          {{ range .Content.LayoutTemplates }}<option value="{{ .ID }}" {{ if eq $.Content.LayoutTemplateID .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}
+        </select>
+        {{ if .Content.LayoutTemplateError }}<p class="form-error" role="alert">{{ .Content.LayoutTemplateError }}</p>{{ end }}
+        <p class="field-desc">Layout templates define the reusable structural layout surrounding the content.</p>
+      </div>
     </div>
     <div class="form-actions">
       <a class="button" href="{{ .Content.BackURL }}">Back</a>
@@ -33,7 +44,8 @@
     </div>
   </header>
   <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
-  {{ if .Content.IsPostsPage }}<div class="posts-page-badge" style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;margin:12px 0;display:flex;gap:12px;align-items:center;"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Displayed at {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
+  {{ if .Content.IsPostsPage }}<div class="posts-page-badge" style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;margin:12px 0;display:flex;gap:12px;align-items:center;"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Public archive: {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
+  {{ if .Content.HasUnpublishedChanges }}<div class="unpublished-badge" style="padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;margin:12px 0;"><strong>Unpublished changes</strong><span> — Public archive is using the previously published revision.</span> {{ if .Content.PublicURL }}<a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a>{{ end }}</div>{{ end }}
   {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert" style="margin:12px 0;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;">{{ .Content.PostsPageWarning }}</p>{{ end }}
   {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
   <div class="editor-workspace">

@@ -129,3 +129,9 @@ func (h *Runtime) InvalidateContent() {
 	h.Robots.Invalidate()
 	h.Feed.Invalidate()
 }
+
+// InvalidateLayoutTemplates is called after publishing a Layout Template.
+// Only the page cache is invalidated; routes/sitemap/robots are unaffected.
+func (h *Runtime) InvalidateLayoutTemplates() {
+	h.Pages.InvalidateAll()
+}

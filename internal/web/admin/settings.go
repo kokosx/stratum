@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/seo"
 	"github.com/kokosx/stratum/internal/site"
@@ -338,6 +340,28 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 	if newBase == "" {
 		newBase = seo.DefaultPostsBase
 	}
+	// Single source of truth: derive PostsBase from Posts Page slug when a
+	// Posts Page is selected. This eliminates the two-value magic where
+	// Posts Page path and PostsBase could diverge (/aktualnosci vs /blog).
+	if newPosts != "" {
+		if entry, err := qtx.GetEntry(ctx, newPosts); err == nil {
+			derived := "/" + strings.Trim(entry.Slug, "/")
+			derived = seo.NormalizePath(derived)
+			if derived != "" && derived != "/" {
+				newBase = derived
+			}
+		}
+	}
+	if err := seo.ValidatePostsBasePath(newBase); err != nil && newPosts == "" {
+		return err
+	}
+	// When Posts Page is set, validate the derived path as well (it must not
+	// collide with reserved prefixes; slug validation already prevents most).
+	if newPosts != "" {
+		if err := seo.ValidatePostsBasePath(newBase); err != nil {
+			return err
+		}
+	}
 	if form.PostsPerPage < 1 {
 		form.PostsPerPage = int(current.PostsPerPage)
 		if form.PostsPerPage < 1 {
@@ -347,6 +371,13 @@ func (h *Handler) persistSettings(ctx context.Context, current db.GetSiteSetting
 	now := time.Now().Unix()
 	if err := h.applyReadingRoutes(ctx, qtx, oldHome, newHome, oldPosts, newPosts, oldBase, newBase, now); err != nil {
 		return err
+	}
+	// Posts page validation: ensure paginated block invariant (publish-time
+	// invariant must also hold for existing published page being assigned).
+	if newPosts != "" {
+		if err := h.validatePostsPageAssignment(ctx, qtx, newPosts); err != nil {
+			return err
+		}
 	}
 	homepageMode := "latest_posts"
 	if newHome != "" {
@@ -532,10 +563,15 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			} else {
 				// Create or ensure entry route at slug path
 				if _, rerr := queries.GetEntryRoute(ctx, strToNullString(oldPosts)); errors.Is(rerr, sql.ErrNoRows) {
-					id, _ := randomID()
-					_ = queries.CreateRoute(ctx, db.CreateRouteParams{
+					id, idErr := randomID()
+					if idErr != nil {
+						return idErr
+					}
+					if err := queries.CreateRoute(ctx, db.CreateRouteParams{
 						ID: id, Path: slugPath, EntryID: strToNullString(oldPosts), RouteType: "entry", CreatedAt: now, UpdatedAt: now,
-					})
+					}); err != nil {
+						return err
+					}
 				} else if rerr == nil {
 					// Entry route still points at archive path – move it back to slug path
 					if ar, arErr := queries.GetEntryRoute(ctx, strToNullString(oldPosts)); arErr == nil && ar.Path != slugPath {
@@ -600,7 +636,10 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 					return err
 				}
 			} else {
-				id, _ := randomID()
+				id, idErr := randomID()
+				if idErr != nil {
+					return idErr
+				}
 				if err := queries.CreateRoute(ctx, db.CreateRouteParams{
 					ID: id, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", CreatedAt: now, UpdatedAt: now,
 				}); err != nil {
@@ -645,6 +684,39 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 		}
 	}
 
+	// ---------- Archive mount move due to homepage mode change (even when base unchanged) ----------
+	if oldArch != archPath {
+		if oldBase != "" && oldBase != newBase {
+			// Base change already handles archive move + post remap below; skip duplicate move here
+		} else {
+			// Homepage mode switch (e.g., /blog <-> /) with same shell
+			if rt, rerr := queries.GetRouteByPath(ctx, oldArch); rerr == nil && rt.RouteType == "archive" {
+				if _, er := queries.GetRouteByPath(ctx, archPath); errors.Is(er, sql.ErrNoRows) {
+					if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
+						ID: rt.ID, Path: archPath, EntryID: rt.EntryID, RouteType: "archive", UpdatedAt: now,
+					}); err != nil {
+						return err
+					}
+					if err := h.upsertRedirectRoute(ctx, queries, oldArch, archPath, now); err != nil {
+						return err
+					}
+				} else {
+					// Archive already at new mount (e.g., shell addition already created it) – ensure redirect
+					if err := h.upsertRedirectRoute(ctx, queries, oldArch, archPath, now); err != nil {
+						return err
+					}
+				}
+			} else {
+				// No archive at old path – still ensure redirect if old was archive-like
+				if oldArch != "/" {
+					if err := h.upsertRedirectRoute(ctx, queries, oldArch, archPath, now); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+
 	// ---------- Base change handling (post routes + shell archive move) ----------
 	if oldBase != "" && oldBase != newBase && oldArch != archPath {
 		// Move shell archive if it exists at oldArch
@@ -683,12 +755,13 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 				if newP == rt.Path {
 					continue
 				}
+				oldPath := rt.Path
 				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
 					ID: rt.ID, Path: newP, EntryID: strToNullString(p.ID), RouteType: "entry", UpdatedAt: now,
 				}); err != nil {
 					return err
 				}
-				if err := h.upsertRedirectRoute(ctx, queries, rt.Path, newP, now); err != nil {
+				if err := h.upsertRedirectRoute(ctx, queries, oldPath, newP, now); err != nil {
 					return err
 				}
 				continue
@@ -712,10 +785,15 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			}
 		}
 	}
+	// Also handle post remap when archive mount changed due to homepage switch but base unchanged?
+	// Posts base remains same, so no post remap needed (per spec posts stay at /blog). Intentionally no remap here.
 
 	// Ensure archive route exists at the mount point (if not already handled by shell logic)
 	if rt, rerr := queries.GetRouteByPath(ctx, archPath); errors.Is(rerr, sql.ErrNoRows) {
-		id, _ := randomID()
+		id, idErr := randomID()
+		if idErr != nil {
+			return idErr
+		}
 		if err := queries.CreateRoute(ctx, db.CreateRouteParams{
 			ID: id, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
@@ -991,4 +1069,58 @@ func boolToInt(value bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+func (h *Handler) validatePostsPageAssignment(ctx context.Context, qtx *db.Queries, entryID string) error {
+	entry, err := qtx.GetEntry(ctx, entryID)
+	if err != nil || entry.ContentTypeID != "page" || entry.Status == "trash" {
+		return errors.New("Posts page must be an existing (non-trashed) Page.")
+	}
+	if !entry.PublishedRevisionID.Valid {
+		return errors.New("Posts page must be published before it can be used as archive shell.")
+	}
+	rev, err := qtx.GetEntryRevision(ctx, entry.PublishedRevisionID.String)
+	if err != nil {
+		return err
+	}
+	doc, err := document.Decode([]byte(rev.DocumentJson))
+	if err != nil {
+		return err
+	}
+	count := 0
+	var walk func([]document.Node)
+	walk = func(nodes []document.Node) {
+		for _, n := range nodes {
+			if n.Block == "core/posts" {
+				source := "archive"
+				pagination := true
+				if len(n.Settings) > 0 {
+					var s map[string]any
+					if json.Unmarshal(n.Settings, &s) == nil {
+						if v, ok := s["source"].(string); ok && v != "" {
+							source = v
+						}
+						// Treat "automatic" as archive for pagination counting (alias)
+						if source == "automatic" {
+							source = "archive"
+						}
+						if v, ok := s["pagination"].(bool); ok {
+							pagination = v
+						}
+					}
+				}
+				if (source == "archive" || source == "automatic") && pagination {
+					count++
+				}
+			}
+			if len(n.Children) > 0 {
+				walk(n.Children)
+			}
+		}
+	}
+	walk(doc.Nodes)
+	if count > 1 {
+		return errors.New("Only one paginated Posts block can be used on a Posts Page.")
+	}
+	return nil
 }

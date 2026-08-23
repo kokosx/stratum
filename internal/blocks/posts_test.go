@@ -10,9 +10,61 @@ import (
 )
 
 // postsTemplate and styles are copied from the migration for test stability.
-const postsSchema = `{"schemaVersion":1,"props":{"type":"object","properties":{}},"settings":{"type":"object","properties":{"source":{"type":"string","enum":["archive","latest"],"default":"archive"},"layout":{"type":"string","enum":["list","grid"],"default":"list"},"columns":{"type":"integer","enum":[1,2,3],"default":1},"showImage":{"type":"boolean","default":true},"showDate":{"type":"boolean","default":true},"showExcerpt":{"type":"boolean","default":true},"limit":{"type":"integer","default":3,"minimum":1,"maximum":20},"pagination":{"type":"boolean","default":true},"showViewAll":{"type":"boolean","default":false},"viewAllLabel":{"type":"string","default":""}}},"children":{"mode":"none"},"editor":{"category":"query","icon":"posts","fields":{"settings.source":{"label":"Source","control":"select","group":"Content"},"settings.layout":{"label":"Layout","control":"segmented","group":"Style"},"settings.columns":{"label":"Columns","control":"select","group":"Style"},"settings.showImage":{"label":"Show image","control":"checkbox","group":"Content"},"settings.showDate":{"label":"Show date","control":"checkbox","group":"Content"},"settings.showExcerpt":{"label":"Show excerpt","control":"checkbox","group":"Content"},"settings.limit":{"label":"Number of posts","control":"number","group":"Content"},"settings.pagination":{"label":"Show pagination","control":"checkbox","group":"Content"},"settings.showViewAll":{"label":"Show view all link","control":"checkbox","group":"Content"},"settings.viewAllLabel":{"label":"View all label","control":"text","group":"Content"}}}}`
+const postsSchema = `{"schemaVersion":1,"props":{"type":"object","properties":{}},"settings":{"type":"object","properties":{"source":{"type":"string","enum":["automatic","archive","latest"],"default":"automatic"},"layout":{"type":"string","enum":["list","grid"],"default":"list"},"columns":{"type":"integer","enum":[1,2,3],"default":1},"showImage":{"type":"boolean","default":true},"showDate":{"type":"boolean","default":true},"showExcerpt":{"type":"boolean","default":true},"limit":{"type":"integer","default":3,"minimum":1,"maximum":20},"pagination":{"type":"boolean","default":true},"showViewAll":{"type":"boolean","default":false},"viewAllLabel":{"type":"string","default":""}}},"children":{"mode":"none"},"editor":{"category":"query","icon":"posts","fields":{"settings.source":{"label":"Source","control":"select","group":"Content"},"settings.layout":{"label":"Layout","control":"segmented","group":"Style"},"settings.columns":{"label":"Columns","control":"select","group":"Style"},"settings.showImage":{"label":"Show image","control":"checkbox","group":"Content"},"settings.showDate":{"label":"Show date","control":"checkbox","group":"Content"},"settings.showExcerpt":{"label":"Show excerpt","control":"checkbox","group":"Content"},"settings.limit":{"label":"Number of posts","control":"number","group":"Content"},"settings.pagination":{"label":"Show pagination","control":"checkbox","group":"Content"},"settings.showViewAll":{"label":"Show view all link","control":"checkbox","group":"Content"},"settings.viewAllLabel":{"label":"View all label","control":"text","group":"Content"}}}}`
 
-const postsTemplate = `{{ $source := .Settings.source }}{{ if eq $source "archive" }}{{ if not .Context.Archive }}<div class="stratum-posts-placeholder">Posts archive will appear here.</div>{{ else }}{{ $entries := .Context.Archive.Entries }}{{ $settings := .Settings }}{{ if eq (len $entries) 0 }}<div class="stratum-posts-empty"><p>No posts found.</p></div>{{ else }}<section class="stratum-posts stratum-posts--{{ $settings.layout }}{{ if eq $settings.layout "grid" }} stratum-posts--cols-{{ $settings.columns }}{{ end }}">{{ range $entries }}<article class="stratum-post-card">{{ if $settings.showImage }}{{ if .FeaturedImage.Src }}<figure class="stratum-post-card__media"><img src="{{ .FeaturedImage.Src }}"{{ if .FeaturedImage.SrcSet }} srcset="{{ .FeaturedImage.SrcSet }}" sizes="(min-width: 768px) 280px, 100vw"{{ end }}{{ if .FeaturedImage.Width }} width="{{ .FeaturedImage.Width }}"{{ end }}{{ if .FeaturedImage.Height }} height="{{ .FeaturedImage.Height }}"{{ end }} alt="{{ .FeaturedImage.Alt }}" loading="lazy" decoding="async"></figure>{{ end }}{{ end }}<header class="stratum-post-card__header"><h2 class="stratum-post-card__title"><a href="{{ .URL }}">{{ .Title }}</a></h2>{{ if $settings.showDate }}{{ if .PublishedISO }}<time class="stratum-post-card__date" datetime="{{ .PublishedISO }}">{{ .PublishedAt }}</time>{{ end }}{{ end }}</header>{{ if $settings.showExcerpt }}{{ if .Excerpt }}<p class="stratum-post-card__excerpt">{{ .Excerpt }}</p>{{ end }}{{ end }}</article>{{ end }}</section>{{ if $settings.pagination }}{{ $p := $.Context.Archive.Pagination }}{{ if gt $p.TotalPages 1 }}<nav aria-label="Pagination" class="stratum-pagination">{{ if $p.PreviousURL }}<a href="{{ $p.PreviousURL }}" rel="prev">Previous</a>{{ end }}<span>Page {{ $p.Current }} of {{ $p.TotalPages }}</span>{{ if $p.NextURL }}<a href="{{ $p.NextURL }}" rel="next">Next</a>{{ end }}</nav>{{ end }}{{ end }}{{ end }}{{ end }}{{ else }}{{ $entries := index .Context.Collections .ID }}{{ $settings := .Settings }}{{ if not $entries }}<div class="stratum-posts-placeholder">No posts.</div>{{ else }}<section class="stratum-posts stratum-posts--{{ $settings.layout }}{{ if eq $settings.layout "grid" }} stratum-posts--cols-{{ $settings.columns }}{{ end }}">{{ range $entries }}<article class="stratum-post-card">{{ if $settings.showImage }}{{ if .FeaturedImage.Src }}<figure class="stratum-post-card__media"><img src="{{ .FeaturedImage.Src }}"{{ if .FeaturedImage.SrcSet }} srcset="{{ .FeaturedImage.SrcSet }}" sizes="(min-width: 768px) 280px, 100vw"{{ end }}{{ if .FeaturedImage.Width }} width="{{ .FeaturedImage.Width }}"{{ end }}{{ if .FeaturedImage.Height }} height="{{ .FeaturedImage.Height }}"{{ end }} alt="{{ .FeaturedImage.Alt }}" loading="lazy" decoding="async"></figure>{{ end }}{{ end }}<header class="stratum-post-card__header"><h2 class="stratum-post-card__title"><a href="{{ .URL }}">{{ .Title }}</a></h2>{{ if $settings.showDate }}{{ if .PublishedISO }}<time class="stratum-post-card__date" datetime="{{ .PublishedISO }}">{{ .PublishedAt }}</time>{{ end }}{{ end }}</header>{{ if $settings.showExcerpt }}{{ if .Excerpt }}<p class="stratum-post-card__excerpt">{{ .Excerpt }}</p>{{ end }}{{ end }}</article>{{ end }}</section>{{ end }}{{ if $settings.showViewAll }}{{ if $.Context.ArchiveURL }}<p class="stratum-posts-view-all"><a href="{{ $.Context.ArchiveURL }}">{{ if $settings.viewAllLabel }}{{ $settings.viewAllLabel }}{{ else }}View all posts{{ end }}</a></p>{{ end }}{{ end }}{{ end }}`
+const postsTemplate = `{{ $raw := .Settings.source }}{{ $isAuto := or (eq $raw "automatic") (eq $raw "archive") (eq $raw "") }}
+{{ if $isAuto }}
+  {{ if .Context.Archive }}
+    {{ $entries := .Context.Archive.Entries }}{{ $settings := .Settings }}
+    {{ if eq (len $entries) 0 }}
+      <div class="stratum-posts-empty"><p>No posts yet.</p></div>
+    {{ else }}
+      <section class="stratum-posts stratum-posts--{{ $settings.layout }}{{ if eq $settings.layout "grid" }} stratum-posts--cols-{{ $settings.columns }}{{ end }}">
+        {{ range $entries }}
+          <article class="stratum-post-card">
+            {{ if $settings.showImage }}{{ if .FeaturedImage.Src }}<figure class="stratum-post-card__media"><img src="{{ .FeaturedImage.Src }}"{{ if .FeaturedImage.SrcSet }} srcset="{{ .FeaturedImage.SrcSet }}" sizes="{{ if eq $settings.layout "grid" }}{{ if eq $settings.columns 2 }}(min-width: 768px) 50vw, 100vw{{ else if eq $settings.columns 3 }}(min-width: 768px) 33vw, 100vw{{ else }}(min-width: 768px) min(720px, 100vw), 100vw{{ end }}{{ else }}(min-width: 768px) min(720px, 100vw), 100vw{{ end }}"{{ end }}{{ if .FeaturedImage.Width }} width="{{ .FeaturedImage.Width }}"{{ end }}{{ if .FeaturedImage.Height }} height="{{ .FeaturedImage.Height }}"{{ end }} alt="{{ .FeaturedImage.Alt }}" loading="lazy" decoding="async"></figure>{{ end }}{{ end }}
+            <header class="stratum-post-card__header"><h2 class="stratum-post-card__title"><a href="{{ .URL }}">{{ .Title }}</a></h2>{{ if $settings.showDate }}{{ if .PublishedISO }}<time class="stratum-post-card__date" datetime="{{ .PublishedISO }}">{{ .PublishedAt }}</time>{{ end }}{{ end }}</header>
+            {{ if $settings.showExcerpt }}{{ if .Excerpt }}<p class="stratum-post-card__excerpt">{{ .Excerpt }}</p>{{ end }}{{ end }}
+          </article>
+        {{ end }}
+      </section>
+      {{ if $settings.pagination }}{{ $p := $.Context.Archive.Pagination }}{{ if gt $p.TotalPages 1 }}<nav aria-label="Pagination" class="stratum-pagination">{{ if $p.PreviousURL }}<a href="{{ $p.PreviousURL }}" rel="prev">Previous</a>{{ end }}<span>Page {{ $p.Current }} of {{ $p.TotalPages }}</span>{{ if $p.NextURL }}<a href="{{ $p.NextURL }}" rel="next">Next</a>{{ end }}</nav>{{ end }}{{ end }}
+    {{ end }}
+  {{ else }}
+    {{ $entries := index .Context.Collections .ID }}{{ $settings := .Settings }}
+    {{ if not $entries }}
+      {{ if .Context.IsPreview }}<div class="stratum-posts-placeholder">Posts will appear here.</div>{{ else }}<div class="stratum-posts-empty"><p>No posts yet.</p></div>{{ end }}
+    {{ else }}
+      <section class="stratum-posts stratum-posts--{{ $settings.layout }}{{ if eq $settings.layout "grid" }} stratum-posts--cols-{{ $settings.columns }}{{ end }}">
+        {{ range $entries }}
+          <article class="stratum-post-card">
+            {{ if $settings.showImage }}{{ if .FeaturedImage.Src }}<figure class="stratum-post-card__media"><img src="{{ .FeaturedImage.Src }}"{{ if .FeaturedImage.SrcSet }} srcset="{{ .FeaturedImage.SrcSet }}" sizes="{{ if eq $settings.layout "grid" }}{{ if eq $settings.columns 2 }}(min-width: 768px) 50vw, 100vw{{ else if eq $settings.columns 3 }}(min-width: 768px) 33vw, 100vw{{ else }}(min-width: 768px) min(720px, 100vw), 100vw{{ end }}{{ else }}(min-width: 768px) min(720px, 100vw), 100vw{{ end }}"{{ end }}{{ if .FeaturedImage.Width }} width="{{ .FeaturedImage.Width }}"{{ end }}{{ if .FeaturedImage.Height }} height="{{ .FeaturedImage.Height }}"{{ end }} alt="{{ .FeaturedImage.Alt }}" loading="lazy" decoding="async"></figure>{{ end }}{{ end }}
+            <header class="stratum-post-card__header"><h2 class="stratum-post-card__title"><a href="{{ .URL }}">{{ .Title }}</a></h2>{{ if $settings.showDate }}{{ if .PublishedISO }}<time class="stratum-post-card__date" datetime="{{ .PublishedISO }}">{{ .PublishedAt }}</time>{{ end }}{{ end }}</header>
+            {{ if $settings.showExcerpt }}{{ if .Excerpt }}<p class="stratum-post-card__excerpt">{{ .Excerpt }}</p>{{ end }}{{ end }}
+          </article>
+        {{ end }}
+      </section>
+      {{ if $settings.showViewAll }}{{ if $.Context.ArchiveURL }}<p class="stratum-posts-view-all"><a href="{{ $.Context.ArchiveURL }}">{{ if $settings.viewAllLabel }}{{ $settings.viewAllLabel }}{{ else }}View all posts{{ end }}</a></p>{{ end }}{{ end }}
+    {{ end }}
+  {{ end }}
+{{ else }}
+  {{ $entries := index .Context.Collections .ID }}{{ $settings := .Settings }}
+  {{ if not $entries }}
+    {{ if .Context.IsPreview }}<div class="stratum-posts-placeholder">Posts will appear here.</div>{{ else }}<div class="stratum-posts-empty"><p>No posts yet.</p></div>{{ end }}
+  {{ else }}
+    <section class="stratum-posts stratum-posts--{{ $settings.layout }}{{ if eq $settings.layout "grid" }} stratum-posts--cols-{{ $settings.columns }}{{ end }}">
+      {{ range $entries }}
+        <article class="stratum-post-card">
+          {{ if $settings.showImage }}{{ if .FeaturedImage.Src }}<figure class="stratum-post-card__media"><img src="{{ .FeaturedImage.Src }}"{{ if .FeaturedImage.SrcSet }} srcset="{{ .FeaturedImage.SrcSet }}" sizes="{{ if eq $settings.layout "grid" }}{{ if eq $settings.columns 2 }}(min-width: 768px) 50vw, 100vw{{ else if eq $settings.columns 3 }}(min-width: 768px) 33vw, 100vw{{ else }}(min-width: 768px) min(720px, 100vw), 100vw{{ end }}{{ else }}(min-width: 768px) min(720px, 100vw), 100vw{{ end }}"{{ end }}{{ if .FeaturedImage.Width }} width="{{ .FeaturedImage.Width }}"{{ end }}{{ if .FeaturedImage.Height }} height="{{ .FeaturedImage.Height }}"{{ end }} alt="{{ .FeaturedImage.Alt }}" loading="lazy" decoding="async"></figure>{{ end }}{{ end }}
+          <header class="stratum-post-card__header"><h2 class="stratum-post-card__title"><a href="{{ .URL }}">{{ .Title }}</a></h2>{{ if $settings.showDate }}{{ if .PublishedISO }}<time class="stratum-post-card__date" datetime="{{ .PublishedISO }}">{{ .PublishedAt }}</time>{{ end }}{{ end }}</header>
+          {{ if $settings.showExcerpt }}{{ if .Excerpt }}<p class="stratum-post-card__excerpt">{{ .Excerpt }}</p>{{ end }}{{ end }}
+        </article>
+      {{ end }}
+    </section>
+  {{ end }}
+  {{ if $settings.showViewAll }}{{ if $.Context.ArchiveURL }}<p class="stratum-posts-view-all"><a href="{{ $.Context.ArchiveURL }}">{{ if $settings.viewAllLabel }}{{ $settings.viewAllLabel }}{{ else }}View all posts{{ end }}</a></p>{{ end }}{{ end }}
+{{ end }}
+`
 
 const postsStyles = `.stratum-posts{display:grid;gap:var(--st-space-lg)} .stratum-posts--list{grid-template-columns:1fr} .stratum-posts--grid{grid-template-columns:repeat(1,1fr)} .stratum-posts--cols-2{grid-template-columns:repeat(2,1fr)} .stratum-posts--cols-3{grid-template-columns:repeat(3,1fr)} @media(max-width: 800px){.stratum-posts--cols-2,.stratum-posts--cols-3{grid-template-columns:1fr}} .stratum-post-card{display:flex;flex-direction:column;gap:var(--st-space-sm);padding:var(--st-space-lg);border:var(--st-border-width) var(--st-border-style) var(--st-color-border);border-radius:var(--st-radius-md);background:var(--st-color-surface)} .stratum-post-card__media{margin:0} .stratum-post-card__media img{display:block;width:100%;height:auto;border-radius:var(--st-radius-sm)} .stratum-post-card__title{margin:0;font-size:1.15rem;line-height:1.3} .stratum-post-card__title a{color:var(--st-color-heading);text-decoration:none} .stratum-post-card__title a:hover{color:var(--st-color-primary);text-decoration:underline} .stratum-post-card__date{color:var(--st-color-text-muted);font-size:var(--st-small-size)} .stratum-post-card__excerpt{margin:0;color:var(--st-color-text)} .stratum-posts-placeholder{padding:var(--st-space-lg);border:1px dashed var(--st-color-border);text-align:center;color:var(--st-color-text-muted)} .stratum-posts-empty{padding:var(--st-space-xl);text-align:center;color:var(--st-color-text-muted)} .stratum-pagination{display:flex;align-items:center;justify-content:center;gap:var(--st-space-md);padding-top:var(--st-space-lg)} .stratum-pagination a{color:var(--st-color-primary);text-decoration:none} .stratum-pagination a:hover{text-decoration:underline} .stratum-posts-view-all{margin-top:var(--st-space-md);text-align:center}`
 
@@ -164,7 +216,7 @@ func TestCorePostsEmptyArchive(t *testing.T) {
 	prepared, _ := reg.Prepare(doc)
 	rc := rendering.RenderContext{Archive: &rendering.ArchiveContext{Entries: nil, Pagination: rendering.PaginationContext{Current: 1, TotalPages: 1}}}
 	html, _ := reg.RenderPrepared(context.Background(), prepared, rc)
-	if !strings.Contains(string(html), "No posts found") {
+	if !strings.Contains(string(html), "No posts yet.") {
 		t.Fatalf("empty archive should show empty state: %s", html)
 	}
 }
@@ -173,10 +225,19 @@ func TestCorePostsPreviewWithoutArchiveContext(t *testing.T) {
 	reg := newPostsRegistry(t)
 	doc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "p1", Block: "core/posts", Version: 1, Props: []byte(`{}`), Settings: []byte(`{"source":"archive"}`)}}}
 	prepared, _ := reg.Prepare(doc)
-	rc := rendering.RenderContext{} // no Archive
+	rc := rendering.RenderContext{IsPreview: true} // no Archive, preview mode
 	html, _ := reg.RenderPrepared(context.Background(), prepared, rc)
-	if !strings.Contains(string(html), "Posts archive will appear here") {
+	if !strings.Contains(string(html), "Posts will appear here") {
 		t.Fatalf("preview without Archive should show placeholder: %s", html)
+	}
+	// Public (non-preview) with same context should show empty, not placeholder
+	rc2 := rendering.RenderContext{IsPreview: false}
+	html2, _ := reg.RenderPrepared(context.Background(), prepared, rc2)
+	if strings.Contains(string(html2), "Posts will appear here") {
+		t.Fatalf("public without Archive should not show placeholder: %s", html2)
+	}
+	if !strings.Contains(string(html2), "No posts yet.") {
+		t.Fatalf("public without Archive should show empty state: %s", html2)
 	}
 }
 

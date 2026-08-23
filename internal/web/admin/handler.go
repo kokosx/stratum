@@ -24,26 +24,29 @@ import (
 )
 
 type Handler struct {
-	database           *sql.DB
-	queries            *db.Queries
-	auth               *auth.Service
-	blocks             *blocks.Registry
-	media              *media.Service
-	dashboardTemplate  *template.Template
-	entriesTemplate    *template.Template
-	entryTemplate      *template.Template
-	setupTemplate      *template.Template
-	loginTemplate      *template.Template
-	menusTemplate      *template.Template
-	mediaTemplate      *template.Template
-	appearanceTemplate *template.Template
-	settingsTemplate   *template.Template
-	navigation         *navigation.Service
-	navigationLoader   *navigation.Loader
-	themes             *themes.Runtime
-	runtime            *runtimehub.Runtime
-	previewRenderer    func(context.Context, string, string, map[string]any, string) ([]byte, error)
-	documentPreview    func(context.Context, RenderInput) ([]byte, error)
+	database                      *sql.DB
+	queries                       *db.Queries
+	auth                          *auth.Service
+	blocks                        *blocks.Registry
+	media                         *media.Service
+	dashboardTemplate             *template.Template
+	entriesTemplate               *template.Template
+	entryTemplate                 *template.Template
+	setupTemplate                 *template.Template
+	loginTemplate                 *template.Template
+	menusTemplate                 *template.Template
+	mediaTemplate                 *template.Template
+	appearanceTemplate            *template.Template
+	settingsTemplate              *template.Template
+	layoutTemplatesTemplate       *template.Template
+	layoutTemplateFormTemplate    *template.Template
+	layoutTemplateEditorTemplate  *template.Template
+	navigation                    *navigation.Service
+	navigationLoader              *navigation.Loader
+	themes                        *themes.Runtime
+	runtime                       *runtimehub.Runtime
+	previewRenderer               func(context.Context, string, string, map[string]any, string) ([]byte, error)
+	documentPreview               func(context.Context, RenderInput) ([]byte, error)
 }
 
 type LayoutData struct {
@@ -109,25 +112,43 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
+	layoutTemplatesTemplate, err := template.ParseFS(templateFS, "layout.html", "layout_templates.html")
+	if err != nil {
+		return nil, err
+	}
+
+	layoutTemplateFormTemplate, err := template.ParseFS(templateFS, "layout.html", "layout_template_form.html")
+	if err != nil {
+		return nil, err
+	}
+
+	layoutTemplateEditorTemplate, err := template.ParseFS(templateFS, "layout.html", "layout_template_editor.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Handler{
-		database:           database,
-		queries:            queries,
-		auth:               authService,
-		blocks:             blockRegistry,
-		media:              mediaService,
-		dashboardTemplate:  dashboardTemplate,
-		entriesTemplate:    entriesTemplate,
-		entryTemplate:      entryTemplate,
-		setupTemplate:      setupTemplate,
-		loginTemplate:      loginTemplate,
-		menusTemplate:      menusTemplate,
-		mediaTemplate:      mediaTemplate,
-		appearanceTemplate: appearanceTemplate,
-		settingsTemplate:   settingsTemplate,
-		navigation:         navigation.NewService(database, queries),
-		navigationLoader:   navigation.NewLoader(queries),
-		themes:             themeRuntime,
-		runtime:            runtime,
+		database:                     database,
+		queries:                      queries,
+		auth:                         authService,
+		blocks:                       blockRegistry,
+		media:                        mediaService,
+		dashboardTemplate:            dashboardTemplate,
+		entriesTemplate:              entriesTemplate,
+		entryTemplate:                entryTemplate,
+		setupTemplate:                setupTemplate,
+		loginTemplate:                loginTemplate,
+		menusTemplate:                menusTemplate,
+		mediaTemplate:                mediaTemplate,
+		appearanceTemplate:           appearanceTemplate,
+		settingsTemplate:             settingsTemplate,
+		layoutTemplatesTemplate:      layoutTemplatesTemplate,
+		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
+		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
+		navigation:                   navigation.NewService(database, queries),
+		navigationLoader:             navigation.NewLoader(queries),
+		themes:                       themeRuntime,
+		runtime:                      runtime,
 	}, nil
 }
 
@@ -162,6 +183,14 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/appearance", h.requireAuth(h.appearance))
 	mux.HandleFunc("POST /admin/appearance", h.requireAuth(h.saveAppearance))
 	mux.HandleFunc("POST /admin/appearance/preview", h.requireAuth(h.previewAppearance))
+	mux.HandleFunc("GET /admin/appearance/templates", h.requireAuth(h.listLayoutTemplates))
+	mux.HandleFunc("GET /admin/appearance/templates/new", h.requireAuth(h.newLayoutTemplate))
+	mux.HandleFunc("POST /admin/appearance/templates", h.requireAuth(h.createLayoutTemplate))
+	mux.HandleFunc("GET /admin/appearance/templates/{id}/edit", h.requireAuth(h.editLayoutTemplate))
+	mux.HandleFunc("POST /admin/appearance/templates/{id}", h.requireAuth(h.saveLayoutTemplate))
+	mux.HandleFunc("POST /admin/appearance/templates/{id}/publish", h.requireAuth(h.publishLayoutTemplate))
+	mux.HandleFunc("POST /admin/appearance/templates/{id}/preview", h.requireAuth(h.previewLayoutTemplate))
+	mux.HandleFunc("POST /admin/appearance/templates/{id}/default", h.requireAuth(h.setDefaultLayoutTemplate))
 	mux.HandleFunc("GET /admin/settings", h.requireAuth(h.settings))
 	mux.HandleFunc("POST /admin/settings", h.requireAuth(h.saveSettings))
 	mux.HandleFunc("POST /admin/settings/robots-preview", h.requireAuth(h.robotsPreview))

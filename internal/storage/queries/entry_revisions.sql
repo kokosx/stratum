@@ -21,6 +21,6 @@ ORDER BY revision_number DESC;
 INSERT INTO entry_revisions (
     id, entry_id, revision_number, title, excerpt, document_json,
     seo_title, seo_description, canonical_url, featured_media_id, social_media_id,
-    seo_robots_index, seo_robots_follow, schema_mode, created_by, created_at
+    seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, created_by, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);

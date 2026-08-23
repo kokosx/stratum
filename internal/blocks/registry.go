@@ -263,17 +263,44 @@ func (r *Registry) RenderDocumentContext(doc *document.Document, rc rendering.Re
 	return current.renderer.RenderDocumentContext(renderDocument, rc)
 }
 
+// EditorMode controls which blocks are visible in the inserter.
+const (
+	EditorModeEntry          = "entry"
+	EditorModeLayoutTemplate = "layout-template"
+)
+
 // EditorCatalog returns a detached copy of the enabled definitions. Disabled
 // definitions remain in the snapshot for historical documents, but cannot be inserted.
 func (r *Registry) EditorCatalog() []EditorDefinition {
+	return r.EditorCatalogFor(EditorModeEntry)
+}
+
+// EditorCatalogFor returns a filtered catalog by editor mode. Entry mode excludes
+// the Content Slot block; layout-template mode includes it.
+func (r *Registry) EditorCatalogFor(mode string) []EditorDefinition {
 	current := r.snapshot.Load()
 	if current == nil {
 		return nil
 	}
-	data, _ := json.Marshal(current.catalog)
-	var catalog []EditorDefinition
-	_ = json.Unmarshal(data, &catalog)
-	return catalog
+	catalog := current.catalog
+	if mode == EditorModeLayoutTemplate {
+		data, _ := json.Marshal(catalog)
+		var out []EditorDefinition
+		_ = json.Unmarshal(data, &out)
+		return out
+	}
+	// Default/entry: exclude core/content-slot
+	filtered := make([]EditorDefinition, 0, len(catalog))
+	for _, def := range catalog {
+		if def.Block == "core/content-slot" {
+			continue
+		}
+		filtered = append(filtered, def)
+	}
+	data, _ := json.Marshal(filtered)
+	var out []EditorDefinition
+	_ = json.Unmarshal(data, &out)
+	return out
 }
 
 // EditorDefinitions returns exact definitions referenced by a document,

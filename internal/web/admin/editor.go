@@ -25,11 +25,14 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		Document json.RawMessage `json:"document"`
-		Title    string          `json:"title"`
-		Excerpt  string          `json:"excerpt"`
-		Slug     string          `json:"slug"`
-		SEO      struct {
+		Document         json.RawMessage `json:"document"`
+		Title            string          `json:"title"`
+		Excerpt          string          `json:"excerpt"`
+		Slug             string          `json:"slug"`
+		EntryID          string          `json:"entry_id"`
+		LayoutTemplateID string          `json:"layout_template_id"`
+		ContentTypeID    string          `json:"content_type_id"`
+		SEO              struct {
 			Title       string `json:"title"`
 			Description string `json:"description"`
 		} `json:"seo"`
@@ -48,6 +51,9 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		payload.Title = r.FormValue("title")
 		payload.Excerpt = r.FormValue("excerpt")
 		payload.Slug = r.FormValue("slug")
+		payload.EntryID = r.FormValue("entry_id")
+		payload.LayoutTemplateID = r.FormValue("layout_template_id")
+		payload.ContentTypeID = r.FormValue("content_type_id")
 		payload.SEO.Title = r.FormValue("seo_title")
 		payload.SEO.Description = r.FormValue("seo_description")
 	}
@@ -67,13 +73,23 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 	if payload.Slug != "" {
 		path = "/" + trimSlashes(payload.Slug)
 	}
+	// If entry ID present but content type not provided, infer it.
+	ct := payload.ContentTypeID
+	if ct == "" && payload.EntryID != "" {
+		if e, err := h.queries.GetEntry(r.Context(), payload.EntryID); err == nil {
+			ct = e.ContentTypeID
+		}
+	}
 	page, err := h.documentPreview(r.Context(), publicweb.RenderInput{
-		Document:       doc,
-		Title:          payload.Title,
-		Excerpt:        payload.Excerpt,
-		SEOTitle:       payload.SEO.Title,
-		SEODescription: payload.SEO.Description,
-		Path:           path,
+		Document:         doc,
+		Title:            payload.Title,
+		Excerpt:          payload.Excerpt,
+		SEOTitle:         payload.SEO.Title,
+		SEODescription:   payload.SEO.Description,
+		Path:             path,
+		EntryID:          payload.EntryID,
+		LayoutTemplateID: payload.LayoutTemplateID,
+		ContentTypeID:    ct,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)

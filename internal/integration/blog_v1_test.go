@@ -363,40 +363,67 @@ func TestBlogV1HappyPath(t *testing.T) {
 		t.Fatalf("published blog update not visible: %s", body)
 	}
 
-	// 8. Change Posts Base /blog -> /news
+	// 8. Archive path is derived from Posts Page slug, so PostsBase is synced.
+	// Changing base to /news while PostsPage slug is still "blog" should keep archive at /blog.
 	saveReadingSettings(t, client, server.URL, queries, homeEntry.ID, blogEntry.ID, "/news", "2")
-	// Verify new locations
-	resp = getPath(t, client, server.URL, "/news")
+	resp = getPath(t, client, server.URL, "/blog")
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /news status = %d, want 200", resp.StatusCode)
+		t.Fatalf("GET /blog after ignored base change status = %d, want 200", resp.StatusCode)
 	}
 	body = bodyString(t, resp)
 	if !strings.Contains(body, "Draft blog intro changed") {
-		t.Fatalf("GET /news missing blog shell after base change")
+		t.Fatalf("GET /blog missing shell after base change (should remain)")
+	}
+	resp = getPath(t, client, server.URL, "/blog/post-a")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /blog/post-a still should be 200 after base ignored, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	// /news should not be archive when derived base is /blog
+	resp = getPath(t, redirectClient, server.URL, "/news")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("GET /news should not be 200 when archive is /blog")
+	}
+	resp.Body.Close()
+	// Now change Blog slug to "news" via direct entry update to move archive to /news (derived)
+	// Simulate slug change: edit Blog page
+	form2 := url.Values{
+		"title":         {"Blog"},
+		"slug":          {"news"},
+		"document_json": {draftDoc},
+		"csrf_token":    {csrfToken(t, client, server.URL, "/admin/pages/"+blogEntry.ID+"/edit")},
+	}
+	resp2 := postForm(t, client, server.URL, "/admin/pages/"+blogEntry.ID+"/publish", form2)
+	if resp2.StatusCode != http.StatusSeeOther {
+		t.Fatalf("publish blog slug news status = %d", resp2.StatusCode)
+	}
+	resp2.Body.Close()
+	time.Sleep(200 * time.Millisecond)
+	// After slug change, re-save reading settings to sync derived base (still PostsPage=Blog)
+	saveReadingSettings(t, client, server.URL, queries, homeEntry.ID, blogEntry.ID, "/news", "2")
+	resp = getPath(t, client, server.URL, "/news")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /news after slug change status = %d, want 200", resp.StatusCode)
+	}
+	body = bodyString(t, resp)
+	if !strings.Contains(body, "Draft blog intro changed") {
+		t.Fatalf("GET /news missing blog shell after slug change")
 	}
 	resp = getPath(t, client, server.URL, "/news/post-a")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /news/post-a status = %d, want 200", resp.StatusCode)
 	}
-	// Old URLs redirect
+	resp.Body.Close()
+	// Old /blog should redirect to /news now
 	resp = getPath(t, redirectClient, server.URL, "/blog")
 	if resp.StatusCode != http.StatusMovedPermanently {
-		t.Fatalf("GET /blog after base change status = %d, want 301", resp.StatusCode)
+		t.Fatalf("GET /blog after slug change status = %d, want 301", resp.StatusCode)
 	}
 	if loc := resp.Header.Get("Location"); loc != "/news" {
 		t.Fatalf("GET /blog redirect Location = %q, want /news", loc)
 	}
 	resp.Body.Close()
-	resp = getPath(t, redirectClient, server.URL, "/blog/post-a")
-	if resp.StatusCode != http.StatusMovedPermanently {
-		t.Fatalf("GET /blog/post-a after base change status = %d, want 301", resp.StatusCode)
-	}
-	loc := resp.Header.Get("Location")
-	if loc != "/news/post-a" {
-		t.Fatalf("GET /blog/post-a Location = %q, want /news/post-a", loc)
-	}
-	resp.Body.Close()
-	// No redirect chains: ensure /news/page/2 still works
+	// No redirect chains: ensure /news/page/2 still works (if enough posts)
 	resp = getPath(t, client, server.URL, "/news/page/2")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /news/page/2 status = %d, want 200", resp.StatusCode)

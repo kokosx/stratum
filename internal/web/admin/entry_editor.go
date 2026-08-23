@@ -17,6 +17,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/seo"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -37,6 +38,11 @@ var reservedSlugs = map[string]bool{
 // entryFormData is the presentation model shared by every Entry editor
 // (Pages, Posts, and future Content Types). The workspace HTML is identical;
 // only the per-type flags and the action URLs differ.
+type layoutTemplateOption struct {
+	ID   string
+	Name string
+}
+
 type entryFormData struct {
 	Heading         string
 	Action          string
@@ -55,6 +61,7 @@ type entryFormData struct {
 	SchemaMode      string // "" | disabled | webpage | aboutpage | contactpage
 	SiteURL         string
 	PublicPath      string
+	EntryID         string
 	DocumentJSON    string
 	EditorJSON      template.JS
 	Error           string
@@ -68,6 +75,12 @@ type entryFormData struct {
 	IsPostsPage     bool
 	PostsPagePath   string
 	PostsPageWarning string
+	HasUnpublishedChanges bool
+	// Layout template selector
+	ContentTypeID       string
+	LayoutTemplateID    string
+	LayoutTemplates     []layoutTemplateOption
+	LayoutTemplateError string
 }
 
 // editorStatusView holds the values rendered into the editor status region via
@@ -80,18 +93,19 @@ type editorStatusView struct {
 }
 
 type entryInput struct {
-	title           string
-	slug            string
-	excerpt         string
-	seoTitle        string
-	seoDescription  string
-	canonicalURL    string
-	featuredMediaID string
-	socialMediaID   string
-	robotsIndex     *bool
-	robotsFollow    *bool
-	schemaMode      string
-	documentJSON    string
+	title            string
+	slug             string
+	excerpt          string
+	seoTitle         string
+	seoDescription   string
+	canonicalURL     string
+	featuredMediaID  string
+	socialMediaID    string
+	robotsIndex      *bool
+	robotsFollow     *bool
+	schemaMode       string
+	documentJSON     string
+	layoutTemplateID string
 }
 
 // renderEntryForm bootstraps the shared block editor and renders the common
@@ -108,6 +122,40 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	}
 	if data.DocumentJSON == "" {
 		data.DocumentJSON = `{"version":1,"nodes":[]}`
+	}
+	// Ensure layout selector is populated if content type is known but no options yet (e.g. direct render).
+	if data.ContentTypeID != "" && data.LayoutTemplates == nil {
+		data.LayoutTemplates = h.loadLayoutTemplateOptions(r.Context(), data.ContentTypeID)
+	}
+	// Default selection for new entries: ContentType default
+	if data.EntryID == "" && data.LayoutTemplateID == "" && data.ContentTypeID != "" {
+		if ct, err := h.queries.GetContentType(r.Context(), data.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid {
+			data.LayoutTemplateID = ct.DefaultLayoutTemplateID.String
+		}
+	}
+	// Validate current selection: if it refers to unavailable template, surface warning
+	if data.LayoutTemplateID != "" {
+		found := false
+		for _, opt := range data.LayoutTemplates {
+			if opt.ID == data.LayoutTemplateID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// Check if template exists but unpublished/mismatched
+			if tmpl, err := h.queries.GetLayoutTemplate(r.Context(), data.LayoutTemplateID); err == nil {
+				if tmpl.ContentTypeID != data.ContentTypeID {
+					data.LayoutTemplateError = "This template belongs to a different content type and cannot be used here."
+				} else if !tmpl.PublishedRevisionID.Valid {
+					data.LayoutTemplateError = "The selected layout template has not been published yet."
+				} else {
+					data.LayoutTemplateError = "The selected layout template is not available."
+				}
+			} else {
+				data.LayoutTemplateError = "The selected layout template is not available."
+			}
+		}
 	}
 	doc, err := document.Decode([]byte(data.DocumentJSON))
 	if err != nil {
@@ -130,6 +178,18 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	}
 }
 
+func (h *Handler) loadLayoutTemplateOptions(ctx context.Context, contentTypeID string) []layoutTemplateOption {
+	rows, err := h.queries.ListPublishedLayoutTemplatesByContentType(ctx, contentTypeID)
+	if err != nil {
+		return nil
+	}
+	opts := make([]layoutTemplateOption, 0, len(rows))
+	for _, r := range rows {
+		opts = append(opts, layoutTemplateOption{ID: r.ID, Name: r.Name})
+	}
+	return opts
+}
+
 // writeEntry persists a new revision for an Entry and optionally publishes it.
 // It is shared by Pages and Posts; contentType selects the entry kind and
 // publish controls whether the public document is updated.
@@ -144,7 +204,7 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if h.blocks == nil {
 		return errors.New("block registry is not configured")
 	}
-	if err := h.blocks.ValidateDocument(doc); err != nil {
+	if err := layouts.ValidateEntryDocument(h.blocks, doc); err != nil {
 		return fmt.Errorf("invalid document: %w", err)
 	}
 	documentJSON, err := json.Marshal(doc)
@@ -216,12 +276,28 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		return fmt.Errorf("save entry: %w", err)
 	}
 	schemaMode := normalizeSchemaMode(input.schemaMode)
+	// Validate layout template selection
+	var layoutTemplateID sql.NullString
+	if strings.TrimSpace(input.layoutTemplateID) != "" {
+		tmplID := strings.TrimSpace(input.layoutTemplateID)
+		tmpl, err := qtx.GetLayoutTemplate(ctx, tmplID)
+		if err != nil {
+			return errors.New("selected layout template not found")
+		}
+		if tmpl.ContentTypeID != contentType {
+			return fmt.Errorf("This template belongs to %s and cannot be used by a %s", tmpl.ContentTypeID, contentType)
+		}
+		if !tmpl.PublishedRevisionID.Valid {
+			return errors.New("The selected layout template has not been published yet.")
+		}
+		layoutTemplateID = sql.NullString{String: tmplID, Valid: true}
+	}
 	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
 		ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title,
 		Excerpt: excerpt, SeoTitle: seoTitle, SeoDescription: seoDescription, CanonicalUrl: canonicalURL,
 		FeaturedMediaID: featuredMediaID, SocialMediaID: socialMediaID,
 		SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
-		DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
+		LayoutTemplateID: layoutTemplateID, DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
 	}); err != nil {
 		return fmt.Errorf("create entry revision: %w", err)
 	}
@@ -415,18 +491,19 @@ func (h *Handler) currentUser(r *http.Request) (auth.User, error) {
 
 func readEntryInput(r *http.Request) (entryInput, error) {
 	input := entryInput{
-			title:           strings.TrimSpace(r.FormValue("title")),
-			slug:            strings.TrimSpace(r.FormValue("slug")),
-			excerpt:         strings.TrimSpace(r.FormValue("excerpt")),
-			seoTitle:        strings.TrimSpace(r.FormValue("seo_title")),
-			seoDescription:  strings.TrimSpace(r.FormValue("seo_description")),
-			canonicalURL:    strings.TrimSpace(r.FormValue("canonical_url")),
-			featuredMediaID: strings.TrimSpace(r.FormValue("featured_media_id")),
-			socialMediaID:   strings.TrimSpace(r.FormValue("social_media_id")),
-			robotsIndex:     parseRobotsOverride(r.FormValue("seo_robots_index")),
-			robotsFollow:    parseRobotsOverride(r.FormValue("seo_robots_follow")),
-			schemaMode:      strings.TrimSpace(r.FormValue("schema_mode")),
-			documentJSON:    postedDocument(r),
+			title:            strings.TrimSpace(r.FormValue("title")),
+			slug:             strings.TrimSpace(r.FormValue("slug")),
+			excerpt:          strings.TrimSpace(r.FormValue("excerpt")),
+			seoTitle:         strings.TrimSpace(r.FormValue("seo_title")),
+			seoDescription:   strings.TrimSpace(r.FormValue("seo_description")),
+			canonicalURL:     strings.TrimSpace(r.FormValue("canonical_url")),
+			featuredMediaID:  strings.TrimSpace(r.FormValue("featured_media_id")),
+			socialMediaID:    strings.TrimSpace(r.FormValue("social_media_id")),
+			robotsIndex:      parseRobotsOverride(r.FormValue("seo_robots_index")),
+			robotsFollow:     parseRobotsOverride(r.FormValue("seo_robots_follow")),
+			schemaMode:       strings.TrimSpace(r.FormValue("schema_mode")),
+			documentJSON:     postedDocument(r),
+			layoutTemplateID: strings.TrimSpace(r.FormValue("layout_template_id")),
 		}
 	if input.title == "" {
 		return input, errors.New("title is required")
@@ -574,6 +651,9 @@ func entryWriteError(err error) string {
 		return err.Error()
 	}
 	if strings.Contains(msg, "invalid document") {
+		return err.Error()
+	}
+	if strings.Contains(msg, "Layout template") || strings.Contains(msg, "layout template") || strings.Contains(msg, "Content Slot") || strings.Contains(msg, "template belongs") {
 		return err.Error()
 	}
 	return "Could not save the entry."

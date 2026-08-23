@@ -139,14 +139,52 @@ func ValidatePostsBasePath(p string) error {
 	if !strings.HasPrefix(p, "/") {
 		return errors.New("Posts URL base must start with /")
 	}
+	if p == "/" {
+		return errors.New("Posts URL base must not be /")
+	}
 	if strings.Contains(p, "?") || strings.Contains(p, "#") {
 		return errors.New("Posts URL base must not contain query string or fragment")
 	}
 	if len(p) > 1 && strings.HasSuffix(p, "/") {
 		return errors.New("Posts URL base must not end with / (except for root)")
 	}
-	reserved := []string{"/admin", "/stratum", "/media", "/sitemap.xml", "/robots.txt", "/feed.xml"}
-	for _, r := range reserved {
+	if strings.Contains(p, "//") {
+		return errors.New("Posts URL base must not contain //")
+	}
+	if strings.Contains(p, " ") {
+		return errors.New("Posts URL base must not contain whitespace")
+	}
+	// No dot segments, no encoded slashes.
+	if strings.Contains(p, "/./") || strings.Contains(p, "/../") || strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..") {
+		return errors.New("Posts URL base must not contain . or .. segments")
+	}
+	if strings.Contains(strings.ToLower(p), "%2f") {
+		return errors.New("Posts URL base must not contain encoded slash")
+	}
+	// Segments: lowercase letters, numbers, hyphen only.
+	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	for _, seg := range segments {
+		if seg == "" {
+			return errors.New("Posts URL base must not contain empty segments")
+		}
+		for _, ch := range seg {
+			if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+				continue
+			}
+			return errors.New("Posts URL base may contain only lowercase letters, numbers and hyphens")
+		}
+		if strings.HasPrefix(seg, "-") || strings.HasSuffix(seg, "-") {
+			return errors.New("Posts URL base segments must not start or end with hyphen")
+		}
+	}
+	reservedPrefixes := []string{"/admin", "/stratum", "/media"}
+	for _, prefix := range reservedPrefixes {
+		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return fmt.Errorf("Posts URL base %s conflicts with reserved path %s", p, prefix)
+		}
+	}
+	reservedExact := []string{"/sitemap.xml", "/robots.txt", "/feed.xml", "/favicon.ico"}
+	for _, r := range reservedExact {
 		if p == r {
 			return fmt.Errorf("Posts URL base %s conflicts with reserved path %s", p, r)
 		}

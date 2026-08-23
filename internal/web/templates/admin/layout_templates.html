@@ -1,0 +1,26 @@
+{{ define "content" }}
+<div class="page-heading"><h1>Templates</h1><a class="button button-primary" href="/admin/appearance/templates/new">Create template</a></div>
+{{ if .Content.Flash }}<div class="flash-message" role="status">{{ .Content.Flash }}</div>{{ end }}
+{{ if .Content.Error }}<p class="form-error" role="alert">{{ .Content.Error }}</p>{{ end }}
+<div class="list-table-wrap">
+<table class="list-table">
+  <thead>
+    <tr><th>Name</th><th>Content Type</th><th>Status</th><th>Default</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {{ range .Content.Templates }}
+    <tr>
+      <td><a href="/admin/appearance/templates/{{ .ID }}/edit">{{ .Name }}</a></td>
+      <td>{{ .ContentTypeName }}</td>
+      <td>{{ .Status }}</td>
+      <td>{{ if .IsDefault }}✓{{ end }}</td>
+      <td><a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a></td>
+    </tr>
+    {{ else }}
+    <tr><td colspan="5" class="muted">No templates yet. Create a reusable layout for Pages or Posts.</td></tr>
+    {{ end }}
+  </tbody>
+</table>
+</div>
+<a class="button" href="/admin/appearance">Back to Appearance</a>
+{{ end }}

@@ -50,6 +50,8 @@ type RenderContext struct {
 	Collections map[string][]ArchiveEntry
 	ArchiveURL string // URL of the post archive (for view-all links in latest mode)
 	LCPNodeID  string
+	IsPreview  bool   // true in editor preview; public renders are false
+	EntryID    string // current entry ID for current-post exclusion in latest blocks
 }
 
 // ArchiveContext is the typed archive listing supplied to core/posts source=archive.

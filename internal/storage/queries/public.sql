@@ -18,7 +18,8 @@ SELECT
     r.social_media_id,
     r.seo_robots_index,
     r.seo_robots_follow,
-    r.schema_mode
+    r.schema_mode,
+    r.layout_template_id
 
 FROM routes rt
 
@@ -53,7 +54,8 @@ SELECT
     r.social_media_id,
     r.seo_robots_index,
     r.seo_robots_follow,
-    r.schema_mode
+    r.schema_mode,
+    r.layout_template_id
 FROM entries e
 JOIN entry_revisions r
     ON r.id = e.published_revision_id

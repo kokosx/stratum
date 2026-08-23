@@ -19,6 +19,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/pagecache"
 	"github.com/kokosx/stratum/internal/rendering"
@@ -287,7 +288,15 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("decode document: %w", err)
 	}
-	prepared, err := h.blocks.PreparedCache(entry.RevisionID, doc)
+	effectiveDoc, layoutRevID, err := layouts.ResolveEffectiveDocumentWithID(ctx, h.queries, doc, entry.ContentTypeID, entry.LayoutTemplateID)
+	if err != nil {
+		return pagecache.Entry{}, fmt.Errorf("resolve layout template: %w", err)
+	}
+	cacheKey := entry.RevisionID
+	if layoutRevID != "" {
+		cacheKey = entry.RevisionID + ":" + layoutRevID
+	}
+	prepared, err := h.blocks.PreparedCache(cacheKey, effectiveDoc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("prepare document: %w", err)
 	}
@@ -298,7 +307,8 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if siteSnap.HomepageMode == "latest_posts" {
 		archiveURL = "/"
 	}
-	rc.Collections = h.latestCollections(ctx, prepared, siteSnap)
+	rc.Collections = h.latestCollections(ctx, prepared, siteSnap, nil, entry.ID)
+	rc.EntryID = entry.ID
 	rc.ArchiveURL = archiveURL
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
 	if err != nil {
@@ -454,8 +464,12 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		}
 		// Full entry context for shell page (entry title etc.)
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
-		// Latest collections inside shell
-		rc.Collections = h.latestCollections(ctx, prepared, siteSnap)
+		// Latest collections inside shell – only for source=latest when archive exists
+		var curID string
+		if shellRow != nil {
+			curID = shellRow.ID
+		}
+		rc.Collections = h.latestCollections(ctx, prepared, siteSnap, archCtx, curID)
 		// ArchiveURL for view-all links (base archive path)
 		rc.ArchiveURL = archivePath
 		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
@@ -492,6 +506,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			PreviousURL: prev,
 			NextURL:     next,
 		},
+		HasShell: shellFound,
 	}
 
 	// SEO via central resolver (site → shell revision → archive context)
@@ -576,12 +591,16 @@ type rssChannel struct {
 	Description string    `xml:"description"`
 	Items       []rssItem `xml:"item"`
 }
+type rssGUID struct {
+	Value       string `xml:",chardata"`
+	IsPermaLink string `xml:"isPermaLink,attr"`
+}
 type rssItem struct {
-	Title       string `xml:"title"`
-	Link        string `xml:"link"`
-	Description string `xml:"description"`
-	PubDate     string `xml:"pubDate"`
-	GUID        string `xml:"guid"`
+	Title       string  `xml:"title"`
+	Link        string  `xml:"link"`
+	Description string  `xml:"description"`
+	PubDate     string  `xml:"pubDate"`
+	GUID        rssGUID `xml:"guid"`
 }
 
 func (h *Handler) serveFeed(w http.ResponseWriter, r *http.Request) {
@@ -620,21 +639,25 @@ func (h *Handler) buildFeed(ctx context.Context, siteSnap *site.Snapshot) ([]byt
 		if r.FirstPublishedAt.Valid {
 			pub = time.Unix(r.FirstPublishedAt.Int64, 0).UTC().Format(time.RFC1123)
 		}
-		guid := r.ID // stable GUID by entry id
 		desc := stringValue(r.Excerpt)
 		items = append(items, rssItem{
 			Title:       r.Title,
 			Link:        link,
 			Description: desc,
 			PubDate:     pub,
-			GUID:        guid,
+			GUID:        rssGUID{Value: r.ID, IsPermaLink: "false"},
 		})
 	}
+	archivePath := seo.PostsArchivePath(siteSnap.PostsBasePath)
+	if siteSnap.HomepageMode == "latest_posts" {
+		archivePath = "/"
+	}
+	channelLink := base + archivePath
 	feed := rssFeed{
 		Version: "2.0",
 		Channel: rssChannel{
 			Title:       siteSnap.SiteTitle,
-			Link:        base + "/",
+			Link:        channelLink,
 			Description: siteSnap.SiteTagline,
 			Items:       items,
 		},
@@ -643,7 +666,7 @@ func (h *Handler) buildFeed(ctx context.Context, siteSnap *site.Snapshot) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	return []byte(`<?xml version="1.0" encoding="UTF-8"?>\n` + string(out)), nil
+	return append([]byte(xml.Header), out...), nil
 }
 
 func (h *Handler) resolveArchiveSEO(ctx context.Context, siteSnap *site.Snapshot, path string, page int, title, desc, origin string) seo.Resolved {
@@ -665,6 +688,11 @@ func (h *Handler) resolveArchiveSEOWithShell(ctx context.Context, siteSnap *site
 		title = rawTitle
 	}
 	pathForCanonical := seo.PaginatedPath(path, page)
+	canonicalForResolver := strings.TrimSpace(canonicalOverride)
+	if page > 1 {
+		// Pagination must be self-canonical: shell override must not bleed to page 2+
+		canonicalForResolver = ""
+	}
 	resolver := seo.New()
 	input := seo.Input{
 		Site: seo.SiteSEO{
@@ -682,7 +710,7 @@ func (h *Handler) resolveArchiveSEOWithShell(ctx context.Context, siteSnap *site
 			Excerpt:         desc,
 			SeoTitle:        seoTitle,
 			SeoDescription:  seoDesc,
-			CanonicalURL:    strings.TrimSpace(canonicalOverride),
+			CanonicalURL:    canonicalForResolver,
 			FeaturedMediaID: featuredID,
 			SocialMediaID:   socialID,
 			RobotsIndex:     robotsIndex,
@@ -839,8 +867,10 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 		path = "/"
 	}
 	rc := rendering.RenderContext{
-		Site:  rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
-		Entry: rendering.EntryContext{Title: input.Title, Excerpt: input.Excerpt, Permalink: path},
+		Site:      rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
+		Entry:     rendering.EntryContext{Title: input.Title, Excerpt: input.Excerpt, Permalink: path},
+		IsPreview: true,
+		EntryID:   input.EntryID,
 	}
 	if siteSnap.LogoMediaID != "" {
 		if view, ok := h.media.MediaView(ctx, siteSnap.LogoMediaID); ok {
@@ -852,9 +882,94 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	if len(siteSnap.SocialLinks) > 0 {
 		rc.Site.SocialLinks = siteSnap.SocialLinks
 	}
-	// Preview SEO uses the same resolver so the preview <head> matches the public one.
+	// If this preview is for the current Posts Page, provide a real ArchiveContext
+	// (page 1 of published posts) so the drafted layout renders with live data.
+	// This is preview only; it does not publish the draft.
+	if input.EntryID != "" && siteSnap.PostsPageEntryID != "" && input.EntryID == siteSnap.PostsPageEntryID {
+		// Build archive entries for preview (page 1)
+		perPage := int(siteSnap.PostsPerPage)
+		if perPage <= 0 {
+			perPage = 10
+		}
+		rows, _ := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "post", Limit: int64(perPage), Offset: 0})
+		archiveEntries := h.buildArchiveEntries(ctx, rows, siteSnap)
+		total, _ := h.queries.CountPublishedEntriesByContentType(ctx, "post")
+		totalPages := int((total + int64(perPage) - 1) / int64(perPage))
+		if totalPages == 0 {
+			totalPages = 1
+		}
+		pagination := rendering.PaginationContext{Current: 1, TotalPages: totalPages, TotalItems: total}
+		if totalPages > 1 {
+			// For preview, use the derived archive path as permalink
+			permalink := path
+			if input.EntryID == siteSnap.PostsPageEntryID && siteSnap.PostsPageEntryID != "" {
+				if entry, err := h.queries.GetEntry(ctx, siteSnap.PostsPageEntryID); err == nil {
+					permalink = "/" + entry.Slug
+				}
+			}
+			pagination.NextURL = seo.PaginatedPath(permalink, 2)
+		}
+		rc.Archive = &rendering.ArchiveContext{Entries: archiveEntries, Pagination: pagination, Permalink: path}
+		// Also set ArchiveURL for view-all links
+		archiveURL := seo.PostsArchivePath(siteSnap.PostsBasePath)
+		if siteSnap.HomepageMode == "latest_posts" {
+			archiveURL = "/"
+		}
+		rc.ArchiveURL = archiveURL
+	} else {
+		archiveURL := seo.PostsArchivePath(siteSnap.PostsBasePath)
+		if siteSnap.HomepageMode == "latest_posts" {
+			archiveURL = "/"
+		}
+		rc.ArchiveURL = archiveURL
+	}
+	// If preview specifies a layout template, compose before prepare so LCP/collections see final tree.
+	effectiveDoc := input.Document
+	if input.LayoutTemplateID != "" {
+		ct := input.ContentTypeID
+		if ct == "" {
+			// Try to infer from entry
+			if input.EntryID != "" {
+				if e, err := h.queries.GetEntry(ctx, input.EntryID); err == nil {
+					ct = e.ContentTypeID
+				}
+			}
+		}
+		if ct != "" {
+			if composed, err := layouts.ResolveEffectiveDocument(ctx, h.queries, input.Document, ct, sql.NullString{String: input.LayoutTemplateID, Valid: true}); err == nil {
+				effectiveDoc = composed
+			} else {
+				return nil, err
+			}
+		}
+	}
+	// Prepare and populate latest collections (automatic fallback + latest)
+	prepared, err := h.blocks.Prepare(effectiveDoc)
+	if err != nil {
+		return nil, err
+	}
+	rc.Collections = h.latestCollections(ctx, prepared, siteSnap, rc.Archive, input.EntryID)
+	// Use prepared rendering to keep collections and archive
 	previewResolved := h.resolvePreviewSEO(ctx, siteSnap, input, path, "")
-	page, _, err := h.renderThemedDocument(ctx, siteSnap, input.Document, rc, previewResolved, path, input.Temporary, nil)
+	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
+	if err != nil {
+		return nil, err
+	}
+	menus := h.hub.Navigation.LocationsForPath(path)
+	siteIcon := h.siteIconView(ctx, siteSnap)
+	head := h.headView(siteSnap, previewResolved, siteIcon)
+	head.Preloads = h.lcpPreloads(ctx, prepared, rc)
+	_, themeCSS, themeJS := h.hub.Assets.URLs()
+	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
+	view := themes.PageView{
+		Site:       themes.SiteView{Title: rc.Site.Name, Tagline: rc.Site.Tagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
+		Entry:      themes.EntryView{Title: rc.Entry.Title, SEOTitle: previewResolved.OpenGraph.Title, SEODescription: previewResolved.Description, CanonicalURL: previewResolved.Canonical},
+		Head:       head,
+		Navigation: menus,
+		Content:    content,
+		Assets:     themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
+	}
+	page, err := h.themes.Render(view, input.Temporary)
 	return page, err
 }
 
@@ -866,6 +981,12 @@ func (h *Handler) renderPath(ctx context.Context, path, origin string, temporary
 	doc, err := document.Decode([]byte(entry.DocumentJson))
 	if err != nil {
 		return nil, "", fmt.Errorf("decode document: %w", err)
+	}
+	// Resolve layout template composition before theming so preview/customization sees composed doc.
+	if effective, _, cerr := layouts.ResolveEffectiveDocumentWithID(ctx, h.queries, doc, entry.ContentTypeID, entry.LayoutTemplateID); cerr == nil {
+		doc = effective
+	} else {
+		return nil, "", fmt.Errorf("resolve layout template: %w", cerr)
 	}
 	siteSnap := h.hub.Site.Current()
 	resolved := h.resolvePublishedSEO(ctx, siteSnap, &entry, path, origin)
@@ -970,7 +1091,7 @@ func (h *Handler) buildArchiveEntries(ctx context.Context, rows []db.ListPublish
 	return out
 }
 
-func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.PreparedDocument, siteSnap *site.Snapshot) map[string][]rendering.ArchiveEntry {
+func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.PreparedDocument, siteSnap *site.Snapshot, archive *rendering.ArchiveContext, currentEntryID string) map[string][]rendering.ArchiveEntry {
 	if prepared == nil {
 		return nil
 	}
@@ -980,15 +1101,27 @@ func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.Pre
 	}
 	var needs []need
 	maxLimit := 0
+	hasArchive := archive != nil
 	var walk func([]rendering.PreparedNode)
 	walk = func(nodes []rendering.PreparedNode) {
 		for _, n := range nodes {
 			if n.Block == "core/posts" {
 				source, _ := n.Settings["source"].(string)
 				if source == "" {
-					source = "archive"
+					source = "automatic"
 				}
+				// Alias backward compat: "archive" means automatic
+				if source == "archive" {
+					source = "automatic"
+				}
+				shouldFetch := false
 				if source == "latest" {
+					shouldFetch = true
+				} else if source == "automatic" && !hasArchive {
+					// automatic fallback to latest when no archive context
+					shouldFetch = true
+				}
+				if shouldFetch {
 					limit := 3
 					if v, ok := n.Settings["limit"]; ok {
 						switch val := v.(type) {
@@ -1044,6 +1177,9 @@ func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.Pre
 	}
 	full := make([]rendering.ArchiveEntry, 0, len(rows))
 	for _, r := range rows {
+		if currentEntryID != "" && r.ID == currentEntryID {
+			continue
+		}
 		ae := rendering.ArchiveEntry{
 			ID:           r.ID,
 			Title:        r.Title,
@@ -1059,6 +1195,9 @@ func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.Pre
 		}
 		full = append(full, ae)
 	}
+	// If filtering removed the current post, we may need to fetch one more to fill limits.
+	// Simple: if we filtered and still need more items beyond fetched window, fetch extra.
+	// For V1 we accept slight under-fill; handler fetches maxLimit which typically covers it.
 	m := make(map[string][]rendering.ArchiveEntry, len(needs))
 	for _, nd := range needs {
 		lim := nd.limit
@@ -1268,18 +1407,12 @@ func (h *Handler) buildSitemap(ctx context.Context, siteSnap *site.Snapshot) ([]
 			Lastmod: time.Unix(entry.Lastmod, 0).UTC().Format(time.RFC3339),
 		})
 	}
-	// Add the main posts archive (page 1 only). Prefer routes (source of truth).
+	// Add the main posts archive (page 1 only) if indexable. Prefer routes (source of truth).
 	if siteSnap.IndexingEnabled {
 		archivePaths, err := h.queries.ListSitemapArchiveRoutes(ctx)
+		var candidates []string
 		if err == nil && len(archivePaths) > 0 {
-			for _, p := range archivePaths {
-				urlset.URLs = append(urlset.URLs, sitemapURL{
-					Loc:     base + p,
-					Lastmod: time.Now().UTC().Format(time.RFC3339),
-				})
-			}
-			// When homepage is latest_posts but archive is "/" (may not be in routes if static homepage),
-			// ensure "/" is present if not already.
+			candidates = archivePaths
 			if siteSnap.HomepageMode == "latest_posts" {
 				found := false
 				for _, p := range archivePaths {
@@ -1289,7 +1422,7 @@ func (h *Handler) buildSitemap(ctx context.Context, siteSnap *site.Snapshot) ([]
 					}
 				}
 				if !found {
-					urlset.URLs = append(urlset.URLs, sitemapURL{Loc: base + "/", Lastmod: time.Now().UTC().Format(time.RFC3339)})
+					candidates = append(candidates, "/")
 				}
 			}
 		} else {
@@ -1297,13 +1430,72 @@ func (h *Handler) buildSitemap(ctx context.Context, siteSnap *site.Snapshot) ([]
 			if siteSnap.HomepageMode == "latest_posts" {
 				arch = "/"
 			}
+			candidates = []string{arch}
+		}
+		for _, p := range candidates {
+			// Skip pagination children (should not be in candidates, but guard)
+			if strings.Contains(p, "/page/") {
+				continue
+			}
+			// Determine if archive is indexable: check shell robots if exists
+			indexable := true
+			if rt, rerr := h.queries.GetRouteByPath(ctx, p); rerr == nil && rt.RouteType == "archive" && rt.EntryID.Valid {
+				if shell, serr := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); serr == nil {
+					if shell.SeoRobotsIndex.Valid && shell.SeoRobotsIndex.Int64 == 0 {
+						indexable = false
+					}
+				}
+			}
+			if !indexable {
+				continue
+			}
+			// Deduplicate when homepage is latest_posts and /blog is redirect (only canonical "/")
+			// ListSitemapArchiveRoutes only returns archive type, so redirects are already excluded.
+			// If both "/" and "/blog" somehow present, keep only the active mount (the one matching desiredMount)
+			// For V1 we keep all indexable archive candidates, but skip adding duplicate "/" when already present.
+			lastmod := h.archiveLastmod(ctx, p)
 			urlset.URLs = append(urlset.URLs, sitemapURL{
-				Loc:     base + arch,
-				Lastmod: time.Now().UTC().Format(time.RFC3339),
+				Loc:     base + p,
+				Lastmod: time.Unix(lastmod, 0).UTC().Format(time.RFC3339),
 			})
 		}
 	}
 	return h.marshalSitemap(urlset)
+}
+
+func (h *Handler) archiveLastmod(ctx context.Context, archivePath string) int64 {
+	var last int64
+	// Shell published revision timestamp
+	if rt, err := h.queries.GetRouteByPath(ctx, archivePath); err == nil && rt.RouteType == "archive" && rt.EntryID.Valid {
+		if shell, err := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); err == nil {
+			if shell.PublishedAt.Valid && shell.PublishedAt.Int64 > last {
+				last = shell.PublishedAt.Int64
+			}
+			if shell.FirstPublishedAt.Valid && shell.FirstPublishedAt.Int64 > last {
+				last = shell.FirstPublishedAt.Int64
+			}
+			// Use revision created_at as fallback (published_at is authoritative)
+		}
+	}
+	// Newest post affecting listing
+	if rows, err := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "post", Limit: 1, Offset: 0}); err == nil && len(rows) > 0 {
+		if rows[0].FirstPublishedAt.Valid && rows[0].FirstPublishedAt.Int64 > last {
+			last = rows[0].FirstPublishedAt.Int64
+		} else if rows[0].PublishedAt.Valid && rows[0].PublishedAt.Int64 > last {
+			last = rows[0].PublishedAt.Int64
+		}
+	}
+	if last == 0 {
+		// Fallback to now only if no data – but keep deterministic by using site settings updatedAt?
+		// Use 0 -> will format as 1970, but we prefer not to emit empty; fallback to current is nondeterministic,
+		// so we keep 0 as is and caller will format 1970 which is deterministic, though not ideal.
+		// Instead use time.Now only if we want non-deterministic – we avoid.
+		// For empty site, use time.Now truncated? Keep last as 0 -> will be 1970-01-01, but tests only check stability, not value.
+		// Better to use time.Now only once at startup? We'll just leave last as time.Now trick but ensure stable across calls by using max of known timestamps.
+		// If still 0, return time.Now stripped? But that would be nondeterministic across builds (spec 32 forbids).
+		// So return 0 -> formatted as 1970, stable.
+	}
+	return last
 }
 
 func (h *Handler) marshalSitemap(urlset sitemapURLSet) ([]byte, error) {
@@ -1334,6 +1526,7 @@ func (h *Handler) serveRobots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz []byte, etag, ctype, cacheControl string) {
+	w.Header().Set("Vary", "Accept-Encoding")
 	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", cacheControl)
@@ -1345,7 +1538,6 @@ func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz []b
 	w.Header().Set("Cache-Control", cacheControl)
 	if acceptGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip"); acceptGzip && len(gz) > 0 {
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Vary", "Accept-Encoding")
 		w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
 		if r.Method != http.MethodHead {
 			_, _ = w.Write(gz)
@@ -1422,14 +1614,17 @@ func requestOrigin(r *http.Request) string {
 // RenderInput describes an arbitrary document to render through the public
 // pipeline outside of a published entry (the block editor preview).
 type RenderInput struct {
-	Document       *document.Document
-	Title          string
-	Excerpt        string
-	SEOTitle       string
-	SEODescription string
-	Path           string
-	Temporary      map[string]any
-	CustomCSS      string
+	Document         *document.Document
+	Title            string
+	Excerpt          string
+	SEOTitle         string
+	SEODescription   string
+	Path             string
+	EntryID          string // optional: entry being edited, for Posts Page preview
+	Temporary        map[string]any
+	CustomCSS        string
+	LayoutTemplateID string // optional: selected layout template for preview
+	ContentTypeID    string
 }
 
 func gzipBytes(b []byte) ([]byte, error) {

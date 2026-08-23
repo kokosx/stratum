@@ -26,14 +26,15 @@ type BlockDefinition struct {
 }
 
 type ContentType struct {
-	ID           string `json:"id"`
-	DisplayName  string `json:"display_name"`
-	PluralName   string `json:"plural_name"`
-	Hierarchical int64  `json:"hierarchical"`
-	Public       int64  `json:"public"`
-	ConfigJson   string `json:"config_json"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
+	ID                      string         `json:"id"`
+	DisplayName             string         `json:"display_name"`
+	PluralName              string         `json:"plural_name"`
+	Hierarchical            int64          `json:"hierarchical"`
+	Public                  int64          `json:"public"`
+	ConfigJson              string         `json:"config_json"`
+	CreatedAt               int64          `json:"created_at"`
+	UpdatedAt               int64          `json:"updated_at"`
+	DefaultLayoutTemplateID sql.NullString `json:"default_layout_template_id"`
 }
 
 type Entry struct {
@@ -51,22 +52,41 @@ type Entry struct {
 }
 
 type EntryRevision struct {
-	ID              string         `json:"id"`
-	EntryID         string         `json:"entry_id"`
-	RevisionNumber  int64          `json:"revision_number"`
-	Title           string         `json:"title"`
-	Excerpt         sql.NullString `json:"excerpt"`
-	DocumentJson    string         `json:"document_json"`
-	SeoTitle        sql.NullString `json:"seo_title"`
-	SeoDescription  sql.NullString `json:"seo_description"`
-	CreatedBy       sql.NullString `json:"created_by"`
-	CreatedAt       int64          `json:"created_at"`
-	CanonicalUrl    sql.NullString `json:"canonical_url"`
-	FeaturedMediaID sql.NullString `json:"featured_media_id"`
-	SocialMediaID   sql.NullString `json:"social_media_id"`
-	SeoRobotsIndex  sql.NullInt64  `json:"seo_robots_index"`
-	SeoRobotsFollow sql.NullInt64  `json:"seo_robots_follow"`
-	SchemaMode      string         `json:"schema_mode"`
+	ID               string         `json:"id"`
+	EntryID          string         `json:"entry_id"`
+	RevisionNumber   int64          `json:"revision_number"`
+	Title            string         `json:"title"`
+	Excerpt          sql.NullString `json:"excerpt"`
+	DocumentJson     string         `json:"document_json"`
+	SeoTitle         sql.NullString `json:"seo_title"`
+	SeoDescription   sql.NullString `json:"seo_description"`
+	CreatedBy        sql.NullString `json:"created_by"`
+	CreatedAt        int64          `json:"created_at"`
+	CanonicalUrl     sql.NullString `json:"canonical_url"`
+	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	SocialMediaID    sql.NullString `json:"social_media_id"`
+	SeoRobotsIndex   sql.NullInt64  `json:"seo_robots_index"`
+	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
+	SchemaMode       string         `json:"schema_mode"`
+	LayoutTemplateID sql.NullString `json:"layout_template_id"`
+}
+
+type LayoutTemplate struct {
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	ContentTypeID       string         `json:"content_type_id"`
+	PublishedRevisionID sql.NullString `json:"published_revision_id"`
+	CreatedAt           int64          `json:"created_at"`
+	UpdatedAt           int64          `json:"updated_at"`
+}
+
+type LayoutTemplateRevision struct {
+	ID             string         `json:"id"`
+	TemplateID     string         `json:"template_id"`
+	RevisionNumber int64          `json:"revision_number"`
+	DocumentJson   string         `json:"document_json"`
+	CreatedBy      sql.NullString `json:"created_by"`
+	CreatedAt      int64          `json:"created_at"`
 }
 
 type MediaVariant struct {

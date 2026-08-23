@@ -17,16 +17,25 @@ import (
 const pageContentType = "page"
 
 func (h *Handler) newPage(w http.ResponseWriter, r *http.Request) {
+	ctID := pageContentType
+	// Preselect default layout template for new entries
+	var defaultTpl string
+	if ct, err := h.queries.GetContentType(r.Context(), ctID); err == nil && ct.DefaultLayoutTemplateID.Valid {
+		defaultTpl = ct.DefaultLayoutTemplateID.String
+	}
 	h.renderEntryForm(w, r, entryFormData{
-		Heading:       "Add New Page",
-		Action:        "/admin/pages",
-		PublishAction: "/admin/pages",
-		BackURL:       "/admin/pages",
-		DocumentJSON:  `{"version":1,"nodes":[]}`,
-		Dirty:         "Saved",
-		Status:        "Draft",
-		ShowSEO:       true,
-		ShowFeatured:  true,
+		Heading:          "Add New Page",
+		Action:           "/admin/pages",
+		PublishAction:    "/admin/pages",
+		BackURL:          "/admin/pages",
+		DocumentJSON:     `{"version":1,"nodes":[]}`,
+		Dirty:            "Saved",
+		Status:           "Draft",
+		ShowSEO:          true,
+		ShowFeatured:     true,
+		ContentTypeID:    ctID,
+		LayoutTemplateID: defaultTpl,
+		LayoutTemplates:  h.loadLayoutTemplateOptions(r.Context(), ctID),
 	}, "pages")
 }
 
@@ -37,7 +46,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := readEntryInput(r)
 	if err != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), Error: err.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: pageContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: err.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
 		return
 	}
 	user, err := h.currentUser(r)
@@ -51,7 +60,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create page: %v", err)
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, Error: entryWriteError(err), ShowSEO: true, ShowFeatured: true}, "pages")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: pageContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: entryWriteError(err), ShowSEO: true, ShowFeatured: true}, "pages")
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
@@ -85,14 +94,14 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 				postsPath = seo.DefaultPostsBase
 			}
 		}
-		// Check if published/lastest revision contains an archive Posts block
+		// Check if published/latest revision contains an archive Posts block (automatic is alias for archive)
 		hasArchiveBlock := false
 		if doc, dErr := document.Decode([]byte(revision.DocumentJson)); dErr == nil {
 			var walk func([]document.Node)
 			walk = func(nodes []document.Node) {
 				for _, n := range nodes {
 					if n.Block == "core/posts" {
-						source := "archive"
+						source := "automatic"
 						if len(n.Settings) > 0 {
 							var s map[string]any
 							if json.Unmarshal(n.Settings, &s) == nil {
@@ -102,6 +111,9 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 						if source == "archive" {
+							source = "automatic"
+						}
+						if source == "automatic" {
 							hasArchiveBlock = true
 						}
 					}
@@ -113,36 +125,46 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 			walk(doc.Nodes)
 		}
 		if !hasArchiveBlock {
-			warning = "This Posts Page does not contain an Archive Posts block. The archive list will not be visible."
+			warning = "This Posts Page does not contain a Posts block. Posts will not be visible on the archive."
 		}
 	}
+	hasUnpublished := entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String != revision.ID
+	layoutID := ""
+	if revision.LayoutTemplateID.Valid {
+		layoutID = revision.LayoutTemplateID.String
+	}
 	h.renderEntryForm(w, r, entryFormData{
-		Heading:          "Edit Page",
-		Action:           "/admin/pages/" + entry.ID,
-		PublishAction:    "/admin/pages/" + entry.ID + "/publish",
-		BackURL:          "/admin/pages",
-		Title:            revision.Title,
-		Slug:             entry.Slug,
-		Excerpt:          stringValue(revision.Excerpt),
-		SEOTitle:         stringValue(revision.SeoTitle),
-		SEODescription:   stringValue(revision.SeoDescription),
-		CanonicalURL:     stringValue(revision.CanonicalUrl),
-		FeaturedMediaID:  stringValue(revision.FeaturedMediaID),
-		SocialMediaID:    stringValue(revision.SocialMediaID),
-		RobotsIndex:      robotsFormValue(revision.SeoRobotsIndex),
-		RobotsFollow:     robotsFormValue(revision.SeoRobotsFollow),
-		SchemaMode:       revision.SchemaMode,
-		SiteURL:          settings.SiteUrl,
-		PublicPath:       h.entryPublicPath(r, entry.ID),
-		DocumentJSON:     revision.DocumentJson,
-		Dirty:            "Saved",
-		Status:           status,
-		PublicURL:        publicURL,
-		ShowSEO:          true,
-		ShowFeatured:     true,
-		IsPostsPage:      isPostsPage,
-		PostsPagePath:    postsPath,
-		PostsPageWarning: warning,
+		Heading:               "Edit Page",
+		Action:                "/admin/pages/" + entry.ID,
+		PublishAction:         "/admin/pages/" + entry.ID + "/publish",
+		BackURL:               "/admin/pages",
+		Title:                 revision.Title,
+		Slug:                  entry.Slug,
+		Excerpt:               stringValue(revision.Excerpt),
+		SEOTitle:              stringValue(revision.SeoTitle),
+		SEODescription:        stringValue(revision.SeoDescription),
+		CanonicalURL:          stringValue(revision.CanonicalUrl),
+		FeaturedMediaID:       stringValue(revision.FeaturedMediaID),
+		SocialMediaID:         stringValue(revision.SocialMediaID),
+		RobotsIndex:           robotsFormValue(revision.SeoRobotsIndex),
+		RobotsFollow:          robotsFormValue(revision.SeoRobotsFollow),
+		SchemaMode:            revision.SchemaMode,
+		SiteURL:               settings.SiteUrl,
+		PublicPath:            h.entryPublicPath(r, entry.ID),
+		EntryID:               entry.ID,
+		DocumentJSON:          revision.DocumentJson,
+		Dirty:                 "Saved",
+		Status:                status,
+		PublicURL:             publicURL,
+		ShowSEO:               true,
+		ShowFeatured:          true,
+		IsPostsPage:           isPostsPage,
+		PostsPagePath:         postsPath,
+		PostsPageWarning:      warning,
+		HasUnpublishedChanges: hasUnpublished,
+		ContentTypeID:         pageContentType,
+		LayoutTemplateID:      layoutID,
+		LayoutTemplates:       h.loadLayoutTemplateOptions(r.Context(), pageContentType),
 	}, "pages")
 }
 
@@ -240,27 +262,30 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 // an inline error message. Used by the no-JS fallback path.
 func (h *Handler) renderEntryError(w http.ResponseWriter, r *http.Request, contentType, activeMenu, entryID string, input entryInput, saveErr error) {
 	data := entryFormData{
-		Heading:         "Edit " + contentTypeTitle(contentType),
-		Action:          "/admin/" + activeMenu + "/" + entryID,
-		PublishAction:   "/admin/" + activeMenu + "/" + entryID + "/publish",
-		BackURL:         "/admin/" + activeMenu,
-		Title:           input.title,
-		Slug:            input.slug,
-		Excerpt:         input.excerpt,
-		SEOTitle:        input.seoTitle,
-		SEODescription:  input.seoDescription,
-		CanonicalURL:    input.canonicalURL,
-		FeaturedMediaID: input.featuredMediaID,
-		SocialMediaID:   input.socialMediaID,
-		RobotsIndex:     robotsInputFormValue(input.robotsIndex),
-		RobotsFollow:    robotsInputFormValue(input.robotsFollow),
-		SchemaMode:      input.schemaMode,
-		DocumentJSON:    input.documentJSON,
-		Error:           entryWriteError(saveErr),
-		Dirty:           "Unsaved",
-		Status:          "Draft",
-		ShowSEO:         true,
-		ShowFeatured:    true,
+		Heading:          "Edit " + contentTypeTitle(contentType),
+		Action:           "/admin/" + activeMenu + "/" + entryID,
+		PublishAction:    "/admin/" + activeMenu + "/" + entryID + "/publish",
+		BackURL:          "/admin/" + activeMenu,
+		Title:            input.title,
+		Slug:             input.slug,
+		Excerpt:          input.excerpt,
+		SEOTitle:         input.seoTitle,
+		SEODescription:   input.seoDescription,
+		CanonicalURL:     input.canonicalURL,
+		FeaturedMediaID:  input.featuredMediaID,
+		SocialMediaID:    input.socialMediaID,
+		RobotsIndex:      robotsInputFormValue(input.robotsIndex),
+		RobotsFollow:     robotsInputFormValue(input.robotsFollow),
+		SchemaMode:       input.schemaMode,
+		DocumentJSON:     input.documentJSON,
+		ContentTypeID:    contentType,
+		LayoutTemplateID: input.layoutTemplateID,
+		LayoutTemplates:  h.loadLayoutTemplateOptions(r.Context(), contentType),
+		Error:            entryWriteError(saveErr),
+		Dirty:            "Unsaved",
+		Status:           "Draft",
+		ShowSEO:          true,
+		ShowFeatured:     true,
 	}
 	if contentType == postContentType {
 		data.ShowExcerpt = true

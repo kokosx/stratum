@@ -830,6 +830,9 @@
     const slugEl = document.getElementById("entry-slug");
     const seoTitleEl = document.getElementById("entry-seo-title");
     const seoDescEl = document.getElementById("entry-seo-description");
+    const entryIdEl = document.getElementById("entry-id");
+    const layoutEl = document.getElementById("entry-layout-template");
+    const ctEl = document.getElementById("entry-content-type");
 
     const params = {
       csrf_token: form.elements.csrf_token.value,
@@ -839,6 +842,9 @@
       slug: slugEl?.value || "",
       seo_title: seoTitleEl?.value || "",
       seo_description: seoDescEl?.value || "",
+      entry_id: entryIdEl?.value || "",
+      layout_template_id: layoutEl?.value || "",
+      content_type_id: ctEl?.value || "",
     };
     try {
       const response = await fetch(bootstrap.previewUrl, {
@@ -918,6 +924,17 @@
         metadataTimer = setTimeout(updatePreview, 600);
       });
     });
+    const layoutEl = document.getElementById("entry-layout-template");
+    if (layoutEl) {
+      layoutEl.addEventListener("change", () => {
+        state.dirty = true;
+        if (dirtyElement) {
+          dirtyElement.textContent = "Unsaved";
+          dirtyElement.className = "editor-status is-dirty";
+        }
+        schedulePreview();
+      });
+    }
   }
 
   // --- Auto-slug from title ------------------------------------------------

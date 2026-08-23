@@ -42,7 +42,7 @@ func (q *Queries) CreateContentType(ctx context.Context, arg CreateContentTypePa
 }
 
 const getContentType = `-- name: GetContentType :one
-SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at
+SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id
 FROM content_types
 WHERE id = ?
 LIMIT 1
@@ -60,12 +60,13 @@ func (q *Queries) GetContentType(ctx context.Context, id string) (ContentType, e
 		&i.ConfigJson,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DefaultLayoutTemplateID,
 	)
 	return i, err
 }
 
 const listContentTypes = `-- name: ListContentTypes :many
-SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at
+SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id
 FROM content_types
 ORDER BY display_name
 `
@@ -88,6 +89,7 @@ func (q *Queries) ListContentTypes(ctx context.Context) ([]ContentType, error) {
 			&i.ConfigJson,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DefaultLayoutTemplateID,
 		); err != nil {
 			return nil, err
 		}

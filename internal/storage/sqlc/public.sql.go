@@ -46,7 +46,8 @@ SELECT
     r.social_media_id,
     r.seo_robots_index,
     r.seo_robots_follow,
-    r.schema_mode
+    r.schema_mode,
+    r.layout_template_id
 FROM entries e
 JOIN entry_revisions r
     ON r.id = e.published_revision_id
@@ -75,6 +76,7 @@ type GetPublishedEntryByIDRow struct {
 	SeoRobotsIndex   sql.NullInt64  `json:"seo_robots_index"`
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 	SchemaMode       string         `json:"schema_mode"`
+	LayoutTemplateID sql.NullString `json:"layout_template_id"`
 }
 
 func (q *Queries) GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error) {
@@ -99,6 +101,7 @@ func (q *Queries) GetPublishedEntryByID(ctx context.Context, id string) (GetPubl
 		&i.SeoRobotsIndex,
 		&i.SeoRobotsFollow,
 		&i.SchemaMode,
+		&i.LayoutTemplateID,
 	)
 	return i, err
 }
@@ -123,7 +126,8 @@ SELECT
     r.social_media_id,
     r.seo_robots_index,
     r.seo_robots_follow,
-    r.schema_mode
+    r.schema_mode,
+    r.layout_template_id
 
 FROM routes rt
 
@@ -159,6 +163,7 @@ type GetPublishedEntryByPathRow struct {
 	SeoRobotsIndex   sql.NullInt64  `json:"seo_robots_index"`
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 	SchemaMode       string         `json:"schema_mode"`
+	LayoutTemplateID sql.NullString `json:"layout_template_id"`
 }
 
 func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error) {
@@ -183,6 +188,7 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.SeoRobotsIndex,
 		&i.SeoRobotsFollow,
 		&i.SchemaMode,
+		&i.LayoutTemplateID,
 	)
 	return i, err
 }

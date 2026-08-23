@@ -177,6 +177,7 @@ type ArchiveView struct {
 	Intro         template.HTML // rendered SDT from Posts Page published revision when set
 	Entries       []ArchiveEntryView
 	Pagination    PaginationView
+	HasShell      bool // true when archive has a Posts Page shell; false uses fallback rendering
 }
 
 // ArchiveEntryView is one card in the listing. Theme controls markup.
