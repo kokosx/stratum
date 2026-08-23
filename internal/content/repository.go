@@ -32,15 +32,42 @@ func (r *Repository) Get(ctx context.Context, id string) (Entry, error) {
 }
 
 // QueryPublished executes a normalized EntryQuery against the stable
-// ListPublishedEntriesByContentType shape. It validates the query before touching the DB.
+// ListPublishedEntriesByContentType shapes. Two shapes are used (DESC/ASC) so
+// the order is pushed to SQL, never built dynamically.
 func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]PublishedEntry, error) {
 	q = q.Normalized()
 	if err := q.Validate(); err != nil {
 		return nil, err
 	}
+	if q.Order == "published_asc" {
+		rows, err := r.queries.ListPublishedEntriesByContentTypeAsc(ctx, db.ListPublishedEntriesByContentTypeAscParams{
+			ContentTypeID: string(q.ContentType),
+			Limit:         int64(q.Limit + len(q.ExcludeIDs) + 5),
+			Offset:        int64(q.Offset),
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]PublishedEntry, 0, len(rows))
+		for _, row := range rows {
+			if contains(q.ExcludeIDs, row.ID) {
+				continue
+			}
+			out = append(out, PublishedEntry{
+				ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
+				Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
+				FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
+				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+			})
+			if len(out) >= q.Limit {
+				break
+			}
+		}
+		return out, nil
+	}
 	rows, err := r.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{
 		ContentTypeID: string(q.ContentType),
-		Limit:         int64(q.Limit),
+		Limit:         int64(q.Limit + len(q.ExcludeIDs) + 5),
 		Offset:        int64(q.Offset),
 	})
 	if err != nil {

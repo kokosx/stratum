@@ -5,12 +5,12 @@ import (
 	"net/http"
 
 	"github.com/kokosx/stratum/internal/document"
-	publicweb "github.com/kokosx/stratum/internal/web/public"
+	"github.com/kokosx/stratum/internal/rendering"
 )
 
-// RenderInput mirrors publicweb.RenderInput and is what the editor preview
-// renderer callback receives.
-type RenderInput = publicweb.RenderInput
+// RenderInput is the shared preview contract (canonical in rendering). Admin
+// depends on rendering, not on the public HTTP package.
+type RenderInput = rendering.RenderInput
 
 type editorBootstrap struct {
 	Document    json.RawMessage `json:"document"`
@@ -80,7 +80,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 			ct = e.ContentTypeID
 		}
 	}
-	page, err := h.documentPreview(r.Context(), publicweb.RenderInput{
+	page, err := h.documentPreview(r.Context(), rendering.RenderInput{
 		Document:         doc,
 		Title:            payload.Title,
 		Excerpt:          payload.Excerpt,

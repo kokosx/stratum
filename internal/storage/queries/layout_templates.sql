@@ -104,3 +104,13 @@ FROM layout_templates t
 JOIN layout_template_revisions r ON r.id = t.published_revision_id
 WHERE t.id = ?
 LIMIT 1;
+
+-- name: ListLatestLayoutRevisions :many
+SELECT *
+FROM layout_template_revisions
+WHERE id IN (
+    SELECT id FROM layout_template_revisions
+    WHERE (template_id, revision_number) IN (
+        SELECT template_id, MAX(revision_number) FROM layout_template_revisions GROUP BY template_id
+    )
+);

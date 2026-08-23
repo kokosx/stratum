@@ -500,9 +500,24 @@
     return zone;
   }
 
-  // P1.37: block-type-aware node summary
+  // SummaryFields is the single source for editor node previews.
+  // Blocks declare e.g. summaryFields: ["props.text"] and the editor uses
+  // that instead of hard-coded branches. Hard-coded fallbacks remain for
+  // legacy blocks without metadata.
   function nodeSummary(node) {
     const def = definitionFor(node);
+    const fields = def?.schema?.editor?.summaryFields || def?.summaryFields;
+    if (fields && fields.length) {
+      for (const path of fields) {
+        const parts = path.split(".");
+        const scope = parts[0] === "props" ? node.props : parts[0] === "settings" ? node.settings : null;
+        if (!scope) continue;
+        const key = parts.slice(1).join(".");
+        const val = scope[key];
+        if (typeof val === "string" && val.trim()) return val.slice(0, 70);
+        if (val) return String(val).slice(0, 70);
+      }
+    }
     const block = def?.block || node.block;
     const p = node.props || {};
     const s = node.settings || {};

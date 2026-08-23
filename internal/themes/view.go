@@ -151,7 +151,9 @@ type PageView struct {
 	Kind PageKind
 	// IsFrontPage is true when this is the site front page (homepage).
 	IsFrontPage bool
-	// Archive is populated for archive renders (including homepage latest-posts).
+	// Archive is legacy: kept for theme debug but no longer rendered; theme's
+	// layout.html uses only .Content (which now comes from Collection). New code
+	// should read content via .Content, not .Archive. Deprecated.
 	Archive ArchiveView
 	// PreviewCSS is generated exclusively by Theme Runtime after server-side
 	// validation. Public renders leave it empty and use /stratum/theme.css.
@@ -168,8 +170,9 @@ const (
 	PageKindArchive PageKind = "archive"
 )
 
-// ArchiveView is the typed contract passed to the theme for any post listing
-// (including homepage in "latest posts" mode and dedicated Posts Page shell).
+// ArchiveView is the legacy typed contract for archive listings. Since the
+// theme now renders via .Content (Collection), this view is deprecated and kept
+// only for backward-compat fallback rendering. Do not add new fields.
 type ArchiveView struct {
 	ContentTypeID string
 	Title         string

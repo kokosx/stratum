@@ -70,9 +70,10 @@ func Transform(doc *Document, fn func(Node) Node) *Document {
 	return cp
 }
 
-// Clone performs a deep copy via JSON round-trip. It is correct for all
-// document shapes and preserves props/settings as raw JSON. For performance
-// critical paths use CloneFast when available.
+// Clone performs a deep copy via JSON round-trip (Marshal+Unmarshal). It is
+// correct and preserves raw JSON, but not a performance optimization; it
+// allocates and copies. Use only where correctness and simplicity outweigh speed.
+// No pooling or fast-path is used – benchmark before replacing.
 func Clone(doc *Document) *Document {
 	if doc == nil {
 		return nil

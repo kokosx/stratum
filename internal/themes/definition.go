@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"strings"
 
 	"github.com/kokosx/stratum/internal/content"
 )
@@ -83,9 +84,9 @@ func (d *Definition) resolveTarget(view PageView) string {
 		for _, p := range patterns {
 			if p == "archive" || p == "single" {
 				candidates = append(candidates, p+".html")
-			} else if len(p) > 5 && p[:8] == "archive-" {
+			} else if strings.HasPrefix(p, "archive-") {
 				candidates = append(candidates, p+".html")
-			} else if len(p) > 7 && p[:7] == "single-" {
+			} else if strings.HasPrefix(p, "single-") {
 				candidates = append(candidates, p+".html")
 			} else {
 				candidates = append(candidates, p+".html")

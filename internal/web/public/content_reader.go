@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/site"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -19,35 +20,25 @@ type handlerContentReader struct {
 }
 
 func (r *handlerContentReader) Query(ctx context.Context, contentType string, limit, offset int, order string, excludeIDs []string) ([]rendering.ArchiveEntry, error) {
-	if limit <= 0 {
-		limit = 3
-	}
-	if limit > 50 {
-		limit = 50
-	}
-	// Stable sort: currently only published_desc is supported by the DB query.
-	// The order param is kept for memo key stability; actual SQL ordering is fixed.
-	rows, err := r.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{
-		ContentTypeID: contentType,
-		Limit:         int64(limit + len(excludeIDs) + 5), // overfetch to allow filtering
-		Offset:        int64(offset),
+	// Delegate to the generic content.Repository so query semantics (limit clamp,
+	// order, exclude handling, overfetch) are defined in one place. Rendering
+	// never touches sqlc directly – it uses this host capability.
+	repo := content.NewRepository(r.queries)
+	entries, err := repo.QueryPublished(ctx, content.EntryQuery{
+		ContentType: content.ContentTypeID(contentType),
+		Limit:       limit,
+		Offset:      offset,
+		Order:       order,
+		ExcludeIDs:  excludeIDs,
 	})
 	if err != nil {
 		return nil, err
 	}
-	// Filter excludeIDs
-	exclude := make(map[string]struct{}, len(excludeIDs))
-	for _, id := range excludeIDs {
-		exclude[id] = struct{}{}
-	}
-	// Batch media for filtered rows
+	// Batch media for filtered entries (repository already filtered).
 	featIDs := make([]string, 0)
-	for _, row := range rows {
-		if _, ok := exclude[row.ID]; ok {
-			continue
-		}
-		if row.FeaturedMediaID.Valid && row.FeaturedMediaID.String != "" {
-			featIDs = append(featIDs, row.FeaturedMediaID.String)
+	for _, e := range entries {
+		if e.FeaturedMediaID.Valid && e.FeaturedMediaID.String != "" {
+			featIDs = append(featIDs, e.FeaturedMediaID.String)
 		}
 	}
 	mediaCache := map[string]rendering.MediaView{}
@@ -59,27 +50,21 @@ func (r *handlerContentReader) Query(ctx context.Context, contentType string, li
 		}
 	}
 	out := make([]rendering.ArchiveEntry, 0, limit)
-	for _, row := range rows {
-		if _, ok := exclude[row.ID]; ok {
-			continue
-		}
+	for _, e := range entries {
 		ae := rendering.ArchiveEntry{
-			ID:           row.ID,
-			Title:        row.Title,
-			Excerpt:      stringValue(row.Excerpt),
-			URL:          row.RoutePath,
-			PublishedAt:  formatEntryDate(row.FirstPublishedAt, r.siteSnap.TimezoneName, false),
-			PublishedISO: formatEntryDate(row.FirstPublishedAt, r.siteSnap.TimezoneName, true),
+			ID:           e.ID,
+			Title:        e.Title,
+			Excerpt:      e.Excerpt,
+			URL:          e.RoutePath,
+			PublishedAt:  formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, false),
+			PublishedISO: formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, true),
 		}
-		if row.FeaturedMediaID.Valid {
-			if mv, ok := mediaCache[row.FeaturedMediaID.String]; ok {
+		if e.FeaturedMediaID.Valid {
+			if mv, ok := mediaCache[e.FeaturedMediaID.String]; ok {
 				ae.FeaturedImage = mv
 			}
 		}
 		out = append(out, ae)
-		if len(out) >= limit {
-			break
-		}
 	}
 	return out, nil
 }

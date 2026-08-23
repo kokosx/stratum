@@ -72,7 +72,10 @@ func (s *Service) Create(ctx context.Context, name, contentTypeID string) (strin
 		return "", err
 	}
 	now := time.Now().Unix()
-	slotID, _ := randomID()
+	slotID, err := randomID()
+	if err != nil {
+		return "", err
+	}
 	docJSON := `{"version":1,"nodes":[{"id":"` + slotID + `","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`
 	if d, err := document.Decode([]byte(docJSON)); err == nil {
 		if err := ValidateLayoutTemplateDocument(s.blocks, d); err != nil {
@@ -141,7 +144,10 @@ func (s *Service) SaveDraft(ctx context.Context, templateID, name, docJSON, auth
 	} else {
 		_ = qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID})
 	}
-	revID, _ := randomID()
+	revID, err := randomID()
+	if err != nil {
+		return err
+	}
 	var createdBy sql.NullString
 	if authorID != "" {
 		createdBy = sql.NullString{String: authorID, Valid: true}
@@ -204,7 +210,11 @@ func (s *Service) Publish(ctx context.Context, templateID, name, docJSON, author
 	needNewRev := docJSON != "" && docString != latest.DocumentJson
 	revID := latest.ID
 	if needNewRev {
-		revID, _ = randomID()
+		var nidErr error
+		revID, nidErr = randomID()
+		if nidErr != nil {
+			return nidErr
+		}
 		nextRev := latest.RevisionNumber + 1
 		var createdBy sql.NullString
 		if authorID != "" {

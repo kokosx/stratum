@@ -122,8 +122,15 @@ func SyncPostsPageSlugChanged(ctx context.Context, q *db.Queries, entryID, newSl
 		return err
 	}
 	if rt, err := q.GetRouteByPath(ctx, oldArch); err == nil && rt.RouteType == RouteTypeArchive {
-		if existing, er := q.GetRouteByPath(ctx, newArch); er == nil && existing.RouteType == RouteTypeArchive {
-			// Archive already at new path – keep old as redirect later.
+		if existing, er := q.GetRouteByPath(ctx, newArch); er == nil {
+			if existing.RouteType == RouteTypeArchive {
+				// Archive already at new path – keep old as redirect later.
+			} else {
+				// Collision: new archive path occupied by entry or redirect.
+				return fmt.Errorf("a route already uses this slug")
+			}
+		} else if !errors.Is(er, sql.ErrNoRows) {
+			return fmt.Errorf("check new archive route: %w", er)
 		} else {
 			if err := q.UpdateRoute(ctx, db.UpdateRouteParams{
 				ID: rt.ID, Path: newArch, EntryID: rt.EntryID, RouteType: RouteTypeArchive,
@@ -152,6 +159,17 @@ func SyncPostsPageSlugChanged(ctx context.Context, q *db.Queries, entryID, newSl
 		if newP == rt.Path {
 			continue
 		}
+		// Collision check for post single new path
+		if byPath, err := q.GetRouteByPath(ctx, newP); err == nil && byPath.EntryID.Valid && byPath.EntryID.String != p.ID {
+			return fmt.Errorf("a route already uses this slug")
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check post route collision: %w", err)
+		} else if err == nil && !byPath.EntryID.Valid {
+			// Stale redirect at newP – clear it so post owns the path.
+			if delErr := q.DeleteRoute(ctx, byPath.ID); delErr != nil {
+				return fmt.Errorf("clear stale redirect for post %s: %w", p.ID, delErr)
+			}
+		}
 		oldPath := rt.Path
 		if err := q.UpdateRoute(ctx, db.UpdateRouteParams{
 			ID: rt.ID, Path: newP, EntryID: sql.NullString{String: p.ID, Valid: true},
@@ -167,12 +185,17 @@ func SyncPostsPageSlugChanged(ctx context.Context, q *db.Queries, entryID, newSl
 		return err
 	}
 	if _, err := q.GetRouteByPath(ctx, newArch); errors.Is(err, sql.ErrNoRows) {
-		id, _ := randomID()
-		_ = q.CreateRoute(ctx, db.CreateRouteParams{
+		id, err := randomID()
+		if err != nil {
+			return err
+		}
+		if err := q.CreateRoute(ctx, db.CreateRouteParams{
 			ID: id, Path: newArch, EntryID: sql.NullString{Valid: false},
 			RouteType: RouteTypeArchive, ContentTypeID: sql.NullString{String: "post", Valid: true},
 			CreatedAt: now, UpdatedAt: now,
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

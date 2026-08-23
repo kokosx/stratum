@@ -7,6 +7,7 @@ import (
 )
 
 func BenchmarkCompose(b *testing.B) {
+	b.ReportAllocs()
 	layout := &document.Document{Version: 1, Nodes: []document.Node{
 		{ID: "sec", Block: "core/section", Version: 1, Children: []document.Node{{ID: "slot", Block: "core/content-slot", Version: 1}}},
 	}}
@@ -19,5 +20,14 @@ func BenchmarkCompose(b *testing.B) {
 		if _, err := Compose(layout, entry); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkClone(b *testing.B) {
+	b.ReportAllocs()
+	doc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "t1", Block: "core/text", Version: 1, Props: []byte(`{"text":"hello"}`)}}}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = document.Clone(doc)
 	}
 }

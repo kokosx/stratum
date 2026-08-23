@@ -63,24 +63,48 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, _ := h.csrfToken(w, r)
-	// Load content types for default check
+	// Batch load content types and latest revisions to avoid N+1.
+	cts, _ := h.queries.ListContentTypes(r.Context())
+	ctMap := make(map[string]db.ContentType, len(cts))
+	for _, ct := range cts {
+		ctMap[ct.ID] = ct
+	}
+	latestRevs, _ := h.queries.ListLatestLayoutRevisions(r.Context())
+	latestMap := make(map[string]db.LayoutTemplateRevision, len(latestRevs))
+	for _, rev := range latestRevs {
+		latestMap[rev.TemplateID] = rev
+	}
 	rows := make([]layoutTemplateRow, 0, len(templates))
 	for _, t := range templates {
-		status := h.layoutTemplateStatus(r, t)
 		ctName := t.ContentTypeID
-		if ct, err := h.queries.GetContentType(r.Context(), t.ContentTypeID); err == nil {
-			ctName = ct.DisplayName
-		}
 		isDefault := false
-		if ct, err := h.queries.GetContentType(r.Context(), t.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String == t.ID {
-			isDefault = true
+		if ct, ok := ctMap[t.ContentTypeID]; ok {
+			ctName = ct.DisplayName
+			if ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String == t.ID {
+				isDefault = true
+			}
 		}
+		status := layoutTemplateStatusFromMaps(t, latestMap)
 		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Status: status, IsDefault: isDefault})
 	}
 	data := layoutTemplatesData{Templates: rows, CSRFToken: token, Flash: h.consumeFlash(w, r)}
 	if err := h.layoutTemplatesTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Templates", ActiveMenu: "appearance", CSRFToken: token, Flash: data.Flash, Content: data}); err != nil {
 		log.Printf("render layout templates: %v", err)
 	}
+}
+
+func layoutTemplateStatusFromMaps(tmpl db.LayoutTemplate, latestMap map[string]db.LayoutTemplateRevision) string {
+	if !tmpl.PublishedRevisionID.Valid {
+		return "Unpublished"
+	}
+	latest, ok := latestMap[tmpl.ID]
+	if !ok {
+		return "Published"
+	}
+	if latest.ID == tmpl.PublishedRevisionID.String {
+		return "Published"
+	}
+	return "Draft changes"
 }
 
 func (h *Handler) layoutTemplateStatus(r *http.Request, tmpl db.LayoutTemplate) string {

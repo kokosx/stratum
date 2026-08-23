@@ -24,6 +24,16 @@ type Definition struct {
 type Renderer struct {
 	blocks        map[blockKey]*template.Template
 	mediaProvider MediaProvider
+	runtimes      map[blockKey]RuntimeRenderer
+}
+
+// RuntimeRenderer is the extensibility boundary for blocks that need to render
+// children multiple times with different contexts (e.g. Collection). Normal
+// blocks use the template path. Future WASM blocks will implement the same
+// interface without receiving *sql.DB or sqlc handles – they use host capabilities
+// like ContentReader.
+type RuntimeRenderer interface {
+	Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error)
 }
 
 type blockKey struct {
@@ -44,12 +54,18 @@ type blockData struct {
 // current Entry and Site settings). It is the same for every node in a document.
 // In the editor preview it is empty, so dynamic blocks fall back to placeholders.
 type RenderContext struct {
-	Site       SiteContext
-	Entry      EntryContext
-	Archive    *ArchiveContext
+	Site    SiteContext
+	Entry   EntryContext
+	Archive *ArchiveContext
+	// Collections and ArchiveURL are legacy: core/posts latest mode used them.
+	// New Collection blocks use Route.Archive and ContentReader. Deprecated.
 	Collections map[string][]ArchiveEntry
-	ArchiveURL string // URL of the post archive (for view-all links in latest mode)
-	LCPNodeID  string
+	ArchiveURL  string // legacy URL of the post archive
+	LCPNodeID   string
+	// LCPConsumed is a request-scoped flag shared by all scoped copies so the
+	// Priority claim is consumed exactly once even when a Collection renders the
+	// same node ID for multiple entries.
+	LCPConsumed *bool
 	IsPreview  bool   // true in editor preview; public renders are false
 	EntryID    string // current entry ID for current-post exclusion in latest blocks
 
@@ -202,10 +218,13 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 	}
 
 	for _, definition := range definitions {
-		if definition.RendererType != "template" {
+		// Template type is the default. Runtime blocks (e.g. core/collection) are
+		// template-backed but also have a RuntimeRenderer registered separately.
+		// Future WASM blocks will use renderer_type = "wasm" and a WASM runtime.
+		if definition.RendererType != "template" && definition.RendererType != "runtime" && definition.RendererType != "wasm" {
 			return nil, fmt.Errorf("block %s/%s@%d: unsupported renderer type %q", definition.Namespace, definition.Name, definition.Version, definition.RendererType)
 		}
-		if definition.Template == "" {
+		if definition.Template == "" && definition.RendererType == "template" {
 			return nil, fmt.Errorf("block %s/%s@%d: template is required", definition.Namespace, definition.Name, definition.Version)
 		}
 
@@ -214,25 +233,49 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 			return nil, fmt.Errorf("duplicate block definition: %s@%d", key.name, key.version)
 		}
 
-		tmpl, err := template.New(key.name).Funcs(template.FuncMap{
-			"integerEquals": integerEquals,
-			"media":         mediaFunc,
-			"icon":          iconFunc,
-			"lines":         linesFunc,
-			"split":         splitFunc,
-			"youtubeID":     youtubeIDFunc,
-			"vimeoID":       vimeoIDFunc,
-			"tagFor":        tagForFunc,
-			"tagOpen":       tagOpenFunc,
-			"tagClose":      tagCloseFunc,
-		}).Parse(definition.Template)
-		if err != nil {
-			return nil, fmt.Errorf("parse block %s@%d template: %w", key.name, key.version, err)
+		if definition.Template != "" {
+			tmpl, err := template.New(key.name).Funcs(template.FuncMap{
+				"integerEquals": integerEquals,
+				"media":         mediaFunc,
+				"icon":          iconFunc,
+				"lines":         linesFunc,
+				"split":         splitFunc,
+				"youtubeID":     youtubeIDFunc,
+				"vimeoID":       vimeoIDFunc,
+				"tagFor":        tagForFunc,
+				"tagOpen":       tagOpenFunc,
+				"tagClose":      tagCloseFunc,
+			}).Parse(definition.Template)
+			if err != nil {
+				return nil, fmt.Errorf("parse block %s@%d template: %w", key.name, key.version, err)
+			}
+			renderer.blocks[key] = tmpl
 		}
-		renderer.blocks[key] = tmpl
+	}
+
+	// Register runtime renderers via a table. Adding a new dynamic block only
+	// requires adding an entry here (or via RegisterRuntime), not modifying
+	// renderPreparedNode's hot path. This satisfies the Block invariant:
+	// generic rendering does not branch on concrete block names per-node.
+	renderer.runtimes = make(map[blockKey]RuntimeRenderer)
+	for key := range renderer.blocks {
+		if key.name == "core/collection" {
+			renderer.runtimes[key] = &collectionRenderer{}
+		}
+		// Future: if key.name == "core/other-dynamic" { renderer.runtimes[key]=... }
 	}
 
 	return renderer, nil
+}
+
+// RegisterRuntime allows external callers (e.g. tests or future plugin loader)
+// to register a runtime renderer without modifying this file. This is the
+// extensibility boundary for WASM/plugin renderers.
+func (r *Renderer) RegisterRuntime(name string, version int64, rr RuntimeRenderer) {
+	if r.runtimes == nil {
+		r.runtimes = make(map[blockKey]RuntimeRenderer)
+	}
+	r.runtimes[blockKey{name: name, version: version}] = rr
 }
 
 func integerEquals(value any, expected int) bool {
@@ -317,17 +360,14 @@ func (r *Renderer) RenderPreparedDocumentContext(ctx context.Context, pd *Prepar
 func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc RenderContext) (template.HTML, error) {
 	key := blockKey{name: node.Block, version: int64(node.Version)}
 	tmpl, ok := r.blocks[key]
-	if !ok {
+	if !ok && r.runtimes[key] == nil {
 		return "", fmt.Errorf("block definition not found: %s@%d", node.Block, node.Version)
 	}
-
-	// Collection is the generic replacement for core/posts. It must be able to
-	// render its children multiple times with different scoped Entry contexts.
-	// This is the only block that requires lazy children; other blocks keep the
-	// simple eager path. The branch is intentionally limited to this block's
-	// runtime behaviour, not a generic handler concern.
-	if node.Block == "core/collection" {
-		return r.renderCollectionNode(ctx, node, rc, tmpl)
+	// Runtime blocks (Collection, future WASM) are dispatched via the registry
+	// table, not a per-node if-branch on concrete names. Adding a new runtime
+	// block only requires RegisterRuntime, not editing this function.
+	if rr, ok := r.runtimes[key]; ok {
+		return rr.Render(ctx, node, rc, r)
 	}
 
 	var children strings.Builder
@@ -339,8 +379,12 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 		children.WriteString(string(rendered))
 	}
 
+	priority := node.ID == rc.LCPNodeID && (rc.LCPConsumed == nil || !*rc.LCPConsumed)
+	if priority && rc.LCPConsumed != nil {
+		*rc.LCPConsumed = true
+	}
 	var out bytes.Buffer
-	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: node.ID == rc.LCPNodeID}); err != nil {
+	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: priority}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	return template.HTML(out.String()), nil
@@ -356,6 +400,13 @@ func (r *Renderer) renderPreparedNodes(ctx context.Context, nodes []PreparedNode
 		out.WriteString(string(rendered))
 	}
 	return template.HTML(out.String()), nil
+}
+
+type collectionRenderer struct{}
+
+func (c *collectionRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {
+	tmpl := r.blocks[blockKey{name: node.Block, version: int64(node.Version)}]
+	return r.renderCollectionNode(ctx, node, rc, tmpl)
 }
 
 func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, rc RenderContext, tmpl *template.Template) (template.HTML, error) {
@@ -405,10 +456,11 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 				entries = cached
 			} else if rc.ContentReader != nil {
 				fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
-				if err == nil {
-					entries = fetched
-					rc.QueryCache[cacheKey] = entries
+				if err != nil {
+					return "", fmt.Errorf("collection %s: %w", node.ID, err)
 				}
+				entries = fetched
+				rc.QueryCache[cacheKey] = entries
 			} else {
 				// Fallback to legacy Collections map (populated by public handler for old docs)
 				if col, ok := rc.Collections[node.ID]; ok {
@@ -419,7 +471,10 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 				}
 			}
 		} else if rc.ContentReader != nil {
-			fetched, _ := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+			fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+			if err != nil {
+				return "", fmt.Errorf("collection %s: %w", node.ID, err)
+			}
 			entries = fetched
 		}
 		// Pagination handling for collection when source=query and pagination flag true?
@@ -482,6 +537,8 @@ func collectionCacheKey(contentType string, limit, offset int, order string, exc
 // renderLegacyCollectionFallback renders a backwards-compatible card list for
 // migrated core/posts@1 documents that have no children. New documents should
 // provide explicit children (EntryTitle etc) and will not hit this path.
+// It preserves historic layout/columns/viewAll semantics so old published content
+// does not change appearance without an explicit migration.
 func renderLegacyCollectionFallback(node PreparedNode, entries []ArchiveEntry, rc RenderContext) template.HTML {
 	showImage := true
 	if v, ok := node.Settings["showImage"]; ok {
@@ -507,9 +564,34 @@ func renderLegacyCollectionFallback(node PreparedNode, entries []ArchiveEntry, r
 			pagination = b
 		}
 	}
+	showViewAll := false
+	if v, ok := node.Settings["showViewAll"]; ok {
+		if b, ok := v.(bool); ok {
+			showViewAll = b
+		}
+	}
+	viewAllLabel, _ := node.Settings["viewAllLabel"].(string)
+	if viewAllLabel == "" {
+		viewAllLabel = "View all posts"
+	}
+	layout, _ := node.Settings["layout"].(string)
+	if layout == "" {
+		layout = "list"
+	}
+	columns := intFromSettings(node.Settings, "columns", 3)
+	if columns < 1 {
+		columns = 1
+	}
+	if columns > 4 {
+		columns = 4
+	}
 	source, _ := node.Settings["source"].(string)
 	var b strings.Builder
-	b.WriteString(`<section class="stratum-posts stratum-posts--list">`)
+	cls := "stratum-posts stratum-posts--list"
+	if layout == "grid" {
+		cls = fmt.Sprintf("stratum-posts stratum-posts--grid stratum-posts--cols-%d", columns)
+	}
+	b.WriteString(`<section class="` + cls + `">`)
 	for _, e := range entries {
 		b.WriteString(`<article class="stratum-post-card">`)
 		if showImage && e.FeaturedImage.Src != "" {
@@ -547,6 +629,21 @@ func renderLegacyCollectionFallback(node PreparedNode, entries []ArchiveEntry, r
 				b.WriteString(`<a href="` + template.HTMLEscapeString(pag.NextURL) + `" rel="next">Next</a>`)
 			}
 			b.WriteString(`</nav>`)
+		}
+	}
+	if showViewAll && source == "context" {
+		var archiveURL string
+		if rc.Route.Archive != nil && rc.Route.Archive.Permalink != "" {
+			archiveURL = rc.Route.Archive.Permalink
+		} else if rc.Archive != nil && rc.Archive.Permalink != "" {
+			archiveURL = rc.Archive.Permalink
+		} else if rc.ArchiveURL != "" {
+			archiveURL = rc.ArchiveURL
+		} else if rc.Route.Path != "" {
+			archiveURL = rc.Route.Path
+		}
+		if archiveURL != "" {
+			b.WriteString(`<p class="stratum-posts-view-all"><a href="` + template.HTMLEscapeString(archiveURL) + `">` + template.HTMLEscapeString(viewAllLabel) + `</a></p>`)
 		}
 	}
 	return template.HTML(b.String())

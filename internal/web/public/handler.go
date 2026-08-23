@@ -24,6 +24,7 @@ import (
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/pagecache"
 	"github.com/kokosx/stratum/internal/rendering"
+	"github.com/kokosx/stratum/internal/routing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/seo"
 	"github.com/kokosx/stratum/internal/site"
@@ -133,15 +134,16 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Canonical pagination: /blog/page/1 -> 301 /blog, /page/1 -> 301 / . Checked
-	// before cache so the non-canonical URL is never cached.
-	if base, pg, ok := parseArchivePagination(r.URL.Path); ok && pg == 1 {
+	// before cache so the non-canonical URL is never cached. Use the single
+	// routing.ParsePagination helper (not a duplicate).
+	if base, pg, ok := routing.ParsePagination(r.URL.Path); ok && pg == 1 {
 		isArchive := false
 		if base == "/" {
 			if siteSnap != nil && siteSnap.HomepageMode == "latest_posts" {
 				isArchive = true
 			}
 		} else {
-			if rt, err := h.queries.GetRouteByPath(r.Context(), base); err == nil && rt.RouteType == "archive" {
+			if rt, err := h.queries.GetRouteByPath(r.Context(), base); err == nil && rt.RouteType == routing.RouteTypeArchive {
 				isArchive = true
 			}
 		}
@@ -235,41 +237,48 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 		return pagecache.Entry{}, fmt.Errorf("site runtime not initialized")
 	}
 
-	// 1. exact route (source of truth)
-	if route, rerr := h.queries.GetRouteByPath(ctx, path); rerr == nil {
-		switch route.RouteType {
-		case "redirect":
-			// handled earlier in serve
-			return pagecache.Entry{}, sql.ErrNoRows
-		case "archive":
-			return h.renderArchivePage(ctx, origin, path, 1, siteSnap)
-		case "entry":
-			return h.renderEntryByRoute(ctx, origin, path, route, siteSnap)
-		case "system":
-			return pagecache.Entry{}, sql.ErrNoRows
-		}
-	}
-
-	// 2. pagination child: /blog/page/3 or /page/3 for home archive
-	if base, pg, ok := parseArchivePagination(path); ok {
-		if rt, rerr := h.queries.GetRouteByPath(ctx, base); rerr == nil && rt.RouteType == "archive" {
+	// Use the single routing.Resolver for exact + pagination resolution.
+	// The full-page cache hit path (serveCachedPage) stays without DB; Resolve
+	// runs only on miss.
+	resolver := routing.NewResolver(h.queries)
+	resolved, err := resolver.Resolve(ctx, path)
+	if err == nil {
+		if resolved.Pagination.IsPagination {
+			base := resolved.Pagination.BasePath
+			pg := resolved.Pagination.Page
 			if pg < 1 {
 				return pagecache.Entry{}, sql.ErrNoRows
 			}
-			return h.renderArchivePage(ctx, origin, base, pg, siteSnap)
+			if base == "/" {
+				if snap := h.hub.Site.Current(); snap != nil && snap.HomepageMode == "latest_posts" {
+					return h.renderArchivePage(ctx, origin, "/", pg, siteSnap)
+				}
+			} else {
+				if rt, rerr := h.queries.GetRouteByPath(ctx, base); rerr == nil && rt.RouteType == routing.RouteTypeArchive {
+					return h.renderArchivePage(ctx, origin, base, pg, siteSnap)
+				}
+				// Resolver guarantees base is archive for non-home pagination
+				return h.renderArchivePage(ctx, origin, base, pg, siteSnap)
+			}
 		}
-		// if home archive and path /page/N
-		if base == "/" {
-			if snap := h.hub.Site.Current(); snap != nil && snap.HomepageMode == "latest_posts" {
-				return h.renderArchivePage(ctx, origin, "/", pg, siteSnap)
+		if resolved.Route != nil {
+			switch resolved.Route.RouteType {
+			case routing.RouteTypeRedirect:
+				return pagecache.Entry{}, sql.ErrNoRows
+			case routing.RouteTypeArchive:
+				return h.renderArchivePage(ctx, origin, path, 1, siteSnap)
+			case routing.RouteTypeEntry:
+				return h.renderEntryByRoute(ctx, origin, path, *resolved.Route, siteSnap)
+			case routing.RouteTypeSystem:
+				return pagecache.Entry{}, sql.ErrNoRows
 			}
 		}
 	}
 
 	// 3. fallback to old entry path (compat for direct)
-	entry, err := h.queries.GetPublishedEntryByPath(ctx, path)
-	if err != nil {
-		return pagecache.Entry{}, err
+	entry, err2 := h.queries.GetPublishedEntryByPath(ctx, path)
+	if err2 != nil {
+		return pagecache.Entry{}, err2
 	}
 	return h.renderEntry(ctx, origin, path, entry, siteSnap)
 }
@@ -356,6 +365,15 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	if pageNum < 1 {
 		return pagecache.Entry{}, sql.ErrNoRows
 	}
+	// Generic archive: content type comes from the archive route's content_type_id.
+	// Fallback to post for legacy routes / shell-less home archive.
+	archiveContentType := "post"
+	if rt, err := h.queries.GetRouteByPath(ctx, archivePath); err == nil && rt.ContentTypeID.Valid && rt.ContentTypeID.String != "" {
+		archiveContentType = rt.ContentTypeID.String
+	} else if ct := routing.ContentTypeForArchive(archivePath, siteSnap.PostsBasePath, siteSnap.HomepageMode); ct != "" {
+		archiveContentType = ct
+	}
+
 	postsBase := siteSnap.PostsBasePath
 	if postsBase == "" {
 		postsBase = seo.DefaultPostsBase
@@ -366,7 +384,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	}
 	offset := (pageNum - 1) * perPage
 
-	total, err := h.queries.CountPublishedEntriesByContentType(ctx, "post")
+	total, err := h.queries.CountPublishedEntriesByContentType(ctx, archiveContentType)
 	if err != nil {
 		return pagecache.Entry{}, err
 	}
@@ -379,7 +397,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	}
 
 	rows, err := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{
-		ContentTypeID: "post",
+		ContentTypeID: archiveContentType,
 		Limit:         int64(perPage),
 		Offset:        int64(offset),
 	})
@@ -429,9 +447,17 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		shellRobotsFollow = seo.NullIntToBoolPtr(shellRow.SeoRobotsFollow.Valid, shellRow.SeoRobotsFollow.Int64)
 		shellCanonical = stringValue(shellRow.CanonicalUrl)
 		if d, derr := document.Decode([]byte(shellRow.DocumentJson)); derr == nil {
-			if p, perr := h.blocks.PreparedCache(shellRow.RevisionID, d); perr == nil {
+			effectiveDoc, layoutRevID, rerr := h.layoutsService.ResolveEffectiveDocument(ctx, d, shellRow.ContentTypeID, shellRow.LayoutTemplateID)
+			if rerr != nil {
+				return pagecache.Entry{}, fmt.Errorf("resolve archive layout: %w", rerr)
+			}
+			cacheKey := shellRow.RevisionID
+			if layoutRevID != "" {
+				cacheKey = shellRow.RevisionID + ":" + layoutRevID
+			}
+			if p, perr := h.blocks.PreparedCache(cacheKey, effectiveDoc); perr == nil {
 				prepared = p
-			} else if p2, perr2 := h.blocks.Prepare(d); perr2 == nil {
+			} else if p2, perr2 := h.blocks.Prepare(effectiveDoc); perr2 == nil {
 				prepared = p2
 			}
 		}
@@ -466,7 +492,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	var usedBlocks []rendering.BlockKey
 	if prepared != nil {
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
-		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: "post", Archive: archCtx, Pagination: pagination}
+		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
 		rc.Mode = rendering.ModePublic
 		rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
 		rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
@@ -483,7 +509,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		// Shell-less fallback: render a minimal Collection so theme can stay .Content-only.
 		rc := rendering.RenderContext{
 			Site: rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
-			Route: rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: "post", Archive: archCtx, Pagination: pagination},
+			Route: rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination},
 			Mode: rendering.ModePublic,
 			ContentReader: &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media},
 			QueryCache: make(map[string][]rendering.ArchiveEntry),
@@ -514,7 +540,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		next = seo.PaginatedPath(archivePath, pageNum+1)
 	}
 	archView := themes.ArchiveView{
-		ContentTypeID: "post",
+		ContentTypeID: archiveContentType,
 		Title:         shellTitle,
 		Description:   shellDesc,
 		Intro:         "", // intro is now inside content via SDT; leave empty to avoid double rendering
@@ -560,7 +586,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		Head:        head,
 		Navigation:  menus,
 		Content:     content,
-		ContentType: "post",
+		ContentType: archiveContentType,
 		Kind:        themes.PageKindArchive,
 		IsFrontPage: archivePath == "/",
 		Archive:     archView,
@@ -1319,12 +1345,32 @@ func (h *Handler) enrichSocialImage(ctx context.Context, siteSnap *site.Snapshot
 // lcpPreloads emits at most one image preload for the FINAL LCP candidate
 // chosen the same way as the renderer: explicit high that exists, then first
 // auto that exists. It supports both core/image and core/featured-image
-// (the latter resolved via rc.Entry.FeaturedImage).
+// (the latter resolved via rc.Entry.FeaturedImage). When the candidate lives
+// inside a Collection, the preload uses the first entry's featured image.
 func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedDocument, rc rendering.RenderContext) []themes.ImagePreload {
 	if prepared == nil || h.media == nil {
 		return nil
 	}
 	hasFeatured := rc.Entry.FeaturedImage != ""
+	// If outer has no featured but archive/context has entries with featured,
+	// consider that for collections.
+	if !hasFeatured {
+		if rc.Route.Archive != nil && len(rc.Route.Archive.Entries) > 0 {
+			for _, e := range rc.Route.Archive.Entries {
+				if e.FeaturedImage.Src != "" {
+					hasFeatured = true
+					break
+				}
+			}
+		} else if rc.Archive != nil && len(rc.Archive.Entries) > 0 {
+			for _, e := range rc.Archive.Entries {
+				if e.FeaturedImage.Src != "" {
+					hasFeatured = true
+					break
+				}
+			}
+		}
+	}
 	candID := prepared.ResolveLCP(hasFeatured)
 	if candID == "" {
 		return nil
@@ -1345,8 +1391,65 @@ func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedD
 	if node == nil {
 		return nil
 	}
+	// Detect if candidate is inside a collection.
+	isInsideCollection := false
+	var contains func([]rendering.PreparedNode) bool
+	contains = func(nodes []rendering.PreparedNode) bool {
+		for _, n := range nodes {
+			if n.Block == "core/collection" {
+				var has func([]rendering.PreparedNode) bool
+				has = func(ch []rendering.PreparedNode) bool {
+					for _, c := range ch {
+						if c.ID == candID {
+							return true
+						}
+						if has(c.Children) {
+							return true
+						}
+					}
+					return false
+				}
+				if has(n.Children) {
+					return true
+				}
+			}
+			if contains(n.Children) {
+				return true
+			}
+		}
+		return false
+	}
+	isInsideCollection = contains(prepared.Nodes)
+
 	var mediaID string
 	if node.Block == "core/featured-image" {
+		if isInsideCollection {
+			// First entry's featured image
+			if rc.Route.Archive != nil && len(rc.Route.Archive.Entries) > 0 && rc.Route.Archive.Entries[0].FeaturedImage.Src != "" {
+				mediaID = rc.Route.Archive.Entries[0].FeaturedImage.Src
+				// Map src back to media ID if needed; use first entry's underlying ID via media lookup?
+				// Prefer ID from archive entry: need media ID, not Src. Search for matching view.
+				// Fallback: use outer featured if src lookup fails.
+				if rc.Route.Archive.Entries[0].FeaturedImage.Src != "" {
+					// Find mediaID by reverse? Use FeaturedImage.Src's media ID from archive entry's source: we have view, use its underlying?
+					// ArchiveEntry stores MediaView, not ID. Use first entry's FeaturedImage Src's ID via media view reverse not needed – use ID via archiveEntries' mediaID not stored, so fallback to using outer logic but with first entry's Src directly.
+					// Instead, directly use view from archive entry.
+					view := rc.Route.Archive.Entries[0].FeaturedImage
+					sizes, _ := node.Settings["sizes"].(string)
+					if strings.TrimSpace(sizes) == "" {
+						sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
+					}
+					return []themes.ImagePreload{{Href: view.Src, SrcSet: view.SrcSet, Sizes: sizes}}
+				}
+			} else if rc.Archive != nil && len(rc.Archive.Entries) > 0 && rc.Archive.Entries[0].FeaturedImage.Src != "" {
+				view := rc.Archive.Entries[0].FeaturedImage
+				sizes, _ := node.Settings["sizes"].(string)
+				if strings.TrimSpace(sizes) == "" {
+					sizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
+				}
+				return []themes.ImagePreload{{Href: view.Src, SrcSet: view.SrcSet, Sizes: sizes}}
+			}
+		}
 		mediaID = rc.Entry.FeaturedImage
 	} else if node.Block == "core/image" {
 		mediaID, _ = node.Props["mediaId"].(string)
@@ -1649,21 +1752,10 @@ func requestOrigin(r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
-// RenderInput describes an arbitrary document to render through the public
-// pipeline outside of a published entry (the block editor preview).
-type RenderInput struct {
-	Document         *document.Document
-	Title            string
-	Excerpt          string
-	SEOTitle         string
-	SEODescription   string
-	Path             string
-	EntryID          string // optional: entry being edited, for Posts Page preview
-	Temporary        map[string]any
-	CustomCSS        string
-	LayoutTemplateID string // optional: selected layout template for preview
-	ContentTypeID    string
-}
+// RenderInput is a type alias to rendering.RenderInput so admin preview does
+// not need to import the public HTTP package. Canonical definition lives in
+// internal/rendering.
+type RenderInput = rendering.RenderInput
 
 func gzipBytes(b []byte) ([]byte, error) {
 	var buf bytes.Buffer
@@ -1687,28 +1779,9 @@ func stringValue(value sql.NullString) string {
 	return ""
 }
 
-// parseArchivePagination returns the base archive path and page number for
-// paths like /blog/page/3 or /page/2 . Returns ok=false for non pagination.
+// parseArchivePagination is kept for backward compatibility; new code should use routing.ParsePagination.
 func parseArchivePagination(path string) (base string, page int, ok bool) {
-	path = strings.TrimSuffix(path, "/")
-	if strings.HasSuffix(path, "/page/1") {
-		base = strings.TrimSuffix(path, "/page/1")
-		if base == "" {
-			base = "/"
-		}
-		return base, 1, true
-	}
-	if idx := strings.LastIndex(path, "/page/"); idx != -1 {
-		suffix := path[idx+6:]
-		if n, err := strconv.Atoi(suffix); err == nil && n > 1 {
-			base = path[:idx]
-			if base == "" {
-				base = "/"
-			}
-			return base, n, true
-		}
-	}
-	return "", 0, false
+	return routing.ParsePagination(path)
 }
 
 func formatEntryDate(ts sql.NullInt64, tz string, iso bool) string {

@@ -148,12 +148,18 @@ func ArchivePathFor(contentTypeID, postsBasePath string, homepageMode string) st
 }
 
 // ContentTypeForArchive returns the content type that owns an archive at path,
-// or "" if none.
+// or "" if none. It iterates over all known archived types so new types do
+// not need a hardcoded branch.
 func ContentTypeForArchive(path string, postsBasePath string, homepageMode string) string {
-	for _, ct := range []string{"post"} { // extend via content.KnownDefinitions when new archived types exist
-		if ArchivePathFor(ct, postsBasePath, homepageMode) == path {
-			return ct
+	for ct := range content.KnownDefinitions() {
+		if ArchivePathFor(string(ct), postsBasePath, homepageMode) == path {
+			return string(ct)
 		}
+	}
+	// Fallback for custom types not in KnownDefinitions (e.g. DB-only): check
+	// generic archived fallback via DefinitionFor path match.
+	if def := content.DefinitionFor("post"); def.IsArchived() && ArchivePathFor("post", postsBasePath, homepageMode) == path {
+		return "post"
 	}
 	return ""
 }

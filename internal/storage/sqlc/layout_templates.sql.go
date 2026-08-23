@@ -247,6 +247,47 @@ func (q *Queries) GetPublishedLayoutTemplateRevision(ctx context.Context, id str
 	return i, err
 }
 
+const listLatestLayoutRevisions = `-- name: ListLatestLayoutRevisions :many
+SELECT id, template_id, revision_number, document_json, created_by, created_at
+FROM layout_template_revisions
+WHERE id IN (
+    SELECT id FROM layout_template_revisions
+    WHERE (template_id, revision_number) IN (
+        SELECT template_id, MAX(revision_number) FROM layout_template_revisions GROUP BY template_id
+    )
+)
+`
+
+func (q *Queries) ListLatestLayoutRevisions(ctx context.Context) ([]LayoutTemplateRevision, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestLayoutRevisions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LayoutTemplateRevision{}
+	for rows.Next() {
+		var i LayoutTemplateRevision
+		if err := rows.Scan(
+			&i.ID,
+			&i.TemplateID,
+			&i.RevisionNumber,
+			&i.DocumentJson,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLayoutTemplateRevisions = `-- name: ListLayoutTemplateRevisions :many
 SELECT id, template_id, revision_number, document_json, created_by, created_at
 FROM layout_template_revisions

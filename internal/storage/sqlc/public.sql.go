@@ -266,3 +266,77 @@ func (q *Queries) ListPublishedEntriesByContentType(ctx context.Context, arg Lis
 	}
 	return items, nil
 }
+
+const listPublishedEntriesByContentTypeAsc = `-- name: ListPublishedEntriesByContentTypeAsc :many
+SELECT
+    e.id,
+    e.slug,
+    e.first_published_at,
+    e.published_at,
+    r.id AS revision_id,
+    r.title,
+    r.excerpt,
+    r.featured_media_id,
+    rt.path AS route_path
+FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
+JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
+WHERE e.content_type_id = ?
+  AND e.status = 'active'
+  AND e.published_revision_id IS NOT NULL
+ORDER BY
+    COALESCE(e.first_published_at, e.published_at) ASC,
+    e.published_at ASC
+LIMIT ? OFFSET ?
+`
+
+type ListPublishedEntriesByContentTypeAscParams struct {
+	ContentTypeID string `json:"content_type_id"`
+	Limit         int64  `json:"limit"`
+	Offset        int64  `json:"offset"`
+}
+
+type ListPublishedEntriesByContentTypeAscRow struct {
+	ID               string         `json:"id"`
+	Slug             string         `json:"slug"`
+	FirstPublishedAt sql.NullInt64  `json:"first_published_at"`
+	PublishedAt      sql.NullInt64  `json:"published_at"`
+	RevisionID       string         `json:"revision_id"`
+	Title            string         `json:"title"`
+	Excerpt          sql.NullString `json:"excerpt"`
+	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	RoutePath        string         `json:"route_path"`
+}
+
+func (q *Queries) ListPublishedEntriesByContentTypeAsc(ctx context.Context, arg ListPublishedEntriesByContentTypeAscParams) ([]ListPublishedEntriesByContentTypeAscRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPublishedEntriesByContentTypeAsc, arg.ContentTypeID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublishedEntriesByContentTypeAscRow{}
+	for rows.Next() {
+		var i ListPublishedEntriesByContentTypeAscRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.FirstPublishedAt,
+			&i.PublishedAt,
+			&i.RevisionID,
+			&i.Title,
+			&i.Excerpt,
+			&i.FeaturedMediaID,
+			&i.RoutePath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

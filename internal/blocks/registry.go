@@ -196,6 +196,24 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 	for key := range used {
 		prepared.UsedBlocks = append(prepared.UsedBlocks, key)
 	}
+	// Compatibility: migrated core/posts documents render fallback with stratum-posts* classes.
+	// Preserve CSS dependency on core/posts@1 when fallback will be used (no children).
+	// This keeps historic published content styled after the in-memory migration.
+	hasLegacyFallback := false
+	for _, n := range nodes {
+		if n.Block == "core/collection" && len(n.Children) == 0 {
+			// Check if original had core/posts (fallback path); simplest: if any collection has no children after migration, assume legacy compat needed.
+			hasLegacyFallback = true
+			break
+		}
+	}
+	if hasLegacyFallback {
+		legacyKey := rendering.BlockKey{Name: "core/posts", Version: 1}
+		if _, ok := used[legacyKey]; !ok {
+			prepared.UsedBlocks = append(prepared.UsedBlocks, legacyKey)
+			used[legacyKey] = true
+		}
+	}
 	sort.Slice(prepared.UsedBlocks, func(i, j int) bool {
 		if prepared.UsedBlocks[i].Name == prepared.UsedBlocks[j].Name {
 			return prepared.UsedBlocks[i].Version < prepared.UsedBlocks[j].Version
@@ -249,6 +267,14 @@ func (r *Registry) RenderPrepared(ctx context.Context, pd *rendering.PreparedDoc
 	}
 	hasFeatured := rc.Entry.FeaturedImage != ""
 	rc.LCPNodeID = pd.ResolveLCP(hasFeatured)
+	// Collection renders the same LCP node ID for multiple entries. The claim
+	// must be consumed exactly once per request; share the flag across all
+	// scoped copies.
+	consumed := false
+	rc.LCPConsumed = &consumed
+	// If the LCP candidate is inside a Collection, the outer hasFeatured may be
+	// empty (shell vs first entry). Resolve again with scoped featured check.
+	// The fallback in renderer ensures only one instance becomes Priority:true.
 	return current.renderer.RenderPreparedDocumentContext(ctx, pd, rc)
 }
 
@@ -410,56 +436,6 @@ func parseEditorContextsFromSchema(blockName string, schema Schema) []string {
 	return []string{EditorModeEntry, EditorModeLayoutTemplate}
 }
 
-func parseEditorContexts(blockName, schemaJSON string) []string {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
-		return nil
-	}
-	editor, ok := raw["editor"].(map[string]any)
-	if !ok {
-		return []string{EditorModeEntry, EditorModeLayoutTemplate}
-	}
-	val, ok := editor["contexts"]
-	if !ok {
-		if blockName == "core/content-slot" {
-			return []string{EditorModeLayoutTemplate}
-		}
-		return []string{EditorModeEntry, EditorModeLayoutTemplate}
-	}
-	switch v := val.(type) {
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		if len(out) == 0 {
-			return []string{EditorModeEntry, EditorModeLayoutTemplate}
-		}
-		return out
-	case []string:
-		return v
-	default:
-		return []string{EditorModeEntry, EditorModeLayoutTemplate}
-	}
-}
-
-func parseHidden(schemaJSON string) bool {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
-		return false
-	}
-	editor, ok := raw["editor"].(map[string]any)
-	if !ok {
-		return false
-	}
-	if hidden, ok := editor["hidden"].(bool); ok {
-		return hidden
-	}
-	return false
-}
-
 func parseLCPCapabilityFromSchema(blockName string, schema Schema) (candidate bool, requiresFeatured bool) {
 	if schema.Editor.LCPCandidate {
 		return true, schema.Editor.RequiresFeatured
@@ -468,64 +444,6 @@ func parseLCPCapabilityFromSchema(blockName string, schema Schema) (candidate bo
 		return meta.LCPCandidate, meta.RequiresFeatured
 	}
 	return false, false
-}
-
-func parseLCPCapability(blockName, schemaJSON string) (candidate bool, requiresFeatured bool) {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
-		raw = nil
-	}
-	if raw != nil {
-		if caps, ok := raw["capabilities"].(map[string]any); ok {
-			if v, ok := caps["lcpCandidate"].(bool); ok && v {
-				req, _ := caps["requiresFeatured"].(bool)
-				return true, req
-			}
-		}
-		if editor, ok := raw["editor"].(map[string]any); ok {
-			if v, ok := editor["lcpCandidate"].(bool); ok && v {
-				req, _ := editor["requiresFeatured"].(bool)
-				return true, req
-			}
-		}
-	}
-	switch blockName {
-	case "core/image":
-		return true, false
-	case "core/featured-image":
-		return true, true
-	default:
-		return false, false
-	}
-}
-
-func parseSummaryFields(schemaJSON string) []string {
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
-		return nil
-	}
-	editor, ok := raw["editor"].(map[string]any)
-	if !ok {
-		return nil
-	}
-	val, ok := editor["summaryFields"]
-	if !ok {
-		return nil
-	}
-	switch v := val.(type) {
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	case []string:
-		return v
-	default:
-		return nil
-	}
 }
 
 // Deprecated: isLCPImageBlock is retained for tests but generic code must use Definition.LCPCandidate.

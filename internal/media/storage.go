@@ -13,10 +13,13 @@ import (
 // implementation is the local filesystem, but an S3-compatible backend can be
 // dropped in later without touching the rest of the media domain.
 //
-// The OpenStream method is the backend-neutral contract (io.ReadSeekCloser + size)
-// so a future S3 implementation can return an HTTP body rather than a local
-// *os.File. The legacy Open method is retained for historical call sites but
-// new code should use OpenStream.
+// The OpenStream method currently requires io.ReadSeekCloser because
+// http.ServeContent needs Seek for Range support. This is NOT fully backend-
+// neutral: S3/HTTP bodies are ReadCloser only and would need buffering to temp
+// file to provide Seek. Future S3 support should expose Open(ctx,key) (ReadCloser,size,error)
+// and a separate Range or Seek capability, so local files stay seekable but S3
+// does not pretend to be. The legacy Open method is retained for callers that
+// still require *os.File.
 type Storage interface {
 	Put(ctx context.Context, key string, data []byte) error
 	Read(ctx context.Context, key string) ([]byte, error)
@@ -24,8 +27,9 @@ type Storage interface {
 	Exists(ctx context.Context, key string) bool
 	// Open returns a seekable handle to a stored blob plus its size (legacy).
 	Open(ctx context.Context, key string) (*os.File, int64, error)
-	// OpenStream is the backend-neutral streaming contract. It returns a
-	// ReadSeekCloser that the caller must close, plus the object's size.
+	// OpenStream returns a ReadSeekCloser for Range-capable serving. Caller must
+	// Close. Requires Seek, so not suitable for pure S3 streaming without
+	// materialization; see type doc for future split.
 	OpenStream(ctx context.Context, key string) (io.ReadSeekCloser, int64, error)
 }
 

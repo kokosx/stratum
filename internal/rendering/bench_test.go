@@ -7,7 +7,8 @@ import (
 	"github.com/kokosx/stratum/internal/document"
 )
 
-func BenchmarkPrepareDocument(b *testing.B) {
+func BenchmarkRenderDocumentContext(b *testing.B) {
+	b.ReportAllocs()
 	doc := &document.Document{
 		Version: 1,
 		Nodes: []document.Node{
@@ -18,7 +19,6 @@ func BenchmarkPrepareDocument(b *testing.B) {
 			}},
 		},
 	}
-	// Build a registry with the core blocks used above.
 	defs := []Definition{
 		{Namespace: "core", Name: "section", Version: 1, RendererType: "template", Template: `<div>{{ .Children }}</div>`},
 		{Namespace: "core", Name: "heading", Version: 1, RendererType: "template", Template: `<h1>{{ .Props.text }}</h1>`},
@@ -34,7 +34,12 @@ func BenchmarkPrepareDocument(b *testing.B) {
 	}
 }
 
+// BenchmarkPrepareDocument was misnamed – it measured RenderDocumentContext.
+// Kept for backward compat, now delegates to the correctly named benchmark.
+func BenchmarkPrepareDocument(b *testing.B) { BenchmarkRenderDocumentContext(b) }
+
 func BenchmarkRenderPrepared(b *testing.B) {
+	b.ReportAllocs()
 	doc := &document.Document{
 		Version: 1,
 		Nodes: []document.Node{
@@ -58,4 +63,35 @@ func BenchmarkRenderPrepared(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkCollection10(b *testing.B) {
+	b.ReportAllocs()
+	defs := []Definition{
+		{Namespace: "core", Name: "collection", Version: 1, RendererType: "template", Template: `<div class="col">{{ .Children }}</div>`},
+		{Namespace: "core", Name: "text", Version: 1, RendererType: "template", Template: `<p>{{ .Props.text }}</p>`},
+	}
+	r, _ := NewRenderer(defs, nil)
+	// Mock ContentReader returning 10 entries
+	cr := &mockContentReader{entries: make([]ArchiveEntry, 10)}
+	for i := range cr.entries {
+		cr.entries[i] = ArchiveEntry{ID: "id", Title: "T", URL: "/t"}
+	}
+	rc := RenderContext{ContentReader: cr, QueryCache: make(map[string][]ArchiveEntry)}
+	pd := &PreparedDocument{Nodes: []PreparedNode{{ID: "c1", Block: "core/collection", Version: 1, Settings: map[string]any{"source": "query", "limit": float64(10), "contentType": "post"}, Children: []PreparedNode{{ID: "t1", Block: "core/text", Version: 1, Props: map[string]any{"text": "hi"}}}}}}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := r.RenderPreparedDocumentContext(context.Background(), pd, rc); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+type mockContentReader struct{ entries []ArchiveEntry }
+
+func (m *mockContentReader) Query(ctx context.Context, contentType string, limit, offset int, order string, excludeIDs []string) ([]ArchiveEntry, error) {
+	if limit > len(m.entries) {
+		limit = len(m.entries)
+	}
+	return m.entries[:limit], nil
 }
