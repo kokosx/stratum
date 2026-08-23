@@ -20,14 +20,32 @@ LIMIT 1;
 
 -- name: CreateRoute :exec
 INSERT INTO routes (
-    id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at
+    id, path, entry_id, route_type, content_type_id, redirect_to, redirect_status, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateRoute :exec
 UPDATE routes
-SET path = ?, entry_id = ?, route_type = ?, redirect_to = ?, redirect_status = ?, updated_at = ?
+SET path = ?, entry_id = ?, route_type = ?, content_type_id = ?, redirect_to = ?, redirect_status = ?, updated_at = ?
 WHERE id = ?;
+
+-- name: GetArchiveRouteByContentType :one
+SELECT *
+FROM routes
+WHERE route_type = 'archive' AND content_type_id = ?
+LIMIT 1;
+
+-- name: ListArchiveRoutes :many
+SELECT *
+FROM routes
+WHERE route_type = 'archive'
+ORDER BY path;
+
+-- name: GetRouteByPathAndType :one
+SELECT *
+FROM routes
+WHERE path = ? AND route_type = ?
+LIMIT 1;
 
 -- name: DeleteRoute :exec
 DELETE FROM routes

@@ -97,12 +97,21 @@ func (r *Registry) Reload(ctx context.Context) error {
 			Schema: schema, Template: stored.Template.String, Styles: nullString(stored.Styles),
 			Source: stored.Source, Enabled: stored.Enabled == 1,
 		}
+		// Editor contexts and capabilities are first-class in Schema.Editor; legacy metadata is the explicit compatibility layer.
+		definition.EditorContexts = parseEditorContextsFromSchema(blockName, schema)
+		hidden := schema.Editor.Hidden
+		if meta, ok := legacyMetadata[blockName]; ok && meta.Hidden {
+			hidden = true
+		}
+		definition.Hidden = hidden
+		definition.LCPCandidate, definition.RequiresFeatured = parseLCPCapabilityFromSchema(blockName, schema)
+		definition.SummaryFields = schema.Editor.SummaryFields
 		compiled[key] = definition
 		rendererDefinitions = append(rendererDefinitions, rendering.Definition{
 			Namespace: stored.Namespace, Name: stored.Name, Version: stored.Version,
 			RendererType: stored.RendererType, Template: stored.Template.String,
 		})
-		if definition.Enabled {
+		if definition.Enabled && !definition.Hidden {
 			catalog = append(catalog, EditorDefinition{Block: blockName, Version: stored.Version, DisplayName: stored.DisplayName, Description: definition.Description, Schema: schema})
 		}
 		if definition.Styles != "" {
@@ -132,11 +141,16 @@ func (r *Registry) Generation() uint64 {
 
 // Prepare validates a document, applies block defaults, and returns the
 // render-ready PreparedDocument. It is the single place defaults and validation
-// happen for the public render path.
+// happen for the public render path. Historical core/posts@1 nodes are
+// migrated in-memory to core/collection so the legacy latestCollections
+// plumbing can be removed without mutating published revisions.
 func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument, error) {
 	current := r.snapshot.Load()
 	if current == nil {
 		return nil, fmt.Errorf("block registry is not initialized")
+	}
+	if _, hasCollection := current.definitions[BlockKey{Name: "core/collection", Version: 1}]; hasCollection {
+		doc = migrateLegacyPostsInPlace(doc)
 	}
 	if err := current.validateDocument(doc); err != nil {
 		return nil, err
@@ -156,26 +170,24 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 	visit = func(items []rendering.PreparedNode) {
 		for _, node := range items {
 			used[rendering.BlockKey{Name: node.Block, Version: node.Version}] = true
-			// Image-producing content blocks can be LCP candidates. Logo/header
-			// icons are never auto-selected.
-			if isLCPImageBlock(node.Block) && imageEligible(node) {
-				priority, _ := node.Settings["priority"].(string)
-				// Existing revisions used eager as the manual opt-in. Keep that
-				// explicit intent until the author changes the new priority field.
-				if priority == "auto" || priority == "" {
-					if eager, _ := node.Settings["eager"].(bool); eager {
-						priority = "high"
-					} else if priority == "" {
-						priority = "auto"
+			// LCP candidate detection is now capability-driven (INVARIANT: no hardcoded block names in generic analyzer).
+			if def := current.definitions[BlockKey{Name: node.Block, Version: int64(node.Version)}]; def != nil && def.LCPCandidate {
+				if lcpEligible(node, def) {
+					priority, _ := node.Settings["priority"].(string)
+					if priority == "auto" || priority == "" {
+						if eager, _ := node.Settings["eager"].(bool); eager {
+							priority = "high"
+						} else if priority == "" {
+							priority = "auto"
+						}
+					}
+					cand := rendering.LCPCandidate{ID: node.ID, Block: node.Block, RequiresFeatured: def.RequiresFeatured}
+					if priority == "high" {
+						high = append(high, cand)
+					} else if priority == "auto" {
+						auto = append(auto, cand)
 					}
 				}
-				cand := rendering.LCPCandidate{ID: node.ID, Block: node.Block, RequiresFeatured: node.Block == "core/featured-image"}
-				if priority == "high" {
-					high = append(high, cand)
-				} else if priority == "auto" {
-					auto = append(auto, cand)
-				}
-				// "normal" is deliberately excluded from LCP candidates
 			}
 			visit(node.Children)
 		}
@@ -253,6 +265,9 @@ func (r *Registry) RenderDocumentContext(doc *document.Document, rc rendering.Re
 	if current == nil {
 		return "", fmt.Errorf("block registry is not initialized")
 	}
+	if _, hasCollection := current.definitions[BlockKey{Name: "core/collection", Version: 1}]; hasCollection {
+		doc = migrateLegacyPostsInPlace(doc)
+	}
 	if err := current.validateDocument(doc); err != nil {
 		return "", err
 	}
@@ -275,32 +290,43 @@ func (r *Registry) EditorCatalog() []EditorDefinition {
 	return r.EditorCatalogFor(EditorModeEntry)
 }
 
-// EditorCatalogFor returns a filtered catalog by editor mode. Entry mode excludes
-// the Content Slot block; layout-template mode includes it.
+// EditorCatalogFor returns a filtered catalog by editor mode using the block's
+// editor.contexts metadata. This replaces the previous hardcoded
+// `if def.Block == "core/content-slot"` branch (INVARIANT 1).
 func (r *Registry) EditorCatalogFor(mode string) []EditorDefinition {
 	current := r.snapshot.Load()
 	if current == nil {
 		return nil
 	}
-	catalog := current.catalog
-	if mode == EditorModeLayoutTemplate {
-		data, _ := json.Marshal(catalog)
-		var out []EditorDefinition
-		_ = json.Unmarshal(data, &out)
-		return out
-	}
-	// Default/entry: exclude core/content-slot
-	filtered := make([]EditorDefinition, 0, len(catalog))
-	for _, def := range catalog {
-		if def.Block == "core/content-slot" {
+	filtered := make([]EditorDefinition, 0, len(current.catalog))
+	for _, ed := range current.catalog {
+		key := BlockKey{Name: ed.Block, Version: ed.Version}
+		def := current.definitions[key]
+		if def == nil {
 			continue
 		}
-		filtered = append(filtered, def)
+		if !isEditorContextAllowed(def.EditorContexts, mode) {
+			continue
+		}
+		filtered = append(filtered, ed)
 	}
 	data, _ := json.Marshal(filtered)
 	var out []EditorDefinition
 	_ = json.Unmarshal(data, &out)
 	return out
+}
+
+func isEditorContextAllowed(contexts []string, mode string) bool {
+	if len(contexts) == 0 {
+		// Legacy blocks without explicit contexts: available in both entry and layout-template.
+		return true
+	}
+	for _, c := range contexts {
+		if c == mode {
+			return true
+		}
+	}
+	return false
 }
 
 // EditorDefinitions returns exact definitions referenced by a document,
@@ -356,6 +382,153 @@ func (r *Registry) StylesFor(keys []rendering.BlockKey) string {
 	return styles.String()
 }
 
+func lcpEligible(node rendering.PreparedNode, def *Definition) bool {
+	if decorative, _ := node.Settings["decorative"].(bool); decorative {
+		return false
+	}
+	if def.RequiresFeatured {
+		return true
+	}
+	if mediaID, _ := node.Props["mediaId"].(string); mediaID != "" {
+		return true
+	}
+	// Generic LCP candidates without mediaId are considered not eligible (e.g. decorative).
+	return false
+}
+
+func parseEditorContextsFromSchema(blockName string, schema Schema) []string {
+	if len(schema.Editor.Contexts) > 0 {
+		return schema.Editor.Contexts
+	}
+	if meta, ok := legacyMetadata[blockName]; ok && len(meta.Contexts) > 0 {
+		return meta.Contexts
+	}
+	// Final fallback for very old rows without any metadata.
+	if blockName == "core/content-slot" {
+		return []string{EditorModeLayoutTemplate}
+	}
+	return []string{EditorModeEntry, EditorModeLayoutTemplate}
+}
+
+func parseEditorContexts(blockName, schemaJSON string) []string {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+		return nil
+	}
+	editor, ok := raw["editor"].(map[string]any)
+	if !ok {
+		return []string{EditorModeEntry, EditorModeLayoutTemplate}
+	}
+	val, ok := editor["contexts"]
+	if !ok {
+		if blockName == "core/content-slot" {
+			return []string{EditorModeLayoutTemplate}
+		}
+		return []string{EditorModeEntry, EditorModeLayoutTemplate}
+	}
+	switch v := val.(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) == 0 {
+			return []string{EditorModeEntry, EditorModeLayoutTemplate}
+		}
+		return out
+	case []string:
+		return v
+	default:
+		return []string{EditorModeEntry, EditorModeLayoutTemplate}
+	}
+}
+
+func parseHidden(schemaJSON string) bool {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+		return false
+	}
+	editor, ok := raw["editor"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if hidden, ok := editor["hidden"].(bool); ok {
+		return hidden
+	}
+	return false
+}
+
+func parseLCPCapabilityFromSchema(blockName string, schema Schema) (candidate bool, requiresFeatured bool) {
+	if schema.Editor.LCPCandidate {
+		return true, schema.Editor.RequiresFeatured
+	}
+	if meta, ok := legacyMetadata[blockName]; ok && meta.LCPCandidate {
+		return meta.LCPCandidate, meta.RequiresFeatured
+	}
+	return false, false
+}
+
+func parseLCPCapability(blockName, schemaJSON string) (candidate bool, requiresFeatured bool) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+		raw = nil
+	}
+	if raw != nil {
+		if caps, ok := raw["capabilities"].(map[string]any); ok {
+			if v, ok := caps["lcpCandidate"].(bool); ok && v {
+				req, _ := caps["requiresFeatured"].(bool)
+				return true, req
+			}
+		}
+		if editor, ok := raw["editor"].(map[string]any); ok {
+			if v, ok := editor["lcpCandidate"].(bool); ok && v {
+				req, _ := editor["requiresFeatured"].(bool)
+				return true, req
+			}
+		}
+	}
+	switch blockName {
+	case "core/image":
+		return true, false
+	case "core/featured-image":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func parseSummaryFields(schemaJSON string) []string {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(schemaJSON), &raw); err != nil {
+		return nil
+	}
+	editor, ok := raw["editor"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	val, ok := editor["summaryFields"]
+	if !ok {
+		return nil
+	}
+	switch v := val.(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return v
+	default:
+		return nil
+	}
+}
+
+// Deprecated: isLCPImageBlock is retained for tests but generic code must use Definition.LCPCandidate.
 func isLCPImageBlock(block string) bool {
 	switch block {
 	case "core/image", "core/featured-image":
@@ -375,8 +548,6 @@ func imageEligible(node rendering.PreparedNode) bool {
 		mediaID, _ := node.Props["mediaId"].(string)
 		return mediaID != ""
 	case "core/featured-image":
-		// Featured image media id lives on the entry, not block props; treat the
-		// block as eligible so it can win LCP when it appears first.
 		return true
 	default:
 		return false

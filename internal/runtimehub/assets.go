@@ -20,10 +20,9 @@ import (
 
 // PageCache, SitemapCache and RobotsCache are the cached runtime artifacts. They
 // are rebuildable from the database and never a source of truth.
+// Sitemap/Robots/Feed share the single ArtifactCache implementation (no duplication).
 type (
-	PageCache    = pagecache.Cache
-	SitemapCache = sitemapCache
-	RobotsCache  = robotsCache
+	PageCache = pagecache.Cache
 )
 
 // AssetManifest holds fingerprinted, immutable CSS/JS assets. Hashes are always

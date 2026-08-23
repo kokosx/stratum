@@ -546,7 +546,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			if archRoute != nil {
 				// Keep the archive at its current path but as shell-less
 				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-					ID: archRoute.ID, Path: archRoute.Path, EntryID: sql.NullString{Valid: false}, RouteType: "archive", UpdatedAt: now,
+					ID: archRoute.ID, Path: archRoute.Path, EntryID: sql.NullString{Valid: false}, RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 				}); err != nil {
 					return err
 				}
@@ -631,7 +631,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			// No archive there – try to move the page's entry route
 			if er, rerr2 := queries.GetEntryRoute(ctx, strToNullString(newPosts)); rerr2 == nil {
 				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-					ID: er.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", UpdatedAt: now,
+					ID: er.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 				}); err != nil {
 					return err
 				}
@@ -641,7 +641,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 					return idErr
 				}
 				if err := queries.CreateRoute(ctx, db.CreateRouteParams{
-					ID: id, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", CreatedAt: now, UpdatedAt: now,
+					ID: id, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, CreatedAt: now, UpdatedAt: now,
 				}); err != nil {
 					return err
 				}
@@ -650,7 +650,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			if !rt.EntryID.Valid {
 				// shell-less archive – adopt it
 				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-					ID: rt.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", UpdatedAt: now,
+					ID: rt.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 				}); err != nil {
 					return err
 				}
@@ -672,7 +672,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 				return fmt.Errorf("The Posts URL base %s conflicts with an existing route.", archPath)
 			}
 			if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-				ID: rt.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", UpdatedAt: now,
+				ID: rt.ID, Path: archPath, EntryID: strToNullString(newPosts), RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 			}); err != nil {
 				return err
 			}
@@ -693,7 +693,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			if rt, rerr := queries.GetRouteByPath(ctx, oldArch); rerr == nil && rt.RouteType == "archive" {
 				if _, er := queries.GetRouteByPath(ctx, archPath); errors.Is(er, sql.ErrNoRows) {
 					if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-						ID: rt.ID, Path: archPath, EntryID: rt.EntryID, RouteType: "archive", UpdatedAt: now,
+						ID: rt.ID, Path: archPath, EntryID: rt.EntryID, RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 					}); err != nil {
 						return err
 					}
@@ -726,7 +726,7 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 				// Already an archive at new path (shell already handled) – just redirect old
 			} else {
 				if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-					ID: rt.ID, Path: archPath, EntryID: rt.EntryID, RouteType: "archive", UpdatedAt: now,
+					ID: rt.ID, Path: archPath, EntryID: rt.EntryID, RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 				}); err != nil {
 					return err
 				}
@@ -795,13 +795,13 @@ func (h *Handler) applyReadingRoutes(ctx context.Context, queries *db.Queries, o
 			return idErr
 		}
 		if err := queries.CreateRoute(ctx, db.CreateRouteParams{
-			ID: id, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", CreatedAt: now, UpdatedAt: now,
+			ID: id, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			return err
 		}
 	} else if rerr == nil && rt.RouteType != "archive" && archPath != "/" {
 		if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-			ID: rt.ID, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", UpdatedAt: now,
+			ID: rt.ID, Path: archPath, EntryID: sql.NullString{Valid: false}, RouteType: "archive", ContentTypeID: sql.NullString{String: "post", Valid: true}, UpdatedAt: now,
 		}); err != nil {
 			return err
 		}

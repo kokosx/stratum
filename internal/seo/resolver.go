@@ -2,6 +2,8 @@ package seo
 
 import (
 	"strings"
+
+	"github.com/kokosx/stratum/internal/content"
 )
 
 // SiteSEO holds the global site-level SEO defaults.
@@ -199,10 +201,10 @@ func (r *Resolver) Resolve(in Input) Resolved {
 		ogImage = base + "/media/" + ogImageID + "/social"
 	}
 
-	ogType := "website"
-	// Spec: Post → article, Page → website. Default to website for unknown.
-	if strings.TrimSpace(in.ContentTypeID) == "post" {
-		ogType = "article"
+	def := content.DefinitionFor(strings.TrimSpace(in.ContentTypeID))
+	ogType := def.SEO.OpenGraphType
+	if ogType == "" {
+		ogType = "website"
 	}
 
 	twitterCard := "summary_large_image"

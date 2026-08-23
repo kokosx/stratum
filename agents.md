@@ -247,3 +247,52 @@ Rules:
 - Status indicators (e.g. `Unsaved` → `Saved`, `Draft` → `Published` + public
   URL) are server-rendered fragments, not client guesses.
 - If you run a stratum server, kill it at the end of your task.
+
+## Architecture Invariants (must hold)
+
+1. Code outside a concrete block definition/implementation MUST NOT branch on a concrete block name (`core/posts`, `core/content-slot`, etc.). Generic layers use block capabilities / editor contexts instead.
+
+2. Generic content code MUST NOT branch on `contentType == "post"` if the difference can be derived from `ContentTypeDefinition`.
+
+3. HTTP handlers MUST NOT know that a concrete dynamic block needs data (no `latestCollections()` / `preparePostsBlock()` in handlers). Data is fetched via `ContentReader` / `EntryQuery` inside the rendering scope.
+
+4. Cache is never source of truth; it is rebuildable from DB.
+
+5. Preview uses the exact same pipeline as public render (`Entry → Revision → SDT → Blocks → Theme → HTML`).
+
+6. Future WASM plugins MUST NOT receive a direct `*sql.DB` handle; they use host capabilities (`content.read`, `media.read`, etc.).
+
+7. A dynamic block is a normal block; "dynamic" is only runtime behaviour, not a separate SDT node type.
+
+8. Composite / pattern / component features MUST NOT introduce a second document system; patterns expand to normal SDT, components resolve to normal SDT in the current `RenderContext`.
+
+Primitives expected after refactor:
+
+```
+Entry, Revision, ContentTypeDefinition, Route, SDT, BlockDefinition,
+RenderContext, EntryQuery, Collection, LayoutTemplate, Theme, Event, Cache
+```
+
+Most CMS features should be composition of these, not new special-case renderers/handlers.
+
+## Routes & Content Types
+
+- `routes.content_type_id` is nullable and set for `route_type='archive'` (e.g. `post` for `/blog`). Single entry routes use `entry_id` → content type via join.
+- `routing` package (`internal/routing`) owns `EntryPath`, `PostsArchivePath`, `ValidatePostsBasePath`, route invariants, and `SyncPostsPageSlugChanged`. `seo` only receives already-resolved paths.
+- `content` package owns `ContentTypeDefinition` and `EntryQuery`; handlers and renderers use it instead of hard-coded `post`/`page` switches.
+- `Collection` (`core/collection`) is the generic replacement for `core/posts`. It fetches via `EntryQuery` + `ContentReader` and renders children with a scoped `Entry` context (`lazy RenderChildren`). `core/posts` remains as deprecated historical renderer for old docs but is hidden from new inserts.
+
+## Rendering
+
+- `RenderContext` has generic scopes: `Site`, `Entry`, `Route`, `Mode`, `ContentReader`, `QueryCache`. Blog-specific fields (`Archive`, `Collections`, `ArchiveURL`) remain for backward compat but new code uses `Route` + `ContentReader`.
+- Collection uses request-local `QueryCache` so duplicate identical queries in one request hit the DB once (no global cache).
+
+## Layout Templates
+
+- `Compose` uses `document.Clone` (no JSON Marshal/Unmarshal pool). Composed SDT must pass `BlockRegistry.ValidateDocument(composed)`, not just `document.Validate`.
+- `internal/layouts` should be accessed via a `LayoutTemplateReader` / `LayoutTemplateService` boundary, not directly via `*sqlc.Queries` in generic code.
+
+## Caching & Events
+
+- `pagecache` is whole-page HTML + gzip + ETag. `ArtifactCache` (generic) replaces duplicated `SitemapCache`/`RobotsCache`/`FeedCache` implementations; runtime keeps three named instances (`Sitemap`, `Robots`, `Feed`) for readability.
+- `runtimehub.Dispatcher` is a tiny synchronous in-process event dispatcher (`EntryPublished`, `ThemeUpdated`, ...). `RuntimeHub` subscribes; no broker.

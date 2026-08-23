@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -31,12 +32,13 @@ import (
 )
 
 type Handler struct {
-	queries *db.Queries
-	blocks  *blocks.Registry
-	themes  *themes.Runtime
-	media   *media.Service
-	hub     *runtimehub.Runtime
-	dev     bool
+	queries        *db.Queries
+	blocks         *blocks.Registry
+	themes         *themes.Runtime
+	media          *media.Service
+	hub            *runtimehub.Runtime
+	layoutsService *layouts.Service
+	dev            bool
 	// warnNoSiteURL guards the one-time production warning about canonical
 	// URLs falling back to the request Host.
 	warnNoSiteURL sync.Once
@@ -54,12 +56,13 @@ func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes
 // so admin write paths and the public frontend share the same caches.
 func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 	return &Handler{
-		queries: hub.Queries,
-		blocks:  hub.Blocks,
-		themes:  hub.Themes,
-		media:   hub.Media,
-		hub:     hub,
-		dev:     os.Getenv("STRATUM_ENV") != "production",
+		queries:        hub.Queries,
+		blocks:         hub.Blocks,
+		themes:         hub.Themes,
+		media:          hub.Media,
+		hub:            hub,
+		layoutsService: layouts.NewService(nil, hub.Queries, hub.Blocks),
+		dev:            os.Getenv("STRATUM_ENV") != "production",
 	}, nil
 }
 
@@ -288,7 +291,10 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("decode document: %w", err)
 	}
-	effectiveDoc, layoutRevID, err := layouts.ResolveEffectiveDocumentWithID(ctx, h.queries, doc, entry.ContentTypeID, entry.LayoutTemplateID)
+	// Layout composition is validated inside the layout application boundary
+	// (Service.ResolveEffectiveDocument calls blocks.ValidateDocument on the
+	// composed SDT). Handlers do not replicate that logic.
+	effectiveDoc, layoutRevID, err := h.layoutsService.ResolveEffectiveDocument(ctx, doc, entry.ContentTypeID, entry.LayoutTemplateID)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("resolve layout template: %w", err)
 	}
@@ -302,14 +308,12 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	}
 	resolved := h.resolvePublishedSEO(ctx, siteSnap, &entry, path, origin)
 	rc := h.entryRenderContext(siteSnap, &entry, path, resolved)
-	// Populate latest-posts collections for core/posts source=latest inside a normal page.
-	archiveURL := seo.PostsArchivePath(siteSnap.PostsBasePath)
-	if siteSnap.HomepageMode == "latest_posts" {
-		archiveURL = "/"
-	}
-	rc.Collections = h.latestCollections(ctx, prepared, siteSnap, nil, entry.ID)
+	// Generic scoped context for Collection blocks.
+	rc.Route = rendering.RouteContext{Path: path, IsArchive: false}
+	rc.Mode = rendering.ModePublic
+	rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
+	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 	rc.EntryID = entry.ID
-	rc.ArchiveURL = archiveURL
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("render document: %w", err)
@@ -441,48 +445,64 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		}
 	}
 
-	// Build full RenderContext for shell document
+	// Build archive context for Collection(source=context) – single source for both shell and fallback
+	pagination := rendering.PaginationContext{
+		Current:    pageNum,
+		TotalPages: totalPages,
+		TotalItems: total,
+	}
+	if pageNum > 1 {
+		pagination.PreviousURL = seo.PaginatedPath(archivePath, pageNum-1)
+	}
+	if pageNum < totalPages {
+		pagination.NextURL = seo.PaginatedPath(archivePath, pageNum+1)
+	}
+	archCtx := &rendering.ArchiveContext{
+		Entries:    archiveEntries,
+		Pagination: pagination,
+		Permalink:  seo.PaginatedPath(archivePath, pageNum),
+	}
 	var content template.HTML
 	var usedBlocks []rendering.BlockKey
 	if prepared != nil {
-		// Build archive context for core/posts
-		pagination := rendering.PaginationContext{
-			Current:    pageNum,
-			TotalPages: totalPages,
-			TotalItems: total,
-		}
-		if pageNum > 1 {
-			pagination.PreviousURL = seo.PaginatedPath(archivePath, pageNum-1)
-		}
-		if pageNum < totalPages {
-			pagination.NextURL = seo.PaginatedPath(archivePath, pageNum+1)
-		}
-		archCtx := &rendering.ArchiveContext{
-			Entries:    archiveEntries,
-			Pagination: pagination,
-			Permalink:  seo.PaginatedPath(archivePath, pageNum),
-		}
-		// Full entry context for shell page (entry title etc.)
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
-		// Latest collections inside shell – only for source=latest when archive exists
-		var curID string
+		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: "post", Archive: archCtx, Pagination: pagination}
+		rc.Mode = rendering.ModePublic
+		rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
+		rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 		if shellRow != nil {
-			curID = shellRow.ID
+			rc.EntryID = shellRow.ID
 		}
-		rc.Collections = h.latestCollections(ctx, prepared, siteSnap, archCtx, curID)
-		// ArchiveURL for view-all links (base archive path)
-		rc.ArchiveURL = archivePath
 		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
 		if cerr != nil {
 			return pagecache.Entry{}, fmt.Errorf("render archive shell: %w", cerr)
 		}
 		content = c
 		usedBlocks = prepared.UsedBlocks
-		// For shell-less fallback (no document), we still need a minimal view
-		_ = content
 	} else {
-		// No shell document: content remains empty, theme will fallback to ArchiveView listing
-		usedBlocks = nil
+		// Shell-less fallback: render a minimal Collection so theme can stay .Content-only.
+		rc := rendering.RenderContext{
+			Site: rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
+			Route: rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: "post", Archive: archCtx, Pagination: pagination},
+			Mode: rendering.ModePublic,
+			ContentReader: &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media},
+			QueryCache: make(map[string][]rendering.ArchiveEntry),
+			Archive: archCtx,
+		}
+		if siteSnap.LogoMediaID != "" && h.media != nil {
+			if view, ok := h.media.MediaView(context.Background(), siteSnap.LogoMediaID); ok {
+				rc.Site.LogoURL = view.Src
+				rc.Site.LogoWidth = view.Width
+				rc.Site.LogoHeight = view.Height
+			}
+		}
+		fallbackDoc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "fallback", Block: "core/collection", Version: 1, Settings: json.RawMessage(`{"source":"context"}`)}}}
+		if p, err := h.blocks.Prepare(fallbackDoc); err == nil {
+			if c, err := h.blocks.RenderPrepared(ctx, p, rc); err == nil {
+				content = c
+				usedBlocks = p.UsedBlocks
+			}
+		}
 	}
 
 	// Pagination URLs for theme fallback
@@ -924,11 +944,11 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 		rc.ArchiveURL = archiveURL
 	}
 	// If preview specifies a layout template, compose before prepare so LCP/collections see final tree.
+	// Composition is validated inside the layout service boundary.
 	effectiveDoc := input.Document
 	if input.LayoutTemplateID != "" {
 		ct := input.ContentTypeID
 		if ct == "" {
-			// Try to infer from entry
 			if input.EntryID != "" {
 				if e, err := h.queries.GetEntry(ctx, input.EntryID); err == nil {
 					ct = e.ContentTypeID
@@ -936,19 +956,31 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 			}
 		}
 		if ct != "" {
-			if composed, err := layouts.ResolveEffectiveDocument(ctx, h.queries, input.Document, ct, sql.NullString{String: input.LayoutTemplateID, Valid: true}); err == nil {
+			var composed *document.Document
+			var cerr error
+			if h.layoutsService != nil {
+				composed, _, cerr = h.layoutsService.ResolveEffectiveDocument(ctx, input.Document, ct, sql.NullString{String: input.LayoutTemplateID, Valid: true})
+			} else {
+				composed, cerr = layouts.ResolveEffectiveDocument(ctx, h.queries, input.Document, ct, sql.NullString{String: input.LayoutTemplateID, Valid: true})
+			}
+			if cerr == nil {
 				effectiveDoc = composed
 			} else {
-				return nil, err
+				return nil, cerr
 			}
 		}
 	}
-	// Prepare and populate latest collections (automatic fallback + latest)
+	// Provide generic collection context for preview (no DB query for latest in preview, but context for archive preview is set above)
+	rc.Mode = rendering.ModePreview
+	rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
+	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
+	if rc.Archive != nil {
+		rc.Route = rendering.RouteContext{Path: path, IsArchive: true, ContentType: "post", Archive: rc.Archive}
+	}
 	prepared, err := h.blocks.Prepare(effectiveDoc)
 	if err != nil {
 		return nil, err
 	}
-	rc.Collections = h.latestCollections(ctx, prepared, siteSnap, rc.Archive, input.EntryID)
 	// Use prepared rendering to keep collections and archive
 	previewResolved := h.resolvePreviewSEO(ctx, siteSnap, input, path, "")
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
@@ -982,8 +1014,14 @@ func (h *Handler) renderPath(ctx context.Context, path, origin string, temporary
 	if err != nil {
 		return nil, "", fmt.Errorf("decode document: %w", err)
 	}
-	// Resolve layout template composition before theming so preview/customization sees composed doc.
-	if effective, _, cerr := layouts.ResolveEffectiveDocumentWithID(ctx, h.queries, doc, entry.ContentTypeID, entry.LayoutTemplateID); cerr == nil {
+	// Layout composition is validated inside the layout service boundary.
+	if h.layoutsService != nil {
+		if effective, _, cerr := h.layoutsService.ResolveEffectiveDocument(ctx, doc, entry.ContentTypeID, entry.LayoutTemplateID); cerr == nil {
+			doc = effective
+		} else {
+			return nil, "", fmt.Errorf("resolve layout template: %w", cerr)
+		}
+	} else if effective, _, cerr := layouts.ResolveEffectiveDocumentWithID(ctx, h.queries, doc, entry.ContentTypeID, entry.LayoutTemplateID); cerr == nil {
 		doc = effective
 	} else {
 		return nil, "", fmt.Errorf("resolve layout template: %w", cerr)

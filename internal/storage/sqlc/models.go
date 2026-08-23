@@ -155,6 +155,7 @@ type Route struct {
 	RedirectStatus sql.NullInt64  `json:"redirect_status"`
 	CreatedAt      int64          `json:"created_at"`
 	UpdatedAt      int64          `json:"updated_at"`
+	ContentTypeID  sql.NullString `json:"content_type_id"`
 }
 
 type Session struct {

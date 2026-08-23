@@ -73,3 +73,16 @@ JOIN routes rt ON rt.id = (
 )
 WHERE e.content_type_id = 'page' AND e.status = 'active'
 ORDER BY r.title, e.id;
+
+-- name: ListPublishedEntriesForNavigation :many
+SELECT e.id, e.content_type_id, r.title, rt.path
+FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
+JOIN routes rt ON rt.id = (
+    SELECT id FROM routes
+    WHERE entry_id = e.id AND route_type = 'entry'
+    ORDER BY path LIMIT 1
+)
+JOIN content_types ct ON ct.id = e.content_type_id
+WHERE e.status = 'active' AND ct.public = 1 AND rt.path IS NOT NULL
+ORDER BY ct.id, r.title, e.id;

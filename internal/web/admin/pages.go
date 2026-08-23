@@ -238,9 +238,13 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, publish)
 	if saveErr == nil && publish && h.runtime != nil {
-		// A new published revision (and possibly a route change) changes the
-		// rendered public pages, sitemap and robots.
-		h.runtime.InvalidateContent()
+		// Reload site settings so a Posts Page slug change (P0) that updated
+		// posts_base_path is visible to the public renderer's site snapshot.
+		// ReloadSite already invalidates page cache, sitemap, robots and feed;
+		// on error fall back to plain invalidation so the publish still succeeds.
+		if err := h.runtime.ReloadSite(r.Context()); err != nil {
+			h.runtime.InvalidateContent()
+		}
 	}
 	if isDatastarRequest(r) {
 		h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, saveErr)

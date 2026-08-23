@@ -1,15 +1,12 @@
 package admin
 
 import (
-	"bytes"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
@@ -134,53 +131,10 @@ func (h *Handler) createLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 		h.renderLayoutCreateError(w, r, "Content type is required", name, ctID)
 		return
 	}
-	if _, err := h.queries.GetContentType(r.Context(), ctID); err != nil {
-		h.renderLayoutCreateError(w, r, "Invalid content type", name, ctID)
-		return
-	}
-	// Create logical template + initial revision with single slot
-	id, err := randomID()
+	id, err := h.layoutsService.Create(r.Context(), name, ctID)
 	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	revID, err := randomID()
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	now := time.Now().Unix()
-	slotID, _ := randomID()
-	// Use stable deterministic? Use random but okay; spec says stable seeded IDs for defaults, but new ones random.
-	docJSON := `{"version":1,"nodes":[{"id":"` + slotID + `","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`
-	// Validate
-	if h.blocks != nil {
-		if d, err := document.Decode([]byte(docJSON)); err == nil {
-			if err := layouts.ValidateLayoutTemplateDocument(h.blocks, d); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-	tx, err := h.database.BeginTx(r.Context(), nil)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
-	if err := qtx.CreateLayoutTemplate(r.Context(), db.CreateLayoutTemplateParams{ID: id, Name: name, ContentTypeID: ctID, PublishedRevisionID: sql.NullString{}, CreatedAt: now, UpdatedAt: now}); err != nil {
 		log.Printf("create layout template: %v", err)
-		h.renderLayoutCreateError(w, r, "Could not create template", name, ctID)
-		return
-	}
-	if err := qtx.CreateLayoutTemplateRevision(r.Context(), db.CreateLayoutTemplateRevisionParams{ID: revID, TemplateID: id, RevisionNumber: 1, DocumentJson: docJSON, CreatedBy: sql.NullString{}, CreatedAt: now}); err != nil {
-		log.Printf("create layout revision: %v", err)
-		h.renderLayoutCreateError(w, r, "Could not create template revision", name, ctID)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.renderLayoutCreateError(w, r, entryWriteError(err), name, ctID)
 		return
 	}
 	http.Redirect(w, r, "/admin/appearance/templates/"+id+"/edit", http.StatusSeeOther)
@@ -296,72 +250,16 @@ func (h *Handler) saveLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 		h.handleLayoutSaveError(w, r, tmpl, "Document is required")
 		return
 	}
-	doc, err := document.Decode([]byte(docJSON))
-	if err != nil {
-		h.handleLayoutSaveError(w, r, tmpl, "Invalid document: "+err.Error())
-		return
-	}
-	if err := layouts.ValidateLayoutTemplateDocument(h.blocks, doc); err != nil {
-		h.handleLayoutSaveError(w, r, tmpl, err.Error())
-		return
-	}
-	// Persist: create new revision, update name and updated_at
 	user, _ := h.currentUser(r)
 	author := ""
 	if user.ID != "" {
 		author = user.ID
 	}
-	now := time.Now().Unix()
-	revID, err := randomID()
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if err := h.layoutsService.SaveDraft(r.Context(), id, name, docJSON, author); err != nil {
+		h.handleLayoutSaveError(w, r, tmpl, err.Error())
 		return
 	}
-	tx, err := h.database.BeginTx(r.Context(), nil)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
-	latest, err := qtx.GetLatestLayoutTemplateRevision(r.Context(), id)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	nextRev := latest.RevisionNumber + 1
-	// Update name if changed
-	if tmpl.Name != name {
-		if err := qtx.UpdateLayoutTemplate(r.Context(), db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: id}); err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// still update updated_at? spec says updated_at updated on publish? We'll update anyway
-		_ = qtx.UpdateLayoutTemplate(r.Context(), db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: id})
-	}
-	var createdBy sql.NullString
-	if author != "" {
-		createdBy = sql.NullString{String: author, Valid: true}
-	}
-	if err := qtx.CreateLayoutTemplateRevision(r.Context(), db.CreateLayoutTemplateRevisionParams{ID: revID, TemplateID: id, RevisionNumber: nextRev, DocumentJson: docJSON, CreatedBy: createdBy, CreatedAt: now}); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	// No page cache invalidation for draft
 	if isDatastarRequest(r) {
-		latest2, _ := h.queries.GetLatestLayoutTemplateRevision(r.Context(), id)
-		tmpl2, _ := h.queries.GetLayoutTemplate(r.Context(), id)
-		status := h.layoutTemplateStatus(r, tmpl2)
-		var buf bytes.Buffer
-		// reuse editor status? We'll just toast
-		_ = latest2
-		_ = status
-		_ = buf
 		writeSSE(w, toastEvent("success", "Template draft saved."))
 		return
 	}
@@ -421,60 +319,13 @@ func (h *Handler) publishLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		h.handleLayoutSaveError(w, r, tmpl, "Document is required")
 		return
 	}
-	doc, err := document.Decode([]byte(docJSON))
-	if err != nil {
-		h.handleLayoutSaveError(w, r, tmpl, "Invalid document: "+err.Error())
-		return
-	}
-	if err := layouts.ValidateLayoutTemplateDocument(h.blocks, doc); err != nil {
-		h.handleLayoutSaveError(w, r, tmpl, err.Error())
-		return
-	}
 	user, _ := h.currentUser(r)
 	author := ""
 	if user.ID != "" {
 		author = user.ID
 	}
-	now := time.Now().Unix()
-	revID, err := randomID()
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	tx, err := h.database.BeginTx(r.Context(), nil)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
-	latest, err := qtx.GetLatestLayoutTemplateRevision(r.Context(), id)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	nextRev := latest.RevisionNumber + 1
-	// Update name if needed
-	if tmpl.Name != name {
-		if err := qtx.UpdateLayoutTemplate(r.Context(), db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: id}); err != nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-	}
-	var createdBy sql.NullString
-	if author != "" {
-		createdBy = sql.NullString{String: author, Valid: true}
-	}
-	if err := qtx.CreateLayoutTemplateRevision(r.Context(), db.CreateLayoutTemplateRevisionParams{ID: revID, TemplateID: id, RevisionNumber: nextRev, DocumentJson: docJSON, CreatedBy: createdBy, CreatedAt: now}); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := qtx.SetLayoutTemplatePublishedRevision(r.Context(), db.SetLayoutTemplatePublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if err := h.layoutsService.Publish(r.Context(), id, name, docJSON, author); err != nil {
+		h.handleLayoutSaveError(w, r, tmpl, err.Error())
 		return
 	}
 	if h.runtime != nil {
@@ -574,19 +425,8 @@ func (h *Handler) setDefaultLayoutTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	id := r.PathValue("id")
-	tmpl, err := h.queries.GetLayoutTemplate(r.Context(), id)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	// Only published templates can be default
-	if !tmpl.PublishedRevisionID.Valid {
-		http.Error(w, "Template must be published to be default", http.StatusBadRequest)
-		return
-	}
-	now := time.Now().Unix()
-	if err := h.queries.SetContentTypeDefaultLayoutTemplate(r.Context(), db.SetContentTypeDefaultLayoutTemplateParams{DefaultLayoutTemplateID: sql.NullString{String: id, Valid: true}, UpdatedAt: now, ID: tmpl.ContentTypeID}); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	if err := h.layoutsService.SetDefault(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if isDatastarRequest(r) {

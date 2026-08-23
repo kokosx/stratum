@@ -5,6 +5,8 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+
+	"github.com/kokosx/stratum/internal/content"
 )
 
 //go:embed default/theme.json default/templates/*.html default/templates/partials/*.html default/assets/*
@@ -66,21 +68,42 @@ func (d *Definition) Render(view PageView) ([]byte, error) {
 }
 
 func (d *Definition) resolveTarget(view PageView) string {
+	def := content.DefinitionFor(view.ContentType)
 	switch view.Kind {
 	case PageKindArchive:
-		if view.ContentType == "post" {
-			return firstPresent(d.template, "archive-post.html", "archive.html", "layout.html")
+		// Generic fallback: archive-{contentType} → archive → layout
+		patterns := def.Templates.ArchivePatterns
+		if len(patterns) == 0 && def.IsArchived() {
+			patterns = []string{"archive-" + string(def.ID), "archive"}
+		} else if len(patterns) == 0 {
+			patterns = []string{"archive"}
 		}
-		return firstPresent(d.template, "archive.html", "layout.html")
+		// Normalize to .html suffix and add layout fallback
+		candidates := make([]string, 0, len(patterns)+1)
+		for _, p := range patterns {
+			if p == "archive" || p == "single" {
+				candidates = append(candidates, p+".html")
+			} else if len(p) > 5 && p[:8] == "archive-" {
+				candidates = append(candidates, p+".html")
+			} else if len(p) > 7 && p[:7] == "single-" {
+				candidates = append(candidates, p+".html")
+			} else {
+				candidates = append(candidates, p+".html")
+			}
+		}
+		candidates = append(candidates, "layout.html")
+		return firstPresent(d.template, candidates...)
 	default:
-		// single
-		if view.ContentType == "post" {
-			return firstPresent(d.template, "single-post.html", "single.html", "layout.html")
+		patterns := def.Templates.SinglePatterns
+		if len(patterns) == 0 {
+			patterns = []string{"single-" + string(def.ID), "single"}
 		}
-		if view.ContentType == "page" {
-			return firstPresent(d.template, "single-page.html", "single.html", "layout.html")
+		candidates := make([]string, 0, len(patterns)+1)
+		for _, p := range patterns {
+			candidates = append(candidates, p+".html")
 		}
-		return firstPresent(d.template, "single.html", "layout.html")
+		candidates = append(candidates, "layout.html")
+		return firstPresent(d.template, candidates...)
 	}
 }
 

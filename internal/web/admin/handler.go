@@ -15,6 +15,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/runtimehub"
@@ -45,6 +46,7 @@ type Handler struct {
 	navigationLoader              *navigation.Loader
 	themes                        *themes.Runtime
 	runtime                       *runtimehub.Runtime
+	layoutsService                *layouts.Service
 	previewRenderer               func(context.Context, string, string, map[string]any, string) ([]byte, error)
 	documentPreview               func(context.Context, RenderInput) ([]byte, error)
 }
@@ -149,6 +151,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,
 		runtime:                      runtime,
+		layoutsService:               layouts.NewService(database, queries, blockRegistry),
 	}, nil
 }
 

@@ -44,9 +44,14 @@ type ChildrenSchema struct {
 }
 
 type EditorSchema struct {
-	Category string                 `json:"category,omitempty"`
-	Icon     string                 `json:"icon,omitempty"`
-	Fields   map[string]EditorField `json:"fields,omitempty"`
+	Category         string                 `json:"category,omitempty"`
+	Icon             string                 `json:"icon,omitempty"`
+	Fields           map[string]EditorField `json:"fields,omitempty"`
+	Contexts         []string               `json:"contexts,omitempty"`
+	Hidden           bool                   `json:"hidden,omitempty"`
+	SummaryFields    []string               `json:"summaryFields,omitempty"`
+	LCPCandidate     bool                   `json:"lcpCandidate,omitempty"`
+	RequiresFeatured bool                   `json:"requiresFeatured,omitempty"`
 }
 
 type EditorField struct {

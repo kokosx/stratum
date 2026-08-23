@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,15 +12,21 @@ import (
 // Storage is the small, deliberate abstraction over where blobs live. The first
 // implementation is the local filesystem, but an S3-compatible backend can be
 // dropped in later without touching the rest of the media domain.
+//
+// The OpenStream method is the backend-neutral contract (io.ReadSeekCloser + size)
+// so a future S3 implementation can return an HTTP body rather than a local
+// *os.File. The legacy Open method is retained for historical call sites but
+// new code should use OpenStream.
 type Storage interface {
 	Put(ctx context.Context, key string, data []byte) error
 	Read(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
 	Exists(ctx context.Context, key string) bool
-	// Open returns a seekable handle to a stored blob plus its size. It lets the
-	// media handler stream a derivative (Range requests, no full read into RAM)
-	// instead of loading the entire file.
+	// Open returns a seekable handle to a stored blob plus its size (legacy).
 	Open(ctx context.Context, key string) (*os.File, int64, error)
+	// OpenStream is the backend-neutral streaming contract. It returns a
+	// ReadSeekCloser that the caller must close, plus the object's size.
+	OpenStream(ctx context.Context, key string) (io.ReadSeekCloser, int64, error)
 }
 
 // LocalStorage keeps blobs under a root directory split into originals/ and
@@ -95,9 +102,37 @@ func (s *LocalStorage) Exists(ctx context.Context, key string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// Open opens a stored blob for streaming. The caller must close the returned
-// file. Size is the file's byte length used for Content-Length and Range.
+// Open opens a stored blob for streaming (legacy; delegates to OpenStream).
 func (s *LocalStorage) Open(ctx context.Context, key string) (*os.File, int64, error) {
+	rc, size, err := s.OpenStream(ctx, key)
+	if err != nil {
+		return nil, 0, err
+	}
+	if f, ok := rc.(*os.File); ok {
+		return f, size, nil
+	}
+	// Fallback: materialize to temp file for callers that require *os.File.
+	tmp, err := os.CreateTemp("", "stratum-media-*")
+	if err != nil {
+		_ = rc.Close()
+		return nil, 0, err
+	}
+	if _, err := io.Copy(tmp, rc); err != nil {
+		_ = rc.Close()
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return nil, 0, err
+	}
+	_ = rc.Close()
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		_ = tmp.Close()
+		return nil, 0, err
+	}
+	return tmp, size, nil
+}
+
+// OpenStream is the backend-neutral streaming contract.
+func (s *LocalStorage) OpenStream(ctx context.Context, key string) (io.ReadSeekCloser, int64, error) {
 	path, err := s.safePath(key)
 	if err != nil {
 		return nil, 0, err

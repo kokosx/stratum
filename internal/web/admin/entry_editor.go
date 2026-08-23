@@ -19,7 +19,7 @@ import (
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
-	"github.com/kokosx/stratum/internal/seo"
+	"github.com/kokosx/stratum/internal/routing"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
@@ -306,21 +306,34 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		if err := validatePostsBlocksForPublish(ctx, qtx, entryID, doc); err != nil {
 			return err
 		}
-		// Central routing policy: compute the public path via seo.EntryPath.
+		// Central routing policy: compute the public path via routing.EntryPath.
 		settings, _ := qtx.GetSiteSettings(ctx)
 		postsBase := ""
 		if settings.PostsBasePath != "" {
 			postsBase = settings.PostsBasePath
 		}
-		computedPath := seo.EntryPath(contentType, input.slug, postsBase)
+		computedPath := routing.EntryPath(contentType, input.slug, postsBase)
 		// If this entry is the current Posts Page shell, its route is the archive
 		// route (type=archive) at PostsBase, not a normal entry route derived from slug.
-		// Publishing the shell must not move or create an entry route; the archive
-		// document alone is updated.
+		// Publishing the shell must atomically move the archive route, redirect the old
+		// archive, update posts_base_path, and remap post singles so the new slug is
+		// live without a separate Settings save (P0 correctness).
 		isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entryID
 		if isPostsPage && contentType == "page" {
-			// Ensure the shell revision is published but keep the archive route intact.
-			// No route mutation here; reading routes own the archive conversion.
+			oldBase := settings.PostsBasePath
+			if oldBase == "" {
+				oldBase = routing.DefaultPostsBase
+			}
+			newBase := routing.NormalizePath("/" + strings.Trim(input.slug, "/"))
+			if oldBase != newBase {
+				if err := routing.ValidatePostsBasePath(newBase); err != nil {
+					return err
+				}
+				if err := routing.SyncPostsPageSlugChanged(ctx, qtx, entryID, input.slug, oldBase, newBase, settings.HomepageMode, now); err != nil {
+					return err
+				}
+			}
+			// Archive shell has no entry-type route; its public presence is the archive route.
 		} else {
 			if err := h.upsertEntryRoute(ctx, qtx, entryID, computedPath, now); err != nil {
 				return err

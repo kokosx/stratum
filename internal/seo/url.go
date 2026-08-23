@@ -1,10 +1,10 @@
 package seo
 
 import (
-	"errors"
-	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/kokosx/stratum/internal/routing"
 )
 
 // BaseURL returns the absolute origin used to build every public absolute URL
@@ -53,19 +53,7 @@ func Canonical(siteURL, origin, path, override string) string {
 // NormalizePath applies the site-wide trailing-slash policy to a URL path:
 // paths start with "/", the root stays "/" and other trailing slashes are
 // removed ("/blog/" becomes "/blog").
-func NormalizePath(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "/"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	for len(path) > 1 && strings.HasSuffix(path, "/") {
-		path = strings.TrimSuffix(path, "/")
-	}
-	return path
-}
+func NormalizePath(path string) string { return routing.NormalizePath(path) }
 
 // normalizeAbsolute rewrites an absolute URL into the canonical spelling:
 // lowercase scheme/host, trailing-slash policy on the path, no fragment.
@@ -78,116 +66,21 @@ func normalizeAbsolute(u *url.URL) string {
 	return out
 }
 
-// PaginatedPath returns the canonical path for page n of an archive at path,
-// preparing for blog pagination: page 1 is the archive itself and later pages
-// live under /page/N ("/blog/page/2"). Every paginated page is its own
-// canonical entity — callers must never collapse it onto the first page.
-func PaginatedPath(path string, page int) string {
-	path = NormalizePath(path)
-	if page <= 1 {
-		return path
-	}
-	if path == "/" {
-		return fmt.Sprintf("/page/%d", page)
-	}
-	return fmt.Sprintf("%s/page/%d", path, page)
-}
+// PaginatedPath returns the canonical path for page n of an archive at path.
+func PaginatedPath(path string, page int) string { return routing.PaginatedPath(path, page) }
 
 // DefaultPostsBase is the conventional default for the posts archive and all
 // single post URLs. It is the value of posts_base_path when not customized.
-const DefaultPostsBase = "/blog"
+const DefaultPostsBase = routing.DefaultPostsBase
 
 // EntryPath is the single place that computes the public path for an Entry.
-// Page → "/{slug}"
-// Post → "{postsBase}/{slug}" (default /blog)
-// Future content types can extend here without touching dozens of call sites.
 func EntryPath(contentTypeID, slug, postsBasePath string) string {
-	s := strings.Trim(slug, "/")
-	if s == "" {
-		return "/"
-	}
-	if contentTypeID == "post" {
-		base := PostsArchivePath(postsBasePath)
-		if base == "/" {
-			return "/" + s
-		}
-		return NormalizePath(base + "/" + s)
-	}
-	return "/" + s
+	return routing.EntryPath(contentTypeID, slug, postsBasePath)
 }
 
 // PostsArchivePath returns the base under which the post archive and all post
-// singles are published. Never returns empty; falls back to DefaultPostsBase.
-func PostsArchivePath(postsBasePath string) string {
-	p := NormalizePath(strings.TrimSpace(postsBasePath))
-	if p == "" || p == "/" {
-		// "/" as posts base is allowed only for "latest posts as homepage" mode,
-		// but we still surface a non-root archive path for explicit /blog links.
-		// Callers that want root archive use the homepage mode.
-		return DefaultPostsBase
-	}
-	return p
-}
+// singles are published.
+func PostsArchivePath(postsBasePath string) string { return routing.PostsArchivePath(postsBasePath) }
 
-// ValidatePostsBasePath enforces the structural rules for posts_base_path
-// before it is written to settings and used to create archive routes.
-func ValidatePostsBasePath(p string) error {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return errors.New("Posts URL base must not be empty")
-	}
-	if !strings.HasPrefix(p, "/") {
-		return errors.New("Posts URL base must start with /")
-	}
-	if p == "/" {
-		return errors.New("Posts URL base must not be /")
-	}
-	if strings.Contains(p, "?") || strings.Contains(p, "#") {
-		return errors.New("Posts URL base must not contain query string or fragment")
-	}
-	if len(p) > 1 && strings.HasSuffix(p, "/") {
-		return errors.New("Posts URL base must not end with / (except for root)")
-	}
-	if strings.Contains(p, "//") {
-		return errors.New("Posts URL base must not contain //")
-	}
-	if strings.Contains(p, " ") {
-		return errors.New("Posts URL base must not contain whitespace")
-	}
-	// No dot segments, no encoded slashes.
-	if strings.Contains(p, "/./") || strings.Contains(p, "/../") || strings.HasSuffix(p, "/.") || strings.HasSuffix(p, "/..") {
-		return errors.New("Posts URL base must not contain . or .. segments")
-	}
-	if strings.Contains(strings.ToLower(p), "%2f") {
-		return errors.New("Posts URL base must not contain encoded slash")
-	}
-	// Segments: lowercase letters, numbers, hyphen only.
-	segments := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	for _, seg := range segments {
-		if seg == "" {
-			return errors.New("Posts URL base must not contain empty segments")
-		}
-		for _, ch := range seg {
-			if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
-				continue
-			}
-			return errors.New("Posts URL base may contain only lowercase letters, numbers and hyphens")
-		}
-		if strings.HasPrefix(seg, "-") || strings.HasSuffix(seg, "-") {
-			return errors.New("Posts URL base segments must not start or end with hyphen")
-		}
-	}
-	reservedPrefixes := []string{"/admin", "/stratum", "/media"}
-	for _, prefix := range reservedPrefixes {
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
-			return fmt.Errorf("Posts URL base %s conflicts with reserved path %s", p, prefix)
-		}
-	}
-	reservedExact := []string{"/sitemap.xml", "/robots.txt", "/feed.xml", "/favicon.ico"}
-	for _, r := range reservedExact {
-		if p == r {
-			return fmt.Errorf("Posts URL base %s conflicts with reserved path %s", p, r)
-		}
-	}
-	return nil
-}
+// ValidatePostsBasePath enforces the structural rules for posts_base_path.
+func ValidatePostsBasePath(p string) error { return routing.ValidatePostsBasePath(p) }

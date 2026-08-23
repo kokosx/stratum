@@ -299,6 +299,55 @@ func (q *Queries) ListNavigationMenus(ctx context.Context) ([]NavigationMenu, er
 	return items, nil
 }
 
+const listPublishedEntriesForNavigation = `-- name: ListPublishedEntriesForNavigation :many
+SELECT e.id, e.content_type_id, r.title, rt.path
+FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
+JOIN routes rt ON rt.id = (
+    SELECT id FROM routes
+    WHERE entry_id = e.id AND route_type = 'entry'
+    ORDER BY path LIMIT 1
+)
+JOIN content_types ct ON ct.id = e.content_type_id
+WHERE e.status = 'active' AND ct.public = 1 AND rt.path IS NOT NULL
+ORDER BY ct.id, r.title, e.id
+`
+
+type ListPublishedEntriesForNavigationRow struct {
+	ID            string `json:"id"`
+	ContentTypeID string `json:"content_type_id"`
+	Title         string `json:"title"`
+	Path          string `json:"path"`
+}
+
+func (q *Queries) ListPublishedEntriesForNavigation(ctx context.Context) ([]ListPublishedEntriesForNavigationRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPublishedEntriesForNavigation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublishedEntriesForNavigationRow{}
+	for rows.Next() {
+		var i ListPublishedEntriesForNavigationRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentTypeID,
+			&i.Title,
+			&i.Path,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPublishedPagesForNavigation = `-- name: ListPublishedPagesForNavigation :many
 SELECT e.id, r.title, rt.path
 FROM entries e

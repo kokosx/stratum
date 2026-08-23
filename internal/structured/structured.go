@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/seo"
 )
 
@@ -375,7 +376,9 @@ func pageTypeName(mode Mode) string {
 }
 
 func isPost(contentTypeID string) bool {
-	return strings.EqualFold(strings.TrimSpace(contentTypeID), "post")
+	def := content.DefinitionFor(strings.TrimSpace(contentTypeID))
+	// BlogPosting is the semantic for post-like types; WebPage for pages.
+	return def.SEO.SchemaType == "BlogPosting"
 }
 
 func canonicalURL(base string, pageInput Page) string {

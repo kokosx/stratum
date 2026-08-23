@@ -37,6 +37,7 @@ type Querier interface {
 	DeleteRoute(ctx context.Context, id string) error
 	DeleteSession(ctx context.Context, tokenHash string) error
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
+	GetArchiveRouteByContentType(ctx context.Context, contentTypeID sql.NullString) (Route, error)
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
 	GetContentType(ctx context.Context, id string) (ContentType, error)
 	GetContentTypeWithDefault(ctx context.Context, id string) (ContentType, error)
@@ -57,6 +58,7 @@ type Querier interface {
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
 	GetPublishedLayoutTemplateRevision(ctx context.Context, id string) (LayoutTemplateRevision, error)
 	GetRouteByPath(ctx context.Context, path string) (Route, error)
+	GetRouteByPathAndType(ctx context.Context, arg GetRouteByPathAndTypeParams) (Route, error)
 	GetSessionUser(ctx context.Context, tokenHash string) (GetSessionUserRow, error)
 	GetSiteIconMediaID(ctx context.Context) (sql.NullString, error)
 	GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, error)
@@ -65,6 +67,7 @@ type Querier interface {
 	GetTwitterSite(ctx context.Context) (string, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	HasAdmin(ctx context.Context) (bool, error)
+	ListArchiveRoutes(ctx context.Context) ([]Route, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
@@ -79,6 +82,7 @@ type Querier interface {
 	ListNavigationLocationsForMenu(ctx context.Context, menuID string) ([]string, error)
 	ListNavigationMenus(ctx context.Context) ([]NavigationMenu, error)
 	ListPublishedEntriesByContentType(ctx context.Context, arg ListPublishedEntriesByContentTypeParams) ([]ListPublishedEntriesByContentTypeRow, error)
+	ListPublishedEntriesForNavigation(ctx context.Context) ([]ListPublishedEntriesForNavigationRow, error)
 	ListPublishedLayoutTemplatesByContentType(ctx context.Context, contentTypeID string) ([]LayoutTemplate, error)
 	ListPublishedPagesForNavigation(ctx context.Context) ([]ListPublishedPagesForNavigationRow, error)
 	// Every redirect route whose target is the given path. Slug changes use this to

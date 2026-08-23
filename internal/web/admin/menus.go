@@ -18,6 +18,7 @@ type menusData struct {
 	Menus     []db.NavigationMenu
 	Selected  *db.NavigationMenu
 	Pages     []db.ListPublishedPagesForNavigationRow
+	Entries   []db.ListPublishedEntriesForNavigationRow // generic, grouped by content_type_id in template
 	Items     []menuItemData
 	Locations []locationData
 	Error     string
@@ -102,14 +103,15 @@ func (h *Handler) updateMenu(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case action == "add-entry":
-		pages, listErr := h.queries.ListPublishedPagesForNavigation(r.Context())
+		// Generic picker: any published, public, linkable entry (grouped by content type in UI).
+		entries, listErr := h.queries.ListPublishedEntriesForNavigation(r.Context())
 		if listErr != nil {
 			err = listErr
 			break
 		}
-		labels := make(map[string]string, len(pages))
-		for _, page := range pages {
-			labels[page.ID] = page.Title
+		labels := make(map[string]string, len(entries))
+		for _, e := range entries {
+			labels[e.ID] = e.Title
 		}
 		for _, entryID := range r.Form["add_entry_id"] {
 			if label, ok := labels[entryID]; ok {
@@ -249,6 +251,7 @@ func (h *Handler) populateMenuEditorData(r *http.Request, data *menusData, selec
 	if err != nil {
 		return err
 	}
+	data.Entries, _ = h.queries.ListPublishedEntriesForNavigation(r.Context())
 	assigned, err := h.queries.ListNavigationLocationsForMenu(r.Context(), selectedID)
 	if err != nil {
 		return err

@@ -1,7 +1,6 @@
 package layouts
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -31,14 +30,11 @@ func Compose(layoutDoc *document.Document, entryDoc *document.Document) (*docume
 		return nil, errors.New("entry document must not contain a Content Slot")
 	}
 
-	// Deep copy docs via JSON to avoid mutating inputs (preserves props/settings)
-	layoutCopy, err := deepCopy(layoutDoc)
-	if err != nil {
-		return nil, err
-	}
-	entryCopy, err := deepCopy(entryDoc)
-	if err != nil {
-		return nil, err
+	// Deep copy via document.Clone (correct, no mutation, preserves raw JSON).
+	layoutCopy := document.Clone(layoutDoc)
+	entryCopy := document.Clone(entryDoc)
+	if layoutCopy == nil || entryCopy == nil {
+		return nil, errors.New("failed to clone documents")
 	}
 
 	// Duplicate ID check: entry IDs vs template non-slot IDs.
@@ -116,24 +112,7 @@ func replace(nodes []document.Node, entryNodes []document.Node) ([]document.Node
 	return out, slots, nil
 }
 
-func cloneNodes(nodes []document.Node) []document.Node {
-	data, _ := json.Marshal(nodes)
-	var out []document.Node
-	_ = json.Unmarshal(data, &out)
-	return out
-}
-
-func deepCopy(doc *document.Document) (*document.Document, error) {
-	data, err := json.Marshal(doc)
-	if err != nil {
-		return nil, err
-	}
-	var out document.Document
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
+func cloneNodes(nodes []document.Node) []document.Node { return document.CloneNodes(nodes) }
 
 func countSlot(nodes []document.Node) int {
 	c := 0
