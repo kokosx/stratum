@@ -12,15 +12,18 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/routing"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/taxonomy"
 )
 
 var entrySlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
@@ -43,44 +46,79 @@ type layoutTemplateOption struct {
 	Name string
 }
 
+type taxonomyTermOption struct {
+	ID       string
+	Name     string
+	Slug     string
+	ParentID string
+	Depth    int
+}
+
+type taxonomyPanelData struct {
+	Taxonomy       taxonomyPanelTaxonomy
+	Terms          []taxonomyTermOption
+	AssignedIDs    map[string]bool
+	AssignedTagRaw string // comma-joined names for flat taxonomy
+}
+
+type taxonomyPanelTaxonomy struct {
+	ID           string
+	PluralName   string
+	SingularName string
+	Hierarchical bool
+}
+
 type entryFormData struct {
-	Heading         string
-	Action          string
-	PublishAction   string
-	BackURL         string
-	Title           string
-	Slug            string
-	Excerpt         string
-	SEOTitle        string
-	SEODescription  string
-	CanonicalURL    string
-	FeaturedMediaID string
-	SocialMediaID   string
-	RobotsIndex     string // "inherit" | "1" | "0"
-	RobotsFollow    string // "inherit" | "1" | "0"
-	SchemaMode      string // "" | disabled | webpage | aboutpage | contactpage
-	SiteURL         string
-	PublicPath      string
-	EntryID         string
-	DocumentJSON    string
-	EditorJSON      template.JS
-	Error           string
-	CSRFToken       string
-	Dirty           string
-	Status          string
-	PublicURL       string
-	ShowExcerpt     bool
-	ShowSEO         bool
-	ShowFeatured    bool
-	IsPostsPage     bool
-	PostsPagePath   string
-	PostsPageWarning string
+	Heading               string
+	Action                string
+	PublishAction         string
+	BackURL               string
+	Title                 string
+	Slug                  string
+	Excerpt               string
+	SEOTitle              string
+	SEODescription        string
+	CanonicalURL          string
+	FeaturedMediaID       string
+	SocialMediaID         string
+	RobotsIndex           string // "inherit" | "1" | "0"
+	RobotsFollow          string // "inherit" | "1" | "0"
+	SchemaMode            string // "" | disabled | webpage | aboutpage | contactpage
+	SiteURL               string
+	PublicPath            string
+	EntryID               string
+	DocumentJSON          string
+	EditorJSON            template.JS
+	Error                 string
+	CSRFToken             string
+	Dirty                 string
+	Status                string
+	PublicURL             string
+	ShowExcerpt           bool
+	ShowSEO               bool
+	ShowFeatured          bool
+	IsPostsPage           bool
+	PostsPagePath         string
+	PostsPageWarning      string
 	HasUnpublishedChanges bool
 	// Layout template selector
 	ContentTypeID       string
 	LayoutTemplateID    string
 	LayoutTemplates     []layoutTemplateOption
 	LayoutTemplateError string
+	TaxonomyPanels      []taxonomyPanelData
+	ParentEntryID       string
+	MenuOrder           int64
+	HierarchyParents    []hierarchyParentOption
+	HierarchyWarning    string
+	Hierarchical        bool
+}
+
+type hierarchyParentOption struct {
+	ID    string
+	Title string
+	Label string
+	Depth int
 }
 
 // editorStatusView holds the values rendered into the editor status region via
@@ -106,6 +144,9 @@ type entryInput struct {
 	schemaMode       string
 	documentJSON     string
 	layoutTemplateID string
+	TermIDs          []string
+	parentEntryID    string
+	menuOrder        int64
 }
 
 // renderEntryForm bootstraps the shared block editor and renders the common
@@ -133,6 +174,10 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 			data.LayoutTemplateID = ct.DefaultLayoutTemplateID.String
 		}
 	}
+	if content.DefinitionFor(data.ContentTypeID).Capabilities.Hierarchical {
+		data.Hierarchical = true
+		data.HierarchyParents, data.HierarchyWarning = h.hierarchyParentOptions(r.Context(), data.ContentTypeID, data.EntryID, data.ParentEntryID)
+	}
 	// Validate current selection: if it refers to unavailable template, surface warning
 	if data.LayoutTemplateID != "" {
 		found := false
@@ -157,6 +202,73 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 			}
 		}
 	}
+	// Taxonomy panels: generic by content type (no if contentType=="post")
+	if len(data.TaxonomyPanels) == 0 && data.ContentTypeID != "" {
+		if taxRows, err := h.queries.ListTaxonomiesByContentType(r.Context(), data.ContentTypeID); err == nil {
+			// assigned term IDs from latest revision
+			assigned := map[string]bool{}
+			assignedTagNames := map[string][]string{}
+			if data.EntryID != "" {
+				if rev, err := h.queries.GetLatestEntryRevision(r.Context(), data.EntryID); err == nil {
+					if termRows, err := h.queries.ListTermsForRevision(r.Context(), rev.ID); err == nil {
+						for _, tr := range termRows {
+							assigned[tr.ID] = true
+						}
+					}
+				}
+			}
+			// Also consider posted TermIDs if present (error re-render): data.TermIDs already?
+			// For re-render after validation error, entryInput.TermIDs may be in data? We pass via data? Not yet, but we can use map.
+			panels := make([]taxonomyPanelData, 0, len(taxRows))
+			for _, tax := range taxRows {
+				terms, _ := h.queries.ListTermsByTaxonomy(r.Context(), tax.ID)
+				termOpts := make([]taxonomyTermOption, 0, len(terms))
+				termMap := map[string]taxonomyTermOption{}
+				for _, t := range terms {
+					termMap[t.ID] = taxonomyTermOption{ID: t.ID, Name: t.Name, Slug: t.Slug, ParentID: t.ParentID.String}
+				}
+				// compute depth
+				for _, t := range terms {
+					depth := 0
+					cur := t.ParentID
+					visited := map[string]bool{}
+					for cur.Valid {
+						if visited[cur.String] {
+							break
+						}
+						visited[cur.String] = true
+						depth++
+						if depth > 10 {
+							break
+						}
+						if p, ok := termMap[cur.String]; ok && p.ParentID != "" {
+							cur = sql.NullString{String: p.ParentID, Valid: true}
+						} else {
+							break
+						}
+					}
+					termOpts = append(termOpts, taxonomyTermOption{ID: t.ID, Name: t.Name, Slug: t.Slug, ParentID: t.ParentID.String, Depth: depth})
+				}
+				// For flat taxonomy, build comma-joined assigned names
+				assignedRaw := ""
+				if tax.Hierarchical == 0 {
+					var names []string
+					for _, t := range terms {
+						if assigned[t.ID] {
+							names = append(names, t.Name)
+						}
+					}
+					assignedRaw = strings.Join(names, ", ")
+					assignedTagNames[tax.ID] = names
+				}
+				panels = append(panels, taxonomyPanelData{
+					Taxonomy: taxonomyPanelTaxonomy{ID: tax.ID, PluralName: tax.PluralName, SingularName: tax.SingularName, Hierarchical: tax.Hierarchical != 0},
+					Terms:    termOpts, AssignedIDs: assigned, AssignedTagRaw: assignedRaw,
+				})
+			}
+			data.TaxonomyPanels = panels
+		}
+	}
 	doc, err := document.Decode([]byte(data.DocumentJSON))
 	if err != nil {
 		log.Printf("prepare editor document: %v", err)
@@ -173,9 +285,53 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	// encoding/json escapes '<', '>' and '&', so this cannot terminate the script element.
 	data.EditorJSON = template.JS(bootstrap)
 	data.CSRFToken = token
-	if err := h.entryTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: activeMenu, CSRFToken: token, Content: data}); err != nil {
+	state := ResolveNav(r.URL.Path)
+	if err := h.entryTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: activeMenu, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render entry form: %v", err)
 	}
+}
+
+func (h *Handler) hierarchyParentOptions(ctx context.Context, contentTypeID, entryID, selectedParentID string) ([]hierarchyParentOption, string) {
+	rows, err := h.queries.ListLatestHierarchyForContentType(ctx, contentTypeID)
+	if err != nil {
+		return nil, "Could not load the page hierarchy."
+	}
+	nodes := make([]content.HierarchyNode, 0, len(rows))
+	status := make(map[string]string, len(rows))
+	for _, row := range rows {
+		parent := ""
+		if row.ParentEntryID.Valid {
+			parent = row.ParentEntryID.String
+		}
+		nodes = append(nodes, content.HierarchyNode{EntryID: row.EntryID, Slug: row.Slug, ParentEntryID: parent, MenuOrder: row.MenuOrder, Title: row.Title})
+		status[row.EntryID] = row.Status
+	}
+	tree, err := content.NewHierarchy(nodes)
+	if err != nil {
+		return nil, "The current page hierarchy is invalid; choose a different parent."
+	}
+	excluded := map[string]bool{entryID: true}
+	for _, descendant := range tree.Descendants(entryID) {
+		excluded[descendant.EntryID] = true
+	}
+	settings, _ := h.queries.GetSiteSettings(ctx)
+	var options []hierarchyParentOption
+	for _, node := range nodes {
+		if excluded[node.EntryID] || status[node.EntryID] == "trash" || (settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == node.EntryID) {
+			continue
+		}
+		depth := tree.Depth(node.EntryID)
+		options = append(options, hierarchyParentOption{ID: node.EntryID, Title: node.Title, Label: strings.Repeat("— ", depth) + node.Title, Depth: depth})
+	}
+	for _, option := range options {
+		if option.ID == selectedParentID {
+			return options, ""
+		}
+	}
+	if selectedParentID != "" {
+		return options, "The currently selected parent is no longer valid. Choose a different parent before saving."
+	}
+	return options, ""
 }
 
 func (h *Handler) loadLayoutTemplateOptions(ctx context.Context, contentTypeID string) []layoutTemplateOption {
@@ -256,6 +412,14 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	}
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
+	settings, err := qtx.GetSiteSettings(ctx)
+	if err != nil {
+		return fmt.Errorf("load site settings: %w", err)
+	}
+	isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entryID
+	if err := validateHierarchyInput(ctx, qtx, contentType, entryID, input.parentEntryID, input.menuOrder, isPostsPage, settings.PostsPageEntryID); err != nil {
+		return err
+	}
 
 	revisionNumber := int64(1)
 	if create {
@@ -297,9 +461,30 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		Excerpt: excerpt, SeoTitle: seoTitle, SeoDescription: seoDescription, CanonicalUrl: canonicalURL,
 		FeaturedMediaID: featuredMediaID, SocialMediaID: socialMediaID,
 		SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
-		LayoutTemplateID: layoutTemplateID, DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
+		LayoutTemplateID: layoutTemplateID, ParentEntryID: nullableString(input.parentEntryID), MenuOrder: input.menuOrder,
+		DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
 	}); err != nil {
 		return fmt.Errorf("create entry revision: %w", err)
+	}
+	// Revision-scoped taxonomy assignments (must be inside same tx, fails atomically)
+	{
+		dedup := make(map[string]struct{}, len(input.TermIDs))
+		for _, tid := range input.TermIDs {
+			tid = strings.TrimSpace(tid)
+			if tid == "" {
+				continue
+			}
+			if _, ok := dedup[tid]; ok {
+				continue
+			}
+			dedup[tid] = struct{}{}
+			if _, err := qtx.GetTerm(ctx, tid); err != nil {
+				return fmt.Errorf("invalid term %s: %w", tid, err)
+			}
+			if err := qtx.SetTermsForRevision(ctx, db.SetTermsForRevisionParams{RevisionID: revisionID, TermID: tid}); err != nil {
+				return fmt.Errorf("set term %s: %w", tid, err)
+			}
+		}
 	}
 	if publish {
 		// Validate posts-page shell: only one paginated archive Posts block.
@@ -307,7 +492,6 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 			return err
 		}
 		// Central routing policy: compute the public path via routing.EntryPath.
-		settings, _ := qtx.GetSiteSettings(ctx)
 		postsBase := ""
 		if settings.PostsBasePath != "" {
 			postsBase = settings.PostsBasePath
@@ -318,7 +502,6 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		// Publishing the shell must atomically move the archive route, redirect the old
 		// archive, update posts_base_path, and remap post singles so the new slug is
 		// live without a separate Settings save (P0 correctness).
-		isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entryID
 		if isPostsPage && contentType == "page" {
 			oldBase := settings.PostsBasePath
 			if oldBase == "" {
@@ -334,6 +517,13 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 				}
 			}
 			// Archive shell has no entry-type route; its public presence is the archive route.
+		} else if content.DefinitionFor(contentType).Capabilities.Hierarchical {
+			if _, err := routing.SyncHierarchyPublish(ctx, qtx, routing.HierarchyEntry{
+				EntryID: entryID, ContentTypeID: contentType, Slug: input.slug, Status: "active", Title: input.title,
+				ParentEntryID: input.parentEntryID, MenuOrder: input.menuOrder,
+			}, now); err != nil {
+				return err
+			}
 		} else {
 			if err := h.upsertEntryRoute(ctx, qtx, entryID, computedPath, now); err != nil {
 				return err
@@ -369,120 +559,65 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 }
 
 func (h *Handler) upsertEntryRoute(ctx context.Context, queries *db.Queries, entryID, path string, now int64) error {
-	// The entry configured as the homepage is always served at "/", regardless
-	// of its slug; applyHomepageRoute owns that mapping. Pinning here also
-	// self-heals a homepage that an earlier publish moved to /<slug>: the stale
-	// redirect occupying "/" below is deleted and the route returns to "/".
-	if settings, err := queries.GetSiteSettings(ctx); err == nil && settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entryID {
-		path = "/"
-	}
-	if path != "/" && reservedSlugs[strings.TrimPrefix(path, "/")] {
-		return errors.New("this slug is reserved for a core Stratum endpoint")
-	}
-	// Reject the new slug only when it is occupied by a different entry. A
-	// pre-existing redirect route at this path (left behind by an earlier slug
-	// change) is safe to reclaim.
-	byPath, err := queries.GetRouteByPath(ctx, path)
-	if err == nil && byPath.EntryID.Valid && byPath.EntryID.String != entryID {
-		return errors.New("a route already uses this slug")
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check entry route: %w", err)
-	}
-	// If the new path holds a stale redirect (from an earlier slug change),
-	// drop it so the entry owns the path cleanly.
-	if err == nil && !byPath.EntryID.Valid {
-		if delErr := queries.DeleteRoute(ctx, byPath.ID); delErr != nil {
-			return fmt.Errorf("clear stale redirect: %w", delErr)
-		}
-	}
-
-	route, err := queries.GetEntryRoute(ctx, sql.NullString{String: entryID, Valid: true})
-	if errors.Is(err, sql.ErrNoRows) {
-		routeID, idErr := randomID()
-		if idErr != nil {
-			return idErr
-		}
-		return queries.CreateRoute(ctx, db.CreateRouteParams{ID: routeID, Path: path, EntryID: sql.NullString{String: entryID, Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now})
-	}
-	if err != nil {
-		return fmt.Errorf("get entry route: %w", err)
-	}
-	if route.Path == path {
-		return nil
-	}
-
-	oldPath := route.Path
-	// Move the live entry route to the new path first. This frees the old path
-	// so the redirect below becomes its own row instead of clobbering the entry
-	// route.
-	if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{ID: route.ID, Path: path, EntryID: sql.NullString{String: entryID, Valid: true}, RouteType: "entry", UpdatedAt: now}); err != nil {
-		return fmt.Errorf("move entry route: %w", err)
-	}
-	// Keep the old path as a 301 redirect to the new one so existing links and
-	// search indexes keep working.
-	return h.upsertRedirectRoute(ctx, queries, oldPath, path, now)
+	return routing.UpsertEntryRoute(ctx, queries, entryID, path, now)
 }
 
-// upsertRedirectRoute records (or refreshes) a 301 redirect from source to
-// target. It always uses its own route row so it never clobbers the entry's
-// live route.
-//
-// Redirect history is kept flat, never chained: before writing source→target,
-// every existing redirect that pointed at source is retargeted straight to
-// target. If an entry moved A→B earlier (A→B on record) and now moves B→C,
-// the result is A→C and B→C — not A→B→C.
-func (h *Handler) upsertRedirectRoute(ctx context.Context, queries *db.Queries, source, target string, now int64) error {
-	// Retarget inbound redirects of the old target directly to the new one.
-	inbound, err := queries.ListRedirectsToTarget(ctx, sql.NullString{String: source, Valid: true})
+func validateHierarchyInput(ctx context.Context, q *db.Queries, contentType, entryID, parentEntryID string, menuOrder int64, isPostsPage bool, postsPageID sql.NullString) error {
+	def := content.DefinitionFor(contentType)
+	if !def.Capabilities.Hierarchical {
+		if parentEntryID != "" {
+			return errors.New("this content type does not support a parent")
+		}
+		return nil
+	}
+	if menuOrder < 0 {
+		return errors.New("order must be a non-negative integer")
+	}
+	if isPostsPage && parentEntryID != "" {
+		return errors.New("the Posts Page cannot have a parent")
+	}
+	if parentEntryID != "" && postsPageID.Valid && parentEntryID == postsPageID.String {
+		return errors.New("the Posts Page cannot be selected as a parent")
+	}
+	rows, err := q.ListLatestHierarchyForContentType(ctx, contentType)
 	if err != nil {
-		return fmt.Errorf("list redirects to %s: %w", source, err)
+		return err
 	}
-	for _, inboundRoute := range inbound {
-		if inboundRoute.Path == target {
-			continue
+	nodes := make([]content.HierarchyNode, 0, len(rows))
+	parentFound := parentEntryID == ""
+	for _, row := range rows {
+		parent := ""
+		if row.ParentEntryID.Valid {
+			parent = row.ParentEntryID.String
 		}
-		if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
-			ID:             inboundRoute.ID,
-			Path:           inboundRoute.Path,
-			EntryID:        sql.NullString{},
-			RouteType:      "redirect",
-			RedirectTo:     sql.NullString{String: target, Valid: true},
-			RedirectStatus: sql.NullInt64{Int64: http.StatusMovedPermanently, Valid: true},
-			UpdatedAt:      now,
-		}); err != nil {
-			return fmt.Errorf("flatten redirect chain %s: %w", inboundRoute.Path, err)
+		if row.EntryID == entryID {
+			parent = parentEntryID
 		}
+		if row.EntryID == parentEntryID {
+			if row.Status == "trash" {
+				return errors.New("the selected parent is in Trash")
+			}
+			parentFound = true
+		}
+		nodes = append(nodes, content.HierarchyNode{EntryID: row.EntryID, Slug: row.Slug, ParentEntryID: parent, MenuOrder: row.MenuOrder, Title: row.Title})
 	}
-	existing, err := queries.GetRouteByPath(ctx, source)
-	if err == nil {
-		return queries.UpdateRoute(ctx, db.UpdateRouteParams{
-			ID:             existing.ID,
-			Path:           source,
-			EntryID:        sql.NullString{},
-			RouteType:      "redirect",
-			RedirectTo:     sql.NullString{String: target, Valid: true},
-			RedirectStatus: sql.NullInt64{Int64: http.StatusMovedPermanently, Valid: true},
-			UpdatedAt:      now,
-		})
+	if !parentFound {
+		return errors.New("the selected parent does not exist in this content type")
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check redirect route: %w", err)
+	_, err = content.NewHierarchy(nodes)
+	return err
+}
+
+func nullableString(value string) sql.NullString {
+	if value == "" {
+		return sql.NullString{}
 	}
-	routeID, idErr := randomID()
-	if idErr != nil {
-		return idErr
-	}
-	return queries.CreateRoute(ctx, db.CreateRouteParams{
-		ID:             routeID,
-		Path:           source,
-		EntryID:        sql.NullString{},
-		RouteType:      "redirect",
-		RedirectTo:     sql.NullString{String: target, Valid: true},
-		RedirectStatus: sql.NullInt64{Int64: http.StatusMovedPermanently, Valid: true},
-		CreatedAt:      now,
-		UpdatedAt:      now,
-	})
+	return sql.NullString{String: value, Valid: true}
+}
+
+// upsertRedirectRoute delegates to routing subsystem so taxonomy slug changes reuse the same flattening logic.
+func (h *Handler) upsertRedirectRoute(ctx context.Context, queries *db.Queries, source, target string, now int64) error {
+	return routing.UpsertRedirectRoute(ctx, queries, source, target, now)
 }
 
 func (h *Handler) entryAndLatestRevision(ctx context.Context, entryID, contentType string) (db.Entry, db.EntryRevision, error) {
@@ -504,27 +639,37 @@ func (h *Handler) currentUser(r *http.Request) (auth.User, error) {
 
 func readEntryInput(r *http.Request) (entryInput, error) {
 	input := entryInput{
-			title:            strings.TrimSpace(r.FormValue("title")),
-			slug:             strings.TrimSpace(r.FormValue("slug")),
-			excerpt:          strings.TrimSpace(r.FormValue("excerpt")),
-			seoTitle:         strings.TrimSpace(r.FormValue("seo_title")),
-			seoDescription:   strings.TrimSpace(r.FormValue("seo_description")),
-			canonicalURL:     strings.TrimSpace(r.FormValue("canonical_url")),
-			featuredMediaID:  strings.TrimSpace(r.FormValue("featured_media_id")),
-			socialMediaID:    strings.TrimSpace(r.FormValue("social_media_id")),
-			robotsIndex:      parseRobotsOverride(r.FormValue("seo_robots_index")),
-			robotsFollow:     parseRobotsOverride(r.FormValue("seo_robots_follow")),
-			schemaMode:       strings.TrimSpace(r.FormValue("schema_mode")),
-			documentJSON:     postedDocument(r),
-			layoutTemplateID: strings.TrimSpace(r.FormValue("layout_template_id")),
+		title:            strings.TrimSpace(r.FormValue("title")),
+		slug:             strings.TrimSpace(r.FormValue("slug")),
+		excerpt:          strings.TrimSpace(r.FormValue("excerpt")),
+		seoTitle:         strings.TrimSpace(r.FormValue("seo_title")),
+		seoDescription:   strings.TrimSpace(r.FormValue("seo_description")),
+		canonicalURL:     strings.TrimSpace(r.FormValue("canonical_url")),
+		featuredMediaID:  strings.TrimSpace(r.FormValue("featured_media_id")),
+		socialMediaID:    strings.TrimSpace(r.FormValue("social_media_id")),
+		robotsIndex:      parseRobotsOverride(r.FormValue("seo_robots_index")),
+		robotsFollow:     parseRobotsOverride(r.FormValue("seo_robots_follow")),
+		schemaMode:       strings.TrimSpace(r.FormValue("schema_mode")),
+		documentJSON:     postedDocument(r),
+		layoutTemplateID: strings.TrimSpace(r.FormValue("layout_template_id")),
+		parentEntryID:    strings.TrimSpace(r.FormValue("parent_entry_id")),
+	}
+	if raw := strings.TrimSpace(r.FormValue("menu_order")); raw != "" {
+		order, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || order < 0 {
+			return input, errors.New("order must be a non-negative integer")
 		}
+		input.menuOrder = order
+	}
 	if input.title == "" {
 		return input, errors.New("title is required")
 	}
 	if !entrySlugPattern.MatchString(input.slug) {
 		return input, errors.New("slug may contain lowercase letters, numbers, and hyphens only")
 	}
-	if reservedSlugs[input.slug] {
+	// A reserved segment is only unsafe at the root. Hierarchical children such
+	// as /company/admin are valid; publish validates the final public path.
+	if input.parentEntryID == "" && reservedSlugs[input.slug] {
 		return input, errors.New("this slug is reserved for a core Stratum endpoint")
 	}
 	if !validCanonicalURL(input.canonicalURL) {
@@ -534,6 +679,124 @@ func readEntryInput(r *http.Request) (entryInput, error) {
 		return input, errors.New("document is required")
 	}
 	return input, nil
+}
+
+func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request, contentType string) ([]string, error) {
+	// Generic: list taxonomies for content type, then collect assignments
+	taxRows, err := h.queries.ListTaxonomiesByContentType(ctx, contentType)
+	if err != nil {
+		return nil, nil
+	}
+	svc := taxonomy.New(h.database, h.queries)
+	var out []string
+	seen := map[string]bool{}
+	for _, tax := range taxRows {
+		key := "taxonomy_" + tax.ID
+		if tax.Hierarchical != 0 {
+			ids := r.Form[key]
+			// also handle single value via FormValue? r.Form already contains all
+			if len(ids) == 0 {
+				// try FormValue comma? but hierarchical expects checkboxes, so just check PostForm
+				if v := r.FormValue(key); v != "" {
+					ids = strings.Split(v, ",")
+				}
+			}
+			for _, id := range ids {
+				id = strings.TrimSpace(id)
+				if id == "" {
+					continue
+				}
+				if seen[id] {
+					continue
+				}
+				// validate term exists and belongs to taxonomy
+				t, err := h.queries.GetTerm(ctx, id)
+				if err != nil {
+					return nil, fmt.Errorf("invalid term %s", id)
+				}
+				if t.TaxonomyID != tax.ID {
+					return nil, fmt.Errorf("term %s does not belong to %s", id, tax.ID)
+				}
+				seen[id] = true
+				out = append(out, id)
+			}
+		} else {
+			raw := strings.TrimSpace(r.FormValue(key))
+			if raw == "" {
+				continue
+			}
+			parts := strings.Split(raw, ",")
+			for _, p := range parts {
+				name := strings.TrimSpace(p)
+				if name == "" {
+					continue
+				}
+				// deduplicate case-insensitively
+				lower := strings.ToLower(name)
+				if seen[lower+"_tag"] {
+					continue
+				}
+				// try slug lookup
+				slug := taxonomySlugify(name)
+				if t, err := h.queries.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: tax.ID, Slug: slug}); err == nil {
+					if !seen[t.ID] {
+						seen[t.ID] = true
+						seen[lower+"_tag"] = true
+						out = append(out, t.ID)
+					}
+					continue
+				}
+				// create missing tag
+				created, err := svc.CreateTerm(ctx, tax.ID, name, slug, "", "")
+				if err != nil {
+					// if duplicate race, fetch again
+					if t, err2 := h.queries.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: tax.ID, Slug: slug}); err2 == nil {
+						if !seen[t.ID] {
+							seen[t.ID] = true
+							out = append(out, t.ID)
+						}
+						continue
+					}
+					return nil, err
+				}
+				if !seen[created.ID] {
+					seen[created.ID] = true
+					seen[lower+"_tag"] = true
+					out = append(out, created.ID)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func taxonomySlugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevDash = false
+		} else if r == '-' {
+			if !prevDash {
+				b.WriteRune('-')
+				prevDash = true
+			}
+		} else {
+			if !prevDash {
+				b.WriteRune('-')
+				prevDash = true
+			}
+		}
+	}
+	res := strings.Trim(b.String(), "-")
+	if res == "" {
+		res = "tag"
+	}
+	return res
 }
 
 // validCanonicalURL accepts an empty value, an absolute http(s) URL, or a

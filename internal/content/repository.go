@@ -31,13 +31,66 @@ func (r *Repository) Get(ctx context.Context, id string) (Entry, error) {
 	}, nil
 }
 
-// QueryPublished executes a normalized EntryQuery against the stable
-// ListPublishedEntriesByContentType shapes. Two shapes are used (DESC/ASC) so
-// the order is pushed to SQL, never built dynamically.
+// QueryPublished executes a normalized EntryQuery against stable prepared shapes.
+// If TermID is set, it uses the term-filtered variant that JOINs via published_revision_id.
 func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]PublishedEntry, error) {
 	q = q.Normalized()
 	if err := q.Validate(); err != nil {
 		return nil, err
+	}
+	if q.TermID != "" {
+		if q.Order == "published_asc" {
+			rows, err := r.queries.ListPublishedEntriesByTermAsc(ctx, db.ListPublishedEntriesByTermAscParams{
+				TermID:        q.TermID,
+				ContentTypeID: string(q.ContentType),
+				Limit:         int64(q.Limit + len(q.ExcludeIDs) + 5),
+				Offset:        int64(q.Offset),
+			})
+			if err != nil {
+				return nil, err
+			}
+			out := make([]PublishedEntry, 0, len(rows))
+			for _, row := range rows {
+				if contains(q.ExcludeIDs, row.ID) {
+					continue
+				}
+				out = append(out, PublishedEntry{
+					ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
+					Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
+					FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
+					PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+				})
+				if len(out) >= q.Limit {
+					break
+				}
+			}
+			return out, nil
+		}
+		rows, err := r.queries.ListPublishedEntriesByTerm(ctx, db.ListPublishedEntriesByTermParams{
+			TermID:        q.TermID,
+			ContentTypeID: string(q.ContentType),
+			Limit:         int64(q.Limit + len(q.ExcludeIDs) + 5),
+			Offset:        int64(q.Offset),
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]PublishedEntry, 0, len(rows))
+		for _, row := range rows {
+			if contains(q.ExcludeIDs, row.ID) {
+				continue
+			}
+			out = append(out, PublishedEntry{
+				ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
+				Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
+				FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
+				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+			})
+			if len(out) >= q.Limit {
+				break
+			}
+		}
+		return out, nil
 	}
 	if q.Order == "published_asc" {
 		rows, err := r.queries.ListPublishedEntriesByContentTypeAsc(ctx, db.ListPublishedEntriesByContentTypeAscParams{
@@ -94,6 +147,11 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 // CountPublished returns the count of published entries for a type.
 func (r *Repository) CountPublished(ctx context.Context, ct ContentTypeID) (int64, error) {
 	return r.queries.CountPublishedEntriesByContentType(ctx, string(ct))
+}
+
+// CountPublishedByTerm returns count for term-filtered published entries.
+func (r *Repository) CountPublishedByTerm(ctx context.Context, ct ContentTypeID, termID string) (int64, error) {
+	return r.queries.ListPublishedEntriesByTermCount(ctx, db.ListPublishedEntriesByTermCountParams{TermID: termID, ContentTypeID: string(ct)})
 }
 
 func contains(ids []string, needle string) bool {

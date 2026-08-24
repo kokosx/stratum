@@ -9,6 +9,18 @@ import (
 
 const wantNoindex = "noindex, nofollow"
 
+func TestAdminResponsesAreNotStored(t *testing.T) {
+	handler, _ := newTestHandler(t)
+
+	for _, path := range []string{"/admin", "/admin/login", "/admin/settings/general"} {
+		rec := httptest.NewRecorder()
+		handler.Routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("GET %s Cache-Control = %q, want %q", path, got, "no-store")
+		}
+	}
+}
+
 // TestAdminResponsesCarryNoindexHeader verifies every admin response —
 // including auth redirects — is marked noindex, nofollow via X-Robots-Tag.
 // robots.txt is a crawler convention, not a security mechanism; the header

@@ -49,6 +49,8 @@ type Entry struct {
 	PublishedAt         sql.NullInt64  `json:"published_at"`
 	FeaturedMediaID     sql.NullString `json:"featured_media_id"`
 	FirstPublishedAt    sql.NullInt64  `json:"first_published_at"`
+	StatusBeforeTrash   sql.NullString `json:"status_before_trash"`
+	TrashedAt           sql.NullInt64  `json:"trashed_at"`
 }
 
 type EntryRevision struct {
@@ -69,6 +71,13 @@ type EntryRevision struct {
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 	SchemaMode       string         `json:"schema_mode"`
 	LayoutTemplateID sql.NullString `json:"layout_template_id"`
+	ParentEntryID    sql.NullString `json:"parent_entry_id"`
+	MenuOrder        int64          `json:"menu_order"`
+}
+
+type EntryRevisionTerm struct {
+	RevisionID string `json:"revision_id"`
+	TermID     string `json:"term_id"`
 }
 
 type LayoutTemplate struct {
@@ -156,6 +165,8 @@ type Route struct {
 	CreatedAt      int64          `json:"created_at"`
 	UpdatedAt      int64          `json:"updated_at"`
 	ContentTypeID  sql.NullString `json:"content_type_id"`
+	TaxonomyID     sql.NullString `json:"taxonomy_id"`
+	TermID         sql.NullString `json:"term_id"`
 }
 
 type Session struct {
@@ -193,6 +204,29 @@ type SiteSetting struct {
 	TwitterSite          string         `json:"twitter_site"`
 	SiteRepresents       string         `json:"site_represents"`
 	PostsBasePath        string         `json:"posts_base_path"`
+}
+
+type Taxonomy struct {
+	ID            string         `json:"id"`
+	ContentTypeID string         `json:"content_type_id"`
+	SingularName  string         `json:"singular_name"`
+	PluralName    string         `json:"plural_name"`
+	Hierarchical  int64          `json:"hierarchical"`
+	Public        int64          `json:"public"`
+	RouteBase     sql.NullString `json:"route_base"`
+	CreatedAt     int64          `json:"created_at"`
+	UpdatedAt     int64          `json:"updated_at"`
+}
+
+type Term struct {
+	ID          string         `json:"id"`
+	TaxonomyID  string         `json:"taxonomy_id"`
+	ParentID    sql.NullString `json:"parent_id"`
+	Name        string         `json:"name"`
+	Slug        string         `json:"slug"`
+	Description string         `json:"description"`
+	CreatedAt   int64          `json:"created_at"`
+	UpdatedAt   int64          `json:"updated_at"`
 }
 
 type ThemeCustomization struct {

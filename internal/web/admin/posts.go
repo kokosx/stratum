@@ -40,6 +40,12 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Excerpt: r.FormValue("excerpt"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: postContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: err.Error(), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
 		return
 	}
+	termIDs, terr := h.taxonomyTermIDsForRequest(r.Context(), r, postContentType)
+	if terr != nil {
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: input.title, Slug: input.slug, Excerpt: input.excerpt, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: postContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: terr.Error(), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
+		return
+	}
+	input.TermIDs = termIDs
 	user, err := h.currentUser(r)
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)

@@ -43,6 +43,43 @@
       <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
     </div>
   </header>
+  {{ if .Content.Hierarchical }}
+  <section class="panel" style="margin:12px 0;padding:16px;">
+    <h3 style="margin:0 0 8px;">Page Attributes</h3>
+    <label class="form-field">Parent
+      <select name="parent_entry_id" {{ if .Content.IsPostsPage }}disabled{{ end }}>
+        <option value="">No parent</option>
+        {{ range .Content.HierarchyParents }}<option value="{{ .ID }}" {{ if eq $.Content.ParentEntryID .ID }}selected{{ end }}>{{ .Label }}</option>{{ end }}
+      </select>
+    </label>
+    <label class="form-field">Order<input type="number" name="menu_order" min="0" step="1" value="{{ .Content.MenuOrder }}"></label>
+    {{ if .Content.IsPostsPage }}<p class="field-desc">The Posts Page cannot have a parent and cannot be used as a parent.</p>{{ end }}
+    {{ if .Content.HierarchyWarning }}<p class="form-warning" role="alert">{{ .Content.HierarchyWarning }}</p>{{ end }}
+  </section>
+  {{ end }}
+  {{ range .Content.TaxonomyPanels }}
+  {{ $panel := . }}
+  <div class="panel taxonomy-panel" style="margin:12px 0;padding:16px;">
+    <h3 style="margin:0 0 8px;">{{ $panel.Taxonomy.PluralName }}</h3>
+    {{ if $panel.Taxonomy.Hierarchical }}
+      <div class="taxonomy-hierarchy">
+        {{ range $panel.Terms }}
+          <label class="check-row" style="margin-left:{{ multiply .Depth 16 }}px">
+            <input type="checkbox" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ .ID }}" {{ if index $panel.AssignedIDs .ID }}checked{{ end }}>
+            {{ .Name }} <small class="muted">({{ .Slug }})</small>
+          </label>
+        {{ end }}
+        {{ if eq (len $panel.Terms) 0 }}<p class="muted">No {{ $panel.Taxonomy.PluralName }} yet. <a href="{{ if eq $panel.Taxonomy.ID "category" }}/admin/posts/categories{{ else }}/admin/posts/tags{{ end }}">Manage</a></p>{{ end }}
+      </div>
+    {{ else }}
+      <div class="form-field">
+        <label for="taxonomy-{{ $panel.Taxonomy.ID }}">Add {{ $panel.Taxonomy.PluralName }}</label>
+        <input type="text" id="taxonomy-{{ $panel.Taxonomy.ID }}" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ $panel.AssignedTagRaw }}" placeholder="comma separated">
+        <p class="field-desc">Separate with commas. Example: go, cms, performance</p>
+      </div>
+    {{ end }}
+  </div>
+  {{ end }}
   <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
   {{ if .Content.IsPostsPage }}<div class="posts-page-badge" style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;margin:12px 0;display:flex;gap:12px;align-items:center;"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Public archive: {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
   {{ if .Content.HasUnpublishedChanges }}<div class="unpublished-badge" style="padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;margin:12px 0;"><strong>Unpublished changes</strong><span> — Public archive is using the previously published revision.</span> {{ if .Content.PublicURL }}<a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a>{{ end }}</div>{{ end }}

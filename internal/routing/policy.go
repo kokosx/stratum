@@ -59,6 +59,21 @@ func EntryPath(contentTypeID, slug, postsBasePath string) string {
 	return "/" + s
 }
 
+// ChildEntryPath derives a child path from the parent's effective public route.
+// In particular, a Homepage parent at "/" does not leak its stored slug into a
+// child's URL.
+func ChildEntryPath(parentPath, slug string) string {
+	parentPath = NormalizePath(parentPath)
+	slug = strings.Trim(slug, "/")
+	if slug == "" {
+		return parentPath
+	}
+	if parentPath == "/" {
+		return "/" + slug
+	}
+	return NormalizePath(parentPath + "/" + slug)
+}
+
 // PaginatedPath returns the canonical path for page n of an archive at path.
 // Page 1 is the archive itself and later pages live under /page/N.
 func PaginatedPath(path string, page int) string {
@@ -162,4 +177,51 @@ func ContentTypeForArchive(path string, postsBasePath string, homepageMode strin
 		return "post"
 	}
 	return ""
+}
+
+// TaxonomyTermPath is central taxonomy path builder (DO NOT construct "/category/"+slug in handlers).
+func TaxonomyTermPath(routeBase, termSlug string) string {
+	base := NormalizePath(strings.TrimSpace(routeBase))
+	if base == "" || base == "/" {
+		base = "/category"
+	}
+	slug := strings.Trim(strings.ToLower(strings.TrimSpace(termSlug)), "/")
+	if slug == "" {
+		return base
+	}
+	if base == "/" {
+		return "/" + slug
+	}
+	return NormalizePath(base + "/" + slug)
+}
+
+// ValidateTermSlug validates a term slug.
+func ValidateTermSlug(slug string) error {
+	slug = strings.TrimSpace(strings.ToLower(slug))
+	if slug == "" {
+		return errors.New("slug is required")
+	}
+	// same pattern as entry slugs
+	for _, ch := range slug {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
+			continue
+		}
+		return errors.New("slug may contain lowercase letters, numbers, and hyphens only")
+	}
+	if strings.HasPrefix(slug, "-") || strings.HasSuffix(slug, "-") || strings.Contains(slug, "--") {
+		// allow simple check; stricter pattern is enforced by NormalizeSlug
+	}
+	if slug == "admin" || slug == "stratum" || slug == "sitemap.xml" || slug == "robots.txt" || slug == "feed.xml" {
+		return errors.New("slug is reserved")
+	}
+	return nil
+}
+
+// ValidateTaxonomyRouteBase validates a taxonomy route_base.
+func ValidateTaxonomyRouteBase(base string) error {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return errors.New("route base must not be empty")
+	}
+	return ValidatePostsBasePath(base) // reuse same strict rules; category/tag both pass
 }

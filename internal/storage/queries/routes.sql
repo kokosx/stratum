@@ -20,13 +20,13 @@ LIMIT 1;
 
 -- name: CreateRoute :exec
 INSERT INTO routes (
-    id, path, entry_id, route_type, content_type_id, redirect_to, redirect_status, created_at, updated_at
+    id, path, entry_id, route_type, content_type_id, taxonomy_id, term_id, redirect_to, redirect_status, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateRoute :exec
 UPDATE routes
-SET path = ?, entry_id = ?, route_type = ?, content_type_id = ?, redirect_to = ?, redirect_status = ?, updated_at = ?
+SET path = ?, entry_id = ?, route_type = ?, content_type_id = ?, taxonomy_id = ?, term_id = ?, redirect_to = ?, redirect_status = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetArchiveRouteByContentType :one
@@ -59,3 +59,15 @@ SELECT *
 FROM routes
 WHERE route_type = 'redirect'
   AND redirect_to = ?;
+
+-- name: ListRoutes :many
+SELECT * FROM routes ORDER BY path;
+
+-- name: GetTermArchiveRoute :one
+SELECT * FROM routes WHERE taxonomy_id = ? AND term_id = ? AND route_type = 'archive' LIMIT 1;
+
+-- name: GetRouteByTaxonomyTerm :one
+SELECT * FROM routes WHERE taxonomy_id = ? AND term_id = ? LIMIT 1;
+
+-- name: ListTaxonomyArchiveRoutes :many
+SELECT * FROM routes WHERE route_type = 'archive' AND taxonomy_id IS NOT NULL ORDER BY path;

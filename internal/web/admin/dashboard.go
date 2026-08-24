@@ -6,9 +6,14 @@ import (
 )
 
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
+	state := ResolveNav(r.URL.Path)
 	data := LayoutData{
-		Title:      "Dashboard",
-		ActiveMenu: "dashboard",
+		Title:         "Dashboard",
+		ActiveMenu:    state.ActiveSection,
+		ActiveSection: state.ActiveSection,
+		ActiveItem:    state.ActiveItem,
+		Nav:           AdminNav(),
+		Flash:         h.consumeFlash(w, r),
 	}
 	token, err := h.csrfToken(w, r)
 	if err != nil {

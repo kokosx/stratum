@@ -22,6 +22,7 @@ type EntryQuery struct {
 	ExcludeIDs  []string
 	// Cursor pagination support (optional, for future).
 	Cursor string
+	TermID string // optional filter for taxonomy archive
 }
 
 // Normalized returns a copy with defaults applied, limits clamped, and
@@ -43,6 +44,7 @@ func (q EntryQuery) Normalized() EntryQuery {
 	if q.Order != "published_asc" && q.Order != "published_desc" {
 		q.Order = "published_desc"
 	}
+	q.TermID = strings.TrimSpace(q.TermID)
 	// Deduplicate and sort ExcludeIDs for stable key (sorting via map would add dep).
 	uniq := make(map[string]struct{}, len(q.ExcludeIDs))
 	for _, id := range q.ExcludeIDs {
@@ -70,7 +72,7 @@ func (q EntryQuery) Normalized() EntryQuery {
 func (q EntryQuery) CacheKey() string {
 	q = q.Normalized()
 	exc := strings.Join(q.ExcludeIDs, ",")
-	return fmt.Sprintf("ct=%s|lim=%d|off=%d|ord=%s|exc=%s|cur=%s", q.ContentType, q.Limit, q.Offset, q.Order, exc, q.Cursor)
+	return fmt.Sprintf("ct=%s|lim=%d|off=%d|ord=%s|exc=%s|cur=%s|term=%s", q.ContentType, q.Limit, q.Offset, q.Order, exc, q.Cursor, q.TermID)
 }
 
 // Validate returns an error if the query is structurally invalid.

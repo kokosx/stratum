@@ -488,9 +488,33 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	}
 	offset := (pageNum - 1) * perPage
 
-	total, err := h.queries.CountPublishedEntriesByContentType(ctx, archiveContentType)
-	if err != nil {
-		return pagecache.Entry{}, err
+	// Detect taxonomy term archive via route snapshot
+	var termArchive bool
+	var termID, taxonomyID, termName, termDesc string
+	if rt, ok := h.hub.Routes.Lookup(archivePath); ok && rt.TaxonomyID.Valid && rt.TermID.Valid {
+		termArchive = true
+		termID = rt.TermID.String
+		taxonomyID = rt.TaxonomyID.String
+		if t, err := h.queries.GetTerm(ctx, termID); err == nil {
+			termName = t.Name
+			termDesc = t.Description
+		}
+	}
+
+	var total int64
+	var rows []db.ListPublishedEntriesByContentTypeRow
+	var termRows []db.ListPublishedEntriesByTermRow
+	var err error
+	if termArchive {
+		total, err = h.queries.ListPublishedEntriesByTermCount(ctx, db.ListPublishedEntriesByTermCountParams{TermID: termID, ContentTypeID: archiveContentType})
+		if err != nil {
+			return pagecache.Entry{}, err
+		}
+	} else {
+		total, err = h.queries.CountPublishedEntriesByContentType(ctx, archiveContentType)
+		if err != nil {
+			return pagecache.Entry{}, err
+		}
 	}
 	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
 	if totalPages == 0 {
@@ -500,17 +524,60 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		return pagecache.Entry{}, sql.ErrNoRows
 	}
 
-	rows, err := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{
-		ContentTypeID: archiveContentType,
-		Limit:         int64(perPage),
-		Offset:        int64(offset),
-	})
-	if err != nil {
-		return pagecache.Entry{}, err
+	if termArchive {
+		trs, err := h.queries.ListPublishedEntriesByTerm(ctx, db.ListPublishedEntriesByTermParams{TermID: termID, ContentTypeID: archiveContentType, Limit: int64(perPage), Offset: int64(offset)})
+		if err != nil {
+			return pagecache.Entry{}, err
+		}
+		termRows = trs
+	} else {
+		tmpRows, err := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{
+			ContentTypeID: archiveContentType,
+			Limit:         int64(perPage),
+			Offset:        int64(offset),
+		})
+		if err != nil {
+			return pagecache.Entry{}, err
+		}
+		rows = tmpRows
 	}
 
 	// Build archive entries using route_path from DB (source of truth)
-	archiveEntries := h.buildArchiveEntries(ctx, rows, siteSnap)
+	var archiveEntries []rendering.ArchiveEntry
+	if termArchive {
+		featIDs := make([]string, 0, len(termRows))
+		for _, r := range termRows {
+			if r.FeaturedMediaID.Valid && r.FeaturedMediaID.String != "" {
+				featIDs = append(featIDs, r.FeaturedMediaID.String)
+			}
+		}
+		mediaCache := map[string]rendering.MediaView{}
+		if h.media != nil && len(featIDs) > 0 {
+			mediaCache = h.media.MediaViews(ctx, featIDs)
+			if mediaCache == nil {
+				mediaCache = map[string]rendering.MediaView{}
+			}
+		}
+		archiveEntries = make([]rendering.ArchiveEntry, 0, len(termRows))
+		for _, r := range termRows {
+			ae := rendering.ArchiveEntry{
+				ID:           r.ID,
+				Title:        r.Title,
+				Excerpt:      stringValue(r.Excerpt),
+				URL:          r.RoutePath,
+				PublishedAt:  formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, false),
+				PublishedISO: formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, true),
+			}
+			if r.FeaturedMediaID.Valid {
+				if mv, ok := mediaCache[r.FeaturedMediaID.String]; ok {
+					ae.FeaturedImage = mv
+				}
+			}
+			archiveEntries = append(archiveEntries, ae)
+		}
+	} else {
+		archiveEntries = h.buildArchiveEntries(ctx, rows, siteSnap)
+	}
 	// Also build legacy theme ArchiveView for shell-less fallback rendering
 	themeEntries := make([]themes.ArchiveEntryView, 0, len(archiveEntries))
 	for _, ae := range archiveEntries {
@@ -592,12 +659,24 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		Pagination: pagination,
 		Permalink:  seo.PaginatedPath(archivePath, pageNum),
 	}
+	if termArchive {
+		archCtx.TaxonomyID = taxonomyID
+		archCtx.TermID = termID
+		archCtx.Title = termName
+		archCtx.Description = termDesc
+	}
 	var content template.HTML
 	var usedBlocks []rendering.BlockKey
 	var archiveRC rendering.RenderContext
 	if prepared != nil {
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
 		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
+		if termArchive {
+			rc.Route.TaxonomyID = taxonomyID
+			rc.Route.TermID = termID
+			rc.Route.ArchiveTitle = termName
+			rc.Route.ArchiveDescription = termDesc
+		}
 		rc.Mode = rendering.ModePublic
 		rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
 		rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
@@ -614,9 +693,16 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		archiveRC = rc
 	} else {
 		// Shell-less fallback: render a minimal Collection so theme can stay .Content-only.
+		routeCtx := rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
+		if termArchive {
+			routeCtx.TaxonomyID = taxonomyID
+			routeCtx.TermID = termID
+			routeCtx.ArchiveTitle = termName
+			routeCtx.ArchiveDescription = termDesc
+		}
 		rc := rendering.RenderContext{
 			Site:          rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
-			Route:         rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination},
+			Route:         routeCtx,
 			Mode:          rendering.ModePublic,
 			ContentReader: &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media},
 			QueryCache:    make(map[string][]rendering.ArchiveEntry),
@@ -660,6 +746,12 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			NextURL:     next,
 		},
 		HasShell: shellFound,
+	}
+	if termArchive {
+		archView.TaxonomyID = taxonomyID
+		archView.TermID = termID
+		archView.Title = termName
+		archView.Description = termDesc
 	}
 
 	// SEO via central resolver (site → shell revision → archive context)
@@ -710,6 +802,9 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		br = nil
 	}
 	tags := []string{"content-type:" + archiveContentType, "site", "navigation", "theme"}
+	if termArchive {
+		tags = append(tags, "taxonomy:"+taxonomyID, "term:"+termID)
+	}
 	if shellRow != nil && shellRow.ID != "" {
 		tags = append(tags, "entry:"+shellRow.ID)
 		if shellRow.LayoutTemplateID.Valid && shellRow.LayoutTemplateID.String != "" {

@@ -14,9 +14,9 @@ const createEntryRevision = `-- name: CreateEntryRevision :exec
 INSERT INTO entry_revisions (
     id, entry_id, revision_number, title, excerpt, document_json,
     seo_title, seo_description, canonical_url, featured_media_id, social_media_id,
-    seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, created_by, created_at
+    seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, created_by, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateEntryRevisionParams struct {
@@ -35,6 +35,8 @@ type CreateEntryRevisionParams struct {
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 	SchemaMode       string         `json:"schema_mode"`
 	LayoutTemplateID sql.NullString `json:"layout_template_id"`
+	ParentEntryID    sql.NullString `json:"parent_entry_id"`
+	MenuOrder        int64          `json:"menu_order"`
 	CreatedBy        sql.NullString `json:"created_by"`
 	CreatedAt        int64          `json:"created_at"`
 }
@@ -56,6 +58,8 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 		arg.SeoRobotsFollow,
 		arg.SchemaMode,
 		arg.LayoutTemplateID,
+		arg.ParentEntryID,
+		arg.MenuOrder,
 		arg.CreatedBy,
 		arg.CreatedAt,
 	)
@@ -63,7 +67,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 }
 
 const getEntryRevision = `-- name: GetEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order
 FROM entry_revisions
 WHERE id = ?
 LIMIT 1
@@ -90,12 +94,14 @@ func (q *Queries) GetEntryRevision(ctx context.Context, id string) (EntryRevisio
 		&i.SeoRobotsFollow,
 		&i.SchemaMode,
 		&i.LayoutTemplateID,
+		&i.ParentEntryID,
+		&i.MenuOrder,
 	)
 	return i, err
 }
 
 const getLatestEntryRevision = `-- name: GetLatestEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -123,12 +129,14 @@ func (q *Queries) GetLatestEntryRevision(ctx context.Context, entryID string) (E
 		&i.SeoRobotsFollow,
 		&i.SchemaMode,
 		&i.LayoutTemplateID,
+		&i.ParentEntryID,
+		&i.MenuOrder,
 	)
 	return i, err
 }
 
 const listEntryRevisions = `-- name: ListEntryRevisions :many
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -161,6 +169,113 @@ func (q *Queries) ListEntryRevisions(ctx context.Context, entryID string) ([]Ent
 			&i.SeoRobotsFollow,
 			&i.SchemaMode,
 			&i.LayoutTemplateID,
+			&i.ParentEntryID,
+			&i.MenuOrder,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLatestHierarchyForContentType = `-- name: ListLatestHierarchyForContentType :many
+SELECT e.id AS entry_id, e.content_type_id, e.slug, e.status, r.title,
+       r.parent_entry_id, r.menu_order
+FROM entries e
+JOIN entry_revisions r ON r.id = (
+    SELECT latest.id FROM entry_revisions latest
+    WHERE latest.entry_id = e.id
+    ORDER BY latest.revision_number DESC
+    LIMIT 1
+)
+WHERE e.content_type_id = ?
+ORDER BY r.menu_order, r.title, e.id
+`
+
+type ListLatestHierarchyForContentTypeRow struct {
+	EntryID       string         `json:"entry_id"`
+	ContentTypeID string         `json:"content_type_id"`
+	Slug          string         `json:"slug"`
+	Status        string         `json:"status"`
+	Title         string         `json:"title"`
+	ParentEntryID sql.NullString `json:"parent_entry_id"`
+	MenuOrder     int64          `json:"menu_order"`
+}
+
+func (q *Queries) ListLatestHierarchyForContentType(ctx context.Context, contentTypeID string) ([]ListLatestHierarchyForContentTypeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLatestHierarchyForContentType, contentTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLatestHierarchyForContentTypeRow{}
+	for rows.Next() {
+		var i ListLatestHierarchyForContentTypeRow
+		if err := rows.Scan(
+			&i.EntryID,
+			&i.ContentTypeID,
+			&i.Slug,
+			&i.Status,
+			&i.Title,
+			&i.ParentEntryID,
+			&i.MenuOrder,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPublishedHierarchyForContentType = `-- name: ListPublishedHierarchyForContentType :many
+SELECT e.id AS entry_id, e.content_type_id, e.slug, e.status, r.title,
+       r.parent_entry_id, r.menu_order
+FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
+WHERE e.content_type_id = ? AND e.status = 'active' AND e.published_revision_id IS NOT NULL
+ORDER BY r.menu_order, r.title, e.id
+`
+
+type ListPublishedHierarchyForContentTypeRow struct {
+	EntryID       string         `json:"entry_id"`
+	ContentTypeID string         `json:"content_type_id"`
+	Slug          string         `json:"slug"`
+	Status        string         `json:"status"`
+	Title         string         `json:"title"`
+	ParentEntryID sql.NullString `json:"parent_entry_id"`
+	MenuOrder     int64          `json:"menu_order"`
+}
+
+func (q *Queries) ListPublishedHierarchyForContentType(ctx context.Context, contentTypeID string) ([]ListPublishedHierarchyForContentTypeRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPublishedHierarchyForContentType, contentTypeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPublishedHierarchyForContentTypeRow{}
+	for rows.Next() {
+		var i ListPublishedHierarchyForContentTypeRow
+		if err := rows.Scan(
+			&i.EntryID,
+			&i.ContentTypeID,
+			&i.Slug,
+			&i.Status,
+			&i.Title,
+			&i.ParentEntryID,
+			&i.MenuOrder,
 		); err != nil {
 			return nil, err
 		}

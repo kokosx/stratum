@@ -19,11 +19,11 @@ func renderDefaultTheme(t *testing.T, nav map[string]navigation.Menu) string {
 		t.Fatalf("validate defaults: %v", err)
 	}
 	view := PageView{
-		Site:  SiteView{Title: "Acme", Language: "en"},
-		Entry: EntryView{Title: "Home", SEOTitle: "Home"},
-		Theme: ThemeView{ID: def.ID, Version: def.Version, Settings: settings},
+		Site:       SiteView{Title: "Acme", Language: "en"},
+		Entry:      EntryView{Title: "Home", SEOTitle: "Home"},
+		Theme:      ThemeView{ID: def.ID, Version: def.Version, Settings: settings},
 		Navigation: nav,
-		Content: template.HTML("<h1>Hello</h1>"),
+		Content:    template.HTML("<h1>Hello</h1>"),
 	}
 	out, err := def.Render(view)
 	if err != nil {

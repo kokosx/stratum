@@ -19,17 +19,49 @@
     <aside id="admin-sidebar" class="sidebar">
       <a class="brand" href="/admin">Stratum</a>
       <nav aria-label="Admin navigation">
-        <ul class="menu">
-          <li><a href="/admin" {{ if eq .ActiveMenu "dashboard" }}class="active" aria-current="page"{{ end }}>Dashboard</a></li>
-          <li><a href="/admin/pages" {{ if eq .ActiveMenu "pages" }}class="active" aria-current="page"{{ end }}>Pages</a></li>
-          <li><a href="/admin/posts" {{ if eq .ActiveMenu "posts" }}class="active" aria-current="page"{{ end }}>Posts</a></li>
-          <li><a href="/admin/appearance" {{ if eq .ActiveMenu "appearance" }}class="active" aria-current="page"{{ end }}>Appearance</a></li>
-          <li><a href="/admin/appearance/templates" {{ if eq .ActiveMenu "appearance" }}class="active" aria-current="page"{{ end }}>Templates</a></li>
-          <li><a href="/admin/media" {{ if eq .ActiveMenu "media" }}class="active" aria-current="page"{{ end }}>Media</a></li>
-          <li><a href="/admin/menus" {{ if eq .ActiveMenu "menus" }}class="active" aria-current="page"{{ end }}>Menus</a></li>
-          <li><a href="/admin/settings" {{ if eq .ActiveMenu "settings" }}class="active" aria-current="page"{{ end }}>Settings</a></li>
+        <ul class="admin-nav">
+          {{ range .Nav }}
+            {{ $sectionActive := eq $.ActiveSection .ID }}
+            {{ $itemActive := eq $.ActiveItem .ID }}
+            {{ if .Children }}
+              <li class="admin-nav__section {{ if $sectionActive }}is-active is-expanded{{ end }}">
+                <div class="admin-nav__parent">
+                  <a href="{{ .Href }}" class="admin-nav__parent-link {{ if $sectionActive }}active-parent{{ end }}" {{ if $sectionActive }}aria-current="false"{{ end }}>
+                    <span class="admin-nav__icon" aria-hidden="true">
+                      {{ if eq .Icon "dashboard" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+                      {{ else if eq .Icon "posts" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                      {{ else if eq .Icon "pages" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                      {{ else if eq .Icon "media" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                      {{ else if eq .Icon "appearance" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 9 15a1.65 1.65 0 0 0-1-1.51A1.65 1.65 0 0 0 6.18 13l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 11 10.09V10a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 18 15a1.65 1.65 0 0 0 1 1.51"/></svg>
+                      {{ else if eq .Icon "settings" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 9 15a1.65 1.65 0 0 0-1-1.51A1.65 1.65 0 0 0 6.18 13l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 11 10.09V10a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 18 15a1.65 1.65 0 0 0 1 1.51"/></svg>
+                      {{ else }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>{{ end }}
+                    </span>
+                    <span class="admin-nav__label">{{ .Label }}</span>
+                  </a>
+                  <button type="button" class="admin-nav__toggle" aria-expanded="{{ if $sectionActive }}true{{ else }}false{{ end }}" aria-controls="submenu-{{ .ID }}" aria-label="Toggle {{ .Label }} submenu">
+                    <span aria-hidden="true" class="admin-nav__toggle-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+                  </button>
+                </div>
+                <ul id="submenu-{{ .ID }}" class="admin-nav__submenu {{ if $sectionActive }}is-open{{ else }}is-collapsed{{ end }}">
+                  {{ range .Children }}
+                    <li><a href="{{ .Href }}" class="admin-nav__submenu-link {{ if eq $.ActiveItem .ID }}active{{ end }}" {{ if eq $.ActiveItem .ID }}aria-current="page"{{ end }}>{{ .Label }}</a></li>
+                  {{ end }}
+                </ul>
+              </li>
+            {{ else }}
+              <li class="admin-nav__leaf {{ if $sectionActive }}is-active{{ end }}"><a href="{{ .Href }}" class="admin-nav__link {{ if $itemActive }}active{{ end }}" {{ if $itemActive }}aria-current="page"{{ end }}>
+                <span class="admin-nav__icon" aria-hidden="true">
+                  {{ if eq .Icon "dashboard" }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>{{ else }}<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>{{ end }}
+                </span>
+                <span class="admin-nav__label">{{ .Label }}</span></a></li>
+            {{ end }}
+          {{ end }}
         </ul>
       </nav>
+      <button type="button" class="sidebar-collapse" id="sidebar-collapse" aria-label="Collapse menu">
+        <span class="sidebar-collapse__icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg></span>
+        <span class="sidebar-collapse__label">Collapse menu</span>
+      </button>
     </aside>
     <main class="main">
       <header class="topbar">
@@ -44,7 +76,7 @@
     </main>
   </div>
   <script>
-    // P1.47: Mobile admin sidebar toggle
+    // Mobile sidebar toggle
     document.querySelector('.sidebar-toggle')?.addEventListener('click', function() {
       var sidebar = document.getElementById('admin-sidebar');
       var open = this.getAttribute('aria-expanded') !== 'true';
@@ -54,12 +86,56 @@
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Escape') return;
       var toggle = document.querySelector('.sidebar-toggle');
-      if (toggle.getAttribute('aria-expanded') === 'true') {
+      if (toggle && toggle.getAttribute('aria-expanded') === 'true') {
         toggle.setAttribute('aria-expanded', 'false');
         document.getElementById('admin-sidebar').classList.remove('is-open');
         toggle.focus();
       }
     });
+    // Submenu toggles (accessible, not hover-dependent) — supports both old and new class names
+    document.querySelectorAll('.admin-nav__toggle, .menu-toggle').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = btn.getAttribute('aria-controls');
+        var submenu = document.getElementById(id);
+        if (!submenu) return;
+        var expanded = btn.getAttribute('aria-expanded') === 'true';
+        var next = !expanded;
+        btn.setAttribute('aria-expanded', String(next));
+        submenu.classList.toggle('is-open', next);
+        submenu.classList.toggle('is-collapsed', !next);
+        var li = btn.closest('.admin-nav__section, .menu-section');
+        if (li) {
+          li.classList.toggle('is-expanded', next);
+          // keep is-active when expanded for subtle hover style; don't remove is-active
+          if (next) li.classList.add('is-active');
+        }
+      });
+      btn.addEventListener('keydown', function(e){
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); btn.click(); }
+      });
+    });
+    // Desktop collapse (persisted in localStorage, not DB)
+    (function(){
+      var admin = document.querySelector('.admin');
+      var btn = document.getElementById('sidebar-collapse');
+      if (!admin || !btn) return;
+      var key = 'stratum-sidebar-collapsed';
+      var labelEl = btn.querySelector('.sidebar-collapse__label');
+      try {
+        if (localStorage.getItem(key) === '1') admin.classList.add('is-collapsed');
+      } catch(e){}
+      function syncLabel(){
+        var collapsed = admin.classList.contains('is-collapsed');
+        if (labelEl) labelEl.textContent = collapsed ? 'Expand menu' : 'Collapse menu';
+        btn.setAttribute('aria-label', collapsed ? 'Expand menu' : 'Collapse menu');
+      }
+      syncLabel();
+      btn.addEventListener('click', function(){
+        admin.classList.toggle('is-collapsed');
+        try { localStorage.setItem(key, admin.classList.contains('is-collapsed') ? '1' : '0'); } catch(e){}
+        syncLabel();
+      });
+    })();
   </script>
   <script src="/admin/static/admin/toast.js"></script>
   <script src="/admin/static/admin/media-picker.js" defer></script>

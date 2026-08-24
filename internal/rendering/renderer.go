@@ -97,11 +97,15 @@ type RenderContext struct {
 
 // RouteContext is the generic route scope for the current request.
 type RouteContext struct {
-	Path        string
-	IsArchive   bool
-	ContentType string
-	Archive     *ArchiveContext
-	Pagination  PaginationContext
+	Path               string
+	IsArchive          bool
+	ContentType        string
+	Archive            *ArchiveContext
+	Pagination         PaginationContext
+	TaxonomyID         string
+	TermID             string
+	ArchiveTitle       string
+	ArchiveDescription string
 }
 
 // RenderMode distinguishes public vs preview rendering.
@@ -143,9 +147,13 @@ func (rc RenderContext) WithRoute(route RouteContext) RenderContext {
 // ArchiveContext is the typed archive listing supplied to core/posts source=archive.
 // Nil on single renders; non-nil on archive renders.
 type ArchiveContext struct {
-	Entries    []ArchiveEntry
-	Pagination PaginationContext
-	Permalink  string // canonical archive path for this page (e.g. "/blog" or "/blog/page/2")
+	Entries     []ArchiveEntry
+	Pagination  PaginationContext
+	Permalink   string // canonical archive path for this page (e.g. "/blog" or "/blog/page/2")
+	TaxonomyID  string
+	TermID      string
+	Title       string
+	Description string
 }
 
 // ArchiveEntry is one post card, already resolved via routes.

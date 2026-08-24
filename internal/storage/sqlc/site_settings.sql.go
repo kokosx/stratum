@@ -79,6 +79,134 @@ func (q *Queries) GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, erro
 	return i, err
 }
 
+const updateGeneralSettings = `-- name: UpdateGeneralSettings :exec
+UPDATE site_settings
+SET
+    site_title = ?,
+    site_tagline = ?,
+    site_url = ?,
+    language = ?,
+    timezone = ?,
+    site_represents = ?,
+    updated_at = ?
+WHERE id = 1
+`
+
+type UpdateGeneralSettingsParams struct {
+	SiteTitle      string `json:"site_title"`
+	SiteTagline    string `json:"site_tagline"`
+	SiteUrl        string `json:"site_url"`
+	Language       string `json:"language"`
+	Timezone       string `json:"timezone"`
+	SiteRepresents string `json:"site_represents"`
+	UpdatedAt      int64  `json:"updated_at"`
+}
+
+func (q *Queries) UpdateGeneralSettings(ctx context.Context, arg UpdateGeneralSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateGeneralSettings,
+		arg.SiteTitle,
+		arg.SiteTagline,
+		arg.SiteUrl,
+		arg.Language,
+		arg.Timezone,
+		arg.SiteRepresents,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const updatePerformanceSettings = `-- name: UpdatePerformanceSettings :exec
+UPDATE site_settings
+SET
+    speculation_mode = ?,
+    speculation_eagerness = ?,
+    updated_at = ?
+WHERE id = 1
+`
+
+type UpdatePerformanceSettingsParams struct {
+	SpeculationMode      string `json:"speculation_mode"`
+	SpeculationEagerness string `json:"speculation_eagerness"`
+	UpdatedAt            int64  `json:"updated_at"`
+}
+
+func (q *Queries) UpdatePerformanceSettings(ctx context.Context, arg UpdatePerformanceSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updatePerformanceSettings, arg.SpeculationMode, arg.SpeculationEagerness, arg.UpdatedAt)
+	return err
+}
+
+const updateReadingSettings = `-- name: UpdateReadingSettings :exec
+UPDATE site_settings
+SET
+    homepage_mode = ?,
+    homepage_entry_id = ?,
+    posts_page_entry_id = ?,
+    posts_per_page = ?,
+    posts_base_path = ?,
+    updated_at = ?
+WHERE id = 1
+`
+
+type UpdateReadingSettingsParams struct {
+	HomepageMode     string         `json:"homepage_mode"`
+	HomepageEntryID  sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID sql.NullString `json:"posts_page_entry_id"`
+	PostsPerPage     int64          `json:"posts_per_page"`
+	PostsBasePath    string         `json:"posts_base_path"`
+	UpdatedAt        int64          `json:"updated_at"`
+}
+
+func (q *Queries) UpdateReadingSettings(ctx context.Context, arg UpdateReadingSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateReadingSettings,
+		arg.HomepageMode,
+		arg.HomepageEntryID,
+		arg.PostsPageEntryID,
+		arg.PostsPerPage,
+		arg.PostsBasePath,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const updateSEOSettings = `-- name: UpdateSEOSettings :exec
+UPDATE site_settings
+SET
+    indexing_enabled = ?,
+    sitemap_enabled = ?,
+    robots_mode = ?,
+    robots_custom = ?,
+    title_separator = ?,
+    site_social_media_id = ?,
+    twitter_site = ?,
+    updated_at = ?
+WHERE id = 1
+`
+
+type UpdateSEOSettingsParams struct {
+	IndexingEnabled   int64          `json:"indexing_enabled"`
+	SitemapEnabled    int64          `json:"sitemap_enabled"`
+	RobotsMode        string         `json:"robots_mode"`
+	RobotsCustom      string         `json:"robots_custom"`
+	TitleSeparator    string         `json:"title_separator"`
+	SiteSocialMediaID sql.NullString `json:"site_social_media_id"`
+	TwitterSite       string         `json:"twitter_site"`
+	UpdatedAt         int64          `json:"updated_at"`
+}
+
+func (q *Queries) UpdateSEOSettings(ctx context.Context, arg UpdateSEOSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateSEOSettings,
+		arg.IndexingEnabled,
+		arg.SitemapEnabled,
+		arg.RobotsMode,
+		arg.RobotsCustom,
+		arg.TitleSeparator,
+		arg.SiteSocialMediaID,
+		arg.TwitterSite,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
 const updateSiteSettings = `-- name: UpdateSiteSettings :exec
 UPDATE site_settings
 SET

@@ -27,38 +27,69 @@ import (
 )
 
 type Handler struct {
-	database                      *sql.DB
-	queries                       *db.Queries
-	auth                          *auth.Service
-	blocks                        *blocks.Registry
-	media                         *media.Service
-	dashboardTemplate             *template.Template
-	entriesTemplate               *template.Template
-	entryTemplate                 *template.Template
-	setupTemplate                 *template.Template
-	loginTemplate                 *template.Template
-	menusTemplate                 *template.Template
-	mediaTemplate                 *template.Template
-	appearanceTemplate            *template.Template
-	settingsTemplate              *template.Template
-	layoutTemplatesTemplate       *template.Template
-	layoutTemplateFormTemplate    *template.Template
-	layoutTemplateEditorTemplate  *template.Template
-	navigation                    *navigation.Service
-	navigationLoader              *navigation.Loader
-	themes                        *themes.Runtime
-	runtime                       *runtimehub.Runtime
-	layoutsService                *layouts.Service
-	previewRenderer               func(context.Context, string, string, map[string]any, string) ([]byte, error)
-	documentPreview               func(context.Context, RenderInput) ([]byte, error)
+	database                     *sql.DB
+	queries                      *db.Queries
+	auth                         *auth.Service
+	blocks                       *blocks.Registry
+	media                        *media.Service
+	dashboardTemplate            *template.Template
+	entriesTemplate              *template.Template
+	entryTemplate                *template.Template
+	setupTemplate                *template.Template
+	loginTemplate                *template.Template
+	menusTemplate                *template.Template
+	mediaTemplate                *template.Template
+	appearanceTemplate           *template.Template
+	settingsTemplate             *template.Template
+	layoutTemplatesTemplate      *template.Template
+	layoutTemplateFormTemplate   *template.Template
+	layoutTemplateEditorTemplate *template.Template
+	taxonomyTemplate             *template.Template
+	navigation                   *navigation.Service
+	navigationLoader             *navigation.Loader
+	themes                       *themes.Runtime
+	runtime                      *runtimehub.Runtime
+	layoutsService               *layouts.Service
+	previewRenderer              func(context.Context, string, string, map[string]any, string) ([]byte, error)
+	documentPreview              func(context.Context, RenderInput) ([]byte, error)
 }
 
 type LayoutData struct {
-	Title      string
-	ActiveMenu string
-	Flash      string
-	CSRFToken  string
-	Content    any
+	Title         string
+	ActiveMenu    string
+	ActiveSection string
+	ActiveItem    string
+	Nav           []AdminNavItem
+	Flash         string
+	CSRFToken     string
+	Content       any
+}
+
+func (h *Handler) navStateFor(r *http.Request) NavState { return ResolveNav(r.URL.Path) }
+
+func (h *Handler) layoutData(r *http.Request, title string) LayoutData {
+	state := ResolveNav(r.URL.Path)
+	legacy := state.ActiveSection
+	return LayoutData{
+		Title:         title,
+		ActiveMenu:    legacy,
+		ActiveSection: state.ActiveSection,
+		ActiveItem:    state.ActiveItem,
+		Nav:           AdminNav(),
+	}
+}
+
+func (h *Handler) layoutDataWithFlash(w http.ResponseWriter, r *http.Request, title string) LayoutData {
+	state := ResolveNav(r.URL.Path)
+	legacy := state.ActiveSection
+	return LayoutData{
+		Title:         title,
+		ActiveMenu:    legacy,
+		ActiveSection: state.ActiveSection,
+		ActiveItem:    state.ActiveItem,
+		Nav:           AdminNav(),
+		Flash:         h.consumeFlash(w, r),
+	}
 }
 
 func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service, blockRegistry *blocks.Registry, themeRuntime *themes.Runtime, mediaService *media.Service, runtimes ...*runtimehub.Runtime) (*Handler, error) {
@@ -77,17 +108,22 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, fmt.Errorf("admin templates: %w", err)
 	}
+	adminFuncs := template.FuncMap{
+		"add":      func(a, b int) int { return a + b },
+		"subtract": func(a, b int) int { return a - b },
+		"multiply": func(a, b int) int { return a * b },
+	}
 
-	dashboardTemplate, err := template.ParseFS(templateFS, "layout.html", "dashboard.html")
+	dashboardTemplate, err := template.New("dashboard").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "dashboard.html")
 	if err != nil {
 		return nil, err
 	}
 
-	entriesTemplate, err := template.ParseFS(templateFS, "layout.html", "entries.html")
+	entriesTemplate, err := template.New("entries").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "entries.html")
 	if err != nil {
 		return nil, err
 	}
-	entryTemplate, err := template.ParseFS(templateFS, "layout.html", "entry_form.html")
+	entryTemplate, err := template.New("entry_form").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "entry_form.html")
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +167,11 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
+	taxonomyTemplate, err := template.New("taxonomy").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "taxonomy.html")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Handler{
 		database:                     database,
 		queries:                      queries,
@@ -146,6 +187,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		mediaTemplate:                mediaTemplate,
 		appearanceTemplate:           appearanceTemplate,
 		settingsTemplate:             settingsTemplate,
+		taxonomyTemplate:             taxonomyTemplate,
 		layoutTemplatesTemplate:      layoutTemplatesTemplate,
 		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
 		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
@@ -161,7 +203,11 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /admin", h.adminHome)
 	mux.HandleFunc("GET /admin/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
+		if r.URL.Path == "/admin/" {
+			http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
+			return
+		}
+		http.NotFound(w, r)
 	})
 	mux.HandleFunc("GET /admin/setup", h.setup)
 	mux.HandleFunc("POST /admin/setup", h.setup)
@@ -174,6 +220,10 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/pages/{id}/edit", h.requireAuth(h.editPage))
 	mux.HandleFunc("POST /admin/pages/{id}", h.requireAuth(h.savePage))
 	mux.HandleFunc("POST /admin/pages/{id}/publish", h.requireAuth(h.publishPage))
+	mux.HandleFunc("POST /admin/pages/{id}/trash", h.requireAuth(h.trashPage))
+	mux.HandleFunc("POST /admin/pages/{id}/restore", h.requireAuth(h.restorePage))
+	mux.HandleFunc("POST /admin/pages/{id}/delete", h.requireAuth(h.deletePagePermanently))
+	mux.HandleFunc("POST /admin/pages/bulk", h.requireAuth(h.bulkPages))
 	mux.HandleFunc("POST /admin/editor/preview", h.requireAuth(h.previewDocument))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
 	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
@@ -181,6 +231,18 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/posts/{id}/edit", h.requireAuth(h.editPost))
 	mux.HandleFunc("POST /admin/posts/{id}", h.requireAuth(h.savePost))
 	mux.HandleFunc("POST /admin/posts/{id}/publish", h.requireAuth(h.publishPost))
+	mux.HandleFunc("POST /admin/posts/{id}/trash", h.requireAuth(h.trashPost))
+	mux.HandleFunc("POST /admin/posts/{id}/restore", h.requireAuth(h.restorePost))
+	mux.HandleFunc("POST /admin/posts/{id}/delete", h.requireAuth(h.deletePostPermanently))
+	mux.HandleFunc("POST /admin/posts/bulk", h.requireAuth(h.bulkPosts))
+	mux.HandleFunc("GET /admin/posts/categories", h.requireAuth(h.listCategories))
+	mux.HandleFunc("POST /admin/posts/categories", h.requireAuth(h.createCategory))
+	mux.HandleFunc("POST /admin/posts/categories/{id}/update", h.requireAuth(h.updateCategory))
+	mux.HandleFunc("POST /admin/posts/categories/{id}/delete", h.requireAuth(h.deleteCategory))
+	mux.HandleFunc("GET /admin/posts/tags", h.requireAuth(h.listTags))
+	mux.HandleFunc("POST /admin/posts/tags", h.requireAuth(h.createTag))
+	mux.HandleFunc("POST /admin/posts/tags/{id}/update", h.requireAuth(h.updateTag))
+	mux.HandleFunc("POST /admin/posts/tags/{id}/delete", h.requireAuth(h.deleteTag))
 	mux.HandleFunc("GET /admin/menus", h.requireAuth(h.listMenus))
 	mux.HandleFunc("POST /admin/menus", h.requireAuth(h.createMenu))
 	mux.HandleFunc("POST /admin/menus/{id}", h.requireAuth(h.updateMenu))
@@ -196,9 +258,18 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/publish", h.requireAuth(h.publishLayoutTemplate))
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/preview", h.requireAuth(h.previewLayoutTemplate))
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/default", h.requireAuth(h.setDefaultLayoutTemplate))
-	mux.HandleFunc("GET /admin/settings", h.requireAuth(h.settings))
+	mux.HandleFunc("GET /admin/settings", h.requireAuth(h.settingsRedirect))
 	mux.HandleFunc("POST /admin/settings", h.requireAuth(h.saveSettings))
+	mux.HandleFunc("GET /admin/settings/general", h.requireAuth(h.settingsGeneral))
+	mux.HandleFunc("POST /admin/settings/general", h.requireAuth(h.saveSettingsGeneral))
+	mux.HandleFunc("GET /admin/settings/reading", h.requireAuth(h.settingsReading))
+	mux.HandleFunc("POST /admin/settings/reading", h.requireAuth(h.saveSettingsReading))
+	mux.HandleFunc("GET /admin/settings/seo", h.requireAuth(h.settingsSEO))
+	mux.HandleFunc("POST /admin/settings/seo", h.requireAuth(h.saveSettingsSEO))
+	mux.HandleFunc("GET /admin/settings/performance", h.requireAuth(h.settingsPerformance))
+	mux.HandleFunc("POST /admin/settings/performance", h.requireAuth(h.saveSettingsPerformance))
 	mux.HandleFunc("POST /admin/settings/robots-preview", h.requireAuth(h.robotsPreview))
+	mux.HandleFunc("POST /admin/settings/seo/robots-preview", h.requireAuth(h.robotsPreview))
 	mux.HandleFunc("GET /admin/media", h.requireAuth(h.mediaLibrary))
 	mux.HandleFunc("GET /admin/media.json", h.requireAuth(h.mediaListJSON))
 	mux.HandleFunc("POST /admin/media/upload", h.requireAuth(h.uploadMedia))
@@ -215,6 +286,7 @@ func (h *Handler) Routes() http.Handler {
 		// The admin UI must never be indexed. robots.txt is not a security or
 		// indexing guarantee, so every admin response also sends the header.
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		w.Header().Set("Cache-Control", "no-store")
 		// The media upload endpoint carries large multipart bodies (~12 MB),
 		// so it must not inherit the small global admin POST body limit.
 		if r.Method == http.MethodPost && r.URL.Path != "/admin/media/upload" {

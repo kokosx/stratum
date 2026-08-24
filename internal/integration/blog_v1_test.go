@@ -61,53 +61,54 @@ func publishPostViaAPI(t *testing.T, client *http.Client, serverURL, title, slug
 func saveReadingSettings(t *testing.T, client *http.Client, serverURL string, queries *db.Queries, homeID, blogID, base, perPage string) {
 	t.Helper()
 	row, _ := queries.GetSiteSettings(context.Background())
-	csrf := csrfToken(t, client, serverURL, "/admin/settings")
+	// General section must set site_url etc. for feed/sitemap to work.
+	genCSRF := csrfToken(t, client, serverURL, "/admin/settings/general")
+	genForm := url.Values{
+		"site_title":      {row.SiteTitle},
+		"tagline":         {row.SiteTagline},
+		"site_url":        {serverURL},
+		"language":        {row.Language},
+		"timezone":        {row.Timezone},
+		"site_represents": {"organization"},
+		"csrf_token":      {genCSRF},
+	}
+	if row.SiteTitle == "" { genForm.Set("site_title", "Test Site") }
+	if row.Language == "" { genForm.Set("language", "en") }
+	if row.Timezone == "" { genForm.Set("timezone", "UTC") }
+	respGen := postForm(t, client, serverURL, "/admin/settings/general", genForm)
+	if respGen.StatusCode != http.StatusSeeOther {
+		body := bodyString(t, respGen)
+		t.Fatalf("save general status = %d, want 303; body=%s", respGen.StatusCode, body)
+	}
+	respGen.Body.Close()
+	// Also ensure SEO toggles for feed indexing etc via seo endpoint
+	seoCSRF := csrfToken(t, client, serverURL, "/admin/settings/seo")
+	seoForm := url.Values{
+		"indexing_enabled": {"on"},
+		"sitemap_enabled":  {"on"},
+		"robots_mode":      {row.RobotsMode},
+		"robots_custom":    {row.RobotsCustom},
+		"title_separator":  {row.TitleSeparator},
+		"csrf_token":       {seoCSRF},
+	}
+	if row.RobotsMode == "" { seoForm.Set("robots_mode", "managed") }
+	if row.TitleSeparator == "" { seoForm.Set("title_separator", "–") }
+	respSEO := postForm(t, client, serverURL, "/admin/settings/seo", seoForm)
+	if respSEO.StatusCode != http.StatusSeeOther {
+		body := bodyString(t, respSEO)
+		t.Fatalf("save seo status = %d, want 303; body=%s", respSEO.StatusCode, body)
+	}
+	respSEO.Body.Close()
+	csrf := csrfToken(t, client, serverURL, "/admin/settings/reading")
 	form := url.Values{
-		"site_title":             {row.SiteTitle},
-		"tagline":                {row.SiteTagline},
-		"site_url":               {serverURL},
-		"language":               {row.Language},
-		"timezone":               {row.Timezone},
-		"site_represents":        {"organization"},
-		"indexing_enabled":       {"on"},
-		"sitemap_enabled":        {"on"},
-		"robots_mode":            {row.RobotsMode},
-		"robots_custom":          {row.RobotsCustom},
-		"speculation_mode":       {row.SpeculationMode},
-		"speculation_eagerness":  {row.SpeculationEagerness},
-		"title_separator":        {row.TitleSeparator},
-		"homepage_mode_choice":   {"page"},
-		"homepage_entry_id":      {homeID},
-		"posts_page_entry_id":    {blogID},
-		"posts_base_path":        {base},
-		"posts_per_page":         {perPage},
-		"csrf_token":             {csrf},
+		"homepage_mode_choice": {"page"},
+		"homepage_entry_id":    {homeID},
+		"posts_page_entry_id":  {blogID},
+		"posts_base_path":      {base},
+		"posts_per_page":       {perPage},
+		"csrf_token":           {csrf},
 	}
-	if row.SiteTitle == "" {
-		form.Set("site_title", "Test Site")
-	}
-	if row.Language == "" {
-		form.Set("language", "en")
-	}
-	if row.Timezone == "" {
-		form.Set("timezone", "UTC")
-	}
-	if row.RobotsMode == "" {
-		form.Set("robots_mode", "managed")
-	}
-	if row.SpeculationMode == "" {
-		form.Set("speculation_mode", "off")
-	}
-	if row.SpeculationEagerness == "" {
-		form.Set("speculation_eagerness", "conservative")
-	}
-	if row.TitleSeparator == "" {
-		form.Set("title_separator", "–")
-	}
-	// Ensure required toggles
-	form.Set("indexing_enabled", "on")
-	form.Set("sitemap_enabled", "on")
-	resp := postForm(t, client, serverURL, "/admin/settings", form)
+	resp := postForm(t, client, serverURL, "/admin/settings/reading", form)
 	if resp.StatusCode != http.StatusSeeOther {
 		body := bodyString(t, resp)
 		t.Fatalf("save reading status = %d, want 303; body=%s", resp.StatusCode, body)

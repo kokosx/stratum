@@ -12,12 +12,12 @@ const (
 // Capabilities describes what a content type can do. Each flag replaces a
 // previous `if contentType == "post"` branch in generic code.
 type Capabilities struct {
-	Hierarchical  bool
-	HasExcerpt    bool
-	HasFeatured   bool
-	HasSEO        bool
-	Public        bool
-	HasArchive    bool
+	Hierarchical bool
+	HasExcerpt   bool
+	HasFeatured  bool
+	HasSEO       bool
+	Public       bool
+	HasArchive   bool
 }
 
 // RoutingPolicy describes how entries of this type are addressed on the public
@@ -92,4 +92,6 @@ func DefinitionFor(id string) ContentTypeDefinition {
 }
 
 // IsArchived reports whether this type has an archive.
-func (d ContentTypeDefinition) IsArchived() bool { return d.Capabilities.HasArchive || d.Routing.Archive }
+func (d ContentTypeDefinition) IsArchived() bool {
+	return d.Capabilities.HasArchive || d.Routing.Archive
+}

@@ -1,23 +1,110 @@
 {{ define "content" }}
 <div class="page-heading"><h1>{{ .Content.Heading }}</h1><a class="button button-primary" href="{{ .Content.NewURL }}">Add New</a></div>
-<div class="list-table-wrap">
-<table class="list-table">
-  <thead>
-    <tr><th>Title</th><th>Slug</th><th>Status</th><th>Updated</th><th>View</th></tr>
-  </thead>
-  <tbody>
-    {{ range .Content.Entries }}
-    <tr>
-      <td class="entry-title"><a href="{{ $.Content.EditBase }}/{{ .ID }}/edit">{{ .Title }}</a></td>
-      <td>{{ .Slug }}</td>
-      <td>{{ .Status }}</td>
-      <td>{{ .UpdatedAt }}</td>
-      <td>{{ if .PublicURL }}<a class="view-link" href="{{ .PublicURL }}" target="_blank" rel="noopener noreferrer">View</a>{{ else }}<span class="muted">—</span>{{ end }}</td>
-    </tr>
-    {{ else }}
-    <tr><td colspan="5" class="muted">No entries found.</td></tr>
-    {{ end }}
-  </tbody>
-</table>
+
+{{ $base := .Content.BasePath }}
+{{ $cur := .Content.CurrentStatus }}
+{{ $search := .Content.Search }}
+{{ $counts := .Content.Counts }}
+
+<ul class="subsubsub" aria-label="Status filters">
+  <li><a href="{{ $base }}?status=all{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "all" }}class="current" aria-current="page"{{ end }}>All <span class="count">({{ $counts.All }})</span></a> |</li>
+  <li><a href="{{ $base }}?status=published{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "published" }}class="current" aria-current="page"{{ end }}>Published <span class="count">({{ $counts.Published }})</span></a> |</li>
+  <li><a href="{{ $base }}?status=draft{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "draft" }}class="current" aria-current="page"{{ end }}>Draft <span class="count">({{ $counts.Draft }})</span></a> |</li>
+  <li><a href="{{ $base }}?status=private{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "private" }}class="current" aria-current="page"{{ end }}>Private <span class="count">({{ $counts.Private }})</span></a> |</li>
+  <li><a href="{{ $base }}?status=trash{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "trash" }}class="current" aria-current="page"{{ end }}>Trash <span class="count">({{ $counts.Trash }})</span></a></li>
+</ul>
+
+<div class="tablenav top">
+  <form method="get" action="{{ $base }}" class="search-box" role="search" aria-label="Search entries">
+    {{ if ne $cur "all" }}<input type="hidden" name="status" value="{{ $cur }}">{{ end }}
+    <label for="entry-search" class="screen-reader-text">Search {{ .Content.Heading }}</label>
+    <input type="search" id="entry-search" name="search" value="{{ $search }}" placeholder="Search {{ .Content.Heading }}">
+    <button type="submit" class="button">Search</button>
+  </form>
 </div>
+
+<form method="post" action="{{ $base }}/bulk" class="bulk-form">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <div class="tablenav">
+    <div class="alignleft actions bulkactions">
+      <label for="bulk-action-selector-top" class="screen-reader-text">Select bulk action</label>
+      <select name="bulk_action" id="bulk-action-selector-top">
+        <option value="">Bulk actions</option>
+        {{ if eq $cur "trash" }}
+          <option value="restore">Restore</option>
+          <option value="delete">Delete Permanently</option>
+        {{ else }}
+          <option value="trash">Move to Trash</option>
+        {{ end }}
+      </select>
+      <button type="submit" class="button">Apply</button>
+    </div>
+    {{ if gt .Content.TotalPages 1 }}
+    <div class="tablenav-pages">
+      <span class="displaying-num">{{ .Content.Total }} items</span>
+      <span class="pagination-links">
+        {{ if gt .Content.Page 1 }}<a class="button" href="{{ $base }}?{{ if $search }}search={{ $search }}&{{ end }}{{ if ne $cur "all" }}status={{ $cur }}&{{ end }}page={{ subtract .Content.Page 1 }}">‹ Prev</a>{{ end }}
+        <span class="paging-input">Page {{ .Content.Page }} of {{ .Content.TotalPages }}</span>
+        {{ if lt .Content.Page .Content.TotalPages }}<a class="button" href="{{ $base }}?{{ if $search }}search={{ $search }}&{{ end }}{{ if ne $cur "all" }}status={{ $cur }}&{{ end }}page={{ add .Content.Page 1 }}">Next ›</a>{{ end }}
+      </span>
+    </div>
+    {{ end }}
+  </div>
+
+  <div class="list-table-wrap">
+  <table class="list-table">
+    <thead>
+      <tr>
+        <th class="check-column"><input type="checkbox" id="cb-select-all" aria-label="Select all"></th>
+        <th>Title</th>
+        <th>Status</th>
+        <th>Slug</th>
+        <th>Updated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Content.Entries }}
+      <tr>
+        <td class="check-column"><input type="checkbox" name="ids" value="{{ .ID }}" class="entry-checkbox"></td>
+        <td class="entry-title column-title">
+          <strong style="margin-left:{{ multiply .Depth 16 }}px"><a href="{{ $.Content.EditBase }}/{{ .ID }}/edit">{{ .Title }}</a></strong>
+          <div class="row-actions">
+            {{ if eq $.Content.CurrentStatus "trash" }}
+              <span><form method="post" action="{{ $.Content.EditBase }}/{{ .ID }}/restore" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Restore</button></form> | </span>
+              <span><form method="post" action="{{ $.Content.EditBase }}/{{ .ID }}/delete" style="display:inline" onsubmit="return confirm('Delete permanently? This cannot be undone.')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link row-action-delete">Delete Permanently</button></form></span>
+            {{ else }}
+              <span><a href="{{ $.Content.EditBase }}/{{ .ID }}/edit">Edit</a> | </span>
+              {{ if .PublicURL }}<span><a href="{{ .PublicURL }}" target="_blank" rel="noopener noreferrer">View</a> | </span>{{ end }}
+              <span><form method="post" action="{{ $.Content.EditBase }}/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link row-action-trash">Trash</button></form></span>
+            {{ end }}
+          </div>
+        </td>
+        <td>{{ .Status }}</td>
+        <td>{{ .Slug }}</td>
+        <td>{{ .UpdatedAt }}</td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="5" class="muted">No entries found.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  </div>
+</form>
+
+{{ if gt .Content.TotalPages 1 }}
+<div class="tablenav bottom">
+  <div class="tablenav-pages">
+    <span class="pagination-links">
+      {{ if gt .Content.Page 1 }}<a class="button" href="{{ $base }}?{{ if $search }}search={{ $search }}&{{ end }}{{ if ne $cur "all" }}status={{ $cur }}&{{ end }}page={{ subtract .Content.Page 1 }}">‹ Prev</a>{{ end }}
+      {{ if lt .Content.Page .Content.TotalPages }}<a class="button" href="{{ $base }}?{{ if $search }}search={{ $search }}&{{ end }}{{ if ne $cur "all" }}status={{ $cur }}&{{ end }}page={{ add .Content.Page 1 }}">Next ›</a>{{ end }}
+    </span>
+  </div>
+</div>
+{{ end }}
+
+<script>
+  document.getElementById('cb-select-all')?.addEventListener('change', function(){
+    document.querySelectorAll('.entry-checkbox').forEach(function(cb){ cb.checked = document.getElementById('cb-select-all').checked; });
+  });
+</script>
 {{ end }}

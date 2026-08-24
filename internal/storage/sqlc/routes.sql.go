@@ -12,9 +12,9 @@ import (
 
 const createRoute = `-- name: CreateRoute :exec
 INSERT INTO routes (
-    id, path, entry_id, route_type, content_type_id, redirect_to, redirect_status, created_at, updated_at
+    id, path, entry_id, route_type, content_type_id, taxonomy_id, term_id, redirect_to, redirect_status, created_at, updated_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRouteParams struct {
@@ -23,6 +23,8 @@ type CreateRouteParams struct {
 	EntryID        sql.NullString `json:"entry_id"`
 	RouteType      string         `json:"route_type"`
 	ContentTypeID  sql.NullString `json:"content_type_id"`
+	TaxonomyID     sql.NullString `json:"taxonomy_id"`
+	TermID         sql.NullString `json:"term_id"`
 	RedirectTo     sql.NullString `json:"redirect_to"`
 	RedirectStatus sql.NullInt64  `json:"redirect_status"`
 	CreatedAt      int64          `json:"created_at"`
@@ -36,6 +38,8 @@ func (q *Queries) CreateRoute(ctx context.Context, arg CreateRouteParams) error 
 		arg.EntryID,
 		arg.RouteType,
 		arg.ContentTypeID,
+		arg.TaxonomyID,
+		arg.TermID,
 		arg.RedirectTo,
 		arg.RedirectStatus,
 		arg.CreatedAt,
@@ -55,7 +59,7 @@ func (q *Queries) DeleteRoute(ctx context.Context, id string) error {
 }
 
 const getArchiveRouteByContentType = `-- name: GetArchiveRouteByContentType :one
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE route_type = 'archive' AND content_type_id = ?
 LIMIT 1
@@ -74,12 +78,14 @@ func (q *Queries) GetArchiveRouteByContentType(ctx context.Context, contentTypeI
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ContentTypeID,
+		&i.TaxonomyID,
+		&i.TermID,
 	)
 	return i, err
 }
 
 const getEntryRoute = `-- name: GetEntryRoute :one
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE entry_id = ?
   AND route_type = 'entry'
@@ -100,12 +106,14 @@ func (q *Queries) GetEntryRoute(ctx context.Context, entryID sql.NullString) (Ro
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ContentTypeID,
+		&i.TaxonomyID,
+		&i.TermID,
 	)
 	return i, err
 }
 
 const getRouteByPath = `-- name: GetRouteByPath :one
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE path = ?
 LIMIT 1
@@ -124,12 +132,14 @@ func (q *Queries) GetRouteByPath(ctx context.Context, path string) (Route, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ContentTypeID,
+		&i.TaxonomyID,
+		&i.TermID,
 	)
 	return i, err
 }
 
 const getRouteByPathAndType = `-- name: GetRouteByPathAndType :one
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE path = ? AND route_type = ?
 LIMIT 1
@@ -153,12 +163,70 @@ func (q *Queries) GetRouteByPathAndType(ctx context.Context, arg GetRouteByPathA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ContentTypeID,
+		&i.TaxonomyID,
+		&i.TermID,
+	)
+	return i, err
+}
+
+const getRouteByTaxonomyTerm = `-- name: GetRouteByTaxonomyTerm :one
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id FROM routes WHERE taxonomy_id = ? AND term_id = ? LIMIT 1
+`
+
+type GetRouteByTaxonomyTermParams struct {
+	TaxonomyID sql.NullString `json:"taxonomy_id"`
+	TermID     sql.NullString `json:"term_id"`
+}
+
+func (q *Queries) GetRouteByTaxonomyTerm(ctx context.Context, arg GetRouteByTaxonomyTermParams) (Route, error) {
+	row := q.db.QueryRowContext(ctx, getRouteByTaxonomyTerm, arg.TaxonomyID, arg.TermID)
+	var i Route
+	err := row.Scan(
+		&i.ID,
+		&i.Path,
+		&i.EntryID,
+		&i.RouteType,
+		&i.RedirectTo,
+		&i.RedirectStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentTypeID,
+		&i.TaxonomyID,
+		&i.TermID,
+	)
+	return i, err
+}
+
+const getTermArchiveRoute = `-- name: GetTermArchiveRoute :one
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id FROM routes WHERE taxonomy_id = ? AND term_id = ? AND route_type = 'archive' LIMIT 1
+`
+
+type GetTermArchiveRouteParams struct {
+	TaxonomyID sql.NullString `json:"taxonomy_id"`
+	TermID     sql.NullString `json:"term_id"`
+}
+
+func (q *Queries) GetTermArchiveRoute(ctx context.Context, arg GetTermArchiveRouteParams) (Route, error) {
+	row := q.db.QueryRowContext(ctx, getTermArchiveRoute, arg.TaxonomyID, arg.TermID)
+	var i Route
+	err := row.Scan(
+		&i.ID,
+		&i.Path,
+		&i.EntryID,
+		&i.RouteType,
+		&i.RedirectTo,
+		&i.RedirectStatus,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentTypeID,
+		&i.TaxonomyID,
+		&i.TermID,
 	)
 	return i, err
 }
 
 const listArchiveRoutes = `-- name: ListArchiveRoutes :many
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE route_type = 'archive'
 ORDER BY path
@@ -183,6 +251,8 @@ func (q *Queries) ListArchiveRoutes(ctx context.Context) ([]Route, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ContentTypeID,
+			&i.TaxonomyID,
+			&i.TermID,
 		); err != nil {
 			return nil, err
 		}
@@ -198,7 +268,7 @@ func (q *Queries) ListArchiveRoutes(ctx context.Context) ([]Route, error) {
 }
 
 const listRedirectsToTarget = `-- name: ListRedirectsToTarget :many
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE route_type = 'redirect'
   AND redirect_to = ?
@@ -226,6 +296,47 @@ func (q *Queries) ListRedirectsToTarget(ctx context.Context, redirectTo sql.Null
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ContentTypeID,
+			&i.TaxonomyID,
+			&i.TermID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRoutes = `-- name: ListRoutes :many
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id FROM routes ORDER BY path
+`
+
+func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
+	rows, err := q.db.QueryContext(ctx, listRoutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Route{}
+	for rows.Next() {
+		var i Route
+		if err := rows.Scan(
+			&i.ID,
+			&i.Path,
+			&i.EntryID,
+			&i.RouteType,
+			&i.RedirectTo,
+			&i.RedirectStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ContentTypeID,
+			&i.TaxonomyID,
+			&i.TermID,
 		); err != nil {
 			return nil, err
 		}
@@ -241,7 +352,7 @@ func (q *Queries) ListRedirectsToTarget(ctx context.Context, redirectTo sql.Null
 }
 
 const listRoutesForEntry = `-- name: ListRoutesForEntry :many
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes
 WHERE entry_id = ?
 ORDER BY path
@@ -266,6 +377,47 @@ func (q *Queries) ListRoutesForEntry(ctx context.Context, entryID sql.NullString
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ContentTypeID,
+			&i.TaxonomyID,
+			&i.TermID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaxonomyArchiveRoutes = `-- name: ListTaxonomyArchiveRoutes :many
+SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id FROM routes WHERE route_type = 'archive' AND taxonomy_id IS NOT NULL ORDER BY path
+`
+
+func (q *Queries) ListTaxonomyArchiveRoutes(ctx context.Context) ([]Route, error) {
+	rows, err := q.db.QueryContext(ctx, listTaxonomyArchiveRoutes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Route{}
+	for rows.Next() {
+		var i Route
+		if err := rows.Scan(
+			&i.ID,
+			&i.Path,
+			&i.EntryID,
+			&i.RouteType,
+			&i.RedirectTo,
+			&i.RedirectStatus,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ContentTypeID,
+			&i.TaxonomyID,
+			&i.TermID,
 		); err != nil {
 			return nil, err
 		}
@@ -282,7 +434,7 @@ func (q *Queries) ListRoutesForEntry(ctx context.Context, entryID sql.NullString
 
 const updateRoute = `-- name: UpdateRoute :exec
 UPDATE routes
-SET path = ?, entry_id = ?, route_type = ?, content_type_id = ?, redirect_to = ?, redirect_status = ?, updated_at = ?
+SET path = ?, entry_id = ?, route_type = ?, content_type_id = ?, taxonomy_id = ?, term_id = ?, redirect_to = ?, redirect_status = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -291,6 +443,8 @@ type UpdateRouteParams struct {
 	EntryID        sql.NullString `json:"entry_id"`
 	RouteType      string         `json:"route_type"`
 	ContentTypeID  sql.NullString `json:"content_type_id"`
+	TaxonomyID     sql.NullString `json:"taxonomy_id"`
+	TermID         sql.NullString `json:"term_id"`
 	RedirectTo     sql.NullString `json:"redirect_to"`
 	RedirectStatus sql.NullInt64  `json:"redirect_status"`
 	UpdatedAt      int64          `json:"updated_at"`
@@ -303,6 +457,8 @@ func (q *Queries) UpdateRoute(ctx context.Context, arg UpdateRouteParams) error 
 		arg.EntryID,
 		arg.RouteType,
 		arg.ContentTypeID,
+		arg.TaxonomyID,
+		arg.TermID,
 		arg.RedirectTo,
 		arg.RedirectStatus,
 		arg.UpdatedAt,

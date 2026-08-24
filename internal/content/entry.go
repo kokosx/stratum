@@ -18,14 +18,14 @@ type Entry struct {
 
 // PublishedEntry is the view returned by EntryQuery (joined with revision + route).
 type PublishedEntry struct {
-	ID              string
-	Slug            string
-	ContentTypeID   ContentTypeID
-	Title           string
-	Excerpt         string
-	FeaturedMediaID sql.NullString
-	RoutePath       string
-	PublishedAt     sql.NullInt64
+	ID               string
+	Slug             string
+	ContentTypeID    ContentTypeID
+	Title            string
+	Excerpt          string
+	FeaturedMediaID  sql.NullString
+	RoutePath        string
+	PublishedAt      sql.NullInt64
 	FirstPublishedAt sql.NullInt64
-	RevisionID      string
+	RevisionID       string
 }

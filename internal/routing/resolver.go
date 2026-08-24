@@ -13,19 +13,19 @@ import (
 
 // ResolvedRoute is the result of resolving a public path before rendering.
 type ResolvedRoute struct {
-	Path        string
-	Route       *db.Route
-	IsArchive   bool
-	IsRedirect  bool
-	RedirectTo  string
-	Pagination  PaginationResolution
+	Path       string
+	Route      *db.Route
+	IsArchive  bool
+	IsRedirect bool
+	RedirectTo string
+	Pagination PaginationResolution
 }
 
 // PaginationResolution holds pagination parsing for archive children.
 type PaginationResolution struct {
-	IsPagination  bool
-	BasePath      string
-	Page          int
+	IsPagination bool
+	BasePath     string
+	Page         int
 }
 
 // Resolver is the single place that maps an incoming request path to a route,

@@ -1,32 +1,42 @@
 // Settings control panel behaviour:
 //  - dirty tracking enables the Save Changes button and flips the status pill
-//  - section navigation scrolls and highlights without a page reload
+//  - section navigation scrolls and highlights without a page reload (legacy stacked layout)
 //  - saving and toggles are handled by Datastar (see the form/toggle attributes);
 //    the server patches #settings-content in place, so no full reload occurs.
 (function () {
-  const form = document.getElementById("settings-form");
-  if (!form) return;
+  // New template renders one form per section (general/reading/seo/performance).
+  // Old template used a single #settings-form. Support both.
+  const form =
+    document.getElementById("settings-form") ||
+    document.getElementById("settings-form-general") ||
+    document.getElementById("settings-form-reading") ||
+    document.getElementById("settings-form-seo") ||
+    document.getElementById("settings-form-performance") ||
+    document.querySelector("form[id^='settings-form-']");
 
-  const saveButton = document.getElementById("settings-save");
-  const saveState = document.getElementById("settings-save-state");
+  if (form) {
+    const saveButton = form.querySelector('button[type="submit"]') || document.getElementById("settings-save");
+    const saveState = form.querySelector("#settings-save-state") || document.getElementById("settings-save-state");
 
-  function markDirty() {
-    if (saveState) {
-      saveState.textContent = "Unsaved";
-      saveState.classList.remove("is-saved");
-      saveState.classList.add("is-dirty");
+    function markDirty() {
+      if (saveState) {
+        saveState.textContent = "Unsaved";
+        saveState.classList.remove("is-saved");
+        saveState.classList.add("is-dirty");
+      }
+      if (saveButton) saveButton.disabled = false;
     }
-    if (saveButton) saveButton.disabled = false;
+
+    form.addEventListener("input", markDirty);
+    form.addEventListener("change", markDirty);
   }
 
-  // Delegated listeners survive Datastar morphs that replace #settings-content,
-  // because the form element itself is never replaced.
-  form.addEventListener("input", markDirty);
-  form.addEventListener("change", markDirty);
-
-  // Section navigation (smooth scroll + active highlight). Sections are stacked,
-  // so this is purely a navigation aid and never affects saved state.
+  // Section navigation: legacy stacked layout used data-section anchors and smooth scroll.
+  // New layout uses real page links (/admin/settings/general etc) – don't intercept those.
   const navLinks = Array.from(document.querySelectorAll(".settings-nav__link"));
+  const hasDataSection = navLinks.some((l) => l.dataset.section);
+  if (!hasDataSection) return;
+
   navLinks.forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();

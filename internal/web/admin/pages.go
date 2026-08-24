@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/seo"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -49,6 +50,12 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: pageContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: err.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
 		return
 	}
+	termIDs, terr := h.taxonomyTermIDsForRequest(r.Context(), r, pageContentType)
+	if terr != nil {
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: pageContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: terr.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
+		return
+	}
+	input.TermIDs = termIDs
 	user, err := h.currentUser(r)
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -64,7 +71,8 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
-		h.runtime.InvalidateEntry(entryID, pageContentType)
+		h.runtime.InvalidateContent()
+		_ = h.runtime.ReloadRoutes(r.Context())
 	}
 	if r.FormValue("publish") != "" {
 		h.setFlash(w, "Page published.")
@@ -165,6 +173,8 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		ContentTypeID:         pageContentType,
 		LayoutTemplateID:      layoutID,
 		LayoutTemplates:       h.loadLayoutTemplateOptions(r.Context(), pageContentType),
+		ParentEntryID:         stringValue(revision.ParentEntryID),
+		MenuOrder:             revision.MenuOrder,
 	}, "pages")
 }
 
@@ -227,6 +237,17 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
 		return
 	}
+	// Taxonomy assignments (generic, revision-scoped)
+	if termIDs, terr := h.taxonomyTermIDsForRequest(r.Context(), r, contentType); terr != nil {
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, terr)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, terr)
+		return
+	} else {
+		input.TermIDs = termIDs
+	}
 	if _, _, err := h.entryAndLatestRevision(r.Context(), entryID, contentType); err != nil {
 		http.NotFound(w, r)
 		return
@@ -238,9 +259,14 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, publish)
 	if saveErr == nil && publish && h.runtime != nil {
-		// Selective invalidation: only pages that depend on this entry or its
-		// content type are dropped. Routes are reloaded for the new slug.
-		h.runtime.InvalidateEntry(entryID, contentType)
+		if content.DefinitionFor(contentType).Capabilities.Hierarchical {
+			// A parent publish can move every descendant path. Drop old path cache
+			// entries before the single route-runtime reload exposes redirects.
+			h.runtime.InvalidateContent()
+			_ = h.runtime.ReloadRoutes(r.Context())
+		} else {
+			h.runtime.InvalidateEntry(entryID, contentType)
+		}
 		// If this entry is the Posts Page, posts_base_path may have changed – ensure site snapshot is fresh.
 		// We still reload site but only invalidate site tag if reload succeeds; fallback already handled by InvalidateEntry.
 		if s, err := h.queries.GetSiteSettings(r.Context()); err == nil && s.PostsPageEntryID.Valid && s.PostsPageEntryID.String == entryID {
@@ -286,6 +312,8 @@ func (h *Handler) renderEntryError(w http.ResponseWriter, r *http.Request, conte
 		ContentTypeID:    contentType,
 		LayoutTemplateID: input.layoutTemplateID,
 		LayoutTemplates:  h.loadLayoutTemplateOptions(r.Context(), contentType),
+		ParentEntryID:    input.parentEntryID,
+		MenuOrder:        input.menuOrder,
 		Error:            entryWriteError(saveErr),
 		Dirty:            "Unsaved",
 		Status:           "Draft",

@@ -6,43 +6,6 @@ import (
 	"strings"
 )
 
-const listRoutes = `-- name: ListRoutes :many
-SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id FROM routes ORDER BY path`
-
-// ListRoutes returns all routes ordered by path.
-func (q *Queries) ListRoutes(ctx context.Context) ([]Route, error) {
-	rows, err := q.db.QueryContext(ctx, listRoutes)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Route
-	for rows.Next() {
-		var i Route
-		if err := rows.Scan(
-			&i.ID,
-			&i.Path,
-			&i.EntryID,
-			&i.RouteType,
-			&i.RedirectTo,
-			&i.RedirectStatus,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ContentTypeID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listMediaByIDsPrefix = `SELECT id, original_filename, storage_key, mime_type, asset_type, file_size, width, height, alt_text, title, caption, description, author_id, created_at, updated_at FROM media WHERE id IN (`
 const listMediaVariantsByMediaIDsPrefix = `SELECT id, media_id, kind, storage_key, mime_type, width, height, file_size, created_at, content_hash FROM media_variants WHERE media_id IN (`
 

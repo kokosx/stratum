@@ -75,7 +75,7 @@ func UpsertRedirectRoute(ctx context.Context, queries *db.Queries, source, targe
 		if err := queries.UpdateRoute(ctx, db.UpdateRouteParams{
 			ID: inboundRoute.ID, Path: inboundRoute.Path, EntryID: sql.NullString{},
 			RouteType: RouteTypeRedirect, ContentTypeID: sql.NullString{},
-			RedirectTo: sql.NullString{String: target, Valid: true},
+			RedirectTo:     sql.NullString{String: target, Valid: true},
 			RedirectStatus: sql.NullInt64{Int64: http.StatusMovedPermanently, Valid: true}, UpdatedAt: now,
 		}); err != nil {
 			return fmt.Errorf("flatten redirect chain %s: %w", inboundRoute.Path, err)
@@ -86,7 +86,7 @@ func UpsertRedirectRoute(ctx context.Context, queries *db.Queries, source, targe
 		return queries.UpdateRoute(ctx, db.UpdateRouteParams{
 			ID: existing.ID, Path: source, EntryID: sql.NullString{},
 			RouteType: RouteTypeRedirect, ContentTypeID: sql.NullString{},
-			RedirectTo: sql.NullString{String: target, Valid: true},
+			RedirectTo:     sql.NullString{String: target, Valid: true},
 			RedirectStatus: sql.NullInt64{Int64: http.StatusMovedPermanently, Valid: true}, UpdatedAt: now,
 		})
 	}
@@ -100,7 +100,7 @@ func UpsertRedirectRoute(ctx context.Context, queries *db.Queries, source, targe
 	return queries.CreateRoute(ctx, db.CreateRouteParams{
 		ID: id, Path: source, EntryID: sql.NullString{},
 		RouteType: RouteTypeRedirect, ContentTypeID: sql.NullString{},
-		RedirectTo: sql.NullString{String: target, Valid: true},
+		RedirectTo:     sql.NullString{String: target, Valid: true},
 		RedirectStatus: sql.NullInt64{Int64: http.StatusMovedPermanently, Valid: true}, CreatedAt: now, UpdatedAt: now,
 	})
 }

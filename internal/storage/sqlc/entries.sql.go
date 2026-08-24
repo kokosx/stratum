@@ -8,7 +8,89 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
+
+const countEntriesAdmin = `-- name: CountEntriesAdmin :one
+SELECT COUNT(*)
+FROM entries
+LEFT JOIN entry_revisions AS latest_revision
+    ON latest_revision.entry_id = entries.id
+    AND latest_revision.revision_number = (
+        SELECT MAX(revision_number)
+        FROM entry_revisions
+        WHERE entry_id = entries.id
+    )
+WHERE entries.content_type_id = ?1
+  AND (
+      ?2 = ''
+      OR (
+          ?2 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+      )
+      OR (
+          ?2 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
+      )
+      OR (
+          ?2 = 'private' AND entries.status = 'private'
+      )
+      OR (
+          ?2 = 'trash' AND entries.status = 'trash'
+      )
+      OR (
+          ?2 = 'all' AND entries.status != 'trash'
+      )
+  )
+  AND (
+      ?3 = ''
+      OR latest_revision.title LIKE '%' || ?3 || '%'
+      OR entries.slug LIKE '%' || ?3 || '%'
+  )
+`
+
+type CountEntriesAdminParams struct {
+	ContentTypeID string      `json:"content_type_id"`
+	StatusFilter  interface{} `json:"status_filter"`
+	Search        interface{} `json:"search"`
+}
+
+func (q *Queries) CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countEntriesAdmin, arg.ContentTypeID, arg.StatusFilter, arg.Search)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countEntriesByAdminStatus = `-- name: CountEntriesByAdminStatus :one
+SELECT
+    SUM(CASE WHEN status != 'trash' THEN 1 ELSE 0 END) AS all_count,
+    SUM(CASE WHEN status = 'active' AND published_revision_id IS NOT NULL THEN 1 ELSE 0 END) AS published_count,
+    SUM(CASE WHEN status = 'active' AND published_revision_id IS NULL THEN 1 ELSE 0 END) AS draft_count,
+    SUM(CASE WHEN status = 'private' THEN 1 ELSE 0 END) AS private_count,
+    SUM(CASE WHEN status = 'trash' THEN 1 ELSE 0 END) AS trash_count
+FROM entries
+WHERE content_type_id = ?
+`
+
+type CountEntriesByAdminStatusRow struct {
+	AllCount       sql.NullFloat64 `json:"all_count"`
+	PublishedCount sql.NullFloat64 `json:"published_count"`
+	DraftCount     sql.NullFloat64 `json:"draft_count"`
+	PrivateCount   sql.NullFloat64 `json:"private_count"`
+	TrashCount     sql.NullFloat64 `json:"trash_count"`
+}
+
+func (q *Queries) CountEntriesByAdminStatus(ctx context.Context, contentTypeID string) (CountEntriesByAdminStatusRow, error) {
+	row := q.db.QueryRowContext(ctx, countEntriesByAdminStatus, contentTypeID)
+	var i CountEntriesByAdminStatusRow
+	err := row.Scan(
+		&i.AllCount,
+		&i.PublishedCount,
+		&i.DraftCount,
+		&i.PrivateCount,
+		&i.TrashCount,
+	)
+	return i, err
+}
 
 const createEntry = `-- name: CreateEntry :exec
 INSERT INTO entries (
@@ -52,8 +134,78 @@ func (q *Queries) DeleteEntry(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteRoutesByEntryID = `-- name: DeleteRoutesByEntryID :exec
+DELETE FROM routes
+WHERE entry_id = ?
+`
+
+func (q *Queries) DeleteRoutesByEntryID(ctx context.Context, entryID sql.NullString) error {
+	_, err := q.db.ExecContext(ctx, deleteRoutesByEntryID, entryID)
+	return err
+}
+
+const getEntriesByIDs = `-- name: GetEntriesByIDs :many
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at, status_before_trash, trashed_at
+FROM entries
+WHERE id IN (/*SLICE:ids*/?)
+  AND content_type_id = ?2
+`
+
+type GetEntriesByIDsParams struct {
+	Ids           []string `json:"ids"`
+	ContentTypeID string   `json:"content_type_id"`
+}
+
+func (q *Queries) GetEntriesByIDs(ctx context.Context, arg GetEntriesByIDsParams) ([]Entry, error) {
+	query := getEntriesByIDs
+	var queryParams []interface{}
+	if len(arg.Ids) > 0 {
+		for _, v := range arg.Ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(arg.Ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	queryParams = append(queryParams, arg.ContentTypeID)
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Entry{}
+	for rows.Next() {
+		var i Entry
+		if err := rows.Scan(
+			&i.ID,
+			&i.ContentTypeID,
+			&i.Slug,
+			&i.Status,
+			&i.AuthorID,
+			&i.PublishedRevisionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.PublishedAt,
+			&i.FeaturedMediaID,
+			&i.FirstPublishedAt,
+			&i.StatusBeforeTrash,
+			&i.TrashedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getEntry = `-- name: GetEntry :one
-SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at, status_before_trash, trashed_at
 FROM entries
 WHERE id = ?
 LIMIT 1
@@ -74,12 +226,14 @@ func (q *Queries) GetEntry(ctx context.Context, id string) (Entry, error) {
 		&i.PublishedAt,
 		&i.FeaturedMediaID,
 		&i.FirstPublishedAt,
+		&i.StatusBeforeTrash,
+		&i.TrashedAt,
 	)
 	return i, err
 }
 
 const getEntryBySlug = `-- name: GetEntryBySlug :one
-SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at
+SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at, status_before_trash, trashed_at
 FROM entries
 WHERE content_type_id = ?
   AND slug = ?
@@ -106,8 +260,119 @@ func (q *Queries) GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) 
 		&i.PublishedAt,
 		&i.FeaturedMediaID,
 		&i.FirstPublishedAt,
+		&i.StatusBeforeTrash,
+		&i.TrashedAt,
 	)
 	return i, err
+}
+
+const listEntriesAdmin = `-- name: ListEntriesAdmin :many
+SELECT
+    entries.id,
+    entries.slug,
+    entries.status,
+    entries.updated_at,
+    entries.published_revision_id,
+    latest_revision.title,
+    public_route.path AS public_path
+FROM entries
+LEFT JOIN entry_revisions AS latest_revision
+    ON latest_revision.entry_id = entries.id
+    AND latest_revision.revision_number = (
+        SELECT MAX(revision_number)
+        FROM entry_revisions
+        WHERE entry_id = entries.id
+    )
+LEFT JOIN routes AS public_route
+    ON public_route.id = (
+        SELECT id
+        FROM routes
+        WHERE entry_id = entries.id
+          AND route_type = 'entry'
+        ORDER BY path
+        LIMIT 1
+    )
+WHERE entries.content_type_id = ?1
+  AND (
+      ?2 = ''
+      OR (
+          ?2 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+      )
+      OR (
+          ?2 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
+      )
+      OR (
+          ?2 = 'private' AND entries.status = 'private'
+      )
+      OR (
+          ?2 = 'trash' AND entries.status = 'trash'
+      )
+      OR (
+          ?2 = 'all' AND entries.status != 'trash'
+      )
+  )
+  AND (
+      ?3 = ''
+      OR latest_revision.title LIKE '%' || ?3 || '%'
+      OR entries.slug LIKE '%' || ?3 || '%'
+  )
+ORDER BY entries.updated_at DESC, entries.id DESC
+LIMIT ?5 OFFSET ?4
+`
+
+type ListEntriesAdminParams struct {
+	ContentTypeID string      `json:"content_type_id"`
+	StatusFilter  interface{} `json:"status_filter"`
+	Search        interface{} `json:"search"`
+	Offset        int64       `json:"offset"`
+	Limit         int64       `json:"limit"`
+}
+
+type ListEntriesAdminRow struct {
+	ID                  string         `json:"id"`
+	Slug                string         `json:"slug"`
+	Status              string         `json:"status"`
+	UpdatedAt           int64          `json:"updated_at"`
+	PublishedRevisionID sql.NullString `json:"published_revision_id"`
+	Title               sql.NullString `json:"title"`
+	PublicPath          sql.NullString `json:"public_path"`
+}
+
+func (q *Queries) ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEntriesAdmin,
+		arg.ContentTypeID,
+		arg.StatusFilter,
+		arg.Search,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEntriesAdminRow{}
+	for rows.Next() {
+		var i ListEntriesAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Status,
+			&i.UpdatedAt,
+			&i.PublishedRevisionID,
+			&i.Title,
+			&i.PublicPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listEntriesByContentType = `-- name: ListEntriesByContentType :many
@@ -179,6 +444,47 @@ func (q *Queries) ListEntriesByContentType(ctx context.Context, contentTypeID st
 		return nil, err
 	}
 	return items, nil
+}
+
+const moveEntryToTrash = `-- name: MoveEntryToTrash :exec
+UPDATE entries
+SET status = 'trash',
+    status_before_trash = CASE WHEN status IN ('active', 'private') THEN status ELSE 'active' END,
+    trashed_at = ?,
+    updated_at = ?
+WHERE id = ?
+  AND status != 'trash'
+`
+
+type MoveEntryToTrashParams struct {
+	TrashedAt sql.NullInt64 `json:"trashed_at"`
+	UpdatedAt int64         `json:"updated_at"`
+	ID        string        `json:"id"`
+}
+
+func (q *Queries) MoveEntryToTrash(ctx context.Context, arg MoveEntryToTrashParams) error {
+	_, err := q.db.ExecContext(ctx, moveEntryToTrash, arg.TrashedAt, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const restoreEntryFromTrash = `-- name: RestoreEntryFromTrash :exec
+UPDATE entries
+SET status = COALESCE(status_before_trash, 'active'),
+    status_before_trash = NULL,
+    trashed_at = NULL,
+    updated_at = ?
+WHERE id = ?
+  AND status = 'trash'
+`
+
+type RestoreEntryFromTrashParams struct {
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) RestoreEntryFromTrash(ctx context.Context, arg RestoreEntryFromTrashParams) error {
+	_, err := q.db.ExecContext(ctx, restoreEntryFromTrash, arg.UpdatedAt, arg.ID)
+	return err
 }
 
 const setFirstPublishedAtIfNull = `-- name: SetFirstPublishedAtIfNull :exec

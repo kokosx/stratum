@@ -183,6 +183,8 @@ type ArchiveView struct {
 	Entries       []ArchiveEntryView
 	Pagination    PaginationView
 	HasShell      bool // true when archive has a Posts Page shell; false uses fallback rendering
+	TaxonomyID    string
+	TermID        string
 }
 
 // ArchiveEntryView is one card in the listing. Theme controls markup.
