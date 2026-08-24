@@ -75,10 +75,22 @@ func NewAssetManifest(blocksReg *blocks.Registry, runtime *themes.Runtime) *Asse
 func (m *AssetManifest) Rebuild(blocksReg *blocks.Registry, runtime *themes.Runtime) {
 	themeCSS := cssmin.CSS([]byte(runtime.Styles()))
 	themeJS := []byte(runtime.JavaScript())
-	themeCSSGzip, _ := compress.Gzip(themeCSS)
-	themeCSSBrotli, _ := compress.Brotli(themeCSS)
-	themeJSGzip, _ := compress.Gzip(themeJS)
-	themeJSBrotli, _ := compress.Brotli(themeJS)
+	themeCSSGzip, err := compress.Gzip(themeCSS)
+	if err != nil {
+		themeCSSGzip = nil
+	}
+	themeCSSBrotli, err := compress.Brotli(themeCSS)
+	if err != nil {
+		themeCSSBrotli = nil
+	}
+	themeJSGzip, err := compress.Gzip(themeJS)
+	if err != nil {
+		themeJSGzip = nil
+	}
+	themeJSBrotli, err := compress.Brotli(themeJS)
+	if err != nil {
+		themeJSBrotli = nil
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -132,8 +144,14 @@ func (m *AssetManifest) BlocksCSSFor(keys []rendering.BlockKey) string {
 	}
 	minified := cssmin.CSS([]byte(src))
 	hash := hashHex(minified)
-	gz, _ := compress.Gzip(minified)
-	br, _ := compress.Brotli(minified)
+	gz, err := compress.Gzip(minified)
+	if err != nil {
+		gz = nil
+	}
+	br, err := compress.Brotli(minified)
+	if err != nil {
+		br = nil
+	}
 
 	m.mu.Lock()
 	if _, ok := m.pageBlocks[hash]; !ok {
@@ -194,7 +212,11 @@ func (m *AssetManifest) Serve(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("ETag", hashETag(body))
 	w.Header().Set("Vary", "Accept-Encoding")
 
-	enc := compress.NegotiateEncoding(r.Header.Get("Accept-Encoding"))
+	enc, ok := compress.NegotiateEncoding(r.Header.Get("Accept-Encoding"))
+	if !ok {
+		http.Error(w, "Not Acceptable", http.StatusNotAcceptable)
+		return true
+	}
 	switch enc {
 	case "br":
 		if len(br) > 0 {
@@ -245,16 +267,5 @@ func hashHex(b []byte) string {
 
 func hashETag(b []byte) string {
 	sum := sha256.Sum256(b)
-	return `"` + hex.EncodeToString(sum[:16]) + `"`
+	return `W/"` + hex.EncodeToString(sum[:16]) + `"`
 }
-
-func gzipBytes(b []byte) ([]byte, error) {
-	return compress.Gzip(b)
-}
-
-// brotliBytes kept for legacy callers (none)
-func brotliBytes(b []byte) ([]byte, error) {
-	return compress.Brotli(b)
-}
-
-var _ = bytes.MinRead

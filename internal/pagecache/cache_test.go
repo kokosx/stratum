@@ -119,3 +119,100 @@ func TestCacheConcurrentGetSetInvalidate(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestCacheGenerationPreventsStaleResurrection(t *testing.T) {
+	c := New()
+	// Start render for R1 and block
+	block := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		_, _ = c.Do("k", func() (Entry, error) {
+			close(started)
+			<-block
+			return Entry{HTML: []byte("R1"), Tags: []string{"entry:x"}}, nil
+		})
+	}()
+	<-started
+	// Invalidate while R1 is inflight (no cached entry yet)
+	c.InvalidateTag("entry:x")
+	// Start second render for R2 after invalidation
+	doneB := make(chan struct{})
+	go func() {
+		_, _ = c.Do("k", func() (Entry, error) {
+			return Entry{HTML: []byte("R2"), Tags: []string{"entry:x"}}, nil
+		})
+		close(doneB)
+	}()
+	<-doneB
+	// Allow R1 to finish – it must not repopulate cache with stale R1
+	close(block)
+	// Give scheduler time (deterministic via second Get)
+	// Poll until cache has R2 or timeout
+	for i := 0; i < 100; i++ {
+		if e, ok := c.Get("k"); ok {
+			if string(e.HTML) == "R2" {
+				return
+			}
+			if string(e.HTML) == "R1" {
+				t.Fatalf("cache resurrected stale R1 after invalidation, got R1")
+			}
+		}
+	}
+	t.Fatalf("cache should contain R2 after race")
+}
+
+func TestCachePostInvalidationDoesNotJoinStaleInflight(t *testing.T) {
+	c := New()
+	blockA := make(chan struct{})
+	startedA := make(chan struct{})
+	// Request A starts R1
+	go func() {
+		_, _ = c.Do("k", func() (Entry, error) {
+			close(startedA)
+			<-blockA
+			return Entry{HTML: []byte("R1"), Tags: []string{"entry:x"}}, nil
+		})
+	}()
+	<-startedA
+	// Invalidate
+	c.InvalidateTag("entry:x")
+	// Request B after invalidation should not join A
+	resultB := make(chan string, 1)
+	go func() {
+		e, _ := c.Do("k", func() (Entry, error) {
+			return Entry{HTML: []byte("R2"), Tags: []string{"entry:x"}}, nil
+		})
+		resultB <- string(e.HTML)
+	}()
+	gotB := <-resultB
+	if gotB != "R2" {
+		t.Fatalf("B should get R2, got %s (joined stale A)", gotB)
+	}
+	close(blockA)
+	// Ensure cache has R2, not R1
+	if e, ok := c.Get("k"); ok && string(e.HTML) != "R2" {
+		t.Fatalf("cache should be R2, got %s", string(e.HTML))
+	}
+}
+
+func TestCacheInvalidationDuringInflightNotCached(t *testing.T) {
+	c := New()
+	block := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		_, _ = c.Do("k", func() (Entry, error) {
+			close(started)
+			<-block
+			return Entry{HTML: []byte("R1")}, nil
+		})
+	}()
+	<-started
+	c.InvalidateTag("site")
+	close(block)
+	// Give time for Do to finish
+	for i := 0; i < 50; i++ {
+		if _, ok := c.Get("k"); ok {
+			t.Fatalf("stale result should not be cached after invalidation")
+		}
+	}
+}

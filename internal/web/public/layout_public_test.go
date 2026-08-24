@@ -210,6 +210,7 @@ func TestCacheInvalidationOnLayoutPublish(t *testing.T) {
 	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "cache-rev1", EntryID: entryID, RevisionNumber: 1, Title: "Cache", DocumentJson: `{"version":1,"nodes":[{"id":"t1","block":"core/text","version":1,"props":{"text":"hello"},"settings":{}}]}`, LayoutTemplateID: sql.NullString{String: layoutID, Valid: true}, CreatedAt: now})
 	_ = queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: "cache-rev1", Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entryID})
 	_ = queries.CreateRoute(ctx, db.CreateRouteParams{ID: "cache-route", Path: "/cache-test", EntryID: sql.NullString{String: entryID, Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now})
+	_ = hub.Routes.Reload(ctx)
 
 	// First request warms cache
 	req1 := httptest.NewRequest(http.MethodGet, "/cache-test", nil)

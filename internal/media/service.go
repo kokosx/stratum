@@ -583,6 +583,7 @@ func joinSrcSet(items []respVariant) string {
 }
 
 // FaviconView returns the generated site-icon URLs for the theme <head>.
+// URLs are versioned with content hash so regenerated favicons get new immutable URLs.
 func (s *Service) FaviconView(ctx context.Context, id string) (rendering.FaviconView, bool) {
 	if view, ok := s.favicon.get(id); ok {
 		return view, true
@@ -598,7 +599,7 @@ func (s *Service) FaviconView(ctx context.Context, id string) (rendering.Favicon
 			continue
 		}
 		found = true
-		url := "/media/" + id + "/" + v.Kind
+		url := variantURL(id, v.Kind, v.ContentHash)
 		switch strings.TrimPrefix(v.Kind, "favicon-") {
 		case "16":
 			view.Size16 = url

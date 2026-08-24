@@ -21,11 +21,10 @@ type Runtime struct {
 	snapshot atomic.Pointer[Snapshot]
 }
 
-// NewRuntime creates a runtime with an empty snapshot. Call Reload to populate.
+// NewRuntime creates a runtime with no snapshot. Call Reload to publish the first snapshot.
+// A nil snapshot means "not loaded yet"; a non-nil empty snapshot means "loaded, zero routes" and is authoritative.
 func NewRuntime(queries *db.Queries) *Runtime {
-	r := &Runtime{queries: queries}
-	r.snapshot.Store(&Snapshot{ByPath: make(map[string]Route)})
-	return r
+	return &Runtime{queries: queries}
 }
 
 // Reload rebuilds the snapshot from the database and atomically publishes it.
@@ -57,13 +56,14 @@ func (r *Runtime) Reload(ctx context.Context) error {
 	return nil
 }
 
-// Current returns the active snapshot (never nil).
+// Current returns the active snapshot, or nil if not yet loaded.
 func (r *Runtime) Current() *Snapshot {
-	snap := r.snapshot.Load()
-	if snap == nil {
-		return &Snapshot{ByPath: make(map[string]Route)}
-	}
-	return snap
+	return r.snapshot.Load()
+}
+
+// Loaded reports whether a snapshot has been published.
+func (r *Runtime) Loaded() bool {
+	return r.snapshot.Load() != nil
 }
 
 // Lookup returns the route for path without touching the database.

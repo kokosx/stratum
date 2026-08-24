@@ -3,6 +3,7 @@ package compress
 import (
 	"bytes"
 	"compress/gzip"
+	"strconv"
 	"strings"
 
 	"github.com/andybalholm/brotli"
@@ -59,126 +60,132 @@ func CompressArtifact(raw []byte, etag string) Artifact {
 }
 
 // NegotiateEncoding parses Accept-Encoding and returns the best supported
-// encoding: "br", "gzip", or "" (identity). It respects q values (q=0 means
-// not acceptable) and prefers br over gzip on tie.
-func NegotiateEncoding(header string) string {
+// encoding: "br", "gzip", or "" (identity) and whether the result is acceptable.
+// It respects q values, uses strconv.ParseFloat, and prefers br over gzip on tie.
+// Identity is considered acceptable with q=1 unless explicitly listed or covered by *.
+func NegotiateEncoding(header string) (string, bool) {
 	if header == "" {
-		return ""
+		return "", true
 	}
-	// Split by comma into tokens.
 	parts := strings.Split(header, ",")
-	type enc struct {
-		name string
-		q    float64
-	}
-	var encs []enc
+	const notSet = -1.0
+	qBr, qGzip, qIdentity, qStar := notSet, notSet, notSet, notSet
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
 		}
-		// split token; encoding; q=...
 		segments := strings.Split(p, ";")
 		name := strings.TrimSpace(strings.ToLower(segments[0]))
 		q := 1.0
 		for _, seg := range segments[1:] {
 			seg = strings.TrimSpace(seg)
 			if strings.HasPrefix(seg, "q=") {
-				val := strings.TrimPrefix(seg, "q=")
-				// parse float
-				if val == "0" || val == "0." || val == "0.0" {
+				val := strings.TrimSpace(strings.TrimPrefix(seg, "q="))
+				parsed, err := parseQ(val)
+				if err != nil {
 					q = 0
 				} else {
-					// simple parse: handle 0.xxx, 1, 1.0
-					// Use manual parse to avoid strconv overhead? Use general.
-					switch val {
-					case "1", "1.", "1.0":
-						q = 1
-					default:
-						// try parse with strings – fallback to 0 if invalid
-						// small fast parse
-						if len(val) > 0 && val[0] == '0' {
-							// 0.xxx
-							if len(val) >= 2 && val[1] == '.' {
-								// parse fractional part
-								q = 0
-								div := 1.0
-								for _, ch := range val[2:] {
-									if ch < '0' || ch > '9' {
-										q = 0
-										break
-									}
-									div *= 10
-									q += float64(ch-'0') / div
-								}
-							} else {
-								q = 0
-							}
-						} else if val == "1" {
-							q = 1
-						} else {
-							q = 0
-						}
+					if parsed < 0 {
+						parsed = 0
 					}
+					if parsed > 1 {
+						parsed = 1
+					}
+					q = parsed
 				}
 			}
 		}
-		encs = append(encs, enc{name: name, q: q})
-	}
-	// Determine best among br, gzip, * for each.
-	bestBR := -1.0
-	bestGzip := -1.0
-	hasStar := false
-	starQ := 0.0
-	for _, e := range encs {
-		switch e.name {
+		switch name {
 		case "br":
-			if e.q > bestBR {
-				bestBR = e.q
+			if q > qBr {
+				qBr = q
 			}
 		case "gzip", "x-gzip":
-			if e.q > bestGzip {
-				bestGzip = e.q
-			}
-		case "*":
-			hasStar = true
-			if e.q > starQ {
-				starQ = e.q
+			if q > qGzip {
+				qGzip = q
 			}
 		case "identity":
-			// identity never compressed; we return "" for it
+			if q > qIdentity {
+				qIdentity = q
+			}
+		case "*":
+			if q > qStar {
+				qStar = q
+			}
 		}
 	}
-	// If * present, it implies both if not explicitly listed.
-	if bestBR < 0 && hasStar {
-		bestBR = starQ
+	// Apply wildcard where explicit not set
+	if qBr == notSet && qStar != notSet {
+		qBr = qStar
 	}
-	if bestGzip < 0 && hasStar {
-		bestGzip = starQ
+	if qGzip == notSet && qStar != notSet {
+		qGzip = qStar
 	}
-	// Respect q=0 (not acceptable)
-	if bestBR == 0 {
-		bestBR = -1
+	if qIdentity == notSet && qStar != notSet {
+		qIdentity = qStar
 	}
-	if bestGzip == 0 {
-		bestGzip = -1
+	qStarOrig := qStar
+	qIdentityOrig := qIdentity
+	// q=0 means not acceptable
+	if qBr == 0 {
+		qBr = notSet
 	}
-	// Prefer higher q; on tie prefer br.
-	if bestBR > bestGzip {
-		return "br"
+	if qGzip == 0 {
+		qGzip = notSet
 	}
-	if bestGzip > bestBR {
-		return "gzip"
+	if qIdentity == 0 {
+		qIdentity = notSet
 	}
-	if bestBR >= 0 && bestGzip >= 0 && bestBR == bestGzip {
-		// tie -> br
-		return "br"
+	if qStar == 0 {
+		qStar = notSet
 	}
-	if bestBR >= 0 {
-		return "br"
+	// If none acceptable, check fallback to identity (when no star/identity explicitly 0)
+	if qBr == notSet && qGzip == notSet && qIdentity == notSet {
+		if qStarOrig == 0 || qIdentityOrig == 0 {
+			return "", false
+		}
+		// Fallback to identity for cases like br;q=0 or br;q=garbage where no other acceptable but identity not explicitly denied
+		return "", true
 	}
-	if bestGzip >= 0 {
-		return "gzip"
+	// Pick highest q, tie br > gzip > identity
+	bestEnc := ""
+	bestQ := notSet
+	if qBr != notSet && qBr > bestQ {
+		bestEnc = "br"
+		bestQ = qBr
 	}
-	return ""
+	if qGzip != notSet && qGzip > bestQ {
+		bestEnc = "gzip"
+		bestQ = qGzip
+	} else if qGzip != notSet && qGzip == bestQ && bestEnc == "br" {
+		// tie br wins, keep br
+	}
+	if qIdentity != notSet && qIdentity > bestQ {
+		bestEnc = ""
+		bestQ = qIdentity
+	}
+	// On tie between br/gzip/identity with same q, br wins per spec
+	if qBr != notSet && qBr == bestQ && bestEnc != "br" {
+		// if best is gzip or identity tie with br, prefer br
+		if qBr == bestQ {
+			bestEnc = "br"
+		}
+	}
+	return bestEnc, true
+}
+
+func parseQ(s string) (float64, error) {
+	// Use strconv.ParseFloat for standards compliance
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	return f, nil
+}
+
+// NegotiateEncodingString is a legacy wrapper returning only encoding, for callers that don't need 406 handling.
+func NegotiateEncodingString(header string) string {
+	enc, _ := NegotiateEncoding(header)
+	return enc
 }

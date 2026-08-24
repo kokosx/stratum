@@ -1,7 +1,6 @@
 package public
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -205,13 +204,39 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	h.writePage(w, r, entry)
 }
 
+func etagWeakMatch(header, etag string) bool {
+	if header == "" || etag == "" {
+		return false
+	}
+	if header == "*" {
+		return true
+	}
+	// Handle list of ETags: "W/\"a\", \"b\""
+	// For simplicity, split by comma and trim
+	for _, part := range strings.Split(header, ",") {
+		p := strings.TrimSpace(part)
+		// Weak comparison: strip leading W/
+		if strings.HasPrefix(p, "W/") {
+			p = p[2:]
+		}
+		e := etag
+		if strings.HasPrefix(e, "W/") {
+			e = e[2:]
+		}
+		if p == e {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pagecache.Entry) {
 	// HTML must revalidate: the public URL is stable across Publish, so a long
 	// immutable max-age would freeze stale content in browsers/CDNs. no-cache
 	// still allows storing the response; clients must revalidate via ETag.
 	const htmlCacheControl = "no-cache"
 
-	if match := r.Header.Get("If-None-Match"); match != "" && match == entry.ETag {
+	if etagWeakMatch(r.Header.Get("If-None-Match"), entry.ETag) {
 		w.Header().Set("ETag", entry.ETag)
 		w.Header().Set("Cache-Control", htmlCacheControl)
 		w.Header().Set("Vary", "Accept-Encoding")
@@ -227,7 +252,12 @@ func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pageca
 		w.Header().Set("X-Robots-Tag", entry.Robots)
 	}
 
-	switch compress.NegotiateEncoding(r.Header.Get("Accept-Encoding")) {
+	enc, ok := compress.NegotiateEncoding(r.Header.Get("Accept-Encoding"))
+	if !ok {
+		http.Error(w, "Not Acceptable", http.StatusNotAcceptable)
+		return
+	}
+	switch enc {
 	case "br":
 		if len(entry.Brotli) > 0 {
 			w.Header().Set("Content-Encoding", "br")
@@ -273,8 +303,10 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 			if siteSnap.HomepageMode == "latest_posts" {
 				isArchive = true
 			}
-		} else if rt, ok2 := snap.ByPath[base]; ok2 && rt.RouteType == routing.RouteTypeArchive {
-			isArchive = true
+		} else if snap != nil {
+			if rt, ok2 := snap.ByPath[base]; ok2 && rt.RouteType == routing.RouteTypeArchive {
+				isArchive = true
+			}
 		}
 		if isArchive {
 			// canonical /blog/page/1 already handled in serveCachedPage, but also handle here
@@ -291,23 +323,24 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 	}
 
 	// Exact route lookup via immutable snapshot (zero DB).
-	if rt, ok := snap.ByPath[normalized]; ok {
-		switch rt.RouteType {
-		case routing.RouteTypeRedirect:
-			return pagecache.Entry{}, sql.ErrNoRows
-		case routing.RouteTypeArchive:
-			return h.renderArchivePage(ctx, origin, normalized, 1, siteSnap)
-		case routing.RouteTypeEntry:
-			return h.renderEntryByRoute(ctx, origin, normalized, rt, siteSnap)
-		case routing.RouteTypeSystem:
-			return pagecache.Entry{}, sql.ErrNoRows
+	if snap != nil {
+		if rt, ok := snap.ByPath[normalized]; ok {
+			switch rt.RouteType {
+			case routing.RouteTypeRedirect:
+				return pagecache.Entry{}, sql.ErrNoRows
+			case routing.RouteTypeArchive:
+				return h.renderArchivePage(ctx, origin, normalized, 1, siteSnap)
+			case routing.RouteTypeEntry:
+				return h.renderEntryByRoute(ctx, origin, normalized, rt, siteSnap)
+			case routing.RouteTypeSystem:
+				return pagecache.Entry{}, sql.ErrNoRows
+			}
 		}
 	}
 
-	// Route snapshot is authoritative when loaded. A miss means 404 without DB.
-	// Only fall back to DB if the runtime is genuinely uninitialized (e.g. no
-	// snapshot yet or empty snapshot on first boot before any routes exist).
-	if snap == nil || len(snap.ByPath) == 0 {
+	// Route snapshot is authoritative when loaded (even empty). A miss means 404 without DB.
+	// Only fall back to DB if the runtime is genuinely not loaded yet.
+	if snap == nil {
 		entry, err2 := h.queries.GetPublishedEntryByPath(ctx, normalized)
 		if err2 != nil {
 			return pagecache.Entry{}, err2
@@ -406,8 +439,14 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render: %w", err)
 	}
-	gz, _ := compress.Gzip(html)
-	br, _ := compress.Brotli(html)
+	gz, err := compress.Gzip(html)
+	if err != nil {
+		gz = nil
+	}
+	br, err := compress.Brotli(html)
+	if err != nil {
+		br = nil
+	}
 	tags := []string{"entry:" + entry.ID, "site", "navigation", "theme"}
 	if entry.LayoutTemplateID.Valid && entry.LayoutTemplateID.String != "" {
 		tags = append(tags, "layout:"+entry.LayoutTemplateID.String)
@@ -662,8 +701,14 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render archive: %w", err)
 	}
-	gz, _ := compress.Gzip(html)
-	br, _ := compress.Brotli(html)
+	gz, err := compress.Gzip(html)
+	if err != nil {
+		gz = nil
+	}
+	br, err := compress.Brotli(html)
+	if err != nil {
+		br = nil
+	}
 	tags := []string{"content-type:" + archiveContentType, "site", "navigation", "theme"}
 	if shellRow != nil && shellRow.ID != "" {
 		tags = append(tags, "entry:"+shellRow.ID)
@@ -1543,6 +1588,7 @@ func (h *Handler) serveSitemap(w http.ResponseWriter, r *http.Request) {
 		}
 		gz, _ = compress.Gzip(built)
 		br, _ = compress.Brotli(built)
+		// compression errors are non-fatal: raw remains usable, compressed variants may be empty
 		etag = pagecache.ComputeETag(built)
 		h.hub.Sitemap.SetWithBrotli(built, gz, br, etag)
 		body = built
@@ -1689,7 +1735,7 @@ func (h *Handler) serveRobots(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz, br []byte, etag, ctype, cacheControl string) {
 	w.Header().Set("Vary", "Accept-Encoding")
-	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
+	if etagWeakMatch(r.Header.Get("If-None-Match"), etag) {
 		w.Header().Set("ETag", etag)
 		w.Header().Set("Cache-Control", cacheControl)
 		w.WriteHeader(http.StatusNotModified)
@@ -1698,7 +1744,12 @@ func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz, br
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", cacheControl)
-	switch compress.NegotiateEncoding(r.Header.Get("Accept-Encoding")) {
+	enc, ok := compress.NegotiateEncoding(r.Header.Get("Accept-Encoding"))
+	if !ok {
+		http.Error(w, "Not Acceptable", http.StatusNotAcceptable)
+		return
+	}
+	switch enc {
 	case "br":
 		if len(br) > 0 {
 			w.Header().Set("Content-Encoding", "br")
@@ -1806,20 +1857,37 @@ func (h *Handler) WarmCache(ctx context.Context) {
 	}
 }
 
-// serveFavicon redirects the legacy /favicon.ico to the immutable favicon media
-// variant, so the mutable URL is never cached as immutable.
+// serveFavicon redirects /favicon.ico to the current versioned favicon variant.
+// The versioned URL includes content hash so regenerated favicons do not stay stale behind immutable cache.
 func (h *Handler) serveFavicon(w http.ResponseWriter, r *http.Request) {
 	siteSnap := h.hub.Site.Current()
 	if siteSnap == nil || siteSnap.SiteIconMediaID == "" {
 		http.NotFound(w, r)
 		return
 	}
-	target := "/media/" + siteSnap.SiteIconMediaID + "/favicon-32"
-	if r.URL.Path != target {
-		http.Redirect(w, r, target, http.StatusFound)
+	view, ok := h.media.FaviconView(r.Context(), siteSnap.SiteIconMediaID)
+	if !ok {
+		http.NotFound(w, r)
 		return
 	}
-	h.serveMedia(w, r)
+	target := view.Size32
+	if target == "" {
+		// Fallback to any available size
+		switch {
+		case view.Size16 != "":
+			target = view.Size16
+		case view.Size180 != "":
+			target = view.Size180
+		case view.Size192 != "":
+			target = view.Size192
+		case view.Size512 != "":
+			target = view.Size512
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}
+	http.Redirect(w, r, target, http.StatusFound)
 }
 
 // siteIconView resolves the configured Site Icon into favicon links, or nil.
@@ -1846,16 +1914,6 @@ func requestOrigin(r *http.Request) string {
 // not need to import the public HTTP package. Canonical definition lives in
 // internal/rendering.
 type RenderInput = rendering.RenderInput
-
-func gzipBytes(b []byte) ([]byte, error) {
-	return compress.Gzip(b)
-}
-
-func brotliBytes(b []byte) ([]byte, error) {
-	return compress.Brotli(b)
-}
-
-var _ = bytes.MinRead
 
 func stringValue(value sql.NullString) string {
 	if value.Valid {

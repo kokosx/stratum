@@ -73,6 +73,43 @@ func TestRouteRuntimeLookupMiss(t *testing.T) {
 	}
 }
 
+func TestRouteRuntimeLoadedEmptyIsAuthoritative(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "empty.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database.DB)
+	rt := NewRuntime(queries)
+	if rt.Loaded() {
+		t.Fatal("should not be loaded before first Reload")
+	}
+	if rt.Current() != nil {
+		t.Fatal("Current should be nil before Reload")
+	}
+	// Successful reload with zero routes
+	if err := rt.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.Loaded() {
+		t.Fatal("should be loaded after Reload")
+	}
+	snap := rt.Current()
+	if snap == nil {
+		t.Fatal("snapshot should be non-nil after successful Reload with zero routes")
+	}
+	if len(snap.ByPath) != 0 {
+		t.Fatalf("empty DB should give empty snapshot, got %d", len(snap.ByPath))
+	}
+	if _, ok := rt.Lookup("/anything"); ok {
+		t.Fatal("empty snapshot should miss")
+	}
+}
+
 func TestRouteRuntimeReloadPublishesImmutableSnapshot(t *testing.T) {
 	rt, queries, cleanup := newTestRuntime(t)
 	defer cleanup()
