@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/richtext"
 )
 
 // Definition is the rendering information for one versioned block.
@@ -133,6 +134,7 @@ func (rc RenderContext) WithEntry(ae ArchiveEntry) RenderContext {
 		PublishDate:   ae.PublishedAt,
 		PublishISO:    ae.PublishedISO,
 		FeaturedImage: ae.FeaturedImage.ID,
+		Fields:        ae.Fields,
 	}
 	rc.EntryID = ae.ID
 	return rc
@@ -165,6 +167,7 @@ type ArchiveEntry struct {
 	PublishedAt   string
 	PublishedISO  string
 	FeaturedImage MediaView
+	Fields        map[string]any
 }
 
 // PaginationContext carries pagination state pre-built from site settings.
@@ -204,6 +207,8 @@ type EntryContext struct {
 	PublishDate   string
 	PublishISO    string
 	FeaturedImage string
+	// Fields is the immutable normalized snapshot from the rendered revision.
+	Fields map[string]any
 }
 
 // NewRenderer validates and compiles enabled block templates from the database.
@@ -254,6 +259,7 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 				"vimeoID":       vimeoIDFunc,
 				"tagFor":        tagForFunc,
 				"tagOpen":       tagOpenFunc,
+				"richText":      richtext.Render,
 				"tagClose":      tagCloseFunc,
 			}).Parse(definition.Template)
 			if err != nil {

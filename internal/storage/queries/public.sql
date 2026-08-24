@@ -11,6 +11,7 @@ SELECT
     r.title,
     r.excerpt,
     r.document_json,
+    r.fields_json,
     r.seo_title,
     r.seo_description,
     r.canonical_url,
@@ -47,6 +48,7 @@ SELECT
     r.title,
     r.excerpt,
     r.document_json,
+    r.fields_json,
     r.seo_title,
     r.seo_description,
     r.canonical_url,
@@ -83,6 +85,7 @@ SELECT
     r.title,
     r.excerpt,
     r.featured_media_id,
+    r.fields_json,
     rt.path AS route_path
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
@@ -106,6 +109,7 @@ SELECT
     r.title,
     r.excerpt,
     r.featured_media_id,
+    r.fields_json,
     rt.path AS route_path
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id

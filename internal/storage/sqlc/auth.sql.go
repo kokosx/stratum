@@ -254,6 +254,21 @@ func (q *Queries) UpdateSiteTitle(ctx context.Context, arg UpdateSiteTitleParams
 	return err
 }
 
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?
+`
+
+type UpdateUserPasswordParams struct {
+	PasswordHash string `json:"password_hash"`
+	UpdatedAt    int64  `json:"updated_at"`
+	ID           string `json:"id"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserPassword, arg.PasswordHash, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const updateUserRole = `-- name: UpdateUserRole :exec
 UPDATE users SET role = ?, updated_at = ? WHERE id = ?
 `

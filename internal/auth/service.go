@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"sync"
 	"time"
@@ -83,14 +84,15 @@ func (s *Service) Setup(ctx context.Context, code, siteTitle, email, password st
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(code)), []byte(s.setupCode)) != 1 {
 		return "", ErrInvalidSetupCode
 	}
-	if strings.TrimSpace(siteTitle) == "" || strings.TrimSpace(email) == "" || password == "" {
+	if strings.TrimSpace(siteTitle) == "" || password == "" {
 		return "", errors.New("site title, email and password are required")
 	}
-	if utf8.RuneCountInString(password) < 12 {
-		return "", errors.New("password must contain at least 12 characters")
+	email, err := normalizeEmail(email)
+	if err != nil {
+		return "", err
 	}
-	if len(password) > 72 {
-		return "", errors.New("password must not exceed 72 bytes")
+	if err := validatePassword(password); err != nil {
+		return "", err
 	}
 
 	hasAdmin, err := s.queries.HasAdmin(ctx)
@@ -119,7 +121,7 @@ func (s *Service) Setup(ctx context.Context, code, siteTitle, email, password st
 		return "", fmt.Errorf("begin setup: %w", err)
 	}
 	qtx := s.queries.WithTx(tx)
-	if err := qtx.CreateUser(ctx, db.CreateUserParams{ID: userID, Email: strings.TrimSpace(strings.ToLower(email)), PasswordHash: string(passwordHash), Role: "admin", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := qtx.CreateUser(ctx, db.CreateUserParams{ID: userID, Email: email, PasswordHash: string(passwordHash), Role: "admin", CreatedAt: now, UpdatedAt: now}); err != nil {
 		tx.Rollback()
 		return "", fmt.Errorf("create administrator: %w", err)
 	}
@@ -188,13 +190,17 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 func (s *Service) SecureCookies() bool { return s.secureCookies }
 
 func (s *Service) CreateUser(ctx context.Context, email, password, role string) error {
-	email = strings.TrimSpace(strings.ToLower(email))
+	var err error
+	email, err = normalizeEmail(email)
+	if err != nil {
+		return err
+	}
 	role = strings.TrimSpace(role)
-	if email == "" || password == "" || !authz.ValidRole(role) {
+	if password == "" || !authz.ValidRole(role) {
 		return errors.New("email, password, and valid role are required")
 	}
-	if utf8.RuneCountInString(password) < 12 || len(password) > 72 {
-		return errors.New("password must contain between 12 and 72 bytes")
+	if err := validatePassword(password); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -212,12 +218,18 @@ func (s *Service) UpdateUser(ctx context.Context, id, role, status string) error
 	if !authz.ValidRole(role) || (status != "active" && status != "disabled") {
 		return errors.New("invalid role or account status")
 	}
-	target, err := s.queries.GetUserByID(ctx, id)
+	tx, err := s.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin user update: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+	target, err := qtx.GetUserByID(ctx, id)
 	if err != nil {
 		return err
 	}
 	if target.Role == string(authz.RoleAdmin) && target.Status == "active" && (role != string(authz.RoleAdmin) || status != "active") {
-		count, err := s.queries.CountActiveAdmins(ctx)
+		count, err := qtx.CountActiveAdmins(ctx)
 		if err != nil {
 			return err
 		}
@@ -225,25 +237,63 @@ func (s *Service) UpdateUser(ctx context.Context, id, role, status string) error
 			return errors.New("cannot disable or demote the last active administrator")
 		}
 	}
-	tx, err := s.database.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin user update: %w", err)
-	}
-	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
 	if err := qtx.UpdateUserRole(ctx, db.UpdateUserRoleParams{ID: id, Role: role, UpdatedAt: now}); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if err := qtx.UpdateUserStatus(ctx, db.UpdateUserStatusParams{ID: id, Status: status, UpdatedAt: now}); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	if err := qtx.DeleteSessionsForUser(ctx, id); err != nil {
-		_ = tx.Rollback()
 		return err
 	}
 	return tx.Commit()
+}
+
+// ResetPassword changes a user's password and invalidates every active session.
+func (s *Service) ResetPassword(ctx context.Context, id, password string) error {
+	if err := validatePassword(password); err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	tx, err := s.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin password reset: %w", err)
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+	if _, err := qtx.GetUserByID(ctx, id); err != nil {
+		return err
+	}
+	if err := qtx.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{ID: id, PasswordHash: string(hash), UpdatedAt: time.Now().Unix()}); err != nil {
+		return err
+	}
+	if err := qtx.DeleteSessionsForUser(ctx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func normalizeEmail(value string) (string, error) {
+	email := strings.ToLower(strings.TrimSpace(value))
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || parsed.Address != email || parsed.Name != "" {
+		return "", errors.New("email must be a valid address")
+	}
+	return email, nil
+}
+
+func validatePassword(password string) error {
+	if utf8.RuneCountInString(password) < 12 {
+		return errors.New("password must contain at least 12 characters")
+	}
+	if len(password) > 72 {
+		return errors.New("password must not exceed 72 bytes")
+	}
+	return nil
 }
 
 func newSessionToken() (token, hash string, err error) {

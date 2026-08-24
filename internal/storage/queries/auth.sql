@@ -47,6 +47,9 @@ UPDATE users SET status = ?, updated_at = ? WHERE id = ?;
 -- name: DeleteSessionsForUser :exec
 DELETE FROM sessions WHERE user_id = ?;
 
+-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?;
+
 -- name: DeleteSession :exec
 DELETE FROM sessions
 WHERE token_hash = ?;

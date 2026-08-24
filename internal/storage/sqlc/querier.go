@@ -160,7 +160,7 @@ type Querier interface {
 	SetPublishedRevision(ctx context.Context, arg SetPublishedRevisionParams) error
 	SetTermsForRevision(ctx context.Context, arg SetTermsForRevisionParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
-	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
+	UpdateEntryProjection(ctx context.Context, arg UpdateEntryProjectionParams) error
 	UpdateGeneralSettings(ctx context.Context, arg UpdateGeneralSettingsParams) error
 	UpdateLayoutTemplate(ctx context.Context, arg UpdateLayoutTemplateParams) error
 	UpdateMediaMetadata(ctx context.Context, arg UpdateMediaMetadataParams) error
@@ -176,6 +176,7 @@ type Querier interface {
 	UpdateTaxonomy(ctx context.Context, arg UpdateTaxonomyParams) error
 	UpdateTerm(ctx context.Context, arg UpdateTermParams) error
 	UpdateTwitterSite(ctx context.Context, twitterSite string) error
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error
 	UpsertNavigationLocation(ctx context.Context, arg UpsertNavigationLocationParams) error

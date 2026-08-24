@@ -51,50 +51,50 @@ func (d *Database) Migrate(ctx context.Context) error {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
 
-		// 041 rebuilds entries to remove SQLite's implicit UNIQUE index. Foreign
-		// keys are connection-local and must be off before the transaction so
-		// dropping the old parent table does not cascade its revisions.
-		rebuildEntries := entry.Name() == "041_revision_scoped_slug.sql"
-		if rebuildEntries {
-			if _, err := d.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
-				return fmt.Errorf("disable foreign keys for %s: %w", entry.Name(), err)
+		if entry.Name() == "041_revision_scoped_slug.sql" {
+			if err := d.migrateEntriesRebuild(ctx, entry.Name(), sql); err != nil {
+				return err
 			}
+			continue
 		}
-
-		tx, err := d.DB.BeginTx(ctx, nil)
-		if err != nil {
-			if rebuildEntries {
-				_, _ = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
-			}
-			return fmt.Errorf("begin migration %s: %w", entry.Name(), err)
-		}
-		if _, err := tx.ExecContext(ctx, string(sql)); err != nil {
-			tx.Rollback()
-			if rebuildEntries {
-				_, _ = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
-			}
-			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO schema_migrations (version, applied_at) VALUES (?, unixepoch())", entry.Name(),
-		); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
-		}
-		if err := tx.Commit(); err != nil {
-			if rebuildEntries {
-				_, _ = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
-			}
-			return fmt.Errorf("commit migration %s: %w", entry.Name(), err)
-		}
-		if rebuildEntries {
-			if _, err := d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-				return fmt.Errorf("restore foreign keys after %s: %w", entry.Name(), err)
-			}
+		if err := d.applyMigration(ctx, entry.Name(), sql); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+func (d *Database) applyMigration(ctx context.Context, name string, migration []byte) error {
+	tx, err := d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migration %s: %w", name, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, string(migration)); err != nil {
+		return fmt.Errorf("apply migration %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version, applied_at) VALUES (?, unixepoch())", name); err != nil {
+		return fmt.Errorf("record migration %s: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration %s: %w", name, err)
+	}
+	return nil
+}
+
+// migrateEntriesRebuild always restores foreign key enforcement on the single
+// SQLite connection, including failed DDL and migration-record paths.
+func (d *Database) migrateEntriesRebuild(ctx context.Context, name string, migration []byte) (err error) {
+	if _, err = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return fmt.Errorf("disable foreign keys for %s: %w", name, err)
+	}
+	defer func() {
+		if _, restoreErr := d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON"); restoreErr != nil && err == nil {
+			err = fmt.Errorf("restore foreign keys after %s: %w", name, restoreErr)
+		}
+	}()
+	return d.applyMigration(ctx, name, migration)
 }
 
 // applyTransitionalMarkersIfNeeded detects a previous short-lived set of

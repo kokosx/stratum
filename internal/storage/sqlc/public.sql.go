@@ -39,6 +39,7 @@ SELECT
     r.title,
     r.excerpt,
     r.document_json,
+    r.fields_json,
     r.seo_title,
     r.seo_description,
     r.canonical_url,
@@ -68,6 +69,7 @@ type GetPublishedEntryByIDRow struct {
 	Title            string         `json:"title"`
 	Excerpt          sql.NullString `json:"excerpt"`
 	DocumentJson     string         `json:"document_json"`
+	FieldsJson       string         `json:"fields_json"`
 	SeoTitle         sql.NullString `json:"seo_title"`
 	SeoDescription   sql.NullString `json:"seo_description"`
 	CanonicalUrl     sql.NullString `json:"canonical_url"`
@@ -93,6 +95,7 @@ func (q *Queries) GetPublishedEntryByID(ctx context.Context, id string) (GetPubl
 		&i.Title,
 		&i.Excerpt,
 		&i.DocumentJson,
+		&i.FieldsJson,
 		&i.SeoTitle,
 		&i.SeoDescription,
 		&i.CanonicalUrl,
@@ -119,6 +122,7 @@ SELECT
     r.title,
     r.excerpt,
     r.document_json,
+    r.fields_json,
     r.seo_title,
     r.seo_description,
     r.canonical_url,
@@ -155,6 +159,7 @@ type GetPublishedEntryByPathRow struct {
 	Title            string         `json:"title"`
 	Excerpt          sql.NullString `json:"excerpt"`
 	DocumentJson     string         `json:"document_json"`
+	FieldsJson       string         `json:"fields_json"`
 	SeoTitle         sql.NullString `json:"seo_title"`
 	SeoDescription   sql.NullString `json:"seo_description"`
 	CanonicalUrl     sql.NullString `json:"canonical_url"`
@@ -180,6 +185,7 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.Title,
 		&i.Excerpt,
 		&i.DocumentJson,
+		&i.FieldsJson,
 		&i.SeoTitle,
 		&i.SeoDescription,
 		&i.CanonicalUrl,
@@ -203,6 +209,7 @@ SELECT
     r.title,
     r.excerpt,
     r.featured_media_id,
+    r.fields_json,
     rt.path AS route_path
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
@@ -232,6 +239,7 @@ type ListPublishedEntriesByContentTypeRow struct {
 	Title            string         `json:"title"`
 	Excerpt          sql.NullString `json:"excerpt"`
 	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	FieldsJson       string         `json:"fields_json"`
 	RoutePath        string         `json:"route_path"`
 }
 
@@ -253,6 +261,7 @@ func (q *Queries) ListPublishedEntriesByContentType(ctx context.Context, arg Lis
 			&i.Title,
 			&i.Excerpt,
 			&i.FeaturedMediaID,
+			&i.FieldsJson,
 			&i.RoutePath,
 		); err != nil {
 			return nil, err
@@ -278,6 +287,7 @@ SELECT
     r.title,
     r.excerpt,
     r.featured_media_id,
+    r.fields_json,
     rt.path AS route_path
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
@@ -307,6 +317,7 @@ type ListPublishedEntriesByContentTypeAscRow struct {
 	Title            string         `json:"title"`
 	Excerpt          sql.NullString `json:"excerpt"`
 	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
+	FieldsJson       string         `json:"fields_json"`
 	RoutePath        string         `json:"route_path"`
 }
 
@@ -328,6 +339,7 @@ func (q *Queries) ListPublishedEntriesByContentTypeAsc(ctx context.Context, arg 
 			&i.Title,
 			&i.Excerpt,
 			&i.FeaturedMediaID,
+			&i.FieldsJson,
 			&i.RoutePath,
 		); err != nil {
 			return nil, err

@@ -2,9 +2,11 @@ package blocks
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/rendering"
+	"github.com/kokosx/stratum/internal/richtext"
 )
 
 // prepareNode builds a PreparedNode: it decodes props/settings, applies schema
@@ -27,6 +29,7 @@ func (s *snapshot) prepareNodeWithLegacy(node document.Node, legacyIDs map[strin
 	if definition != nil {
 		applyDefaults(definition.Schema.Props, props)
 		applyDefaults(definition.Schema.Settings, settings)
+		normalizeRichTextFields(definition.Schema, props)
 	}
 	// Normalize json.Number produced by UseNumber to float64 so templates
 	// like `ne .Settings.start 1.0` work (json.Number != float64 for template funcs).
@@ -71,6 +74,22 @@ func (s *snapshot) prepareNodeWithLegacy(node document.Node, legacyIDs map[strin
 		Children:     children,
 		LegacySource: legacySource,
 	}, nil
+}
+
+func normalizeRichTextFields(schema Schema, value any) {
+	props, ok := value.(map[string]any)
+	if !ok {
+		return
+	}
+	for name, field := range schema.Editor.Fields {
+		if field.Control != "richtext" || !strings.HasPrefix(name, "props.") {
+			continue
+		}
+		property := strings.TrimPrefix(name, "props.")
+		if text, err := richtext.Parse(props[property]); err == nil {
+			props[property] = text
+		}
+	}
 }
 
 func applyDefaults(schema ValueSchema, value any) {

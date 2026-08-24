@@ -52,9 +52,9 @@ INSERT INTO entries (
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
--- name: UpdateEntry :exec
+-- name: UpdateEntryProjection :exec
 UPDATE entries
-SET slug = ?, status = ?, author_id = ?, updated_at = ?, published_at = ?
+SET slug = ?, status = ?, updated_at = ?, published_at = ?
 WHERE id = ?;
 
 -- name: SetPublishedRevision :exec

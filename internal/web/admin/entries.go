@@ -343,8 +343,19 @@ func (h *Handler) bulkEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		http.Redirect(w, r, listingURL, http.StatusSeeOther)
 		return
 	}
+	user, err := h.currentUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	for _, id := range ids {
+		entry, err := h.queries.GetEntry(r.Context(), id)
+		if err != nil || entry.ContentTypeID != contentType || !authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, contentType, authz.EntryDelete) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	svc := content.NewLifecycleService(h.database, h.queries)
-	var err error
 	switch action {
 	case "trash":
 		err = svc.BulkTrash(r.Context(), contentType, ids)

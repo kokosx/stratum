@@ -561,26 +561,24 @@ func (q *Queries) SetPublishedRevision(ctx context.Context, arg SetPublishedRevi
 	return err
 }
 
-const updateEntry = `-- name: UpdateEntry :exec
+const updateEntryProjection = `-- name: UpdateEntryProjection :exec
 UPDATE entries
-SET slug = ?, status = ?, author_id = ?, updated_at = ?, published_at = ?
+SET slug = ?, status = ?, updated_at = ?, published_at = ?
 WHERE id = ?
 `
 
-type UpdateEntryParams struct {
-	Slug        string         `json:"slug"`
-	Status      string         `json:"status"`
-	AuthorID    sql.NullString `json:"author_id"`
-	UpdatedAt   int64          `json:"updated_at"`
-	PublishedAt sql.NullInt64  `json:"published_at"`
-	ID          string         `json:"id"`
+type UpdateEntryProjectionParams struct {
+	Slug        string        `json:"slug"`
+	Status      string        `json:"status"`
+	UpdatedAt   int64         `json:"updated_at"`
+	PublishedAt sql.NullInt64 `json:"published_at"`
+	ID          string        `json:"id"`
 }
 
-func (q *Queries) UpdateEntry(ctx context.Context, arg UpdateEntryParams) error {
-	_, err := q.db.ExecContext(ctx, updateEntry,
+func (q *Queries) UpdateEntryProjection(ctx context.Context, arg UpdateEntryProjectionParams) error {
+	_, err := q.db.ExecContext(ctx, updateEntryProjection,
 		arg.Slug,
 		arg.Status,
-		arg.AuthorID,
 		arg.UpdatedAt,
 		arg.PublishedAt,
 		arg.ID,

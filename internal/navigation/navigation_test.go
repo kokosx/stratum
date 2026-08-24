@@ -202,7 +202,7 @@ func createPublishedPage(t *testing.T, ctx context.Context, queries *db.Queries,
 		if getErr != nil {
 			t.Fatal(getErr)
 		}
-		if err := queries.UpdateEntry(ctx, db.UpdateEntryParams{Slug: slug, Status: status, AuthorID: entry.AuthorID, UpdatedAt: 2, PublishedAt: entry.PublishedAt, ID: id}); err != nil {
+		if err := queries.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{Slug: slug, Status: status, UpdatedAt: 2, PublishedAt: entry.PublishedAt, ID: id}); err != nil {
 			t.Fatal(err)
 		}
 	}

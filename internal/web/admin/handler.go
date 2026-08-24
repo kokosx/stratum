@@ -224,6 +224,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/users", h.requireAuth(h.listUsers))
 	mux.HandleFunc("POST /admin/users", h.requireAuth(h.createUser))
 	mux.HandleFunc("POST /admin/users/{id}", h.requireAuth(h.updateUser))
+	mux.HandleFunc("POST /admin/users/{id}/password", h.requireAuth(h.resetUserPassword))
 	mux.HandleFunc("GET /admin/pages", h.requireAuth(h.listPages))
 	mux.HandleFunc("GET /admin/pages/new", h.requireAuth(h.newPage))
 	mux.HandleFunc("POST /admin/pages", h.requireAuth(h.createPage))
@@ -503,47 +504,52 @@ func (h *Handler) isAuthenticated(r *http.Request) bool {
 
 func (h *Handler) authorized(r *http.Request, user auth.User) bool {
 	path := r.URL.Path
-	var permission authz.Permission
 	switch {
-	case strings.HasPrefix(path, "/admin/users"), strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/menus"):
-		permission = authz.ManageSite
-		if strings.HasPrefix(path, "/admin/users") {
-			permission = authz.ManageUsers
-		}
+	case strings.HasPrefix(path, "/admin/users"):
+		return authz.Allows(user.Role, authz.ManageUsers)
+	case strings.HasPrefix(path, "/admin/menus"):
+		return authz.Allows(user.Role, authz.ManageNavigation)
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"):
+		return authz.Allows(user.Role, authz.ManageSite)
 	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
-		permission = authz.ManageTaxonomies
+		return authz.Allows(user.Role, authz.ManageTaxonomies)
 	case strings.HasPrefix(path, "/admin/media"):
-		permission = authz.ManageMedia
+		return authz.Allows(user.Role, authz.ManageMedia)
 	case strings.HasPrefix(path, "/admin/pages"):
-		permission = authz.EditAnyEntry
+		return h.authorizeEntryRequest(r, user, pageContentType)
 	case strings.HasPrefix(path, "/admin/posts"):
-		if strings.Contains(path, "/publish") || strings.Contains(path, "/unpublish") {
-			return authz.Allows(user.Role, authz.PublishEntries)
-		}
-		if strings.Contains(path, "/trash") || strings.Contains(path, "/restore") || strings.Contains(path, "/delete") || strings.Contains(path, "/bulk") {
-			return authz.Allows(user.Role, authz.DeleteEntries)
-		}
-		permission = authz.EditAnyEntry
-		if r.PathValue("id") == "" && (r.Method == http.MethodGet || r.Method == http.MethodPost) {
-			if r.Method == http.MethodPost && r.FormValue("publish") != "" {
-				return authz.Allows(user.Role, authz.PublishEntries)
-			}
-			return authz.Allows(user.Role, authz.ReadEntries) || authz.Allows(user.Role, authz.CreateEntries)
-		}
+		return h.authorizeEntryRequest(r, user, postContentType)
 	case path == "/admin/editor/preview":
-		permission = authz.CreateEntries
+		return authz.Allows(user.Role, authz.CreateEntries)
 	default:
 		return true
 	}
-	if authz.Allows(user.Role, permission) {
-		return true
-	}
+}
+
+func (h *Handler) authorizeEntryRequest(r *http.Request, user auth.User, contentType string) bool {
 	id := r.PathValue("id")
-	if id == "" || !strings.HasPrefix(path, "/admin/posts/") {
-		return false
+	action := authz.EntryRead
+	if id == "" {
+		if r.Method == http.MethodPost || strings.HasSuffix(r.URL.Path, "/new") {
+			action = authz.EntryCreate
+		}
+		if action == authz.EntryRead {
+			return contentType == postContentType && authz.Allows(user.Role, authz.ReadEntries) || authz.CanAccessEntry(user.Role, user.ID, "", contentType, action)
+		}
+		return authz.CanAccessEntry(user.Role, user.ID, "", contentType, action)
 	}
 	entry, err := h.queries.GetEntry(r.Context(), id)
-	return err == nil && entry.ContentTypeID == postContentType && entry.AuthorID.Valid && authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, authz.EditOwnEntry)
+	if err != nil || entry.ContentTypeID != contentType {
+		return false
+	}
+	if strings.Contains(r.URL.Path, "/publish") || strings.Contains(r.URL.Path, "/unpublish") {
+		action = authz.EntryPublish
+	} else if strings.Contains(r.URL.Path, "/trash") || strings.Contains(r.URL.Path, "/restore") || strings.Contains(r.URL.Path, "/delete") || strings.Contains(r.URL.Path, "/revisions/") {
+		action = authz.EntryDelete
+	} else if r.Method == http.MethodPost || strings.HasSuffix(r.URL.Path, "/edit") {
+		action = authz.EntryEdit
+	}
+	return authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, contentType, action)
 }
 
 func (h *Handler) navForUser(r *http.Request) []AdminNavItem {

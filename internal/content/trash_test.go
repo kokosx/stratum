@@ -35,7 +35,7 @@ func createPublishedEntry(t *testing.T, queries *db.Queries, id, ct, slug string
 	now := time.Now().Unix()
 	_ = queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: ct, Slug: slug, Status: "active", CreatedAt: now, UpdatedAt: now})
 	revID := id + "-r1"
-	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Title: "Title " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
+	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Title " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
 	_ = queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id})
 	id2, _ := randomID()
 	_ = queries.CreateRoute(ctx, db.CreateRouteParams{ID: id2, Path: "/" + slug, EntryID: sql.NullString{String: id, Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now})
@@ -56,9 +56,9 @@ func createPrivateEntry(t *testing.T, queries *db.Queries, id, ct, slug string) 
 	now := time.Now().Unix()
 	_ = queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: ct, Slug: slug, Status: "private", CreatedAt: now, UpdatedAt: now})
 	revID := id + "-r1"
-	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Title: "Private " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
+	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Private " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
 	_ = queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id})
-	_ = queries.UpdateEntry(ctx, db.UpdateEntryParams{ID: id, Slug: slug, Status: "private", UpdatedAt: now, PublishedAt: sql.NullInt64{Int64: now, Valid: true}})
+	_ = queries.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{ID: id, Slug: slug, Status: "private", UpdatedAt: now, PublishedAt: sql.NullInt64{Int64: now, Valid: true}})
 }
 
 func TestDraftTrashRestore(t *testing.T) {
@@ -142,6 +142,64 @@ func TestRestoreRecreatesPublicAvailability(t *testing.T) {
 	}
 	if _, err := queries.GetRouteByPath(ctx, "/pub-three"); err != nil {
 		t.Fatalf("route missing %v", err)
+	}
+}
+
+func TestRestoreUsesPublishedRevisionSlug(t *testing.T) {
+	svc, _, queries, ctx := newTrashHarness(t)
+	createPublishedEntry(t, queries, "slug1", "page", "restore-about")
+	now := time.Now().Unix()
+	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "slug1-r2", EntryID: "slug1", RevisionNumber: 2, Slug: "restore-company", Title: "Company", DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{ID: "slug1", Slug: "restore-company", Status: "active", UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MoveToTrash(ctx, "slug1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Restore(ctx, "slug1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/restore-about"); err != nil {
+		t.Fatalf("published path was not restored: %v", err)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/restore-company"); err == nil {
+		t.Fatal("draft slug became public during restore")
+	}
+}
+
+func TestRestoreUsesPublishedHierarchyInsteadOfDraftParent(t *testing.T) {
+	svc, _, queries, ctx := newTrashHarness(t)
+	createPublishedEntry(t, queries, "company", "page", "restore-company-root")
+	createPublishedEntry(t, queries, "services", "page", "restore-services-root")
+	now := time.Now().Unix()
+	if err := queries.CreateEntry(ctx, db.CreateEntryParams{ID: "team", ContentTypeID: "page", Slug: "team", Status: "active", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "team-r1", EntryID: "team", RevisionNumber: 1, Slug: "team", Title: "Team", ParentEntryID: sql.NullString{String: "company", Valid: true}, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{ID: "team", PublishedRevisionID: sql.NullString{String: "team-r1", Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "team-route", Path: "/restore-company-root/team", EntryID: sql.NullString{String: "team", Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "team-r2", EntryID: "team", RevisionNumber: 2, Slug: "staff", Title: "Staff", ParentEntryID: sql.NullString{String: "services", Valid: true}, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MoveToTrash(ctx, "team"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Restore(ctx, "team"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/restore-company-root/team"); err != nil {
+		t.Fatalf("published hierarchy path was not restored: %v", err)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/restore-services-root/staff"); err == nil {
+		t.Fatal("draft hierarchy became public during restore")
 	}
 }
 

@@ -3,13 +3,13 @@ package authz
 import "testing"
 
 func TestAuthorOnlyEditsOwnEntries(t *testing.T) {
-	if !CanAccessEntry(string(RoleAuthor), "author", "author", EditOwnEntry) {
+	if !CanAccessEntry(string(RoleAuthor), "author", "author", "post", EntryEdit) {
 		t.Fatal("author should edit their own entry")
 	}
-	if CanAccessEntry(string(RoleAuthor), "author", "other", EditOwnEntry) {
+	if CanAccessEntry(string(RoleAuthor), "author", "other", "post", EntryEdit) {
 		t.Fatal("author should not edit another user's entry")
 	}
-	if Allows(string(RoleAuthor), PublishEntries) || Allows(string(RoleAuthor), ManageSite) {
+	if !CanAccessEntry(string(RoleAuthor), "author", "author", "post", EntryPublish) || Allows(string(RoleAuthor), ManageSite) {
 		t.Fatal("author received an administrative permission")
 	}
 }

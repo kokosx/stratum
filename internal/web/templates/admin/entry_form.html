@@ -12,7 +12,34 @@
       <label>Slug<input id="entry-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
       {{ if .Content.ShowExcerpt }}
       <label class="editor-excerpt">Excerpt<textarea id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea></label>
-      {{ end }}
+   {{ end }}
+   {{ if .Content.CustomFields }}
+   <section class="panel" style="margin:12px 0;padding:16px;">
+     <h3 style="margin:0 0 12px;">Custom Fields</h3>
+     {{ range .Content.CustomFields }}{{ $field := . }}
+     <div class="form-field">
+       {{ if eq .Type "boolean" }}
+       <input type="hidden" name="field_{{ .Key }}_present" value="true">
+       <label class="check-row"><input type="checkbox" name="field_{{ .Key }}" value="true" {{ if .Checked }}checked{{ end }}> {{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+       {{ else if eq .Type "textarea" }}
+       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+       <textarea id="field-{{ .Key }}" name="field_{{ .Key }}" rows="4" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>{{ .Value }}</textarea>
+       {{ else if eq .Type "select" }}
+       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+       <select id="field-{{ .Key }}" name="field_{{ .Key }}" {{ if .Required }}required{{ end }}><option value="">Select…</option>{{ range .Options }}<option value="{{ . }}" {{ if eq $field.Selected . }}selected{{ end }}>{{ . }}</option>{{ end }}</select>
+       {{ else if eq .Type "media" }}
+       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+       <input id="field-{{ .Key }}" type="hidden" name="field_{{ .Key }}" value="{{ .Value }}">
+       <div class="social-image-field"><div class="social-image-preview" id="field-{{ .Key }}-preview">{{ if .Value }}<img src="/media/{{ .Value }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="field-desc">No media selected</span>{{ end }}</div><div class="social-image-actions"><button class="button" type="button" data-custom-media-picker="field-{{ .Key }}">Choose media</button><button class="button button-danger" type="button" data-custom-media-remove="field-{{ .Key }}" {{ if not .Value }}hidden{{ end }}>Remove</button></div></div>
+       {{ else }}
+       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+       <input id="field-{{ .Key }}" type="{{ if eq .Type "number" }}number{{ else if eq .Type "date" }}date{{ else if eq .Type "datetime" }}datetime-local{{ else if eq .Type "url" }}url{{ else if eq .Type "email" }}email{{ else }}text{{ end }}" name="field_{{ .Key }}" value="{{ .Value }}" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
+       {{ end }}
+       {{ if .HelpText }}<p class="field-desc">{{ .HelpText }}</p>{{ end }}
+     </div>
+     {{ end }}
+   </section>
+   {{ end }}
       {{ if .Content.ShowFeatured }}
       <div class="form-field editor-featured-image">
         <span class="field-label">Featured Image</span>
@@ -378,6 +405,32 @@
   </script>
   {{ end }}
 </form>
+<script>
+  document.querySelectorAll('[data-custom-media-picker]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      if (!window.openMediaPicker) return;
+      var id = button.getAttribute('data-custom-media-picker');
+      window.openMediaPicker({onSelect: function (asset) {
+        var input = document.getElementById(id);
+        var preview = document.getElementById(id + '-preview');
+        var remove = document.querySelector('[data-custom-media-remove="' + id + '"]');
+        if (input) input.value = asset.id;
+        if (preview) preview.innerHTML = '<img src="/media/' + asset.id + '/original" alt="" style="max-width:100%;height:auto;">';
+        if (remove) remove.hidden = false;
+      }});
+    });
+  });
+  document.querySelectorAll('[data-custom-media-remove]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var id = button.getAttribute('data-custom-media-remove');
+      var input = document.getElementById(id);
+      var preview = document.getElementById(id + '-preview');
+      if (input) input.value = '';
+      if (preview) preview.innerHTML = '<span class="field-desc">No media selected</span>';
+      button.hidden = true;
+    });
+  });
+</script>
 <script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
 <script type="module" src="/admin/static/editor/editor.js"></script>
 {{ end }}

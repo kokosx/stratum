@@ -18,6 +18,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/compress"
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
@@ -387,6 +388,10 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("decode document: %w", err)
 	}
+	fields, err := content.DecodeFieldSnapshot(entry.FieldsJson)
+	if err != nil {
+		return pagecache.Entry{}, fmt.Errorf("decode revision fields: %w", err)
+	}
 	// Layout composition is validated inside the layout application boundary
 	// (Service.ResolveEffectiveDocument calls blocks.ValidateDocument on the
 	// composed SDT). Handlers do not replicate that logic.
@@ -403,7 +408,7 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 		return pagecache.Entry{}, fmt.Errorf("prepare document: %w", err)
 	}
 	resolved := h.resolvePublishedSEO(ctx, siteSnap, &entry, path, origin)
-	rc := h.entryRenderContext(siteSnap, &entry, path, resolved)
+	rc := h.entryRenderContext(siteSnap, &entry, path, resolved, fields)
 	// Generic scoped context for Collection blocks.
 	rc.Route = rendering.RouteContext{Path: path, IsArchive: false}
 	rc.Mode = rendering.ModePublic
@@ -1178,7 +1183,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	}
 	rc := rendering.RenderContext{
 		Site:      rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
-		Entry:     rendering.EntryContext{Title: input.Title, Excerpt: input.Excerpt, Permalink: path},
+		Entry:     rendering.EntryContext{Title: input.Title, Excerpt: input.Excerpt, Permalink: path, Fields: input.Fields},
 		IsPreview: true,
 		EntryID:   input.EntryID,
 	}
@@ -1307,6 +1312,10 @@ func (h *Handler) renderPath(ctx context.Context, path, origin string, temporary
 	if err != nil {
 		return nil, "", fmt.Errorf("decode document: %w", err)
 	}
+	fields, err := content.DecodeFieldSnapshot(entry.FieldsJson)
+	if err != nil {
+		return nil, "", fmt.Errorf("decode revision fields: %w", err)
+	}
 	// Layout composition is validated inside the layout service boundary.
 	if h.layoutsService != nil {
 		if effective, _, cerr := h.layoutsService.ResolveEffectiveDocument(ctx, doc, entry.ContentTypeID, entry.LayoutTemplateID); cerr == nil {
@@ -1321,12 +1330,12 @@ func (h *Handler) renderPath(ctx context.Context, path, origin string, temporary
 	}
 	siteSnap := h.hub.Site.Current()
 	resolved := h.resolvePublishedSEO(ctx, siteSnap, &entry, path, origin)
-	rc := h.entryRenderContext(siteSnap, &entry, path, resolved)
+	rc := h.entryRenderContext(siteSnap, &entry, path, resolved, fields)
 	page, robots, err := h.renderThemedDocument(ctx, siteSnap, doc, rc, resolved, path, temporary, customCSS)
 	return page, robots, err
 }
 
-func (h *Handler) entryRenderContext(siteSnap *site.Snapshot, entry *db.GetPublishedEntryByPathRow, path string, resolved seo.Resolved) rendering.RenderContext {
+func (h *Handler) entryRenderContext(siteSnap *site.Snapshot, entry *db.GetPublishedEntryByPathRow, path string, resolved seo.Resolved, fields map[string]any) rendering.RenderContext {
 	rc := rendering.RenderContext{
 		Site: rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
 		Entry: rendering.EntryContext{
@@ -1336,6 +1345,7 @@ func (h *Handler) entryRenderContext(siteSnap *site.Snapshot, entry *db.GetPubli
 			PublishDate:   formatEntryDate(entry.PublishedAt, siteSnap.TimezoneName, false),
 			PublishISO:    formatEntryDate(entry.PublishedAt, siteSnap.TimezoneName, true),
 			FeaturedImage: resolved.FeaturedMediaID,
+			Fields:        fields,
 		},
 	}
 	if siteSnap.LogoMediaID != "" {
@@ -1357,6 +1367,10 @@ func (h *Handler) archiveRenderContext(siteSnap *site.Snapshot, shell *db.GetPub
 		Archive: archCtx,
 	}
 	if shell != nil {
+		fields, err := content.DecodeFieldSnapshot(shell.FieldsJson)
+		if err != nil {
+			fields = map[string]any{}
+		}
 		rc.Entry = rendering.EntryContext{
 			Title:         shell.Title,
 			Excerpt:       stringValue(shell.Excerpt),
@@ -1364,6 +1378,7 @@ func (h *Handler) archiveRenderContext(siteSnap *site.Snapshot, shell *db.GetPub
 			PublishDate:   formatEntryDate(shell.PublishedAt, siteSnap.TimezoneName, false),
 			PublishISO:    formatEntryDate(shell.PublishedAt, siteSnap.TimezoneName, true),
 			FeaturedImage: stringValue(shell.FeaturedMediaID),
+			Fields:        fields,
 		}
 	} else {
 		rc.Entry = rendering.EntryContext{

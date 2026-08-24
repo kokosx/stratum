@@ -77,7 +77,9 @@ func navPermission(path string) authz.Permission {
 	switch {
 	case strings.HasPrefix(path, "/admin/users"):
 		return authz.ManageUsers
-	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/menus"):
+	case strings.HasPrefix(path, "/admin/menus"):
+		return authz.ManageNavigation
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"):
 		return authz.ManageSite
 	case strings.HasPrefix(path, "/admin/media"):
 		return authz.ManageMedia

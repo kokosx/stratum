@@ -45,7 +45,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	input, err := readEntryInput(r)
+	input, err := readEntryInput(r, pageContentType)
 	if err != nil {
 		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: pageContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: err.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
 		return
@@ -155,6 +155,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		PublicPath:            h.entryPublicPath(r, entry.ID),
 		EntryID:               entry.ID,
 		DocumentJSON:          revision.DocumentJson,
+		FieldValues:           fieldValues(revision.FieldsJson),
 		Dirty:                 "Saved",
 		Status:                status,
 		PublicURL:             publicURL,
@@ -233,7 +234,7 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 		return
 	}
 	entryID := r.PathValue("id")
-	input, err := readEntryInput(r)
+	input, err := readEntryInput(r, contentType)
 	if err != nil {
 		if isDatastarRequest(r) {
 			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, err)

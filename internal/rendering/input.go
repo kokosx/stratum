@@ -18,4 +18,5 @@ type RenderInput struct {
 	CustomCSS        string
 	LayoutTemplateID string // optional: selected layout template for preview
 	ContentTypeID    string
+	Fields           map[string]any
 }

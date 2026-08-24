@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/richtext"
 )
 
 func (r *Registry) ValidateDocument(doc *document.Document) error {
@@ -40,6 +42,9 @@ func (s *snapshot) validateNode(node document.Node, path string) error {
 		return fmt.Errorf("%s.props: %w", path, err)
 	}
 	if err := validateValue(definition.Schema.Props, props, path+".props", true, false); err != nil {
+		return err
+	}
+	if err := validateRichTextFields(definition.Schema, props, path+".props"); err != nil {
 		return err
 	}
 	settings, err := decodeJSONValue(node.Settings, map[string]any{})
@@ -82,6 +87,23 @@ func (s *snapshot) validateNode(node document.Node, path string) error {
 		}
 		if err := s.validateNode(child, childPath); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func validateRichTextFields(schema Schema, value any, path string) error {
+	props, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for name, field := range schema.Editor.Fields {
+		if field.Control != "richtext" || !strings.HasPrefix(name, "props.") {
+			continue
+		}
+		property := strings.TrimPrefix(name, "props.")
+		if _, err := richtext.Parse(props[property]); err != nil {
+			return fmt.Errorf("%s.%s: %w", path, property, err)
 		}
 	}
 	return nil

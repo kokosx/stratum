@@ -129,3 +129,62 @@ func TestUpdateUserKeepsOneActiveAdministrator(t *testing.T) {
 		t.Fatal("last active administrator was demoted")
 	}
 }
+
+func TestUpdateUserKeepsOneActiveAdministratorWhenDisabled(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(database.DB, db.New(database.DB), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Setup(ctx, service.SetupCode(), "Example", "admin@example.com", "a sufficiently long password"); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := db.New(database.DB).GetUserByEmail(ctx, "admin@example.com")
+	if err := service.UpdateUser(ctx, admin.ID, "admin", "disabled"); err == nil {
+		t.Fatal("last active administrator was disabled")
+	}
+}
+
+func TestResetPasswordRejectsDisplayAddressAndRevokesSessions(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(database.DB, db.New(database.DB), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Setup(ctx, service.SetupCode(), "Example", "admin@example.com", "a sufficiently long password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreateUser(ctx, "Name <author@example.com>", "a sufficiently long password", "author"); err == nil {
+		t.Fatal("display-name email was accepted")
+	}
+	if err := service.CreateUser(ctx, "AUTHOR@example.com", "a sufficiently long password", "author"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := service.Login(ctx, "author@example.com", "a sufficiently long password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, _ := db.New(database.DB).GetUserByEmail(ctx, "author@example.com")
+	if err := service.ResetPassword(ctx, user.ID, "another sufficiently long password"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UserForToken(ctx, token); err == nil {
+		t.Fatal("password reset did not revoke sessions")
+	}
+}

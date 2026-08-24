@@ -63,7 +63,7 @@ type EditorField struct {
 var supportedControls = map[string]bool{
 	"text": true, "textarea": true, "number": true, "checkbox": true,
 	"select": true, "segmented": true, "radio": true, "range": true,
-	"media": true,
+	"media": true, "richtext": true,
 }
 
 var blockNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$`)
@@ -169,10 +169,10 @@ func strictDecode(data []byte, value any) error {
 }
 
 func (s *Schema) validateContract() error {
-	if err := validateValueContract(&s.Props, "props"); err != nil {
+	if err := validateValueContract(&s.Props, "props", hasRichTextField(s.Editor, "props.")); err != nil {
 		return err
 	}
-	if err := validateValueContract(&s.Settings, "settings"); err != nil {
+	if err := validateValueContract(&s.Settings, "settings", hasRichTextField(s.Editor, "settings.")); err != nil {
 		return err
 	}
 	if s.Props.Type != "object" || s.Settings.Type != "object" {
@@ -242,7 +242,16 @@ func (s *Schema) validateContract() error {
 	return nil
 }
 
-func validateValueContract(schema *ValueSchema, path string) error {
+func hasRichTextField(editor EditorSchema, prefix string) bool {
+	for path, field := range editor.Fields {
+		if field.Control == "richtext" && strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateValueContract(schema *ValueSchema, path string, allowComplex bool) error {
 	switch schema.Type {
 	case "object":
 		if schema.Items != nil || len(schema.Enum) > 0 || schema.Minimum != nil || schema.Maximum != nil || schema.MinLength != nil || schema.MaxLength != nil || schema.Pattern != "" {
@@ -260,7 +269,7 @@ func validateValueContract(schema *ValueSchema, path string) error {
 		}
 		for name, property := range schema.Properties {
 			copy := property
-			if err := validateValueContract(&copy, path+"."+name); err != nil {
+			if err := validateValueContract(&copy, path+"."+name, allowComplex); err != nil {
 				return err
 			}
 			schema.Properties[name] = copy
@@ -272,10 +281,10 @@ func validateValueContract(schema *ValueSchema, path string) error {
 		if schema.Items == nil {
 			return fmt.Errorf("%s.items is required", path)
 		}
-		if schema.Items.Type == "array" || schema.Items.Type == "object" && hasComplexObjects(*schema.Items) {
+		if !allowComplex && (schema.Items.Type == "array" || schema.Items.Type == "object" && hasComplexObjects(*schema.Items)) {
 			return fmt.Errorf("%s.items: only primitives and simple objects are supported", path)
 		}
-		if err := validateValueContract(schema.Items, path+"[]"); err != nil {
+		if err := validateValueContract(schema.Items, path+"[]", allowComplex); err != nil {
 			return err
 		}
 	case "string":

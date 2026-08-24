@@ -58,7 +58,7 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 					ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
 					Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
 					FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
-					PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+					PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson,
 				})
 				if len(out) >= q.Limit {
 					break
@@ -84,7 +84,7 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 				ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
 				Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
 				FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
-				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson,
 			})
 			if len(out) >= q.Limit {
 				break
@@ -110,7 +110,7 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 				ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
 				Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
 				FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
-				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson,
 			})
 			if len(out) >= q.Limit {
 				break
@@ -135,7 +135,7 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 			ID: row.ID, Slug: row.Slug, ContentTypeID: ContentTypeID(string(q.ContentType)),
 			Title: row.Title, Excerpt: sqlNullToString(row.Excerpt),
 			FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath,
-			PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+			PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson,
 		})
 		if len(out) >= q.Limit {
 			break

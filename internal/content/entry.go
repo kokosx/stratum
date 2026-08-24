@@ -28,4 +28,5 @@ type PublishedEntry struct {
 	PublishedAt      sql.NullInt64
 	FirstPublishedAt sql.NullInt64
 	RevisionID       string
+	FieldsJSON       string
 }

@@ -60,6 +60,10 @@ func (r *handlerContentReader) Query(ctx context.Context, contentType string, li
 	}
 	out := make([]rendering.ArchiveEntry, 0, limit)
 	for _, e := range entries {
+		fields, err := content.DecodeFieldSnapshot(e.FieldsJSON)
+		if err != nil {
+			return nil, err
+		}
 		ae := rendering.ArchiveEntry{
 			ID:           e.ID,
 			Title:        e.Title,
@@ -67,6 +71,7 @@ func (r *handlerContentReader) Query(ctx context.Context, contentType string, li
 			URL:          e.RoutePath,
 			PublishedAt:  formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, false),
 			PublishedISO: formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, true),
+			Fields:       fields,
 		}
 		if e.FeaturedMediaID.Valid {
 			if mv, ok := mediaCache[e.FeaturedMediaID.String]; ok {

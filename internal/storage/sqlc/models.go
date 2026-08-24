@@ -74,6 +74,7 @@ type EntryRevision struct {
 	ParentEntryID    sql.NullString `json:"parent_entry_id"`
 	MenuOrder        int64          `json:"menu_order"`
 	Slug             string         `json:"slug"`
+	FieldsJson       string         `json:"fields_json"`
 }
 
 type EntryRevisionTerm struct {

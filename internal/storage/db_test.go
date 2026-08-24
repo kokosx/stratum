@@ -106,12 +106,12 @@ func TestMigrateInstallsCoreBlockDefinitions(t *testing.T) {
 	var count int
 	if err := database.DB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM block_definitions
-		WHERE namespace = 'core' AND name = 'text' AND version = 1 AND enabled = 1
+		WHERE namespace = 'core' AND name = 'text' AND version = 2 AND enabled = 1
 	`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
-		t.Fatalf("enabled core/text@1 definitions = %d, want 1", count)
+		t.Fatalf("enabled core/text@2 definitions = %d, want 1", count)
 	}
 	registry, err := blocks.NewRegistry(ctx, db.New(database.DB))
 	if err != nil {

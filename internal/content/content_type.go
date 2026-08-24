@@ -47,13 +47,17 @@ type TemplatePolicy struct {
 // It is loaded from the content_types table but enriched with the policies
 // above so generic code never branches on the type name.
 type ContentTypeDefinition struct {
-	ID           ContentTypeID
-	Name         string
-	PluralName   string
-	Capabilities Capabilities
-	Routing      RoutingPolicy
-	SEO          SEOProfile
-	Templates    TemplatePolicy
+	ID         ContentTypeID
+	Name       string
+	PluralName string
+	// Fields is the current editing schema. Stored revision snapshots remain
+	// readable even when a field is later removed from this definition.
+	Fields        []FieldDefinition
+	SchemaVersion int
+	Capabilities  Capabilities
+	Routing       RoutingPolicy
+	SEO           SEOProfile
+	Templates     TemplatePolicy
 }
 
 // KnownDefinitions returns built-in definitions. Custom types will be loaded

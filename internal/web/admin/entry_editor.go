@@ -114,6 +114,8 @@ type entryFormData struct {
 	HierarchyWarning    string
 	Hierarchical        bool
 	Revisions           []revisionHistoryItem
+	CustomFields        []customFieldControl
+	FieldValues         map[string]any
 }
 
 type revisionHistoryItem struct {
@@ -158,6 +160,7 @@ type entryInput struct {
 	taxonomyValues   map[string][]string
 	parentEntryID    string
 	menuOrder        int64
+	fields           map[string]any
 }
 
 // renderEntryForm bootstraps the shared block editor and renders the common
@@ -175,6 +178,11 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	if data.DocumentJSON == "" {
 		data.DocumentJSON = `{"version":1,"nodes":[]}`
 	}
+	definition := content.DefinitionFor(data.ContentTypeID)
+	if data.Error != "" {
+		data.FieldValues = rawFieldValues(r, definition)
+	}
+	data.CustomFields = customFieldControls(definition, data.FieldValues)
 	// Ensure layout selector is populated if content type is known but no options yet (e.g. direct render).
 	if data.ContentTypeID != "" && data.LayoutTemplates == nil {
 		data.LayoutTemplates = h.loadLayoutTemplateOptions(r.Context(), data.ContentTypeID)
@@ -445,8 +453,23 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if err != nil {
 		return err
 	}
+	fields, err := content.ValidateFields(content.DefinitionFor(contentType), input.fields, content.FieldValidationOptions{
+		MediaExists: func(id string) bool {
+			_, err := qtx.GetMedia(ctx, id)
+			return err == nil
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("invalid custom fields: %w", err)
+	}
+	fieldsJSON, err := content.EncodeFieldSnapshot(fields)
+	if err != nil {
+		return fmt.Errorf("encode custom fields: %w", err)
+	}
 
 	revisionNumber := int64(1)
+	var latest db.EntryRevision
+	reuseLatest := false
 	if create {
 		err = qtx.CreateEntry(ctx, db.CreateEntryParams{ID: entryID, ContentTypeID: contentType, Slug: input.slug, Status: "active", AuthorID: sql.NullString{String: authorID, Valid: true}, CreatedAt: now, UpdatedAt: now})
 	} else {
@@ -454,12 +477,12 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		if getErr != nil || entry.ContentTypeID != contentType {
 			return sql.ErrNoRows
 		}
-		latest, getErr := qtx.GetLatestEntryRevision(ctx, entryID)
+		latest, getErr = qtx.GetLatestEntryRevision(ctx, entryID)
 		if getErr != nil {
 			return fmt.Errorf("get latest revision: %w", getErr)
 		}
 		revisionNumber = latest.RevisionNumber + 1
-		err = qtx.UpdateEntry(ctx, db.UpdateEntryParams{Slug: input.slug, Status: entry.Status, AuthorID: sql.NullString{String: authorID, Valid: true}, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
+		err = qtx.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{Slug: input.slug, Status: entry.Status, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
 	}
 	if err != nil {
 		return fmt.Errorf("save entry: %w", err)
@@ -481,18 +504,30 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		}
 		layoutTemplateID = sql.NullString{String: tmplID, Valid: true}
 	}
-	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
-		ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Slug: input.slug, Title: input.title,
-		Excerpt: excerpt, SeoTitle: seoTitle, SeoDescription: seoDescription, CanonicalUrl: canonicalURL,
-		FeaturedMediaID: featuredMediaID, SocialMediaID: socialMediaID,
-		SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
-		LayoutTemplateID: layoutTemplateID, ParentEntryID: nullableString(input.parentEntryID), MenuOrder: input.menuOrder,
-		DocumentJson: string(documentJSON), CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
-	}); err != nil {
-		return fmt.Errorf("create entry revision: %w", err)
+	if !create && publish {
+		matches, err := revisionMatchesInput(ctx, qtx, latest, input, string(documentJSON), fieldsJSON, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID, robotsIndex, robotsFollow, schemaMode, layoutTemplateID, termIDs)
+		if err != nil {
+			return err
+		}
+		if matches {
+			revisionID = latest.ID
+			reuseLatest = true
+		}
+	}
+	if !reuseLatest {
+		if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
+			ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Slug: input.slug, Title: input.title,
+			Excerpt: excerpt, SeoTitle: seoTitle, SeoDescription: seoDescription, CanonicalUrl: canonicalURL,
+			FeaturedMediaID: featuredMediaID, SocialMediaID: socialMediaID,
+			SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
+			LayoutTemplateID: layoutTemplateID, ParentEntryID: nullableString(input.parentEntryID), MenuOrder: input.menuOrder,
+			DocumentJson: string(documentJSON), FieldsJson: fieldsJSON, CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
+		}); err != nil {
+			return fmt.Errorf("create entry revision: %w", err)
+		}
 	}
 	// Revision-scoped taxonomy assignments (must be inside same tx, fails atomically)
-	{
+	if !reuseLatest {
 		dedup := make(map[string]struct{}, len(termIDs))
 		for _, tid := range termIDs {
 			tid = strings.TrimSpace(tid)
@@ -583,6 +618,29 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	return nil
 }
 
+func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryRevision, input entryInput, documentJSON, fieldsJSON string, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID sql.NullString, robotsIndex, robotsFollow sql.NullInt64, schemaMode string, layoutTemplateID sql.NullString, termIDs []string) (bool, error) {
+	if revision.Slug != input.slug || revision.Title != input.title || revision.DocumentJson != documentJSON || revision.FieldsJson != fieldsJSON || revision.Excerpt != excerpt || revision.SeoTitle != seoTitle || revision.SeoDescription != seoDescription || revision.CanonicalUrl != canonicalURL || revision.FeaturedMediaID != featuredMediaID || revision.SocialMediaID != socialMediaID || revision.SeoRobotsIndex != robotsIndex || revision.SeoRobotsFollow != robotsFollow || revision.SchemaMode != schemaMode || revision.LayoutTemplateID != layoutTemplateID || revision.ParentEntryID != nullableString(input.parentEntryID) || revision.MenuOrder != input.menuOrder {
+		return false, nil
+	}
+	terms, err := q.ListTermsForRevision(ctx, revision.ID)
+	if err != nil {
+		return false, err
+	}
+	if len(terms) != len(termIDs) {
+		return false, nil
+	}
+	want := make(map[string]struct{}, len(termIDs))
+	for _, id := range termIDs {
+		want[id] = struct{}{}
+	}
+	for _, term := range terms {
+		if _, ok := want[term.ID]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // restoreEntryRevision makes a historical revision the latest draft. Revisions
 // are immutable, so restoring never changes the selected historical record.
 func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID, revisionID, authorID string) error {
@@ -612,7 +670,8 @@ func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID
 		SeoRobotsIndex: revision.SeoRobotsIndex, SeoRobotsFollow: revision.SeoRobotsFollow,
 		SchemaMode: revision.SchemaMode, LayoutTemplateID: revision.LayoutTemplateID,
 		ParentEntryID: revision.ParentEntryID, MenuOrder: revision.MenuOrder,
-		CreatedBy: nullableString(authorID), CreatedAt: time.Now().Unix(),
+		FieldsJson: revision.FieldsJson,
+		CreatedBy:  nullableString(authorID), CreatedAt: time.Now().Unix(),
 	}); err != nil {
 		return err
 	}
@@ -680,38 +739,16 @@ func (h *Handler) unpublishEntry(w http.ResponseWriter, r *http.Request, content
 		http.NotFound(w, r)
 		return
 	}
-	settings, err := h.queries.GetSiteSettings(r.Context())
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if (settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entry.ID) || (settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entry.ID) {
-		h.setFlash(w, "Change Site Settings before unpublishing the Homepage or Posts Page.")
-		http.Redirect(w, r, "/admin/"+activeMenu+"/"+entry.ID+"/edit", http.StatusSeeOther)
-		return
-	}
-	tx, err := h.database.BeginTx(r.Context(), nil)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
-	if err := qtx.ClearPublishedRevision(r.Context(), db.ClearPublishedRevisionParams{UpdatedAt: time.Now().Unix(), ID: entry.ID}); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if route, err := qtx.GetEntryRoute(r.Context(), sql.NullString{String: entry.ID, Valid: true}); err == nil {
-		if err := qtx.DeleteRoute(r.Context(), route.ID); err != nil {
+	if err := content.NewLifecycleService(h.database, h.queries).Unpublish(r.Context(), entry.ID); err != nil {
+		if errors.Is(err, content.ErrProtectedPage) {
+			h.setFlash(w, "Change Site Settings before unpublishing the Homepage or Posts Page.")
+		} else if errors.Is(err, content.ErrPublishedDescendants) {
+			h.setFlash(w, "Move or unpublish child pages first.")
+		} else {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		http.Redirect(w, r, "/admin/"+activeMenu+"/"+entry.ID+"/edit", http.StatusSeeOther)
 		return
 	}
 	if h.runtime != nil {
@@ -738,7 +775,16 @@ func (h *Handler) previewRevision(w http.ResponseWriter, r *http.Request, conten
 	if settings, err := h.queries.GetSiteSettings(r.Context()); err == nil {
 		postsBase = settings.PostsBasePath
 	}
-	page, err := h.documentPreview(r.Context(), rendering.RenderInput{Document: doc, Title: revision.Title, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), Path: routing.EntryPath(contentType, revision.Slug, postsBase), EntryID: r.PathValue("id"), LayoutTemplateID: stringValue(revision.LayoutTemplateID), ContentTypeID: contentType})
+	path := routing.EntryPath(contentType, revision.Slug, postsBase)
+	if content.DefinitionFor(contentType).Capabilities.Hierarchical && revision.ParentEntryID.Valid {
+		parentRoute, parentErr := h.queries.GetEntryRoute(r.Context(), revision.ParentEntryID)
+		if parentErr != nil {
+			http.Error(w, "Preview parent is unavailable", http.StatusUnprocessableEntity)
+			return
+		}
+		path = routing.ChildEntryPath(parentRoute.Path, revision.Slug)
+	}
+	page, err := h.documentPreview(r.Context(), rendering.RenderInput{Document: doc, Title: revision.Title, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), Path: path, EntryID: r.PathValue("id"), LayoutTemplateID: stringValue(revision.LayoutTemplateID), ContentTypeID: contentType, Fields: fieldValues(revision.FieldsJson)})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -828,7 +874,11 @@ func (h *Handler) currentUser(r *http.Request) (auth.User, error) {
 	return h.auth.UserForToken(r.Context(), cookie.Value)
 }
 
-func readEntryInput(r *http.Request) (entryInput, error) {
+func readEntryInput(r *http.Request, contentTypes ...string) (entryInput, error) {
+	contentType := ""
+	if len(contentTypes) > 0 {
+		contentType = contentTypes[0]
+	}
 	input := entryInput{
 		title:            strings.TrimSpace(r.FormValue("title")),
 		slug:             strings.TrimSpace(r.FormValue("slug")),
@@ -845,6 +895,7 @@ func readEntryInput(r *http.Request) (entryInput, error) {
 		layoutTemplateID: strings.TrimSpace(r.FormValue("layout_template_id")),
 		parentEntryID:    strings.TrimSpace(r.FormValue("parent_entry_id")),
 		taxonomyValues:   postedTaxonomyValues(r),
+		fields:           rawFieldValues(r, content.DefinitionFor(contentType)),
 	}
 	if raw := strings.TrimSpace(r.FormValue("menu_order")); raw != "" {
 		order, err := strconv.ParseInt(raw, 10, 64)

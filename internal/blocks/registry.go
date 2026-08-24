@@ -176,6 +176,7 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 		return nil, fmt.Errorf("block registry is not initialized")
 	}
 	legacyIDs := collectLegacyPostsIDs(doc)
+	doc = migrateLegacyRichTextInPlace(doc, current.definitions)
 	if _, hasCollection := current.definitions[BlockKey{Name: "core/collection", Version: 1}]; hasCollection {
 		doc = migrateLegacyPostsInPlace(doc)
 	}

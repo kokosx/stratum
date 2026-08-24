@@ -35,7 +35,7 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	input, err := readEntryInput(r)
+	input, err := readEntryInput(r, postContentType)
 	if err != nil {
 		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Excerpt: r.FormValue("excerpt"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: postContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: err.Error(), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
 		return
@@ -98,6 +98,7 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		PublicPath:       h.entryPublicPath(r, entry.ID),
 		EntryID:          entry.ID,
 		DocumentJSON:     revision.DocumentJson,
+		FieldValues:      fieldValues(revision.FieldsJson),
 		Dirty:            "Saved",
 		Status:           status,
 		PublicURL:        publicURL,

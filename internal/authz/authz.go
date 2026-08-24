@@ -14,14 +14,27 @@ type Permission string
 const (
 	ManageUsers      Permission = "users.manage"
 	ManageSite       Permission = "site.manage"
+	ManageNavigation Permission = "navigation.manage"
 	ManageTaxonomies Permission = "taxonomies.manage"
 	ManageMedia      Permission = "media.manage"
 	ReadEntries      Permission = "entries.read"
 	CreateEntries    Permission = "entries.create"
 	EditAnyEntry     Permission = "entries.edit_any"
 	EditOwnEntry     Permission = "entries.edit_own"
-	PublishEntries   Permission = "entries.publish"
-	DeleteEntries    Permission = "entries.delete"
+	PublishAnyEntry  Permission = "entries.publish_any"
+	PublishOwnEntry  Permission = "entries.publish_own"
+	DeleteAnyEntry   Permission = "entries.delete_any"
+	DeleteOwnEntry   Permission = "entries.delete_own"
+)
+
+type EntryAction string
+
+const (
+	EntryRead    EntryAction = "read"
+	EntryCreate  EntryAction = "create"
+	EntryEdit    EntryAction = "edit"
+	EntryPublish EntryAction = "publish"
+	EntryDelete  EntryAction = "delete"
 )
 
 func ValidRole(role string) bool {
@@ -34,24 +47,31 @@ func Allows(role string, permission Permission) bool {
 		return true
 	case RoleEditor:
 		switch permission {
-		case ManageMedia, ManageTaxonomies, ReadEntries, CreateEntries, EditAnyEntry, EditOwnEntry, PublishEntries, DeleteEntries:
+		case ManageMedia, ManageTaxonomies, ManageNavigation, ReadEntries, CreateEntries, EditAnyEntry, EditOwnEntry, PublishAnyEntry, DeleteAnyEntry:
 			return true
 		}
 	case RoleAuthor:
 		switch permission {
-		case ReadEntries, CreateEntries, EditOwnEntry:
+		case ManageMedia, ReadEntries, CreateEntries, EditOwnEntry, PublishOwnEntry, DeleteOwnEntry:
 			return true
 		}
 	}
 	return false
 }
 
-func CanAccessEntry(role, userID, authorID string, permission Permission) bool {
-	if permission == EditOwnEntry {
-		return userID != "" && userID == authorID
-	}
-	if Allows(role, permission) {
+// CanAccessEntry is the single ownership decision for entry operations.
+func CanAccessEntry(role, userID, authorID, contentType string, action EntryAction) bool {
+	if Role(role) == RoleAdmin {
 		return true
 	}
-	return false
+	if Role(role) == RoleEditor {
+		return action == EntryRead || action == EntryCreate || action == EntryEdit || action == EntryPublish || action == EntryDelete
+	}
+	if Role(role) != RoleAuthor || contentType != "post" {
+		return false
+	}
+	if action == EntryCreate {
+		return true
+	}
+	return userID != "" && userID == authorID && (action == EntryRead || action == EntryEdit || action == EntryPublish || action == EntryDelete)
 }

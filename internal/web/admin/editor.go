@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/rendering"
 )
@@ -32,6 +33,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		EntryID          string          `json:"entry_id"`
 		LayoutTemplateID string          `json:"layout_template_id"`
 		ContentTypeID    string          `json:"content_type_id"`
+		Fields           map[string]any  `json:"fields"`
 		SEO              struct {
 			Title       string `json:"title"`
 			Description string `json:"description"`
@@ -80,6 +82,20 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 			ct = e.ContentTypeID
 		}
 	}
+	definition := content.DefinitionFor(ct)
+	if r.Header.Get("Content-Type") != "application/json" {
+		payload.Fields = rawFieldValues(r, definition)
+	}
+	fields, err := content.ValidateFields(definition, payload.Fields, content.FieldValidationOptions{
+		MediaExists: func(id string) bool {
+			_, err := h.queries.GetMedia(r.Context(), id)
+			return err == nil
+		},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	page, err := h.documentPreview(r.Context(), rendering.RenderInput{
 		Document:         doc,
 		Title:            payload.Title,
@@ -90,6 +106,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		EntryID:          payload.EntryID,
 		LayoutTemplateID: payload.LayoutTemplateID,
 		ContentTypeID:    ct,
+		Fields:           fields,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)

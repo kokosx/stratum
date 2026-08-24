@@ -515,6 +515,9 @@
         const key = parts.slice(1).join(".");
         const val = scope[key];
         if (typeof val === "string" && val.trim()) return val.slice(0, 70);
+        if (val?.version === 1 && Array.isArray(val.content)) {
+          return val.content.map((run) => run.text || "").join("").slice(0, 70);
+        }
         if (val) return String(val).slice(0, 70);
       }
     }
@@ -654,6 +657,16 @@
   function buildField(node, object, name, schema, metadata, path) {
     const wrapper = element("label", "inspector-field");
     wrapper.append(element("span", "", metadata.label || humanize(name)));
+    const control = metadata.control || inferredControl(schema);
+    if (control === "richtext") {
+      wrapper.append(buildRichTextControl(object[name], (value) => {
+        object[name] = value;
+        maybePushHistory();
+        changed({ tree: false, inspector: false });
+        renderTree();
+      }));
+      return wrapper;
+    }
     if (schema.type === "array") {
       wrapper.append(buildArray(node, object, name, schema, path));
       return wrapper;
@@ -666,7 +679,6 @@
       wrapper.append(nested);
       return wrapper;
     }
-    const control = metadata.control || inferredControl(schema);
     if (control === "media") {
       wrapper.append(buildMediaControl(node, object, name, updateFromObject(object, name)));
       return wrapper;
@@ -703,6 +715,81 @@
     segmented: (schema, value, update) => optionControl("segmented", schema, value, update),
     radio: (schema, value, update) => optionControl("radio", schema, value, update),
   };
+
+  function buildRichTextControl(value, update) {
+    const container = element("div", "richtext-control");
+    const toolbar = element("div", "richtext-control__toolbar");
+    const editor = element("div", "richtext-control__editor");
+    editor.contentEditable = "true";
+    editor.setAttribute("role", "textbox");
+    editor.setAttribute("aria-multiline", "true");
+
+    function command(label, commandName, argument) {
+      const button = element("button", "button", label);
+      button.type = "button";
+      button.addEventListener("mousedown", (event) => event.preventDefault());
+      button.addEventListener("click", () => {
+        editor.focus();
+        document.execCommand(commandName, false, argument);
+        save();
+      });
+      toolbar.append(button);
+    }
+    command("B", "bold");
+    command("I", "italic");
+    command("S", "strikeThrough");
+    command("Code", "formatBlock", "code");
+    const link = element("button", "button", "Link");
+    link.type = "button";
+    link.addEventListener("mousedown", (event) => event.preventDefault());
+    link.addEventListener("click", () => {
+      const href = window.prompt("Link URL");
+      if (href) {
+        editor.focus();
+        document.execCommand("createLink", false, href);
+        save();
+      }
+    });
+    toolbar.append(link);
+
+    function serialize(node, marks, content) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.textContent) content.push({ text: node.textContent, ...(marks.length ? { marks } : {}) });
+        return;
+      }
+      const tag = node.nodeName.toLowerCase();
+      let next = marks;
+      if (tag === "strong" || tag === "b") next = [...marks, { type: "bold" }];
+      if (tag === "em" || tag === "i") next = [...marks, { type: "italic" }];
+      if (tag === "s" || tag === "strike") next = [...marks, { type: "strike" }];
+      if (tag === "code") next = [...marks, { type: "code" }];
+      if (tag === "a" && node.getAttribute("href")) next = [...marks, { type: "link", href: node.getAttribute("href") }];
+      node.childNodes.forEach((child) => serialize(child, next, content));
+    }
+    function save() {
+      const content = [];
+      editor.childNodes.forEach((child) => serialize(child, [], content));
+      update({ version: 1, content });
+    }
+    function appendRun(run) {
+      let node = document.createTextNode(run.text || "");
+      (run.marks || []).forEach((mark) => {
+        const wrapper = document.createElement(mark.type === "bold" ? "strong" : mark.type === "italic" ? "em" : mark.type === "strike" ? "s" : mark.type === "code" ? "code" : "a");
+        if (mark.type === "link") wrapper.href = mark.href || "";
+        wrapper.append(node);
+        node = wrapper;
+      });
+      editor.append(node);
+    }
+    (value?.content || []).forEach(appendRun);
+    editor.addEventListener("input", save);
+    editor.addEventListener("paste", (event) => {
+      event.preventDefault();
+      document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+    });
+    container.append(toolbar, editor);
+    return container;
+  }
 
   function inputControl(type, value, update) {
     const input = document.createElement("input");
@@ -862,10 +949,14 @@
       content_type_id: ctEl?.value || "",
     };
     try {
+      const previewParams = new URLSearchParams(params);
+      new FormData(form).forEach((value, key) => {
+        if (key.startsWith("field_")) previewParams.append(key, value);
+      });
       const response = await fetch(bootstrap.previewUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "StratumEditor" },
-        body: new URLSearchParams(params),
+        body: previewParams,
       });
       const output = await response.text();
       if (!response.ok) throw new Error(output.trim() || "Preview failed");

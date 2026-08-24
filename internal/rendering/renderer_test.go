@@ -57,6 +57,24 @@ func TestRendererRejectsMissingBlockDefinition(t *testing.T) {
 	}
 }
 
+func TestRendererExposesImmutableEntryFieldsInContext(t *testing.T) {
+	doc, err := document.Decode([]byte(`{"version":1,"nodes":[{"id":"field","block":"example/field","version":1,"props":{}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer, err := NewRenderer([]Definition{{Namespace: "example", Name: "field", Version: 1, RendererType: "template", Template: `{{ index .Context.Entry.Fields "price" }}`}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := renderer.RenderDocumentContext(doc, RenderContext{Entry: EntryContext{Fields: map[string]any{"price": 129.99}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output) != "129.99" {
+		t.Fatalf("rendered fields = %q", output)
+	}
+}
+
 type fakeMediaProvider struct{ view MediaView }
 
 func (f fakeMediaProvider) MediaView(_ context.Context, id string) (MediaView, bool) {

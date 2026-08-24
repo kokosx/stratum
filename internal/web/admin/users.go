@@ -78,3 +78,16 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
+
+func (h *Handler) resetUserPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if err := h.auth.ResetPassword(r.Context(), r.PathValue("id"), r.FormValue("password")); err != nil {
+		h.setFlash(w, err.Error())
+	} else {
+		h.setFlash(w, "Password reset. Their sessions were revoked.")
+	}
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+}

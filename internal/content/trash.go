@@ -228,12 +228,15 @@ func (s *LifecycleService) assertNoLatestDescendants(ctx context.Context, entry 
 // restorePath uses the parent entry's existing compiled route. This preserves
 // nested and Homepage-rooted URLs without doing public-time ancestry traversal.
 func (s *LifecycleService) restorePath(ctx context.Context, q *db.Queries, entry db.Entry, postsBase string) (string, error) {
-	if !DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical || !entry.PublishedRevisionID.Valid {
-		return entryPublicPath(entry.ContentTypeID, entry.Slug, postsBase), nil
+	if !entry.PublishedRevisionID.Valid {
+		return "", sql.ErrNoRows
 	}
 	revision, err := q.GetEntryRevision(ctx, entry.PublishedRevisionID.String)
-	if err != nil || !revision.ParentEntryID.Valid {
-		return entryPublicPath(entry.ContentTypeID, entry.Slug, postsBase), err
+	if err != nil {
+		return "", err
+	}
+	if !DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical || !revision.ParentEntryID.Valid {
+		return entryPublicPath(entry.ContentTypeID, revision.Slug, postsBase), nil
 	}
 	parent, err := q.GetEntry(ctx, revision.ParentEntryID.String)
 	if err != nil || parent.Status != "active" || !parent.PublishedRevisionID.Valid {
@@ -244,9 +247,41 @@ func (s *LifecycleService) restorePath(ctx context.Context, q *db.Queries, entry
 		return "", ErrParentUnavailable
 	}
 	if parentRoute.Path == "/" {
-		return "/" + strings.Trim(entry.Slug, "/"), nil
+		return "/" + strings.Trim(revision.Slug, "/"), nil
 	}
-	return strings.TrimRight(parentRoute.Path, "/") + "/" + strings.Trim(entry.Slug, "/"), nil
+	return strings.TrimRight(parentRoute.Path, "/") + "/" + strings.Trim(revision.Slug, "/"), nil
+}
+
+// Unpublish removes a public route only when no published child would remain
+// reachable beneath it.
+func (s *LifecycleService) Unpublish(ctx context.Context, entryID string) error {
+	entry, err := s.queries.GetEntry(ctx, entryID)
+	if err != nil {
+		return err
+	}
+	if err := s.assertNotProtected(ctx, entryID); err != nil {
+		return err
+	}
+	if err := s.assertNoPublishedDescendants(ctx, entry); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	qtx := s.queries.WithTx(tx)
+	if err := qtx.ClearPublishedRevision(ctx, db.ClearPublishedRevisionParams{UpdatedAt: time.Now().Unix(), ID: entryID}); err != nil {
+		return err
+	}
+	if route, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entryID, Valid: true}); err == nil {
+		if err := qtx.DeleteRoute(ctx, route.ID); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *LifecycleService) BulkTrash(ctx context.Context, contentTypeID string, ids []string) error {
