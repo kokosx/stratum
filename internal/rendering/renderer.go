@@ -140,15 +140,6 @@ func (rc RenderContext) WithRoute(route RouteContext) RenderContext {
 	return rc
 }
 
-// BlockRenderInput is the future lazy-children API. Parent blocks receive a
-// RenderChildren function that may be called multiple times with different
-// RenderContexts. Normal containers call it once; Collection calls it per entry.
-type BlockRenderInput struct {
-	Context        RenderContext
-	Node           PreparedNode
-	RenderChildren func(RenderContext) (template.HTML, error)
-}
-
 // ArchiveContext is the typed archive listing supplied to core/posts source=archive.
 // Nil on single renders; non-nil on archive renders.
 type ArchiveContext struct {

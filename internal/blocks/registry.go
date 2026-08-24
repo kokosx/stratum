@@ -253,7 +253,10 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 // preparing and caching it on first use. revisionID uniquely identifies the
 // immutable revision; the entry is scoped by registry generation.
 func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*rendering.PreparedDocument, error) {
-	if revisionID != "" {
+	if revisionID == "" {
+		return r.Prepare(doc)
+	}
+	for {
 		gen := r.generation.Load()
 		key := fmt.Sprintf("%d:%s", gen, revisionID)
 		r.preparedMu.Lock()
@@ -270,31 +273,7 @@ func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*re
 			return nil, err
 		}
 		if r.generation.Load() != gen {
-			// Registry changed while preparing; don't cache under stale generation.
-			// Re-prepare with current generation.
-			gen2 := r.generation.Load()
-			key2 := fmt.Sprintf("%d:%s", gen2, revisionID)
-			r.preparedMu.Lock()
-			if pd2, ok := r.prepared[key2]; ok {
-				r.preparedMu.Unlock()
-				return pd2, nil
-			}
-			r.preparedMu.Unlock()
-			pd2, err := r.Prepare(doc)
-			if err != nil {
-				return nil, err
-			}
-			r.preparedMu.Lock()
-			if r.prepared == nil {
-				r.prepared = make(map[string]*rendering.PreparedDocument)
-			}
-			if existing, ok := r.prepared[key2]; ok {
-				r.preparedMu.Unlock()
-				return existing, nil
-			}
-			r.prepared[key2] = pd2
-			r.preparedMu.Unlock()
-			return pd2, nil
+			continue
 		}
 		r.preparedMu.Lock()
 		if r.prepared == nil {
@@ -308,7 +287,6 @@ func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*re
 		r.preparedMu.Unlock()
 		return pd, nil
 	}
-	return r.Prepare(doc)
 }
 
 // RenderPrepared renders a PreparedDocument through the current renderer without
@@ -335,21 +313,11 @@ func (r *Registry) RenderDocument(doc *document.Document) (template.HTML, error)
 // Entry and Site settings) for use by dynamic blocks such as Entry Title or
 // Site Name. The editor preview passes an empty context.
 func (r *Registry) RenderDocumentContext(doc *document.Document, rc rendering.RenderContext) (template.HTML, error) {
-	current := r.snapshot.Load()
-	if current == nil {
-		return "", fmt.Errorf("block registry is not initialized")
-	}
-	if _, hasCollection := current.definitions[BlockKey{Name: "core/collection", Version: 1}]; hasCollection {
-		doc = migrateLegacyPostsInPlace(doc)
-	}
-	if err := current.validateDocument(doc); err != nil {
+	pd, err := r.Prepare(doc)
+	if err != nil {
 		return "", err
 	}
-	renderDocument, err := current.documentWithDefaults(doc)
-	if err != nil {
-		return "", fmt.Errorf("apply block defaults: %w", err)
-	}
-	return current.renderer.RenderDocumentContext(renderDocument, rc)
+	return r.RenderPrepared(context.Background(), pd, rc)
 }
 
 // EditorMode controls which blocks are visible in the inserter.

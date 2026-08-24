@@ -104,7 +104,7 @@ func TestSeedBlogSlugIsPublicSemantics(t *testing.T) {
 	if !archRoute.ContentTypeID.Valid || archRoute.ContentTypeID.String != "post" {
 		t.Fatalf("archive content_type = %#v, want post", archRoute.ContentTypeID)
 	}
-	// Simulate Settings save without changing Posts Page: derived base must stay /blog
+	// Verify persisted source-of-truth values are coherent (slug is public semantics, not internal ID).
 	derived := "/" + strings.Trim(blogEntry.Slug, "/")
 	if derived != "/blog" {
 		t.Fatalf("derived PostsBasePath = %q, want /blog", derived)

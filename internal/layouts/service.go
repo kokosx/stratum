@@ -15,12 +15,6 @@ import (
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
-// Reader is the minimal boundary for layout template loading.
-type Reader interface {
-	GetPublished(ctx context.Context, templateID string) (*document.Document, string, error)
-	GetLatest(ctx context.Context, templateID string) (*document.Document, error)
-}
-
 type Service struct {
 	db      *sql.DB
 	queries *db.Queries
@@ -131,7 +125,9 @@ func (s *Service) SaveDraft(ctx context.Context, templateID, name, docJSON, auth
 			return err
 		}
 	} else {
-		_ = qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID})
+		if err := qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID}); err != nil {
+			return err
+		}
 	}
 	revID, err := randomID()
 	if err != nil {
@@ -141,7 +137,10 @@ func (s *Service) SaveDraft(ctx context.Context, templateID, name, docJSON, auth
 	if authorID != "" {
 		createdBy = sql.NullString{String: authorID, Valid: true}
 	}
-	encoded, _ := json.Marshal(doc)
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("marshal document: %w", err)
+	}
 	if err := qtx.CreateLayoutTemplateRevision(ctx, db.CreateLayoutTemplateRevisionParams{ID: revID, TemplateID: templateID, RevisionNumber: nextRev, DocumentJson: string(encoded), CreatedBy: createdBy, CreatedAt: now}); err != nil {
 		return err
 	}
@@ -165,7 +164,10 @@ func (s *Service) Publish(ctx context.Context, templateID, name, docJSON, author
 		if err := ValidateLayoutTemplateDocument(s.blocks, d); err != nil {
 			return err
 		}
-		enc, _ := json.Marshal(d)
+		enc, err := json.Marshal(d)
+		if err != nil {
+			return fmt.Errorf("marshal document: %w", err)
+		}
 		docString = string(enc)
 	} else {
 		latest, err := s.queries.GetLatestLayoutTemplateRevision(ctx, templateID)

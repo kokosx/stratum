@@ -7,51 +7,6 @@ import (
 	"github.com/kokosx/stratum/internal/rendering"
 )
 
-// documentWithDefaults creates a render-only copy. Defaults make older valid
-// revisions deterministic without migrating or rewriting their stored JSON.
-func (s *snapshot) documentWithDefaults(doc *document.Document) (*document.Document, error) {
-	encoded, err := json.Marshal(doc)
-	if err != nil {
-		return nil, err
-	}
-	var result document.Document
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return nil, err
-	}
-	for i := range result.Nodes {
-		if err := s.applyNodeDefaults(&result.Nodes[i]); err != nil {
-			return nil, err
-		}
-	}
-	return &result, nil
-}
-
-func (s *snapshot) applyNodeDefaults(node *document.Node) error {
-	definition := s.definitions[BlockKey{Name: node.Block, Version: int64(node.Version)}]
-	props, err := decodeJSONValue(node.Props, map[string]any{})
-	if err != nil {
-		return err
-	}
-	settings, err := decodeJSONValue(node.Settings, map[string]any{})
-	if err != nil {
-		return err
-	}
-	applyDefaults(definition.Schema.Props, props)
-	applyDefaults(definition.Schema.Settings, settings)
-	if node.Props, err = json.Marshal(props); err != nil {
-		return err
-	}
-	if node.Settings, err = json.Marshal(settings); err != nil {
-		return err
-	}
-	for i := range node.Children {
-		if err := s.applyNodeDefaults(&node.Children[i]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // prepareNode builds a PreparedNode: it decodes props/settings, applies schema
 // defaults once, and recursively prepares children. The result carries ready
 // maps so the renderer never decodes or marshals JSON again.
@@ -72,6 +27,20 @@ func (s *snapshot) prepareNodeWithLegacy(node document.Node, legacyIDs map[strin
 	if definition != nil {
 		applyDefaults(definition.Schema.Props, props)
 		applyDefaults(definition.Schema.Settings, settings)
+	}
+	// Normalize json.Number produced by UseNumber to float64 so templates
+	// like `ne .Settings.start 1.0` work (json.Number != float64 for template funcs).
+	if b, err := json.Marshal(props); err == nil {
+		var norm any
+		if err := json.Unmarshal(b, &norm); err == nil {
+			props = norm
+		}
+	}
+	if b, err := json.Marshal(settings); err == nil {
+		var norm any
+		if err := json.Unmarshal(b, &norm); err == nil {
+			settings = norm
+		}
 	}
 	propMap, _ := props.(map[string]any)
 	if propMap == nil {

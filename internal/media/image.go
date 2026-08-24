@@ -142,9 +142,6 @@ func ProcessImage(data []byte) (*Processed, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot decode image: %v", ErrInvalidImage, err)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("media: cannot decode image: %w", err)
-	}
 
 	variants := make([]VariantBytes, 0, len(targetWidths))
 	for _, w := range targetWidths {
