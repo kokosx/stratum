@@ -40,7 +40,8 @@
     <div class="form-actions">
       <a class="button" href="{{ .Content.BackURL }}">Back</a>
       <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
-      <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+       <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+	       {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish">Unpublish</button>{{ end }}
     </div>
   </header>
   {{ if .Content.Hierarchical }}
@@ -84,6 +85,12 @@
   {{ if .Content.IsPostsPage }}<div class="posts-page-badge" style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;margin:12px 0;display:flex;gap:12px;align-items:center;"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Public archive: {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
   {{ if .Content.HasUnpublishedChanges }}<div class="unpublished-badge" style="padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;margin:12px 0;"><strong>Unpublished changes</strong><span> — Public archive is using the previously published revision.</span> {{ if .Content.PublicURL }}<a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a>{{ end }}</div>{{ end }}
   {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert" style="margin:12px 0;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;">{{ .Content.PostsPageWarning }}</p>{{ end }}
+	{{ if .Content.Revisions }}
+	<section class="panel" style="margin:12px 0;padding:16px;">
+	  <h3 style="margin:0 0 8px;">Revision History</h3>
+	  {{ range .Content.Revisions }}<div style="display:flex;gap:8px;align-items:center;margin:6px 0;"><span>Revision {{ .Number }}: {{ .Title }} ({{ .Slug }}){{ if .Published }} <strong>Published</strong>{{ end }}</span><a class="button" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a><button class="button" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button></div>{{ end }}
+	</section>
+	{{ end }}
   {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
   <div class="editor-workspace">
     <aside class="editor-panel block-library" aria-label="Block library">

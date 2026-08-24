@@ -95,7 +95,7 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Status: status, IsDefault: isDefault})
 	}
 	data := layoutTemplatesData{Templates: rows, CSRFToken: token, Flash: h.consumeFlash(w, r)}
-	if err := h.layoutTemplatesTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Templates", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: AdminNav(), CSRFToken: token, Flash: data.Flash, Content: data}); err != nil {
+	if err := h.layoutTemplatesTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Templates", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Flash: data.Flash, Content: data}); err != nil {
 		log.Printf("render layout templates: %v", err)
 	}
 }
@@ -142,7 +142,7 @@ func (h *Handler) newLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 		CSRFToken:    token,
 		ContentTypes: opts,
 	}
-	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: AdminNav(), CSRFToken: token, Content: data}); err != nil {
+	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render new template form: %v", err)
 	}
 }
@@ -188,7 +188,7 @@ func (h *Handler) renderLayoutCreateError(w http.ResponseWriter, r *http.Request
 		Error:         msg,
 		ContentTypes:  opts,
 	}
-	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: AdminNav(), CSRFToken: token, Content: data}); err != nil {
+	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render create error: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		Status:          status,
 		IsDefault:       isDefault,
 	}
-	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Template - " + tmpl.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: AdminNav(), CSRFToken: token, Content: data}); err != nil {
+	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Template - " + tmpl.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render layout editor: %v", err)
 	}
 }

@@ -20,7 +20,7 @@ LIMIT 1;
 -- name: ListEntriesByContentType :many
 SELECT
     entries.id,
-    entries.slug,
+    COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) AS slug,
     entries.status,
     entries.updated_at,
     entries.published_revision_id,
@@ -62,6 +62,11 @@ UPDATE entries
 SET published_revision_id = ?, status = 'active', published_at = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: ClearPublishedRevision :exec
+UPDATE entries
+SET published_revision_id = NULL, published_at = NULL, updated_at = ?
+WHERE id = ?;
+
 -- name: SetFirstPublishedAtIfNull :exec
 -- Records the FIRST publication of an Entry. Later re-publishes must never
 -- move it: structured data uses it as the stable datePublished.
@@ -99,7 +104,7 @@ WHERE entry_id = ?;
 -- name: ListEntriesAdmin :many
 SELECT
     entries.id,
-    entries.slug,
+    COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) AS slug,
     entries.status,
     entries.updated_at,
     entries.published_revision_id,
@@ -123,7 +128,8 @@ LEFT JOIN routes AS public_route
         LIMIT 1
     )
 WHERE entries.content_type_id = sqlc.arg('content_type_id')
-  AND (
+	AND (sqlc.narg('author_id') IS NULL OR entries.author_id = sqlc.narg('author_id'))
+   AND (
       sqlc.arg('status_filter') = ''
       OR (
           sqlc.arg('status_filter') = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
@@ -144,7 +150,7 @@ WHERE entries.content_type_id = sqlc.arg('content_type_id')
   AND (
       sqlc.arg('search') = ''
       OR latest_revision.title LIKE '%' || sqlc.arg('search') || '%'
-      OR entries.slug LIKE '%' || sqlc.arg('search') || '%'
+       OR COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) LIKE '%' || sqlc.arg('search') || '%'
   )
 ORDER BY entries.updated_at DESC, entries.id DESC
 LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
@@ -160,7 +166,8 @@ LEFT JOIN entry_revisions AS latest_revision
         WHERE entry_id = entries.id
     )
 WHERE entries.content_type_id = sqlc.arg('content_type_id')
-  AND (
+	AND (sqlc.narg('author_id') IS NULL OR entries.author_id = sqlc.narg('author_id'))
+   AND (
       sqlc.arg('status_filter') = ''
       OR (
           sqlc.arg('status_filter') = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
@@ -181,7 +188,7 @@ WHERE entries.content_type_id = sqlc.arg('content_type_id')
   AND (
       sqlc.arg('search') = ''
       OR latest_revision.title LIKE '%' || sqlc.arg('search') || '%'
-      OR entries.slug LIKE '%' || sqlc.arg('search') || '%'
+       OR COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) LIKE '%' || sqlc.arg('search') || '%'
   );
 
 -- name: CountEntriesByAdminStatus :one
@@ -192,4 +199,6 @@ SELECT
     SUM(CASE WHEN status = 'private' THEN 1 ELSE 0 END) AS private_count,
     SUM(CASE WHEN status = 'trash' THEN 1 ELSE 0 END) AS trash_count
 FROM entries
-WHERE content_type_id = ?;
+WHERE content_type_id = sqlc.arg('content_type_id')
+  AND (sqlc.narg('author_id') IS NULL OR author_id = sqlc.narg('author_id'))
+;

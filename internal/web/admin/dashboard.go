@@ -12,7 +12,7 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		ActiveMenu:    state.ActiveSection,
 		ActiveSection: state.ActiveSection,
 		ActiveItem:    state.ActiveItem,
-		Nav:           AdminNav(),
+		Nav:           h.navForUser(r),
 		Flash:         h.consumeFlash(w, r),
 	}
 	token, err := h.csrfToken(w, r)

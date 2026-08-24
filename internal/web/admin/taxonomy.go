@@ -101,7 +101,7 @@ func (h *Handler) listTaxonomy(w http.ResponseWriter, r *http.Request, taxonomyI
 		ActiveMenu:    "posts",
 		ActiveSection: state.ActiveSection,
 		ActiveItem:    state.ActiveItem,
-		Nav:           AdminNav(),
+		Nav:           h.navForUser(r),
 		Flash:         h.consumeFlash(w, r),
 		CSRFToken:     token,
 		Content: taxonomyData{
@@ -154,7 +154,7 @@ func (h *Handler) createTerm(w http.ResponseWriter, r *http.Request, taxonomyID,
 		slug = slugifyTerm(name)
 	}
 	svc := taxonomy.New(h.database, h.queries)
-	_, err := svc.CreateTerm(r.Context(), taxonomyID, name, slug, parentID, description)
+	_, err := svc.CreateTerm(r.Context(), taxonomyID, name, slug, description, parentID)
 	if err != nil {
 		log.Printf("create term %s %s: %v", taxonomyID, name, err)
 		h.setFlash(w, "Could not create term: "+err.Error())
@@ -182,6 +182,11 @@ func (h *Handler) updateTerm(w http.ResponseWriter, r *http.Request, taxonomyID,
 		return
 	}
 	id := r.PathValue("id")
+	term, err := h.queries.GetTerm(r.Context(), id)
+	if err != nil || term.TaxonomyID != taxonomyID {
+		http.NotFound(w, r)
+		return
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return

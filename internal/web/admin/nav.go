@@ -1,6 +1,10 @@
 package admin
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/kokosx/stratum/internal/authz"
+)
 
 // AdminNavItem is the single source of truth for admin sidebar structure.
 type AdminNavItem struct {
@@ -33,7 +37,6 @@ func AdminNav() []AdminNavItem {
 		}},
 		{ID: "media", Label: "Media", Href: "/admin/media", Icon: "media", Children: []AdminNavItem{
 			{ID: "media-library", Label: "Library", Href: "/admin/media"},
-			{ID: "media-new", Label: "Add New", Href: "/admin/media"},
 		}},
 		{ID: "appearance", Label: "Appearance", Href: "/admin/appearance", Icon: "appearance", Children: []AdminNavItem{
 			{ID: "appearance-styles", Label: "Styles", Href: "/admin/appearance"},
@@ -46,6 +49,46 @@ func AdminNav() []AdminNavItem {
 			{ID: "settings-seo", Label: "SEO & Crawling", Href: "/admin/settings/seo"},
 			{ID: "settings-performance", Label: "Performance", Href: "/admin/settings/performance"},
 		}},
+		{ID: "users", Label: "Users", Href: "/admin/users", Icon: "users"},
+	}
+}
+
+// FilterAdminNav keeps navigation as a view of the same central policy that
+// protects routes. It is not a security boundary; handlers enforce the policy.
+func FilterAdminNav(nav []AdminNavItem, role string) []AdminNavItem {
+	filtered := make([]AdminNavItem, 0, len(nav))
+	for _, item := range nav {
+		if !authz.Allows(role, navPermission(item.Href)) {
+			continue
+		}
+		children := make([]AdminNavItem, 0, len(item.Children))
+		for _, child := range item.Children {
+			if authz.Allows(role, navPermission(child.Href)) {
+				children = append(children, child)
+			}
+		}
+		item.Children = children
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func navPermission(path string) authz.Permission {
+	switch {
+	case strings.HasPrefix(path, "/admin/users"):
+		return authz.ManageUsers
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/menus"):
+		return authz.ManageSite
+	case strings.HasPrefix(path, "/admin/media"):
+		return authz.ManageMedia
+	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
+		return authz.ManageTaxonomies
+	case strings.HasPrefix(path, "/admin/pages"):
+		return authz.EditAnyEntry
+	case strings.HasPrefix(path, "/admin/posts"):
+		return authz.ReadEntries
+	default:
+		return authz.ReadEntries
 	}
 }
 
@@ -90,8 +133,6 @@ func ResolveNav(path string) NavState {
 		}
 		return NavState{ActiveSection: "pages", ActiveItem: "pages-all"}
 	case strings.HasPrefix(path, "/admin/media"):
-		// No separate /media/new route yet; both Library and Add New point to /admin/media.
-		// Keep Library active for now.
 		return NavState{ActiveSection: "media", ActiveItem: "media-library"}
 	case strings.HasPrefix(path, "/admin/appearance"):
 		if strings.HasPrefix(path, "/admin/appearance/templates") {
@@ -114,6 +155,8 @@ func ResolveNav(path string) NavState {
 			return NavState{ActiveSection: "settings", ActiveItem: "settings-performance"}
 		}
 		return NavState{ActiveSection: "settings", ActiveItem: "settings-general"}
+	case strings.HasPrefix(path, "/admin/users"):
+		return NavState{ActiveSection: "users", ActiveItem: "users"}
 	}
 	return NavState{}
 }

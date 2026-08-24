@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
@@ -45,6 +46,7 @@ type Handler struct {
 	layoutTemplateFormTemplate   *template.Template
 	layoutTemplateEditorTemplate *template.Template
 	taxonomyTemplate             *template.Template
+	usersTemplate                *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -75,7 +77,7 @@ func (h *Handler) layoutData(r *http.Request, title string) LayoutData {
 		ActiveMenu:    legacy,
 		ActiveSection: state.ActiveSection,
 		ActiveItem:    state.ActiveItem,
-		Nav:           AdminNav(),
+		Nav:           h.navForUser(r),
 	}
 }
 
@@ -87,7 +89,7 @@ func (h *Handler) layoutDataWithFlash(w http.ResponseWriter, r *http.Request, ti
 		ActiveMenu:    legacy,
 		ActiveSection: state.ActiveSection,
 		ActiveItem:    state.ActiveItem,
-		Nav:           AdminNav(),
+		Nav:           h.navForUser(r),
 		Flash:         h.consumeFlash(w, r),
 	}
 }
@@ -171,6 +173,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	usersTemplate, err := template.New("users").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "users.html")
+	if err != nil {
+		return nil, err
+	}
 
 	return &Handler{
 		database:                     database,
@@ -188,6 +194,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		appearanceTemplate:           appearanceTemplate,
 		settingsTemplate:             settingsTemplate,
 		taxonomyTemplate:             taxonomyTemplate,
+		usersTemplate:                usersTemplate,
 		layoutTemplatesTemplate:      layoutTemplatesTemplate,
 		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
 		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
@@ -214,12 +221,18 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/login", h.login)
 	mux.HandleFunc("POST /admin/login", h.login)
 	mux.HandleFunc("POST /admin/logout", h.logout)
+	mux.HandleFunc("GET /admin/users", h.requireAuth(h.listUsers))
+	mux.HandleFunc("POST /admin/users", h.requireAuth(h.createUser))
+	mux.HandleFunc("POST /admin/users/{id}", h.requireAuth(h.updateUser))
 	mux.HandleFunc("GET /admin/pages", h.requireAuth(h.listPages))
 	mux.HandleFunc("GET /admin/pages/new", h.requireAuth(h.newPage))
 	mux.HandleFunc("POST /admin/pages", h.requireAuth(h.createPage))
 	mux.HandleFunc("GET /admin/pages/{id}/edit", h.requireAuth(h.editPage))
 	mux.HandleFunc("POST /admin/pages/{id}", h.requireAuth(h.savePage))
 	mux.HandleFunc("POST /admin/pages/{id}/publish", h.requireAuth(h.publishPage))
+	mux.HandleFunc("POST /admin/pages/{id}/unpublish", h.requireAuth(h.unpublishPage))
+	mux.HandleFunc("POST /admin/pages/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restorePageRevision))
+	mux.HandleFunc("GET /admin/pages/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewPageRevision))
 	mux.HandleFunc("POST /admin/pages/{id}/trash", h.requireAuth(h.trashPage))
 	mux.HandleFunc("POST /admin/pages/{id}/restore", h.requireAuth(h.restorePage))
 	mux.HandleFunc("POST /admin/pages/{id}/delete", h.requireAuth(h.deletePagePermanently))
@@ -231,6 +244,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/posts/{id}/edit", h.requireAuth(h.editPost))
 	mux.HandleFunc("POST /admin/posts/{id}", h.requireAuth(h.savePost))
 	mux.HandleFunc("POST /admin/posts/{id}/publish", h.requireAuth(h.publishPost))
+	mux.HandleFunc("POST /admin/posts/{id}/unpublish", h.requireAuth(h.unpublishPost))
+	mux.HandleFunc("POST /admin/posts/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restorePostRevision))
+	mux.HandleFunc("GET /admin/posts/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewPostRevision))
 	mux.HandleFunc("POST /admin/posts/{id}/trash", h.requireAuth(h.trashPost))
 	mux.HandleFunc("POST /admin/posts/{id}/restore", h.requireAuth(h.restorePost))
 	mux.HandleFunc("POST /admin/posts/{id}/delete", h.requireAuth(h.deletePostPermanently))
@@ -463,8 +479,13 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !h.isAuthenticated(r) {
+		user, err := h.currentUser(r)
+		if err != nil {
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if !h.authorized(r, user) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 		next(w, r)
@@ -478,6 +499,59 @@ func (h *Handler) isAuthenticated(r *http.Request) bool {
 	}
 	_, err = h.auth.UserForToken(r.Context(), cookie.Value)
 	return err == nil
+}
+
+func (h *Handler) authorized(r *http.Request, user auth.User) bool {
+	path := r.URL.Path
+	var permission authz.Permission
+	switch {
+	case strings.HasPrefix(path, "/admin/users"), strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/menus"):
+		permission = authz.ManageSite
+		if strings.HasPrefix(path, "/admin/users") {
+			permission = authz.ManageUsers
+		}
+	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
+		permission = authz.ManageTaxonomies
+	case strings.HasPrefix(path, "/admin/media"):
+		permission = authz.ManageMedia
+	case strings.HasPrefix(path, "/admin/pages"):
+		permission = authz.EditAnyEntry
+	case strings.HasPrefix(path, "/admin/posts"):
+		if strings.Contains(path, "/publish") || strings.Contains(path, "/unpublish") {
+			return authz.Allows(user.Role, authz.PublishEntries)
+		}
+		if strings.Contains(path, "/trash") || strings.Contains(path, "/restore") || strings.Contains(path, "/delete") || strings.Contains(path, "/bulk") {
+			return authz.Allows(user.Role, authz.DeleteEntries)
+		}
+		permission = authz.EditAnyEntry
+		if r.PathValue("id") == "" && (r.Method == http.MethodGet || r.Method == http.MethodPost) {
+			if r.Method == http.MethodPost && r.FormValue("publish") != "" {
+				return authz.Allows(user.Role, authz.PublishEntries)
+			}
+			return authz.Allows(user.Role, authz.ReadEntries) || authz.Allows(user.Role, authz.CreateEntries)
+		}
+	case path == "/admin/editor/preview":
+		permission = authz.CreateEntries
+	default:
+		return true
+	}
+	if authz.Allows(user.Role, permission) {
+		return true
+	}
+	id := r.PathValue("id")
+	if id == "" || !strings.HasPrefix(path, "/admin/posts/") {
+		return false
+	}
+	entry, err := h.queries.GetEntry(r.Context(), id)
+	return err == nil && entry.ContentTypeID == postContentType && entry.AuthorID.Valid && authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, authz.EditOwnEntry)
+}
+
+func (h *Handler) navForUser(r *http.Request) []AdminNavItem {
+	user, err := h.currentUser(r)
+	if err != nil {
+		return nil
+	}
+	return FilterAdminNav(AdminNav(), user.Role)
 }
 
 func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {

@@ -51,12 +51,28 @@ func (d *Database) Migrate(ctx context.Context) error {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
 
+		// 041 rebuilds entries to remove SQLite's implicit UNIQUE index. Foreign
+		// keys are connection-local and must be off before the transaction so
+		// dropping the old parent table does not cascade its revisions.
+		rebuildEntries := entry.Name() == "041_revision_scoped_slug.sql"
+		if rebuildEntries {
+			if _, err := d.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+				return fmt.Errorf("disable foreign keys for %s: %w", entry.Name(), err)
+			}
+		}
+
 		tx, err := d.DB.BeginTx(ctx, nil)
 		if err != nil {
+			if rebuildEntries {
+				_, _ = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+			}
 			return fmt.Errorf("begin migration %s: %w", entry.Name(), err)
 		}
 		if _, err := tx.ExecContext(ctx, string(sql)); err != nil {
 			tx.Rollback()
+			if rebuildEntries {
+				_, _ = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+			}
 			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -66,7 +82,15 @@ func (d *Database) Migrate(ctx context.Context) error {
 			return fmt.Errorf("record migration %s: %w", entry.Name(), err)
 		}
 		if err := tx.Commit(); err != nil {
+			if rebuildEntries {
+				_, _ = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON")
+			}
 			return fmt.Errorf("commit migration %s: %w", entry.Name(), err)
+		}
+		if rebuildEntries {
+			if _, err := d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+				return fmt.Errorf("restore foreign keys after %s: %w", entry.Name(), err)
+			}
 		}
 	}
 

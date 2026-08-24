@@ -57,6 +57,8 @@ func createPrivateEntry(t *testing.T, queries *db.Queries, id, ct, slug string) 
 	_ = queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: ct, Slug: slug, Status: "private", CreatedAt: now, UpdatedAt: now})
 	revID := id + "-r1"
 	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Title: "Private " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
+	_ = queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id})
+	_ = queries.UpdateEntry(ctx, db.UpdateEntryParams{ID: id, Slug: slug, Status: "private", UpdatedAt: now, PublishedAt: sql.NullInt64{Int64: now, Valid: true}})
 }
 
 func TestDraftTrashRestore(t *testing.T) {
@@ -114,6 +116,9 @@ func TestPrivateTrashRestore(t *testing.T) {
 	e, _ := queries.GetEntry(ctx, "priv1")
 	if e.Status != "private" {
 		t.Fatalf("expected private, got %s", e.Status)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/priv-one"); err == nil {
+		t.Fatal("private restore must not recreate a public route")
 	}
 }
 

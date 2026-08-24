@@ -73,6 +73,7 @@ type EntryRevision struct {
 	LayoutTemplateID sql.NullString `json:"layout_template_id"`
 	ParentEntryID    sql.NullString `json:"parent_entry_id"`
 	MenuOrder        int64          `json:"menu_order"`
+	Slug             string         `json:"slug"`
 }
 
 type EntryRevisionTerm struct {
@@ -244,4 +245,5 @@ type User struct {
 	Role         string `json:"role"`
 	CreatedAt    int64  `json:"created_at"`
 	UpdatedAt    int64  `json:"updated_at"`
+	Status       string `json:"status"`
 }

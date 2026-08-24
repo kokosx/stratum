@@ -61,7 +61,11 @@ func (s *LifecycleService) MoveToTrash(ctx context.Context, entryID string) erro
 		return err
 	}
 	if rt, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entryID, Valid: true}); err == nil {
-		_ = qtx.DeleteRoute(ctx, rt.ID)
+		if err := qtx.DeleteRoute(ctx, rt.ID); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
@@ -81,7 +85,7 @@ func (s *LifecycleService) Restore(ctx context.Context, entryID string) error {
 		return errors.New("database not configured")
 	}
 	var targetPath string
-	needsRoute := entry.PublishedRevisionID.Valid
+	needsRoute := needsPublicRoute(entry)
 	if needsRoute {
 		settings, err := s.queries.GetSiteSettings(ctx)
 		if err == nil {
@@ -120,7 +124,10 @@ func (s *LifecycleService) Restore(ctx context.Context, entryID string) error {
 		return err
 	}
 	if needsRoute && targetPath != "" {
-		settings, _ := qtx.GetSiteSettings(ctx)
+		settings, err := qtx.GetSiteSettings(ctx)
+		if err != nil {
+			return err
+		}
 		if settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entryID {
 			targetPath = "/"
 		}
@@ -279,7 +286,11 @@ func (s *LifecycleService) BulkTrash(ctx context.Context, contentTypeID string, 
 			return err
 		}
 		if rt, err := qtx.GetEntryRoute(ctx, sql.NullString{String: id, Valid: true}); err == nil {
-			_ = qtx.DeleteRoute(ctx, rt.ID)
+			if err := qtx.DeleteRoute(ctx, rt.ID); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
 	}
 	return tx.Commit()
@@ -304,7 +315,7 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 		if e.Status != "trash" {
 			return fmt.Errorf("entry %s is not in trash", id)
 		}
-		if e.PublishedRevisionID.Valid {
+		if needsPublicRoute(e) {
 			targetPath, err := s.restorePath(ctx, s.queries, e, settings.PostsBasePath)
 			if err != nil {
 				return err
@@ -328,14 +339,19 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
 	for _, id := range ids {
-		ent, _ := qtx.GetEntry(ctx, id)
-		needsRoute := ent.PublishedRevisionID.Valid
+		ent, err := qtx.GetEntry(ctx, id)
+		if err != nil {
+			return err
+		}
+		needsRoute := needsPublicRoute(ent)
 		targetPath := ""
 		if needsRoute {
 			s2 := settings
-			if cur, err := qtx.GetSiteSettings(ctx); err == nil {
-				s2 = cur
+			cur, err := qtx.GetSiteSettings(ctx)
+			if err != nil {
+				return err
 			}
+			s2 = cur
 			targetPath, err = s.restorePath(ctx, qtx, ent, s2.PostsBasePath)
 			if err != nil {
 				return err
@@ -344,7 +360,11 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 				targetPath = "/"
 			}
 			if byPath, err := qtx.GetRouteByPath(ctx, targetPath); err == nil && !byPath.EntryID.Valid {
-				_ = qtx.DeleteRoute(ctx, byPath.ID)
+				if err := qtx.DeleteRoute(ctx, byPath.ID); err != nil {
+					return err
+				}
+			} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
 			}
 		}
 		if err := qtx.RestoreEntryFromTrash(ctx, db.RestoreEntryFromTrashParams{UpdatedAt: now, ID: id}); err != nil {
@@ -357,6 +377,10 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 		}
 	}
 	return tx.Commit()
+}
+
+func needsPublicRoute(entry db.Entry) bool {
+	return entry.PublishedRevisionID.Valid && entry.StatusBeforeTrash.Valid && entry.StatusBeforeTrash.String == "active"
 }
 
 func (s *LifecycleService) BulkDeletePermanently(ctx context.Context, contentTypeID string, ids []string) error {

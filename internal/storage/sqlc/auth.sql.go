@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countActiveAdmins = `-- name: CountActiveAdmins :one
+SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active'
+`
+
+func (q *Queries) CountActiveAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveAdmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
 VALUES (?, ?, ?, ?)
@@ -32,8 +43,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 }
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO users (id, email, password_hash, role, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO users (id, email, password_hash, role, status, created_at, updated_at)
+VALUES (?, ?, ?, ?, 'active', ?, ?)
 `
 
 type CreateUserParams struct {
@@ -67,8 +78,17 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash string) error {
 	return err
 }
 
+const deleteSessionsForUser = `-- name: DeleteSessionsForUser :exec
+DELETE FROM sessions WHERE user_id = ?
+`
+
+func (q *Queries) DeleteSessionsForUser(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, deleteSessionsForUser, userID)
+	return err
+}
+
 const getSessionUser = `-- name: GetSessionUser :one
-SELECT u.id, u.email, u.role, s.expires_at
+SELECT u.id, u.email, u.role, u.status, s.expires_at
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = ?
@@ -79,6 +99,7 @@ type GetSessionUserRow struct {
 	ID        string `json:"id"`
 	Email     string `json:"email"`
 	Role      string `json:"role"`
+	Status    string `json:"status"`
 	ExpiresAt int64  `json:"expires_at"`
 }
 
@@ -89,26 +110,68 @@ func (q *Queries) GetSessionUser(ctx context.Context, tokenHash string) (GetSess
 		&i.ID,
 		&i.Email,
 		&i.Role,
+		&i.Status,
 		&i.ExpiresAt,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password_hash, role, created_at, updated_at
+SELECT id, email, password_hash, role, status, created_at, updated_at
 FROM users
 WHERE email = ?
 LIMIT 1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
+type GetUserByEmailRow struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	Role         string `json:"role"`
+	Status       string `json:"status"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
+func (q *Queries) GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error) {
 	row := q.db.QueryRowContext(ctx, getUserByEmail, email)
-	var i User
+	var i GetUserByEmailRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,
 		&i.PasswordHash,
 		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserByID = `-- name: GetUserByID :one
+SELECT id, email, password_hash, role, status, created_at, updated_at
+FROM users WHERE id = ? LIMIT 1
+`
+
+type GetUserByIDRow struct {
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	PasswordHash string `json:"password_hash"`
+	Role         string `json:"role"`
+	Status       string `json:"status"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
+func (q *Queries) GetUserByID(ctx context.Context, id string) (GetUserByIDRow, error) {
+	row := q.db.QueryRowContext(ctx, getUserByID, id)
+	var i GetUserByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Role,
+		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -119,7 +182,7 @@ const hasAdmin = `-- name: HasAdmin :one
 SELECT EXISTS(
     SELECT 1
     FROM users
-    WHERE role = 'admin'
+WHERE role = 'admin'
 )
 `
 
@@ -128,6 +191,51 @@ func (q *Queries) HasAdmin(ctx context.Context) (bool, error) {
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const listUsers = `-- name: ListUsers :many
+SELECT id, email, role, status, created_at, updated_at
+FROM users
+ORDER BY email
+`
+
+type ListUsersRow struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUsersRow{}
+	for rows.Next() {
+		var i ListUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateSiteTitle = `-- name: UpdateSiteTitle :exec
@@ -143,5 +251,35 @@ type UpdateSiteTitleParams struct {
 
 func (q *Queries) UpdateSiteTitle(ctx context.Context, arg UpdateSiteTitleParams) error {
 	_, err := q.db.ExecContext(ctx, updateSiteTitle, arg.SiteTitle, arg.UpdatedAt)
+	return err
+}
+
+const updateUserRole = `-- name: UpdateUserRole :exec
+UPDATE users SET role = ?, updated_at = ? WHERE id = ?
+`
+
+type UpdateUserRoleParams struct {
+	Role      string `json:"role"`
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserRole, arg.Role, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const updateUserStatus = `-- name: UpdateUserStatus :exec
+UPDATE users SET status = ?, updated_at = ? WHERE id = ?
+`
+
+type UpdateUserStatusParams struct {
+	Status    string `json:"status"`
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserStatus, arg.Status, arg.UpdatedAt, arg.ID)
 	return err
 }

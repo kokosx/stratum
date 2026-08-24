@@ -715,7 +715,10 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 				rc.Site.LogoHeight = view.Height
 			}
 		}
-		fallbackDoc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "fallback", Block: "core/collection", Version: 1, Settings: json.RawMessage(`{"source":"context"}`)}}}
+		fallbackDoc := &document.Document{Version: 1, Nodes: []document.Node{{
+			ID: "fallback", Block: "core/collection", Version: 1, Settings: json.RawMessage(`{"source":"context"}`),
+			Children: []document.Node{{ID: "fallback-title", Block: "core/entry-title", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{}`)}},
+		}}}
 		if p, err := h.blocks.Prepare(fallbackDoc); err == nil {
 			if c, err := h.blocks.RenderPrepared(ctx, p, rc); err == nil {
 				content = c

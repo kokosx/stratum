@@ -21,6 +21,7 @@ import (
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/routing"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/taxonomy"
@@ -112,6 +113,16 @@ type entryFormData struct {
 	HierarchyParents    []hierarchyParentOption
 	HierarchyWarning    string
 	Hierarchical        bool
+	Revisions           []revisionHistoryItem
+}
+
+type revisionHistoryItem struct {
+	ID        string
+	Number    int64
+	Title     string
+	Slug      string
+	CreatedAt int64
+	Published bool
 }
 
 type hierarchyParentOption struct {
@@ -144,7 +155,7 @@ type entryInput struct {
 	schemaMode       string
 	documentJSON     string
 	layoutTemplateID string
-	TermIDs          []string
+	taxonomyValues   map[string][]string
 	parentEntryID    string
 	menuOrder        int64
 }
@@ -205,10 +216,14 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	// Taxonomy panels: generic by content type (no if contentType=="post")
 	if len(data.TaxonomyPanels) == 0 && data.ContentTypeID != "" {
 		if taxRows, err := h.queries.ListTaxonomiesByContentType(r.Context(), data.ContentTypeID); err == nil {
-			// assigned term IDs from latest revision
+			// Use submitted values after a validation error instead of rebuilding the
+			// taxonomy controls from the last stored revision.
 			assigned := map[string]bool{}
-			assignedTagNames := map[string][]string{}
-			if data.EntryID != "" {
+			postedValues := map[string][]string(nil)
+			if data.Error != "" {
+				postedValues = r.Form
+			}
+			if postedValues == nil && data.EntryID != "" {
 				if rev, err := h.queries.GetLatestEntryRevision(r.Context(), data.EntryID); err == nil {
 					if termRows, err := h.queries.ListTermsForRevision(r.Context(), rev.ID); err == nil {
 						for _, tr := range termRows {
@@ -217,8 +232,6 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 					}
 				}
 			}
-			// Also consider posted TermIDs if present (error re-render): data.TermIDs already?
-			// For re-render after validation error, entryInput.TermIDs may be in data? We pass via data? Not yet, but we can use map.
 			panels := make([]taxonomyPanelData, 0, len(taxRows))
 			for _, tax := range taxRows {
 				terms, _ := h.queries.ListTermsByTaxonomy(r.Context(), tax.ID)
@@ -249,17 +262,25 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 					}
 					termOpts = append(termOpts, taxonomyTermOption{ID: t.ID, Name: t.Name, Slug: t.Slug, ParentID: t.ParentID.String, Depth: depth})
 				}
-				// For flat taxonomy, build comma-joined assigned names
+				if postedValues != nil && tax.Hierarchical != 0 {
+					for _, id := range postedValues["taxonomy_"+tax.ID] {
+						assigned[strings.TrimSpace(id)] = true
+					}
+				}
+				// For flat taxonomy, preserve the exact submitted comma-separated text.
 				assignedRaw := ""
 				if tax.Hierarchical == 0 {
-					var names []string
-					for _, t := range terms {
-						if assigned[t.ID] {
-							names = append(names, t.Name)
+					if postedValues != nil {
+						assignedRaw = strings.Join(postedValues["taxonomy_"+tax.ID], ",")
+					} else {
+						var names []string
+						for _, t := range terms {
+							if assigned[t.ID] {
+								names = append(names, t.Name)
+							}
 						}
+						assignedRaw = strings.Join(names, ", ")
 					}
-					assignedRaw = strings.Join(names, ", ")
-					assignedTagNames[tax.ID] = names
 				}
 				panels = append(panels, taxonomyPanelData{
 					Taxonomy: taxonomyPanelTaxonomy{ID: tax.ID, PluralName: tax.PluralName, SingularName: tax.SingularName, Hierarchical: tax.Hierarchical != 0},
@@ -286,7 +307,7 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	data.EditorJSON = template.JS(bootstrap)
 	data.CSRFToken = token
 	state := ResolveNav(r.URL.Path)
-	if err := h.entryTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: activeMenu, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), CSRFToken: token, Content: data}); err != nil {
+	if err := h.entryTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: activeMenu, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render entry form: %v", err)
 	}
 }
@@ -420,6 +441,10 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if err := validateHierarchyInput(ctx, qtx, contentType, entryID, input.parentEntryID, input.menuOrder, isPostsPage, settings.PostsPageEntryID); err != nil {
 		return err
 	}
+	termIDs, err := h.taxonomyTermIDsForInput(ctx, qtx, contentType, input.taxonomyValues)
+	if err != nil {
+		return err
+	}
 
 	revisionNumber := int64(1)
 	if create {
@@ -457,7 +482,7 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		layoutTemplateID = sql.NullString{String: tmplID, Valid: true}
 	}
 	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
-		ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Title: input.title,
+		ID: revisionID, EntryID: entryID, RevisionNumber: revisionNumber, Slug: input.slug, Title: input.title,
 		Excerpt: excerpt, SeoTitle: seoTitle, SeoDescription: seoDescription, CanonicalUrl: canonicalURL,
 		FeaturedMediaID: featuredMediaID, SocialMediaID: socialMediaID,
 		SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
@@ -468,8 +493,8 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	}
 	// Revision-scoped taxonomy assignments (must be inside same tx, fails atomically)
 	{
-		dedup := make(map[string]struct{}, len(input.TermIDs))
-		for _, tid := range input.TermIDs {
+		dedup := make(map[string]struct{}, len(termIDs))
+		for _, tid := range termIDs {
 			tid = strings.TrimSpace(tid)
 			if tid == "" {
 				continue
@@ -556,6 +581,172 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		}
 	}
 	return nil
+}
+
+// restoreEntryRevision makes a historical revision the latest draft. Revisions
+// are immutable, so restoring never changes the selected historical record.
+func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID, revisionID, authorID string) error {
+	entry, revision, err := h.entryAndRevision(ctx, contentType, entryID, revisionID)
+	if err != nil {
+		return err
+	}
+	latest, err := h.queries.GetLatestEntryRevision(ctx, entryID)
+	if err != nil {
+		return err
+	}
+	newID, err := randomID()
+	if err != nil {
+		return err
+	}
+	tx, err := h.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	qtx := h.queries.WithTx(tx)
+	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
+		ID: newID, EntryID: entry.ID, RevisionNumber: latest.RevisionNumber + 1, Slug: revision.Slug,
+		Title: revision.Title, Excerpt: revision.Excerpt, DocumentJson: revision.DocumentJson,
+		SeoTitle: revision.SeoTitle, SeoDescription: revision.SeoDescription, CanonicalUrl: revision.CanonicalUrl,
+		FeaturedMediaID: revision.FeaturedMediaID, SocialMediaID: revision.SocialMediaID,
+		SeoRobotsIndex: revision.SeoRobotsIndex, SeoRobotsFollow: revision.SeoRobotsFollow,
+		SchemaMode: revision.SchemaMode, LayoutTemplateID: revision.LayoutTemplateID,
+		ParentEntryID: revision.ParentEntryID, MenuOrder: revision.MenuOrder,
+		CreatedBy: nullableString(authorID), CreatedAt: time.Now().Unix(),
+	}); err != nil {
+		return err
+	}
+	terms, err := qtx.ListTermsForRevision(ctx, revision.ID)
+	if err != nil {
+		return err
+	}
+	for _, term := range terms {
+		if err := qtx.SetTermsForRevision(ctx, db.SetTermsForRevisionParams{RevisionID: newID, TermID: term.ID}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (h *Handler) entryAndRevision(ctx context.Context, contentType, entryID, revisionID string) (db.Entry, db.EntryRevision, error) {
+	entry, err := h.queries.GetEntry(ctx, entryID)
+	if err != nil || entry.ContentTypeID != contentType {
+		return db.Entry{}, db.EntryRevision{}, sql.ErrNoRows
+	}
+	revision, err := h.queries.GetEntryRevision(ctx, revisionID)
+	if err != nil || revision.EntryID != entryID {
+		return db.Entry{}, db.EntryRevision{}, sql.ErrNoRows
+	}
+	return entry, revision, nil
+}
+
+func (h *Handler) revisionHistory(ctx context.Context, entry db.Entry) []revisionHistoryItem {
+	revisions, err := h.queries.ListEntryRevisions(ctx, entry.ID)
+	if err != nil {
+		return nil
+	}
+	items := make([]revisionHistoryItem, 0, len(revisions))
+	for _, revision := range revisions {
+		items = append(items, revisionHistoryItem{ID: revision.ID, Number: revision.RevisionNumber, Title: revision.Title, Slug: revision.Slug, CreatedAt: revision.CreatedAt, Published: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String == revision.ID})
+	}
+	return items
+}
+
+func (h *Handler) restoreRevision(w http.ResponseWriter, r *http.Request, contentType, activeMenu string) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	user, err := h.currentUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := h.restoreEntryRevision(r.Context(), contentType, r.PathValue("id"), r.PathValue("revisionID"), user.ID); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.setFlash(w, "Revision restored as a draft.")
+	http.Redirect(w, r, "/admin/"+activeMenu+"/"+r.PathValue("id")+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) unpublishEntry(w http.ResponseWriter, r *http.Request, contentType, activeMenu string) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	entry, err := h.queries.GetEntry(r.Context(), r.PathValue("id"))
+	if err != nil || entry.ContentTypeID != contentType {
+		http.NotFound(w, r)
+		return
+	}
+	settings, err := h.queries.GetSiteSettings(r.Context())
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if (settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entry.ID) || (settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entry.ID) {
+		h.setFlash(w, "Change Site Settings before unpublishing the Homepage or Posts Page.")
+		http.Redirect(w, r, "/admin/"+activeMenu+"/"+entry.ID+"/edit", http.StatusSeeOther)
+		return
+	}
+	tx, err := h.database.BeginTx(r.Context(), nil)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+	qtx := h.queries.WithTx(tx)
+	if err := qtx.ClearPublishedRevision(r.Context(), db.ClearPublishedRevisionParams{UpdatedAt: time.Now().Unix(), ID: entry.ID}); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if route, err := qtx.GetEntryRoute(r.Context(), sql.NullString{String: entry.ID, Valid: true}); err == nil {
+		if err := qtx.DeleteRoute(r.Context(), route.ID); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateEntry(entry.ID, contentType)
+		h.runtime.InvalidateContent()
+		_ = h.runtime.ReloadRoutes(r.Context())
+	}
+	h.setFlash(w, "Entry unpublished.")
+	http.Redirect(w, r, "/admin/"+activeMenu+"/"+entry.ID+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) previewRevision(w http.ResponseWriter, r *http.Request, contentType string) {
+	_, revision, err := h.entryAndRevision(r.Context(), contentType, r.PathValue("id"), r.PathValue("revisionID"))
+	if err != nil || h.documentPreview == nil {
+		http.NotFound(w, r)
+		return
+	}
+	doc, err := document.Decode([]byte(revision.DocumentJson))
+	if err != nil {
+		http.Error(w, "Invalid revision document", http.StatusUnprocessableEntity)
+		return
+	}
+	postsBase := ""
+	if settings, err := h.queries.GetSiteSettings(r.Context()); err == nil {
+		postsBase = settings.PostsBasePath
+	}
+	page, err := h.documentPreview(r.Context(), rendering.RenderInput{Document: doc, Title: revision.Title, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), Path: routing.EntryPath(contentType, revision.Slug, postsBase), EntryID: r.PathValue("id"), LayoutTemplateID: stringValue(revision.LayoutTemplateID), ContentTypeID: contentType})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	_, _ = w.Write(page)
 }
 
 func (h *Handler) upsertEntryRoute(ctx context.Context, queries *db.Queries, entryID, path string, now int64) error {
@@ -653,6 +844,7 @@ func readEntryInput(r *http.Request) (entryInput, error) {
 		documentJSON:     postedDocument(r),
 		layoutTemplateID: strings.TrimSpace(r.FormValue("layout_template_id")),
 		parentEntryID:    strings.TrimSpace(r.FormValue("parent_entry_id")),
+		taxonomyValues:   postedTaxonomyValues(r),
 	}
 	if raw := strings.TrimSpace(r.FormValue("menu_order")); raw != "" {
 		order, err := strconv.ParseInt(raw, 10, 64)
@@ -681,9 +873,19 @@ func readEntryInput(r *http.Request) (entryInput, error) {
 	return input, nil
 }
 
-func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request, contentType string) ([]string, error) {
+func postedTaxonomyValues(r *http.Request) map[string][]string {
+	values := make(map[string][]string)
+	for key, items := range r.Form {
+		if strings.HasPrefix(key, "taxonomy_") {
+			values[key] = append([]string(nil), items...)
+		}
+	}
+	return values
+}
+
+func (h *Handler) taxonomyTermIDsForInput(ctx context.Context, q *db.Queries, contentType string, values map[string][]string) ([]string, error) {
 	// Generic: list taxonomies for content type, then collect assignments
-	taxRows, err := h.queries.ListTaxonomiesByContentType(ctx, contentType)
+	taxRows, err := q.ListTaxonomiesByContentType(ctx, contentType)
 	if err != nil {
 		return nil, nil
 	}
@@ -693,11 +895,10 @@ func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request
 	for _, tax := range taxRows {
 		key := "taxonomy_" + tax.ID
 		if tax.Hierarchical != 0 {
-			ids := r.Form[key]
+			ids := values[key]
 			// also handle single value via FormValue? r.Form already contains all
 			if len(ids) == 0 {
-				// try FormValue comma? but hierarchical expects checkboxes, so just check PostForm
-				if v := r.FormValue(key); v != "" {
+				if v := strings.Join(values[key], ","); v != "" {
 					ids = strings.Split(v, ",")
 				}
 			}
@@ -710,7 +911,7 @@ func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request
 					continue
 				}
 				// validate term exists and belongs to taxonomy
-				t, err := h.queries.GetTerm(ctx, id)
+				t, err := q.GetTerm(ctx, id)
 				if err != nil {
 					return nil, fmt.Errorf("invalid term %s", id)
 				}
@@ -721,7 +922,7 @@ func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request
 				out = append(out, id)
 			}
 		} else {
-			raw := strings.TrimSpace(r.FormValue(key))
+			raw := strings.TrimSpace(strings.Join(values[key], ","))
 			if raw == "" {
 				continue
 			}
@@ -738,7 +939,7 @@ func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request
 				}
 				// try slug lookup
 				slug := taxonomySlugify(name)
-				if t, err := h.queries.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: tax.ID, Slug: slug}); err == nil {
+				if t, err := q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: tax.ID, Slug: slug}); err == nil {
 					if !seen[t.ID] {
 						seen[t.ID] = true
 						seen[lower+"_tag"] = true
@@ -747,10 +948,10 @@ func (h *Handler) taxonomyTermIDsForRequest(ctx context.Context, r *http.Request
 					continue
 				}
 				// create missing tag
-				created, err := svc.CreateTerm(ctx, tax.ID, name, slug, "", "")
+				created, err := svc.CreateTermWithQueries(ctx, q, tax.ID, name, slug, "", "")
 				if err != nil {
 					// if duplicate race, fetch again
-					if t, err2 := h.queries.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: tax.ID, Slug: slug}); err2 == nil {
+					if t, err2 := q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: tax.ID, Slug: slug}); err2 == nil {
 						if !seen[t.ID] {
 							seen[t.ID] = true
 							out = append(out, t.ID)

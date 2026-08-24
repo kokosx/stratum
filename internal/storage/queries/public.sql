@@ -2,7 +2,7 @@
 SELECT
     e.id,
     e.content_type_id,
-    e.slug,
+    r.slug,
     e.status,
     e.published_at,
     e.first_published_at,
@@ -39,7 +39,7 @@ LIMIT 1;
 SELECT
     e.id,
     e.content_type_id,
-    e.slug,
+    r.slug,
     e.status,
     e.published_at,
     e.first_published_at,
@@ -76,7 +76,7 @@ WHERE e.content_type_id = ?
 -- name: ListPublishedEntriesByContentType :many
 SELECT
     e.id,
-    e.slug,
+    r.slug,
     e.first_published_at,
     e.published_at,
     r.id AS revision_id,
@@ -99,7 +99,7 @@ LIMIT ? OFFSET ?;
 -- name: ListPublishedEntriesByContentTypeAsc :many
 SELECT
     e.id,
-    e.slug,
+    r.slug,
     e.first_published_at,
     e.published_at,
     r.id AS revision_id,

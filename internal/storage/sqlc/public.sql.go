@@ -31,7 +31,7 @@ const getPublishedEntryByID = `-- name: GetPublishedEntryByID :one
 SELECT
     e.id,
     e.content_type_id,
-    e.slug,
+    r.slug,
     e.status,
     e.published_at,
     e.first_published_at,
@@ -110,7 +110,7 @@ const getPublishedEntryByPath = `-- name: GetPublishedEntryByPath :one
 SELECT
     e.id,
     e.content_type_id,
-    e.slug,
+    r.slug,
     e.status,
     e.published_at,
     e.first_published_at,
@@ -196,7 +196,7 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 const listPublishedEntriesByContentType = `-- name: ListPublishedEntriesByContentType :many
 SELECT
     e.id,
-    e.slug,
+    r.slug,
     e.first_published_at,
     e.published_at,
     r.id AS revision_id,
@@ -271,7 +271,7 @@ func (q *Queries) ListPublishedEntriesByContentType(ctx context.Context, arg Lis
 const listPublishedEntriesByContentTypeAsc = `-- name: ListPublishedEntriesByContentTypeAsc :many
 SELECT
     e.id,
-    e.slug,
+    r.slug,
     e.first_published_at,
     e.published_at,
     r.id AS revision_id,

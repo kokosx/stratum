@@ -104,7 +104,25 @@ func (s *Service) GetTerm(ctx context.Context, id string) (Term, error) {
 
 // CreateTerm validates and creates a term and its archive route atomically.
 func (s *Service) CreateTerm(ctx context.Context, taxonomyID, name, slug, description, parentID string) (Term, error) {
-	taxRow, err := s.queries.GetTaxonomy(ctx, taxonomyID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Term{}, err
+	}
+	defer tx.Rollback()
+	term, err := s.CreateTermWithQueries(ctx, s.queries.WithTx(tx), taxonomyID, name, slug, description, parentID)
+	if err != nil {
+		return Term{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Term{}, err
+	}
+	return term, nil
+}
+
+// CreateTermWithQueries creates a term using the caller's transaction.
+// It is used by entry writes so tag creation and revision assignment commit together.
+func (s *Service) CreateTermWithQueries(ctx context.Context, q *db.Queries, taxonomyID, name, slug, description, parentID string) (Term, error) {
+	taxRow, err := q.GetTaxonomy(ctx, taxonomyID)
 	if err != nil {
 		return Term{}, err
 	}
@@ -128,7 +146,7 @@ func (s *Service) CreateTerm(ctx context.Context, taxonomyID, name, slug, descri
 			return Term{}, ErrParentNotAllowed
 		}
 		parent = sql.NullString{String: parentID, Valid: true}
-		pr, err := s.queries.GetTerm(ctx, parentID)
+		pr, err := q.GetTerm(ctx, parentID)
 		if err != nil {
 			return Term{}, ErrParentNotFound
 		}
@@ -138,7 +156,7 @@ func (s *Service) CreateTerm(ctx context.Context, taxonomyID, name, slug, descri
 	} else {
 		parent = sql.NullString{Valid: false}
 	}
-	if _, err := s.queries.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: taxonomyID, Slug: slug}); err == nil {
+	if _, err := q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: taxonomyID, Slug: slug}); err == nil {
 		return Term{}, ErrDuplicateSlug
 	}
 	id, err := randomID()
@@ -146,13 +164,7 @@ func (s *Service) CreateTerm(ctx context.Context, taxonomyID, name, slug, descri
 		return Term{}, err
 	}
 	now := time.Now().Unix()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Term{}, err
-	}
-	defer tx.Rollback()
-	qtx := s.queries.WithTx(tx)
-	if err := qtx.CreateTerm(ctx, db.CreateTermParams{ID: id, TaxonomyID: taxonomyID, ParentID: parent, Name: name, Slug: slug, Description: strings.TrimSpace(description), CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := q.CreateTerm(ctx, db.CreateTermParams{ID: id, TaxonomyID: taxonomyID, ParentID: parent, Name: name, Slug: slug, Description: strings.TrimSpace(description), CreatedAt: now, UpdatedAt: now}); err != nil {
 		return Term{}, err
 	}
 	if tax.Public {
@@ -160,23 +172,25 @@ func (s *Service) CreateTerm(ctx context.Context, taxonomyID, name, slug, descri
 		if err := validateNotReserved(path); err != nil {
 			return Term{}, err
 		}
-		if byPath, err := qtx.GetRouteByPath(ctx, path); err == nil && byPath.EntryID.Valid {
+		if byPath, err := q.GetRouteByPath(ctx, path); err == nil && byPath.EntryID.Valid {
 			return Term{}, errors.New("route already occupied")
 		}
-		if byPath, err := qtx.GetRouteByPath(ctx, path); err == nil && !byPath.EntryID.Valid && byPath.RouteType == "redirect" {
-			_ = qtx.DeleteRoute(ctx, byPath.ID)
+		if byPath, err := q.GetRouteByPath(ctx, path); err == nil && !byPath.EntryID.Valid && byPath.RouteType == "redirect" {
+			if err := q.DeleteRoute(ctx, byPath.ID); err != nil {
+				return Term{}, err
+			}
 		}
-		rid, _ := randomID()
-		if err := qtx.CreateRoute(ctx, db.CreateRouteParams{
+		rid, err := randomID()
+		if err != nil {
+			return Term{}, err
+		}
+		if err := q.CreateRoute(ctx, db.CreateRouteParams{
 			ID: rid, Path: path, RouteType: routing.RouteTypeArchive, ContentTypeID: sql.NullString{String: tax.ContentTypeID, Valid: true},
 			TaxonomyID: sql.NullString{String: taxonomyID, Valid: true}, TermID: sql.NullString{String: id, Valid: true},
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			return Term{}, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return Term{}, err
 	}
 	return Term{ID: id, TaxonomyID: taxonomyID, ParentID: parent, Name: name, Slug: slug, Description: strings.TrimSpace(description), CreatedAt: now, UpdatedAt: now}, nil
 }
@@ -272,7 +286,9 @@ func (s *Service) UpdateTerm(ctx context.Context, id, name, slug, description, p
 				if byPath.RouteType != "redirect" {
 					return Term{}, errors.New("route already occupied")
 				}
-				_ = qtx.DeleteRoute(ctx, byPath.ID)
+				if err := qtx.DeleteRoute(ctx, byPath.ID); err != nil {
+					return Term{}, err
+				}
 			}
 			if err := qtx.UpdateRoute(ctx, db.UpdateRouteParams{
 				ID: route.ID, Path: newPath, EntryID: sql.NullString{},
@@ -283,12 +299,17 @@ func (s *Service) UpdateTerm(ctx context.Context, id, name, slug, description, p
 				return Term{}, err
 			}
 		} else {
-			rid, _ := randomID()
-			_ = qtx.CreateRoute(ctx, db.CreateRouteParams{
+			rid, err := randomID()
+			if err != nil {
+				return Term{}, err
+			}
+			if err := qtx.CreateRoute(ctx, db.CreateRouteParams{
 				ID: rid, Path: newPath, RouteType: routing.RouteTypeArchive, ContentTypeID: sql.NullString{String: tax.ContentTypeID, Valid: true},
 				TaxonomyID: sql.NullString{String: tax.ID, Valid: true}, TermID: sql.NullString{String: id, Valid: true},
 				CreatedAt: now, UpdatedAt: now,
-			})
+			}); err != nil {
+				return Term{}, err
+			}
 		}
 		if err := routing.UpsertRedirectRoute(ctx, qtx, oldPath, newPath, now); err != nil {
 			return Term{}, err
@@ -306,7 +327,10 @@ func (s *Service) DeleteTerm(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	taxRow, _ := s.queries.GetTaxonomy(ctx, existing.TaxonomyID)
+	taxRow, err := s.queries.GetTaxonomy(ctx, existing.TaxonomyID)
+	if err != nil {
+		return err
+	}
 	var oldPath string
 	if taxRow.Public != 0 {
 		tax := taxonomyFromRow(taxRow)
@@ -319,7 +343,10 @@ func (s *Service) DeleteTerm(ctx context.Context, id string) error {
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
-	children, _ := qtx.ListChildTerms(ctx, sql.NullString{String: id, Valid: true})
+	children, err := qtx.ListChildTerms(ctx, sql.NullString{String: id, Valid: true})
+	if err != nil {
+		return err
+	}
 	for _, child := range children {
 		newParent := existing.ParentID
 		if err := qtx.UpdateTerm(ctx, db.UpdateTermParams{ParentID: newParent, Name: child.Name, Slug: child.Slug, Description: child.Description, UpdatedAt: now, ID: child.ID}); err != nil {
@@ -328,9 +355,15 @@ func (s *Service) DeleteTerm(ctx context.Context, id string) error {
 	}
 	if oldPath != "" {
 		if rt, err := qtx.GetTermArchiveRoute(ctx, db.GetTermArchiveRouteParams{TaxonomyID: sql.NullString{String: existing.TaxonomyID, Valid: true}, TermID: sql.NullString{String: id, Valid: true}}); err == nil {
-			_ = qtx.DeleteRoute(ctx, rt.ID)
+			if err := qtx.DeleteRoute(ctx, rt.ID); err != nil {
+				return err
+			}
 		} else if rt, err := qtx.GetRouteByPath(ctx, oldPath); err == nil && rt.TermID.Valid && rt.TermID.String == id {
-			_ = qtx.DeleteRoute(ctx, rt.ID)
+			if err := qtx.DeleteRoute(ctx, rt.ID); err != nil {
+				return err
+			}
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
 		}
 	}
 	if err := qtx.DeleteTerm(ctx, id); err != nil {

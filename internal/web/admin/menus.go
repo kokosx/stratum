@@ -223,7 +223,7 @@ func (h *Handler) renderMenus(w http.ResponseWriter, r *http.Request, selectedID
 	}
 	data.CSRFToken = token
 	state := ResolveNav(r.URL.Path)
-	layout := LayoutData{Title: "Menus", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
+	layout := LayoutData{Title: "Menus", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
 	if err := h.menusTemplate.ExecuteTemplate(w, "layout.html", layout); err != nil {
 		log.Printf("render menus: %v", err)
 	}

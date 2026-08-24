@@ -12,9 +12,11 @@ import (
 type Querier interface {
 	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
 	ClearLayoutTemplatePublishedRevision(ctx context.Context, arg ClearLayoutTemplatePublishedRevisionParams) error
+	ClearPublishedRevision(ctx context.Context, arg ClearPublishedRevisionParams) error
+	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountEntries(ctx context.Context) (int64, error)
 	CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminParams) (int64, error)
-	CountEntriesByAdminStatus(ctx context.Context, contentTypeID string) (CountEntriesByAdminStatusRow, error)
+	CountEntriesByAdminStatus(ctx context.Context, arg CountEntriesByAdminStatusParams) (CountEntriesByAdminStatusRow, error)
 	CountMedia(ctx context.Context) (int64, error)
 	CountMediaUsage(ctx context.Context, id sql.NullString) (int64, error)
 	CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error)
@@ -44,6 +46,7 @@ type Querier interface {
 	DeleteRoute(ctx context.Context, id string) error
 	DeleteRoutesByEntryID(ctx context.Context, entryID sql.NullString) error
 	DeleteSession(ctx context.Context, tokenHash string) error
+	DeleteSessionsForUser(ctx context.Context, userID string) error
 	DeleteTaxonomy(ctx context.Context, id string) error
 	DeleteTerm(ctx context.Context, id string) error
 	DeleteTermsForRevision(ctx context.Context, revisionID string) error
@@ -83,7 +86,8 @@ type Querier interface {
 	GetTermByTaxonomyAndSlug(ctx context.Context, arg GetTermByTaxonomyAndSlugParams) (Term, error)
 	GetThemeCustomization(ctx context.Context, themeID string) (ThemeCustomization, error)
 	GetTwitterSite(ctx context.Context) (string, error)
-	GetUserByEmail(ctx context.Context, email string) (User, error)
+	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
+	GetUserByID(ctx context.Context, id string) (GetUserByIDRow, error)
 	HasAdmin(ctx context.Context) (bool, error)
 	ListArchiveRoutes(ctx context.Context) ([]Route, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
@@ -134,6 +138,7 @@ type Querier interface {
 	ListTermsByTaxonomy(ctx context.Context, taxonomyID string) ([]Term, error)
 	ListTermsByTaxonomyWithCounts(ctx context.Context, taxonomyID string) ([]ListTermsByTaxonomyWithCountsRow, error)
 	ListTermsForRevision(ctx context.Context, revisionID string) ([]Term, error)
+	ListUsers(ctx context.Context) ([]ListUsersRow, error)
 	MoveEntryToTrash(ctx context.Context, arg MoveEntryToTrashParams) error
 	RestoreEntryFromTrash(ctx context.Context, arg RestoreEntryFromTrashParams) error
 	SearchTermsByTaxonomy(ctx context.Context, arg SearchTermsByTaxonomyParams) ([]Term, error)
@@ -171,6 +176,8 @@ type Querier interface {
 	UpdateTaxonomy(ctx context.Context, arg UpdateTaxonomyParams) error
 	UpdateTerm(ctx context.Context, arg UpdateTermParams) error
 	UpdateTwitterSite(ctx context.Context, twitterSite string) error
+	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error
+	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error
 	UpsertNavigationLocation(ctx context.Context, arg UpsertNavigationLocationParams) error
 	UpsertThemeCustomization(ctx context.Context, arg UpsertThemeCustomizationParams) error
 }

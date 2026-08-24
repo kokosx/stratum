@@ -2,15 +2,15 @@
 SELECT EXISTS(
     SELECT 1
     FROM users
-    WHERE role = 'admin'
+WHERE role = 'admin'
 );
 
 -- name: CreateUser :exec
-INSERT INTO users (id, email, password_hash, role, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO users (id, email, password_hash, role, status, created_at, updated_at)
+VALUES (?, ?, ?, ?, 'active', ?, ?);
 
 -- name: GetUserByEmail :one
-SELECT id, email, password_hash, role, created_at, updated_at
+SELECT id, email, password_hash, role, status, created_at, updated_at
 FROM users
 WHERE email = ?
 LIMIT 1;
@@ -20,11 +20,32 @@ INSERT INTO sessions (token_hash, user_id, created_at, expires_at)
 VALUES (?, ?, ?, ?);
 
 -- name: GetSessionUser :one
-SELECT u.id, u.email, u.role, s.expires_at
+SELECT u.id, u.email, u.role, u.status, s.expires_at
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = ?
 LIMIT 1;
+
+-- name: ListUsers :many
+SELECT id, email, role, status, created_at, updated_at
+FROM users
+ORDER BY email;
+
+-- name: GetUserByID :one
+SELECT id, email, password_hash, role, status, created_at, updated_at
+FROM users WHERE id = ? LIMIT 1;
+
+-- name: CountActiveAdmins :one
+SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active';
+
+-- name: UpdateUserRole :exec
+UPDATE users SET role = ?, updated_at = ? WHERE id = ?;
+
+-- name: UpdateUserStatus :exec
+UPDATE users SET status = ?, updated_at = ? WHERE id = ?;
+
+-- name: DeleteSessionsForUser :exec
+DELETE FROM sessions WHERE user_id = ?;
 
 -- name: DeleteSession :exec
 DELETE FROM sessions

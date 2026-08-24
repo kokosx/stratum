@@ -72,7 +72,7 @@ func (h *Handler) appearance(w http.ResponseWriter, r *http.Request) {
 		PreviewPages:     previewPages,
 	}
 	state := ResolveNav(r.URL.Path)
-	layout := LayoutData{Title: "Appearance", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
+	layout := LayoutData{Title: "Appearance", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
 	if err := h.appearanceTemplate.ExecuteTemplate(w, "layout.html", layout); err != nil {
 		log.Printf("render appearance: %v", err)
 	}

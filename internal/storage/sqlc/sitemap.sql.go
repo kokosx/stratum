@@ -10,7 +10,21 @@ import (
 )
 
 const listSitemapArchiveRoutes = `-- name: ListSitemapArchiveRoutes :many
-SELECT path FROM routes WHERE route_type = 'archive' ORDER BY path
+SELECT routes.path
+FROM routes
+WHERE routes.route_type = 'archive'
+  AND (
+      routes.term_id IS NULL
+      OR EXISTS (
+          SELECT 1
+          FROM entries
+          JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
+          WHERE entry_revision_terms.term_id = routes.term_id
+            AND entries.status = 'active'
+            AND entries.published_revision_id IS NOT NULL
+      )
+  )
+ORDER BY routes.path
 `
 
 func (q *Queries) ListSitemapArchiveRoutes(ctx context.Context) ([]string, error) {

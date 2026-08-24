@@ -7,7 +7,7 @@ SELECT terms.* FROM terms INNER JOIN entry_revision_terms ON entry_revision_term
 -- name: ListTermIDsForRevision :many
 SELECT term_id FROM entry_revision_terms WHERE revision_id = ?;
 -- name: ListPublishedEntriesByTerm :many
-SELECT entries.id, entries.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, entries.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
+SELECT entries.id, latest_revision.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, latest_revision.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
 FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
 INNER JOIN entry_revisions AS latest_revision ON latest_revision.id = entries.published_revision_id
@@ -16,7 +16,7 @@ WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entri
 ORDER BY entries.published_at DESC, entries.id DESC
 LIMIT ? OFFSET ?;
 -- name: ListPublishedEntriesByTermAsc :many
-SELECT entries.id, entries.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, entries.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
+SELECT entries.id, latest_revision.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, latest_revision.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
 FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
 INNER JOIN entry_revisions AS latest_revision ON latest_revision.id = entries.published_revision_id

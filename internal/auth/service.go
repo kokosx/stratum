@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/kokosx/stratum/internal/authz"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -30,9 +31,10 @@ var (
 )
 
 type User struct {
-	ID    string
-	Email string
-	Role  string
+	ID     string
+	Email  string
+	Role   string
+	Status string
 }
 
 type Service struct {
@@ -143,7 +145,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (string, er
 		passwordHash = []byte(user.PasswordHash)
 	}
 	passwordErr := bcrypt.CompareHashAndPassword(passwordHash, []byte(password))
-	if err != nil || passwordErr != nil {
+	if err != nil || passwordErr != nil || user.Status != "active" || !authz.ValidRole(user.Role) {
 		return "", ErrInvalidCredentials
 	}
 	token, tokenHash, err := newSessionToken()
@@ -169,7 +171,11 @@ func (s *Service) UserForToken(ctx context.Context, token string) (User, error) 
 		_ = s.queries.DeleteSession(ctx, tokenDigest(token))
 		return User{}, sql.ErrNoRows
 	}
-	return User{ID: user.ID, Email: user.Email, Role: user.Role}, nil
+	if user.Status != "active" || !authz.ValidRole(user.Role) {
+		_ = s.queries.DeleteSession(ctx, tokenDigest(token))
+		return User{}, sql.ErrNoRows
+	}
+	return User{ID: user.ID, Email: user.Email, Role: user.Role, Status: user.Status}, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
@@ -180,6 +186,65 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 }
 
 func (s *Service) SecureCookies() bool { return s.secureCookies }
+
+func (s *Service) CreateUser(ctx context.Context, email, password, role string) error {
+	email = strings.TrimSpace(strings.ToLower(email))
+	role = strings.TrimSpace(role)
+	if email == "" || password == "" || !authz.ValidRole(role) {
+		return errors.New("email, password, and valid role are required")
+	}
+	if utf8.RuneCountInString(password) < 12 || len(password) > 72 {
+		return errors.New("password must contain between 12 and 72 bytes")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	id, err := randomToken(16)
+	if err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	return s.queries.CreateUser(ctx, db.CreateUserParams{ID: id, Email: email, PasswordHash: string(hash), Role: role, CreatedAt: now, UpdatedAt: now})
+}
+
+func (s *Service) UpdateUser(ctx context.Context, id, role, status string) error {
+	if !authz.ValidRole(role) || (status != "active" && status != "disabled") {
+		return errors.New("invalid role or account status")
+	}
+	target, err := s.queries.GetUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if target.Role == string(authz.RoleAdmin) && target.Status == "active" && (role != string(authz.RoleAdmin) || status != "active") {
+		count, err := s.queries.CountActiveAdmins(ctx)
+		if err != nil {
+			return err
+		}
+		if count <= 1 {
+			return errors.New("cannot disable or demote the last active administrator")
+		}
+	}
+	tx, err := s.database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin user update: %w", err)
+	}
+	qtx := s.queries.WithTx(tx)
+	now := time.Now().Unix()
+	if err := qtx.UpdateUserRole(ctx, db.UpdateUserRoleParams{ID: id, Role: role, UpdatedAt: now}); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := qtx.UpdateUserStatus(ctx, db.UpdateUserStatusParams{ID: id, Status: status, UpdatedAt: now}); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := qtx.DeleteSessionsForUser(ctx, id); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
 
 func newSessionToken() (token, hash string, err error) {
 	token, err = randomToken(32)

@@ -56,10 +56,14 @@ func TestWritePagePreservesDocumentsAndPublishedRevision(t *testing.T) {
 	assertLatestDocument(t, h.queries, entryID, 1, draftOne)
 
 	draftTwo := nestedDocument("draft two", "center")
-	if err := h.writeEntry(ctx, "page", "author", entryID, entryInput{title: "Second", slug: "first", documentJSON: draftTwo}, false, false); err != nil {
+	if err := h.writeEntry(ctx, "page", "author", entryID, entryInput{title: "Second", slug: "draft-two", documentJSON: draftTwo}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	assertLatestDocument(t, h.queries, entryID, 2, draftTwo)
+	latest, err := h.queries.GetLatestEntryRevision(ctx, entryID)
+	if err != nil || latest.Slug != "draft-two" {
+		t.Fatalf("draft slug = %q, err = %v", latest.Slug, err)
+	}
 
 	publishedDocument := nestedDocument("public version", "right")
 	if err := h.writeEntry(ctx, "page", "author", entryID, entryInput{title: "Published", slug: "published", documentJSON: publishedDocument}, false, true); err != nil {
@@ -76,7 +80,7 @@ func TestWritePagePreservesDocumentsAndPublishedRevision(t *testing.T) {
 	assertLatestDocument(t, h.queries, entryID, 3, publishedDocument)
 
 	newDraft := nestedDocument("not public yet", "left")
-	if err := h.writeEntry(ctx, "page", "author", entryID, entryInput{title: "New draft", slug: "published", documentJSON: newDraft}, false, false); err != nil {
+	if err := h.writeEntry(ctx, "page", "author", entryID, entryInput{title: "New draft", slug: "draft-three", documentJSON: newDraft}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	entry, err = h.queries.GetEntry(ctx, entryID)
@@ -90,12 +94,26 @@ func TestWritePagePreservesDocumentsAndPublishedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if public.Slug != "published" {
+		t.Fatalf("public slug changed by draft: got %q", public.Slug)
+	}
 	assertSameDocument(t, public.DocumentJson, publishedDocument)
 	assertLatestDocument(t, h.queries, entryID, 4, newDraft)
+	if err := h.writeEntry(ctx, "page", "author", "same-draft-slug", entryInput{title: "Another draft", slug: "draft-three", documentJSON: newDraft}, true, false); err != nil {
+		t.Fatalf("same draft slug should not be globally unique: %v", err)
+	}
 
 	revisions, err := h.queries.ListEntryRevisions(ctx, entryID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	oldest := revisions[len(revisions)-1]
+	if err := h.restoreEntryRevision(ctx, "page", entryID, oldest.ID, "restorer"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := h.queries.GetLatestEntryRevision(ctx, entryID)
+	if err != nil || restored.Slug != oldest.Slug {
+		t.Fatalf("restored slug = %q, err = %v", restored.Slug, err)
 	}
 	for _, revision := range revisions {
 		doc, err := document.Decode([]byte(revision.DocumentJson))

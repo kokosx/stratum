@@ -1,0 +1,20 @@
+{{ define "content" }}
+<section class="settings-section">
+  <h1>Users</h1>
+  <form method="post" action="/admin/users" class="settings-form">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <h2>Add user</h2>
+    <label>Email <input type="email" name="email" required></label>
+    <label>Password <input type="password" name="password" minlength="12" required></label>
+    <label>Role <select name="role"><option value="author">Author</option><option value="editor">Editor</option><option value="admin">Admin</option></select></label>
+    <button type="submit">Add user</button>
+  </form>
+  {{ range .Content.Users }}<form id="user-{{ .ID }}" method="post" action="/admin/users/{{ .ID }}"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"></form>{{ end }}
+  <table class="settings-table">
+    <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead>
+    <tbody>{{ range .Content.Users }}
+      <tr><td>{{ .Email }}</td><td><select form="user-{{ .ID }}" name="role"><option value="author" {{ if eq .Role "author" }}selected{{ end }}>Author</option><option value="editor" {{ if eq .Role "editor" }}selected{{ end }}>Editor</option><option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>Admin</option></select></td><td><select form="user-{{ .ID }}" name="status"><option value="active" {{ if eq .Status "active" }}selected{{ end }}>Active</option><option value="disabled" {{ if eq .Status "disabled" }}selected{{ end }}>Disabled</option></select></td><td>{{ .CreatedAt }}</td><td><button form="user-{{ .ID }}" type="submit">Save</button></td></tr>
+    {{ end }}</tbody>
+  </table>
+</section>
+{{ end }}

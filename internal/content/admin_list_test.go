@@ -134,6 +134,19 @@ func TestAdminListPaginationDeterministic(t *testing.T) {
 	}
 }
 
+func TestAdminListClampsOutOfRangeBeforeQuery(t *testing.T) {
+	repo, _, queries := newAdminListHarness(t)
+	ctx := context.Background()
+	insertAdminEntry(t, queries, "last1", "page", "last1", "active", sql.NullString{}, "Last")
+	res, err := repo.AdminList(ctx, EntryAdminListQuery{ContentType: ContentTypePage, Status: AdminStatusAll, Page: 999, PerPage: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Page != 1 || len(res.Entries) != 1 || res.Entries[0].ID != "last1" {
+		t.Fatalf("out-of-range page returned %+v", res)
+	}
+}
+
 func TestAdminListUnknownStatusNormalized(t *testing.T) {
 	repo, _, queries := newAdminListHarness(t)
 	ctx := context.Background()

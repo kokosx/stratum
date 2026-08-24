@@ -79,7 +79,7 @@ func (h *Handler) mediaLibrary(w http.ResponseWriter, r *http.Request) {
 	}
 	data := mediaLibraryData{Cards: cards, CSRFToken: token}
 	state := ResolveNav(r.URL.Path)
-	layout := LayoutData{Title: "Media", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
+	layout := LayoutData{Title: "Media", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
 	if err := h.mediaTemplate.ExecuteTemplate(w, "layout.html", layout); err != nil {
 		log.Printf("render media library: %v", err)
 	}

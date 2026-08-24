@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/content"
 )
 
@@ -73,6 +75,10 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		Page:        page,
 		PerPage:     perPage,
 	}
+	user, userErr := h.currentUser(r)
+	if userErr == nil && contentType == postContentType && !authz.Allows(user.Role, authz.EditAnyEntry) {
+		q.AuthorID = user.ID
+	}
 	q = q.Normalized()
 	result, err := repo.AdminList(r.Context(), q)
 	if err != nil {
@@ -101,22 +107,22 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	for _, entry := range result.Entries {
 		title := "(untitled)"
-		if entry.Title.Valid && entry.Title.String != "" {
-			title = entry.Title.String
+		if entry.Title != "" {
+			title = entry.Title
 		}
 		publicURL := ""
-		if entry.Status == "active" && entry.PublishedRevisionID.Valid {
-			publicURL = stringValue(entry.PublicPath)
+		if entry.Status == "active" && entry.PublishedRevisionID != "" {
+			publicURL = entry.PublicPath
 		}
 		items = append(items, EntryData{
 			ID:           entry.ID,
 			Title:        title,
 			Slug:         entry.Slug,
-			Status:       entryStatus(entry.Status, entry.PublishedRevisionID.Valid),
+			Status:       entryStatus(entry.Status, entry.PublishedRevisionID != ""),
 			UpdatedAt:    time.Unix(entry.UpdatedAt, 0).Format("2 Jan 2006, 15:04"),
 			PublicURL:    publicURL,
 			RawStatus:    entry.Status,
-			HasPublished: entry.PublishedRevisionID.Valid,
+			HasPublished: entry.PublishedRevisionID != "",
 			Depth:        depths[entry.ID],
 		})
 	}
@@ -124,10 +130,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 	if totalPages < 1 {
 		totalPages = 1
 	}
-	if q.Page > totalPages {
-		q.Page = totalPages
-		// Re-query if page beyond total? For deterministic we just clamp display, but result already may be empty; that's acceptable.
-	}
+	q.Page = result.Page
 	basePath := "/admin/" + activeMenu
 	qs := buildEntriesQueryString(search, string(status))
 	state := ResolveNav(r.URL.Path)
@@ -141,7 +144,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		ActiveMenu:    activeMenu,
 		ActiveSection: state.ActiveSection,
 		ActiveItem:    state.ActiveItem,
-		Nav:           AdminNav(),
+		Nav:           h.navForUser(r),
 		Flash:         h.consumeFlash(w, r),
 		CSRFToken:     token,
 		Content: EntriesData{
@@ -233,6 +236,10 @@ func (h *Handler) trashEntry(w http.ResponseWriter, r *http.Request, contentType
 		return
 	}
 	id := r.PathValue("id")
+	if !h.entryHasContentType(r.Context(), id, contentType) {
+		http.NotFound(w, r)
+		return
+	}
 	svc := content.NewLifecycleService(h.database, h.queries)
 	err := svc.MoveToTrash(r.Context(), id)
 	if err != nil {
@@ -262,6 +269,10 @@ func (h *Handler) restoreEntry(w http.ResponseWriter, r *http.Request, contentTy
 		return
 	}
 	id := r.PathValue("id")
+	if !h.entryHasContentType(r.Context(), id, contentType) {
+		http.NotFound(w, r)
+		return
+	}
 	svc := content.NewLifecycleService(h.database, h.queries)
 	err := svc.Restore(r.Context(), id)
 	if err != nil {
@@ -287,6 +298,10 @@ func (h *Handler) deleteEntryPermanently(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	id := r.PathValue("id")
+	if !h.entryHasContentType(r.Context(), id, contentType) {
+		http.NotFound(w, r)
+		return
+	}
 	svc := content.NewLifecycleService(h.database, h.queries)
 	err := svc.DeletePermanently(r.Context(), id)
 	if err != nil {
@@ -304,6 +319,11 @@ func (h *Handler) deleteEntryPermanently(w http.ResponseWriter, r *http.Request,
 	}
 	h.setFlash(w, "Entry permanently deleted.")
 	http.Redirect(w, r, listingURL+"?status=trash", http.StatusSeeOther)
+}
+
+func (h *Handler) entryHasContentType(ctx context.Context, id, contentType string) bool {
+	entry, err := h.queries.GetEntry(ctx, id)
+	return err == nil && entry.ContentTypeID == contentType
 }
 
 func (h *Handler) bulkEntries(w http.ResponseWriter, r *http.Request, contentType, listingURL string) {

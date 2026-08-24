@@ -11,6 +11,22 @@ import (
 	"strings"
 )
 
+const clearPublishedRevision = `-- name: ClearPublishedRevision :exec
+UPDATE entries
+SET published_revision_id = NULL, published_at = NULL, updated_at = ?
+WHERE id = ?
+`
+
+type ClearPublishedRevisionParams struct {
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) ClearPublishedRevision(ctx context.Context, arg ClearPublishedRevisionParams) error {
+	_, err := q.db.ExecContext(ctx, clearPublishedRevision, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const countEntriesAdmin = `-- name: CountEntriesAdmin :one
 SELECT COUNT(*)
 FROM entries
@@ -22,39 +38,46 @@ LEFT JOIN entry_revisions AS latest_revision
         WHERE entry_id = entries.id
     )
 WHERE entries.content_type_id = ?1
-  AND (
-      ?2 = ''
+	AND (?2 IS NULL OR entries.author_id = ?2)
+   AND (
+      ?3 = ''
       OR (
-          ?2 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+          ?3 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
       )
       OR (
-          ?2 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
+          ?3 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
       )
       OR (
-          ?2 = 'private' AND entries.status = 'private'
+          ?3 = 'private' AND entries.status = 'private'
       )
       OR (
-          ?2 = 'trash' AND entries.status = 'trash'
+          ?3 = 'trash' AND entries.status = 'trash'
       )
       OR (
-          ?2 = 'all' AND entries.status != 'trash'
+          ?3 = 'all' AND entries.status != 'trash'
       )
   )
   AND (
-      ?3 = ''
-      OR latest_revision.title LIKE '%' || ?3 || '%'
-      OR entries.slug LIKE '%' || ?3 || '%'
+      ?4 = ''
+      OR latest_revision.title LIKE '%' || ?4 || '%'
+       OR COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) LIKE '%' || ?4 || '%'
   )
 `
 
 type CountEntriesAdminParams struct {
 	ContentTypeID string      `json:"content_type_id"`
+	AuthorID      interface{} `json:"author_id"`
 	StatusFilter  interface{} `json:"status_filter"`
 	Search        interface{} `json:"search"`
 }
 
 func (q *Queries) CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countEntriesAdmin, arg.ContentTypeID, arg.StatusFilter, arg.Search)
+	row := q.db.QueryRowContext(ctx, countEntriesAdmin,
+		arg.ContentTypeID,
+		arg.AuthorID,
+		arg.StatusFilter,
+		arg.Search,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -68,8 +91,14 @@ SELECT
     SUM(CASE WHEN status = 'private' THEN 1 ELSE 0 END) AS private_count,
     SUM(CASE WHEN status = 'trash' THEN 1 ELSE 0 END) AS trash_count
 FROM entries
-WHERE content_type_id = ?
+WHERE content_type_id = ?1
+  AND (?2 IS NULL OR author_id = ?2)
 `
+
+type CountEntriesByAdminStatusParams struct {
+	ContentTypeID string      `json:"content_type_id"`
+	AuthorID      interface{} `json:"author_id"`
+}
 
 type CountEntriesByAdminStatusRow struct {
 	AllCount       sql.NullFloat64 `json:"all_count"`
@@ -79,8 +108,8 @@ type CountEntriesByAdminStatusRow struct {
 	TrashCount     sql.NullFloat64 `json:"trash_count"`
 }
 
-func (q *Queries) CountEntriesByAdminStatus(ctx context.Context, contentTypeID string) (CountEntriesByAdminStatusRow, error) {
-	row := q.db.QueryRowContext(ctx, countEntriesByAdminStatus, contentTypeID)
+func (q *Queries) CountEntriesByAdminStatus(ctx context.Context, arg CountEntriesByAdminStatusParams) (CountEntriesByAdminStatusRow, error) {
+	row := q.db.QueryRowContext(ctx, countEntriesByAdminStatus, arg.ContentTypeID, arg.AuthorID)
 	var i CountEntriesByAdminStatusRow
 	err := row.Scan(
 		&i.AllCount,
@@ -269,7 +298,7 @@ func (q *Queries) GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) 
 const listEntriesAdmin = `-- name: ListEntriesAdmin :many
 SELECT
     entries.id,
-    entries.slug,
+    COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) AS slug,
     entries.status,
     entries.updated_at,
     entries.published_revision_id,
@@ -293,35 +322,37 @@ LEFT JOIN routes AS public_route
         LIMIT 1
     )
 WHERE entries.content_type_id = ?1
-  AND (
-      ?2 = ''
+	AND (?2 IS NULL OR entries.author_id = ?2)
+   AND (
+      ?3 = ''
       OR (
-          ?2 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+          ?3 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
       )
       OR (
-          ?2 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
+          ?3 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
       )
       OR (
-          ?2 = 'private' AND entries.status = 'private'
+          ?3 = 'private' AND entries.status = 'private'
       )
       OR (
-          ?2 = 'trash' AND entries.status = 'trash'
+          ?3 = 'trash' AND entries.status = 'trash'
       )
       OR (
-          ?2 = 'all' AND entries.status != 'trash'
+          ?3 = 'all' AND entries.status != 'trash'
       )
   )
   AND (
-      ?3 = ''
-      OR latest_revision.title LIKE '%' || ?3 || '%'
-      OR entries.slug LIKE '%' || ?3 || '%'
+      ?4 = ''
+      OR latest_revision.title LIKE '%' || ?4 || '%'
+       OR COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) LIKE '%' || ?4 || '%'
   )
 ORDER BY entries.updated_at DESC, entries.id DESC
-LIMIT ?5 OFFSET ?4
+LIMIT ?6 OFFSET ?5
 `
 
 type ListEntriesAdminParams struct {
 	ContentTypeID string      `json:"content_type_id"`
+	AuthorID      interface{} `json:"author_id"`
 	StatusFilter  interface{} `json:"status_filter"`
 	Search        interface{} `json:"search"`
 	Offset        int64       `json:"offset"`
@@ -341,6 +372,7 @@ type ListEntriesAdminRow struct {
 func (q *Queries) ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error) {
 	rows, err := q.db.QueryContext(ctx, listEntriesAdmin,
 		arg.ContentTypeID,
+		arg.AuthorID,
 		arg.StatusFilter,
 		arg.Search,
 		arg.Offset,
@@ -378,7 +410,7 @@ func (q *Queries) ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminPara
 const listEntriesByContentType = `-- name: ListEntriesByContentType :many
 SELECT
     entries.id,
-    entries.slug,
+    COALESCE(NULLIF(latest_revision.slug, ''), entries.slug) AS slug,
     entries.status,
     entries.updated_at,
     entries.published_revision_id,

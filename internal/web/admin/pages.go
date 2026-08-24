@@ -50,12 +50,6 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: pageContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: err.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
 		return
 	}
-	termIDs, terr := h.taxonomyTermIDsForRequest(r.Context(), r, pageContentType)
-	if terr != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: pageContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: terr.Error(), ShowSEO: true, ShowFeatured: true}, "pages")
-		return
-	}
-	input.TermIDs = termIDs
 	user, err := h.currentUser(r)
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -147,7 +141,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		PublishAction:         "/admin/pages/" + entry.ID + "/publish",
 		BackURL:               "/admin/pages",
 		Title:                 revision.Title,
-		Slug:                  entry.Slug,
+		Slug:                  revision.Slug,
 		Excerpt:               stringValue(revision.Excerpt),
 		SEOTitle:              stringValue(revision.SeoTitle),
 		SEODescription:        stringValue(revision.SeoDescription),
@@ -175,6 +169,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		LayoutTemplates:       h.loadLayoutTemplateOptions(r.Context(), pageContentType),
 		ParentEntryID:         stringValue(revision.ParentEntryID),
 		MenuOrder:             revision.MenuOrder,
+		Revisions:             h.revisionHistory(r.Context(), entry),
 	}, "pages")
 }
 
@@ -209,6 +204,16 @@ func (h *Handler) publishPage(w http.ResponseWriter, r *http.Request) {
 	h.updateEntry(w, r, pageContentType, "pages", "/admin/pages", true)
 }
 
+func (h *Handler) restorePageRevision(w http.ResponseWriter, r *http.Request) {
+	h.restoreRevision(w, r, pageContentType, "pages")
+}
+func (h *Handler) unpublishPage(w http.ResponseWriter, r *http.Request) {
+	h.unpublishEntry(w, r, pageContentType, "pages")
+}
+func (h *Handler) previewPageRevision(w http.ResponseWriter, r *http.Request) {
+	h.previewRevision(w, r, pageContentType)
+}
+
 // updateEntry is shared by Pages and Posts. It validates the posted input and
 // writes a new revision (preserving the public document until publish). The
 // publish flag is decided by the route, not by a form field, so the editor can
@@ -237,17 +242,6 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
 		return
 	}
-	// Taxonomy assignments (generic, revision-scoped)
-	if termIDs, terr := h.taxonomyTermIDsForRequest(r.Context(), r, contentType); terr != nil {
-		if isDatastarRequest(r) {
-			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, terr)
-			return
-		}
-		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, terr)
-		return
-	} else {
-		input.TermIDs = termIDs
-	}
 	if _, _, err := h.entryAndLatestRevision(r.Context(), entryID, contentType); err != nil {
 		http.NotFound(w, r)
 		return
@@ -266,6 +260,7 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 			_ = h.runtime.ReloadRoutes(r.Context())
 		} else {
 			h.runtime.InvalidateEntry(entryID, contentType)
+			h.runtime.InvalidateContent()
 		}
 		// If this entry is the Posts Page, posts_base_path may have changed – ensure site snapshot is fresh.
 		// We still reload site but only invalidate site tag if reload succeeds; fallback already handled by InvalidateEntry.

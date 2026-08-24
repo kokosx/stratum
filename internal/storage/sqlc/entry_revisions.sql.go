@@ -12,17 +12,18 @@ import (
 
 const createEntryRevision = `-- name: CreateEntryRevision :exec
 INSERT INTO entry_revisions (
-    id, entry_id, revision_number, title, excerpt, document_json,
+    id, entry_id, revision_number, slug, title, excerpt, document_json,
     seo_title, seo_description, canonical_url, featured_media_id, social_media_id,
     seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, created_by, created_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateEntryRevisionParams struct {
 	ID               string         `json:"id"`
 	EntryID          string         `json:"entry_id"`
 	RevisionNumber   int64          `json:"revision_number"`
+	Slug             string         `json:"slug"`
 	Title            string         `json:"title"`
 	Excerpt          sql.NullString `json:"excerpt"`
 	DocumentJson     string         `json:"document_json"`
@@ -46,6 +47,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 		arg.ID,
 		arg.EntryID,
 		arg.RevisionNumber,
+		arg.Slug,
 		arg.Title,
 		arg.Excerpt,
 		arg.DocumentJson,
@@ -67,7 +69,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 }
 
 const getEntryRevision = `-- name: GetEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug
 FROM entry_revisions
 WHERE id = ?
 LIMIT 1
@@ -96,12 +98,13 @@ func (q *Queries) GetEntryRevision(ctx context.Context, id string) (EntryRevisio
 		&i.LayoutTemplateID,
 		&i.ParentEntryID,
 		&i.MenuOrder,
+		&i.Slug,
 	)
 	return i, err
 }
 
 const getLatestEntryRevision = `-- name: GetLatestEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -131,12 +134,13 @@ func (q *Queries) GetLatestEntryRevision(ctx context.Context, entryID string) (E
 		&i.LayoutTemplateID,
 		&i.ParentEntryID,
 		&i.MenuOrder,
+		&i.Slug,
 	)
 	return i, err
 }
 
 const listEntryRevisions = `-- name: ListEntryRevisions :many
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -171,6 +175,7 @@ func (q *Queries) ListEntryRevisions(ctx context.Context, entryID string) ([]Ent
 			&i.LayoutTemplateID,
 			&i.ParentEntryID,
 			&i.MenuOrder,
+			&i.Slug,
 		); err != nil {
 			return nil, err
 		}
@@ -186,7 +191,7 @@ func (q *Queries) ListEntryRevisions(ctx context.Context, entryID string) ([]Ent
 }
 
 const listLatestHierarchyForContentType = `-- name: ListLatestHierarchyForContentType :many
-SELECT e.id AS entry_id, e.content_type_id, e.slug, e.status, r.title,
+SELECT e.id AS entry_id, e.content_type_id, COALESCE(NULLIF(r.slug, ''), e.slug) AS slug, e.status, r.title,
        r.parent_entry_id, r.menu_order
 FROM entries e
 JOIN entry_revisions r ON r.id = (
@@ -241,7 +246,7 @@ func (q *Queries) ListLatestHierarchyForContentType(ctx context.Context, content
 }
 
 const listPublishedHierarchyForContentType = `-- name: ListPublishedHierarchyForContentType :many
-SELECT e.id AS entry_id, e.content_type_id, e.slug, e.status, r.title,
+SELECT e.id AS entry_id, e.content_type_id, COALESCE(NULLIF(r.slug, ''), e.slug) AS slug, e.status, r.title,
        r.parent_entry_id, r.menu_order
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id

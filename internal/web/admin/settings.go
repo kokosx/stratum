@@ -1068,7 +1068,7 @@ func (h *Handler) renderSettingsSection(w http.ResponseWriter, r *http.Request, 
 	}
 	data.CSRFToken = token
 	state := ResolveNav(r.URL.Path)
-	layout := LayoutData{Title: "Settings", ActiveMenu: "settings", ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), CSRFToken: token, Content: data, Flash: h.consumeFlash(w, r)}
+	layout := LayoutData{Title: "Settings", ActiveMenu: "settings", ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data, Flash: h.consumeFlash(w, r)}
 	if err := h.settingsTemplate.ExecuteTemplate(w, "layout.html", layout); err != nil {
 		log.Printf("render settings: %v", err)
 	}
@@ -1077,7 +1077,7 @@ func (h *Handler) renderSettingsSection(w http.ResponseWriter, r *http.Request, 
 func (h *Handler) renderSettingsSectionFragment(w http.ResponseWriter, r *http.Request, data settingsData, notice string) {
 	var buf bytes.Buffer
 	state := ResolveNav(r.URL.Path)
-	if err := h.settingsTemplate.ExecuteTemplate(&buf, "content", LayoutData{Title: "Settings", ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: AdminNav(), Content: data}); err != nil {
+	if err := h.settingsTemplate.ExecuteTemplate(&buf, "content", LayoutData{Title: "Settings", ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Content: data}); err != nil {
 		log.Printf("render settings fragment: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return

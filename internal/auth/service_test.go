@@ -64,3 +64,68 @@ func TestSetupCreatesHashedSessionAndAllowsLogin(t *testing.T) {
 		t.Fatal("logged out session remains valid")
 	}
 }
+
+func TestUpdateUserRevokesSessionsAndDisablesLogin(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(database.DB, db.New(database.DB), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Setup(ctx, service.SetupCode(), "Example", "admin@example.com", "a sufficiently long password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CreateUser(ctx, "author@example.com", "a sufficiently long password", "author"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := service.Login(ctx, "author@example.com", "a sufficiently long password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := db.New(database.DB).GetUserByEmail(ctx, "author@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateUser(ctx, user.ID, "author", "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UserForToken(ctx, token); err == nil {
+		t.Fatal("disabled account session remains valid")
+	}
+	if _, err := service.Login(ctx, "author@example.com", "a sufficiently long password"); err != ErrInvalidCredentials {
+		t.Fatalf("disabled login error = %v", err)
+	}
+}
+
+func TestUpdateUserKeepsOneActiveAdministrator(t *testing.T) {
+	ctx := context.Background()
+	database, err := storage.Open(filepath.Join(t.TempDir(), "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(database.DB, db.New(database.DB), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Setup(ctx, service.SetupCode(), "Example", "admin@example.com", "a sufficiently long password"); err != nil {
+		t.Fatal(err)
+	}
+	admin, err := db.New(database.DB).GetUserByEmail(ctx, "admin@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateUser(ctx, admin.ID, "author", "active"); err == nil {
+		t.Fatal("last active administrator was demoted")
+	}
+}

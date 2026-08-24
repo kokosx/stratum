@@ -33,7 +33,7 @@ func (q *Queries) DeleteTermsForRevision(ctx context.Context, revisionID string)
 }
 
 const listPublishedEntriesByTerm = `-- name: ListPublishedEntriesByTerm :many
-SELECT entries.id, entries.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, entries.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
+SELECT entries.id, latest_revision.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, latest_revision.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
 FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
 INNER JOIN entry_revisions AS latest_revision ON latest_revision.id = entries.published_revision_id
@@ -103,7 +103,7 @@ func (q *Queries) ListPublishedEntriesByTerm(ctx context.Context, arg ListPublis
 }
 
 const listPublishedEntriesByTermAsc = `-- name: ListPublishedEntriesByTermAsc :many
-SELECT entries.id, entries.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, entries.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
+SELECT entries.id, latest_revision.slug, entries.content_type_id, latest_revision.title, latest_revision.excerpt, latest_revision.featured_media_id, routes.path AS route_path, entries.published_at, entries.first_published_at, COALESCE(entries.published_revision_id, '') AS revision_id
 FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
 INNER JOIN entry_revisions AS latest_revision ON latest_revision.id = entries.published_revision_id
