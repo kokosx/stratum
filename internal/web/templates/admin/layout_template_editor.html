@@ -48,21 +48,12 @@
     <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
   </section>
   <div class="form-field" style="margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:6px;display:grid;gap:10px;">
-    <div>
-      <label for="parent-template">Parent template</label>
-      <select id="parent-template" name="parent_template_id">
-        <option value="">— No parent —</option>
-        {{ range .Content.ParentOptions }}<option value="{{ .ID }}" {{ if eq $.Content.ParentID .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}
-      </select>
-      <p class="field-desc">One optional parent per template. Parent: {{ if .Content.ParentName }}{{ .Content.ParentName }}{{ else }}none{{ end }} → Child: {{ .Content.Name }} → Entry. Parent must be published and same content type. Cycles and depth &gt;8 are rejected.</p>
-      {{ if .Content.ParentID }}<p class="field-desc">Current parent: <strong>{{ .Content.ParentName }}</strong> ({{ .Content.ParentID }})</p>{{ end }}
-    </div>
     <div style="display:flex;gap:8px;align-items:center;">
       <span><strong>Status:</strong> {{ .Content.Status }}</span>
       {{ if .Content.IsDefault }}<span style="padding:2px 6px;background:#dcfce7;border-radius:4px;font-size:12px;">Default for {{ .Content.ContentTypeName }}</span>{{ else }}<span class="muted">Not default</span>{{ end }}
       {{ if not .Content.IsDefault }}<button class="button" type="submit" formaction="{{ .Content.DefaultAction }}" data-on:click__prevent="@post('{{ .Content.DefaultAction }}', {contentType: 'form'})">Set as Default</button>{{ end }}
     </div>
-    <p class="field-desc">Published/Draft status, Default status and Parent are shown here. Save Draft or Publish to persist parent changes.</p>
+    <p class="field-desc">Published/Draft status and Default status are shown here.</p>
   </div>
 </form>
 <script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>

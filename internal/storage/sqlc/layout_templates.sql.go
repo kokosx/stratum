@@ -26,22 +26,6 @@ func (q *Queries) ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg
 	return err
 }
 
-const clearLayoutTemplateParent = `-- name: ClearLayoutTemplateParent :exec
-UPDATE layout_templates
-SET parent_template_id = NULL, updated_at = ?
-WHERE id = ?
-`
-
-type ClearLayoutTemplateParentParams struct {
-	UpdatedAt int64  `json:"updated_at"`
-	ID        string `json:"id"`
-}
-
-func (q *Queries) ClearLayoutTemplateParent(ctx context.Context, arg ClearLayoutTemplateParentParams) error {
-	_, err := q.db.ExecContext(ctx, clearLayoutTemplateParent, arg.UpdatedAt, arg.ID)
-	return err
-}
-
 const clearLayoutTemplatePublishedRevision = `-- name: ClearLayoutTemplatePublishedRevision :exec
 UPDATE layout_templates
 SET published_revision_id = NULL, updated_at = ?
@@ -59,8 +43,8 @@ func (q *Queries) ClearLayoutTemplatePublishedRevision(ctx context.Context, arg 
 }
 
 const createLayoutTemplate = `-- name: CreateLayoutTemplate :exec
-INSERT INTO layout_templates (id, name, content_type_id, published_revision_id, parent_template_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO layout_templates (id, name, content_type_id, published_revision_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateLayoutTemplateParams struct {
@@ -68,7 +52,6 @@ type CreateLayoutTemplateParams struct {
 	Name                string         `json:"name"`
 	ContentTypeID       string         `json:"content_type_id"`
 	PublishedRevisionID sql.NullString `json:"published_revision_id"`
-	ParentTemplateID    sql.NullString `json:"parent_template_id"`
 	CreatedAt           int64          `json:"created_at"`
 	UpdatedAt           int64          `json:"updated_at"`
 }
@@ -79,7 +62,6 @@ func (q *Queries) CreateLayoutTemplate(ctx context.Context, arg CreateLayoutTemp
 		arg.Name,
 		arg.ContentTypeID,
 		arg.PublishedRevisionID,
-		arg.ParentTemplateID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -159,7 +141,7 @@ func (q *Queries) GetLatestLayoutTemplateRevision(ctx context.Context, templateI
 }
 
 const getLayoutTemplate = `-- name: GetLayoutTemplate :one
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, parent_template_id
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
 FROM layout_templates
 WHERE id = ?
 LIMIT 1
@@ -175,71 +157,8 @@ func (q *Queries) GetLayoutTemplate(ctx context.Context, id string) (LayoutTempl
 		&i.PublishedRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ParentTemplateID,
 	)
 	return i, err
-}
-
-const getLayoutTemplateChain = `-- name: GetLayoutTemplateChain :many
-SELECT
-    t.id,
-    t.name,
-    t.content_type_id,
-    t.published_revision_id,
-    t.parent_template_id,
-    t.created_at,
-    t.updated_at,
-    r.id AS revision_id,
-    r.document_json
-FROM layout_templates t
-JOIN layout_template_revisions r ON r.id = t.published_revision_id
-WHERE t.id = ?
-LIMIT 1
-`
-
-type GetLayoutTemplateChainRow struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	ContentTypeID       string         `json:"content_type_id"`
-	PublishedRevisionID sql.NullString `json:"published_revision_id"`
-	ParentTemplateID    sql.NullString `json:"parent_template_id"`
-	CreatedAt           int64          `json:"created_at"`
-	UpdatedAt           int64          `json:"updated_at"`
-	RevisionID          string         `json:"revision_id"`
-	DocumentJson        string         `json:"document_json"`
-}
-
-func (q *Queries) GetLayoutTemplateChain(ctx context.Context, id string) ([]GetLayoutTemplateChainRow, error) {
-	rows, err := q.db.QueryContext(ctx, getLayoutTemplateChain, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []GetLayoutTemplateChainRow{}
-	for rows.Next() {
-		var i GetLayoutTemplateChainRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.ContentTypeID,
-			&i.PublishedRevisionID,
-			&i.ParentTemplateID,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.RevisionID,
-			&i.DocumentJson,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getLayoutTemplateRevision = `-- name: GetLayoutTemplateRevision :one
@@ -269,7 +188,6 @@ SELECT
     t.name,
     t.content_type_id,
     t.published_revision_id,
-    t.parent_template_id,
     t.created_at,
     t.updated_at,
     r.id AS revision_id,
@@ -285,7 +203,6 @@ type GetLayoutTemplateWithPublishedRevisionRow struct {
 	Name                string         `json:"name"`
 	ContentTypeID       string         `json:"content_type_id"`
 	PublishedRevisionID sql.NullString `json:"published_revision_id"`
-	ParentTemplateID    sql.NullString `json:"parent_template_id"`
 	CreatedAt           int64          `json:"created_at"`
 	UpdatedAt           int64          `json:"updated_at"`
 	RevisionID          string         `json:"revision_id"`
@@ -300,7 +217,6 @@ func (q *Queries) GetLayoutTemplateWithPublishedRevision(ctx context.Context, id
 		&i.Name,
 		&i.ContentTypeID,
 		&i.PublishedRevisionID,
-		&i.ParentTemplateID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RevisionID,
@@ -410,7 +326,7 @@ func (q *Queries) ListLayoutTemplateRevisions(ctx context.Context, templateID st
 }
 
 const listLayoutTemplates = `-- name: ListLayoutTemplates :many
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, parent_template_id
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
 FROM layout_templates
 ORDER BY
     CASE WHEN published_revision_id IS NULL THEN 1 ELSE 0 END,
@@ -434,7 +350,6 @@ func (q *Queries) ListLayoutTemplates(ctx context.Context) ([]LayoutTemplate, er
 			&i.PublishedRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ParentTemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -450,7 +365,7 @@ func (q *Queries) ListLayoutTemplates(ctx context.Context) ([]LayoutTemplate, er
 }
 
 const listLayoutTemplatesByContentType = `-- name: ListLayoutTemplatesByContentType :many
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, parent_template_id
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
 FROM layout_templates
 WHERE content_type_id = ?
 ORDER BY name, id
@@ -472,7 +387,6 @@ func (q *Queries) ListLayoutTemplatesByContentType(ctx context.Context, contentT
 			&i.PublishedRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ParentTemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -488,7 +402,7 @@ func (q *Queries) ListLayoutTemplatesByContentType(ctx context.Context, contentT
 }
 
 const listPublishedLayoutTemplatesByContentType = `-- name: ListPublishedLayoutTemplatesByContentType :many
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, parent_template_id
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
 FROM layout_templates
 WHERE content_type_id = ?
   AND published_revision_id IS NOT NULL
@@ -511,7 +425,6 @@ func (q *Queries) ListPublishedLayoutTemplatesByContentType(ctx context.Context,
 			&i.PublishedRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ParentTemplateID,
 		); err != nil {
 			return nil, err
 		}
@@ -574,22 +487,5 @@ type UpdateLayoutTemplateParams struct {
 
 func (q *Queries) UpdateLayoutTemplate(ctx context.Context, arg UpdateLayoutTemplateParams) error {
 	_, err := q.db.ExecContext(ctx, updateLayoutTemplate, arg.Name, arg.UpdatedAt, arg.ID)
-	return err
-}
-
-const updateLayoutTemplateParent = `-- name: UpdateLayoutTemplateParent :exec
-UPDATE layout_templates
-SET parent_template_id = ?, updated_at = ?
-WHERE id = ?
-`
-
-type UpdateLayoutTemplateParentParams struct {
-	ParentTemplateID sql.NullString `json:"parent_template_id"`
-	UpdatedAt        int64          `json:"updated_at"`
-	ID               string         `json:"id"`
-}
-
-func (q *Queries) UpdateLayoutTemplateParent(ctx context.Context, arg UpdateLayoutTemplateParentParams) error {
-	_, err := q.db.ExecContext(ctx, updateLayoutTemplateParent, arg.ParentTemplateID, arg.UpdatedAt, arg.ID)
 	return err
 }

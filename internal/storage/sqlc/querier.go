@@ -11,7 +11,6 @@ import (
 
 type Querier interface {
 	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
-	ClearLayoutTemplateParent(ctx context.Context, arg ClearLayoutTemplateParentParams) error
 	ClearLayoutTemplatePublishedRevision(ctx context.Context, arg ClearLayoutTemplatePublishedRevisionParams) error
 	CountEntries(ctx context.Context) (int64, error)
 	CountMedia(ctx context.Context) (int64, error)
@@ -50,7 +49,6 @@ type Querier interface {
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetLatestLayoutTemplateRevision(ctx context.Context, templateID string) (LayoutTemplateRevision, error)
 	GetLayoutTemplate(ctx context.Context, id string) (LayoutTemplate, error)
-	GetLayoutTemplateChain(ctx context.Context, id string) ([]GetLayoutTemplateChainRow, error)
 	GetLayoutTemplateRevision(ctx context.Context, id string) (LayoutTemplateRevision, error)
 	GetLayoutTemplateWithPublishedRevision(ctx context.Context, id string) (GetLayoutTemplateWithPublishedRevisionRow, error)
 	GetMedia(ctx context.Context, id string) (Medium, error)
@@ -123,7 +121,6 @@ type Querier interface {
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntry(ctx context.Context, arg UpdateEntryParams) error
 	UpdateLayoutTemplate(ctx context.Context, arg UpdateLayoutTemplateParams) error
-	UpdateLayoutTemplateParent(ctx context.Context, arg UpdateLayoutTemplateParentParams) error
 	UpdateMediaMetadata(ctx context.Context, arg UpdateMediaMetadataParams) error
 	UpdateNavigationMenu(ctx context.Context, arg UpdateNavigationMenuParams) error
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error

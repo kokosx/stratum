@@ -135,14 +135,12 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, media.ErrInvalidImage) ||
 			errors.Is(err, media.ErrDimensionsTooLarge) ||
 			errors.Is(err, media.ErrTooManyPixels) ||
-			errors.Is(err, media.ErrSVGUnsafe) ||
 			errors.Is(err, media.ErrDerivativeFailed) {
 			status = http.StatusBadRequest
 		} else {
 			log.Printf("upload media: %v", err)
 			status = http.StatusInternalServerError
 		}
-		// Ensure the frontend receives the useful backend message (e.g. SVG unsafe).
 		writeJSONError(w, status, err)
 		return
 	}

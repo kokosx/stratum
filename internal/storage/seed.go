@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	seedHomeEntryID    = "seed-home"
-	seedHomeRevisionID = "seed-home-r1"
-	seedBlogEntryID    = "seed-blog"
-	seedBlogRevisionID = "seed-blog-r1"
-	seedAboutEntryID   = "seed-about"
+	seedHomeEntryID     = "seed-home"
+	seedHomeRevisionID  = "seed-home-r1"
+	seedBlogEntryID     = "seed-blog"
+	seedBlogRevisionID  = "seed-blog-r1"
+	seedAboutEntryID    = "seed-about"
 	seedAboutRevisionID = "seed-about-r1"
 )
 
@@ -60,11 +60,11 @@ func (d *Database) Seed(ctx context.Context) error {
 	// --- Entries ---
 	type seedEntry struct {
 		id, revisionID, routeID, contentType, slug, path, title, excerpt, document string
-		routeType string // entry or archive
+		routeType                                                                  string // entry or archive
 	}
 	entries := []seedEntry{
 		{seedHomeEntryID, seedHomeRevisionID, "seed-home-route", "page", "home", "/", "Welcome to StratumCMS", "A modern, single-binary CMS with WordPress familiarity.", seedHomeDocument, "entry"},
-		{seedBlogEntryID, seedBlogRevisionID, "seed-blog-route", "page", "seed-blog", "/blog", "Blog", "Thoughts, updates and stories.", seedBlogDocument, "archive"},
+		{seedBlogEntryID, seedBlogRevisionID, "seed-blog-route", "page", "blog", "/blog", "Blog", "Thoughts, updates and stories.", seedBlogDocument, "archive"},
 		{seedAboutEntryID, seedAboutRevisionID, "seed-about-route", "page", "about", "/about", "About Stratum", "Learn about this example site.", seedAboutDocument, "entry"},
 		{"seed-post-hello", "seed-post-hello-r1", "seed-post-hello-route", "post", "hello-world", "/blog/hello-world", "Hello World — Your First Post", "An example post to show how Stratum renders structured documents.", seedPostDocument, "entry"},
 		// Keep two additional lightweight posts for collection demo (optional, no junk)

@@ -27,37 +27,28 @@ type layoutTemplateRow struct {
 	ContentTypeName string
 	Status          string
 	IsDefault       bool
-	ParentName      string
 }
 
 type layoutTemplateFormData struct {
-	Heading          string
-	Action           string
-	PublishAction    string
-	DefaultAction    string
-	BackURL          string
-	TemplateID       string
-	Name             string
-	ContentTypeID    string
-	ContentTypeName  string
-	ReadOnlyCT       bool
-	DocumentJSON     string
-	EditorJSON       template.JS
-	CSRFToken        string
-	Error            string
-	Dirty            string
-	Status           string
-	PublicNote       string
-	IsDefault        bool
-	ContentTypes     []ctOption
-	ParentID         string
-	ParentOptions    []parentOption
-	ParentName       string
-}
-
-type parentOption struct {
-	ID   string
-	Name string
+	Heading         string
+	Action          string
+	PublishAction   string
+	DefaultAction   string
+	BackURL         string
+	TemplateID      string
+	Name            string
+	ContentTypeID   string
+	ContentTypeName string
+	ReadOnlyCT      bool
+	DocumentJSON    string
+	EditorJSON      template.JS
+	CSRFToken       string
+	Error           string
+	Dirty           string
+	Status          string
+	PublicNote      string
+	IsDefault       bool
+	ContentTypes    []ctOption
 }
 
 type ctOption struct {
@@ -90,11 +81,6 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 	for _, rev := range latestRevs {
 		latestMap[rev.TemplateID] = rev
 	}
-	// Map for parent names
-	parentNames := map[string]string{}
-	for _, t := range templates {
-		parentNames[t.ID] = t.Name
-	}
 	rows := make([]layoutTemplateRow, 0, len(templates))
 	for _, t := range templates {
 		ctName := t.ContentTypeID
@@ -106,15 +92,7 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		status := layoutTemplateStatusFromMaps(t, latestMap)
-		parentName := ""
-		if t.ParentTemplateID.Valid {
-			if n, ok := parentNames[t.ParentTemplateID.String]; ok {
-				parentName = n
-			} else {
-				parentName = t.ParentTemplateID.String
-			}
-		}
-		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Status: status, IsDefault: isDefault, ParentName: parentName})
+		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Status: status, IsDefault: isDefault})
 	}
 	data := layoutTemplatesData{Templates: rows, CSRFToken: token, Flash: h.consumeFlash(w, r)}
 	if err := h.layoutTemplatesTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Templates", ActiveMenu: "appearance", CSRFToken: token, Flash: data.Flash, Content: data}); err != nil {
@@ -157,22 +135,12 @@ func (h *Handler) newLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	for _, ct := range cts {
 		opts = append(opts, ctOption{ID: ct.ID, DisplayName: ct.DisplayName})
 	}
-	// Parent options: all published templates
-	var parentOpts []parentOption
-	if pubs, err := h.queries.ListLayoutTemplates(r.Context()); err == nil {
-		for _, t := range pubs {
-			if t.PublishedRevisionID.Valid {
-				parentOpts = append(parentOpts, parentOption{ID: t.ID, Name: t.Name + " (" + t.ContentTypeID + ")"})
-			}
-		}
-	}
 	data := layoutTemplateFormData{
 		Heading:      "Create Template",
 		Action:       "/admin/appearance/templates",
 		BackURL:      "/admin/appearance/templates",
 		CSRFToken:    token,
 		ContentTypes: opts,
-		ParentOptions: parentOpts,
 	}
 	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: "appearance", CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render new template form: %v", err)
@@ -186,56 +154,39 @@ func (h *Handler) createLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	ctID := strings.TrimSpace(r.FormValue("content_type_id"))
-	parentID := strings.TrimSpace(r.FormValue("parent_template_id"))
 	if name == "" {
-		h.renderLayoutCreateError(w, r, "Name is required", name, ctID, parentID)
+		h.renderLayoutCreateError(w, r, "Name is required", name, ctID)
 		return
 	}
 	if ctID == "" {
-		h.renderLayoutCreateError(w, r, "Content type is required", name, ctID, parentID)
+		h.renderLayoutCreateError(w, r, "Content type is required", name, ctID)
 		return
 	}
-	var id string
-	var err error
-	if parentID != "" {
-		id, err = h.layoutsService.CreateWithParent(r.Context(), name, ctID, parentID)
-	} else {
-		id, err = h.layoutsService.Create(r.Context(), name, ctID)
-	}
+	id, err := h.layoutsService.Create(r.Context(), name, ctID)
 	if err != nil {
 		log.Printf("create layout template: %v", err)
-		h.renderLayoutCreateError(w, r, entryWriteError(err), name, ctID, parentID)
+		h.renderLayoutCreateError(w, r, entryWriteError(err), name, ctID)
 		return
 	}
 	http.Redirect(w, r, "/admin/appearance/templates/"+id+"/edit", http.StatusSeeOther)
 }
 
-func (h *Handler) renderLayoutCreateError(w http.ResponseWriter, r *http.Request, msg, name, ctID, parentID string) {
+func (h *Handler) renderLayoutCreateError(w http.ResponseWriter, r *http.Request, msg, name, ctID string) {
 	token, _ := h.csrfToken(w, r)
 	cts, _ := h.queries.ListContentTypes(r.Context())
 	var opts []ctOption
 	for _, ct := range cts {
 		opts = append(opts, ctOption{ID: ct.ID, DisplayName: ct.DisplayName})
 	}
-	var parentOpts []parentOption
-	if pubs, err := h.queries.ListLayoutTemplates(r.Context()); err == nil {
-		for _, t := range pubs {
-			if t.PublishedRevisionID.Valid {
-				parentOpts = append(parentOpts, parentOption{ID: t.ID, Name: t.Name + " (" + t.ContentTypeID + ")"})
-			}
-		}
-	}
 	data := layoutTemplateFormData{
-		Heading:      "Create Template",
-		Action:       "/admin/appearance/templates",
-		BackURL:      "/admin/appearance/templates",
-		Name:         name,
+		Heading:       "Create Template",
+		Action:        "/admin/appearance/templates",
+		BackURL:       "/admin/appearance/templates",
+		Name:          name,
 		ContentTypeID: ctID,
-		ParentID:     parentID,
-		CSRFToken:    token,
-		Error:        msg,
-		ContentTypes: opts,
-		ParentOptions: parentOpts,
+		CSRFToken:     token,
+		Error:         msg,
+		ContentTypes:  opts,
 	}
 	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: "appearance", CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render create error: %v", err)
@@ -280,46 +231,24 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	// Parent options: published templates of same content type, excluding self
-	var parentOpts []parentOption
-	if rows, err := h.queries.ListPublishedLayoutTemplatesByContentType(r.Context(), tmpl.ContentTypeID); err == nil {
-		for _, t := range rows {
-			if t.ID == tmpl.ID {
-				continue
-			}
-			parentOpts = append(parentOpts, parentOption{ID: t.ID, Name: t.Name})
-		}
-	}
-	parentName := ""
-	if tmpl.ParentTemplateID.Valid {
-		if p, err := h.queries.GetLayoutTemplate(r.Context(), tmpl.ParentTemplateID.String); err == nil {
-			parentName = p.Name
-		}
-	}
 	data := layoutTemplateFormData{
-		Heading:       "Edit Template",
-		Action:        "/admin/appearance/templates/" + tmpl.ID,
-		PublishAction: "/admin/appearance/templates/" + tmpl.ID + "/publish",
-		DefaultAction: "/admin/appearance/templates/" + tmpl.ID + "/default",
-		BackURL:       "/admin/appearance/templates",
-		TemplateID:    tmpl.ID,
-		Name:          tmpl.Name,
-		ContentTypeID: tmpl.ContentTypeID,
+		Heading:         "Edit Template",
+		Action:          "/admin/appearance/templates/" + tmpl.ID,
+		PublishAction:   "/admin/appearance/templates/" + tmpl.ID + "/publish",
+		DefaultAction:   "/admin/appearance/templates/" + tmpl.ID + "/default",
+		BackURL:         "/admin/appearance/templates",
+		TemplateID:      tmpl.ID,
+		Name:            tmpl.Name,
+		ContentTypeID:   tmpl.ContentTypeID,
 		ContentTypeName: ctName,
-		ReadOnlyCT:    true,
-		DocumentJSON:  rev.DocumentJson,
-		EditorJSON:    template.JS(bootstrap),
-		CSRFToken:     token,
-		Error:         errMsg,
-		Dirty:         "Saved",
-		Status:        status,
-		IsDefault:     isDefault,
-		ParentID:      "",
-		ParentOptions: parentOpts,
-		ParentName:    parentName,
-	}
-	if tmpl.ParentTemplateID.Valid {
-		data.ParentID = tmpl.ParentTemplateID.String
+		ReadOnlyCT:      true,
+		DocumentJSON:    rev.DocumentJson,
+		EditorJSON:      template.JS(bootstrap),
+		CSRFToken:       token,
+		Error:           errMsg,
+		Dirty:           "Saved",
+		Status:          status,
+		IsDefault:       isDefault,
 	}
 	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Template - " + tmpl.Name, ActiveMenu: "appearance", CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render layout editor: %v", err)
@@ -343,7 +272,6 @@ func (h *Handler) saveLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	docJSON := postedDocument(r)
-	parentID := strings.TrimSpace(r.FormValue("parent_template_id"))
 	if name == "" {
 		h.handleLayoutSaveError(w, r, tmpl, "Name is required")
 		return
@@ -357,15 +285,7 @@ func (h *Handler) saveLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	if user.ID != "" {
 		author = user.ID
 	}
-	parentProvided := r.FormValue("parent_template_id") != "" || r.PostFormValue("parent_template_id") == ""
-	// Detect if field was submitted (even empty). Use Form.Has
-	parentProvided = hasFormValue(r, "parent_template_id")
-	var saveErr error
-	if parentProvided {
-		saveErr = h.layoutsService.SaveDraftWithParent(r.Context(), id, name, docJSON, parentID, author, true)
-	} else {
-		saveErr = h.layoutsService.SaveDraft(r.Context(), id, name, docJSON, author)
-	}
+	saveErr := h.layoutsService.SaveDraft(r.Context(), id, name, docJSON, author)
 	if saveErr != nil {
 		h.handleLayoutSaveError(w, r, tmpl, saveErr.Error())
 		return
@@ -376,12 +296,6 @@ func (h *Handler) saveLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setFlash(w, "Template draft saved.")
 	http.Redirect(w, r, "/admin/appearance/templates", http.StatusSeeOther)
-}
-
-func hasFormValue(r *http.Request, key string) bool {
-	_ = r.ParseForm()
-	_, ok := r.Form[key]
-	return ok
 }
 
 func (h *Handler) handleLayoutSaveError(w http.ResponseWriter, r *http.Request, tmpl db.LayoutTemplate, msg string) {
@@ -420,7 +334,6 @@ func (h *Handler) publishLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	docJSON := postedDocument(r)
-	parentID := strings.TrimSpace(r.FormValue("parent_template_id"))
 	if docJSON == "" {
 		if latest, lerr := h.queries.GetLatestLayoutTemplateRevision(r.Context(), id); lerr == nil {
 			docJSON = latest.DocumentJson
@@ -441,13 +354,7 @@ func (h *Handler) publishLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 	if user.ID != "" {
 		author = user.ID
 	}
-	parentProvided := hasFormValue(r, "parent_template_id")
-	var pubErr error
-	if parentProvided {
-		pubErr = h.layoutsService.PublishWithParent(r.Context(), id, name, docJSON, parentID, author, true)
-	} else {
-		pubErr = h.layoutsService.Publish(r.Context(), id, name, docJSON, author)
-	}
+	pubErr := h.layoutsService.Publish(r.Context(), id, name, docJSON, author)
 	if pubErr != nil {
 		h.handleLayoutSaveError(w, r, tmpl, pubErr.Error())
 		return
@@ -516,11 +423,11 @@ func (h *Handler) previewLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		sampleTitle = "Example Page Title"
 	}
 	input := RenderInput{
-		Document:       composed,
-		Title:          sampleTitle,
-		Excerpt:        sampleExcerpt,
-		Path:           path,
-		EntryID:        "preview-layout-" + id,
+		Document: composed,
+		Title:    sampleTitle,
+		Excerpt:  sampleExcerpt,
+		Path:     path,
+		EntryID:  "preview-layout-" + id,
 	}
 	if h.documentPreview == nil {
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)

@@ -61,3 +61,63 @@ func TestSeedCreatesAnIdempotentPublishedHomepage(t *testing.T) {
 		t.Errorf("homepage entry = %#v, want %q", settings.HomepageEntryID, seedHomeEntryID)
 	}
 }
+
+func TestSeedBlogSlugIsPublicSemantics(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(filepath.Join(t.TempDir(), "data", "stratum.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Seed(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database.DB)
+	// Blog entry slug must be "blog" (public semantics), not internal seed ID
+	blogEntry, err := queries.GetEntry(ctx, seedBlogEntryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blogEntry.Slug != "blog" {
+		t.Fatalf("Blog Entry slug = %q, want %q", blogEntry.Slug, "blog")
+	}
+	settings, err := queries.GetSiteSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.PostsBasePath != "/blog" {
+		t.Fatalf("site_settings.posts_base_path = %q, want /blog", settings.PostsBasePath)
+	}
+	archRoute, err := queries.GetRouteByPath(ctx, "/blog")
+	if err != nil {
+		t.Fatalf("archive route /blog not found: %v", err)
+	}
+	if archRoute.RouteType != "archive" {
+		t.Fatalf("route /blog type = %q, want archive", archRoute.RouteType)
+	}
+	if !archRoute.EntryID.Valid || archRoute.EntryID.String != seedBlogEntryID {
+		t.Fatalf("archive entry = %#v, want %q", archRoute.EntryID, seedBlogEntryID)
+	}
+	if !archRoute.ContentTypeID.Valid || archRoute.ContentTypeID.String != "post" {
+		t.Fatalf("archive content_type = %#v, want post", archRoute.ContentTypeID)
+	}
+	// Simulate Settings save without changing Posts Page: derived base must stay /blog
+	derived := "/" + strings.Trim(blogEntry.Slug, "/")
+	if derived != "/blog" {
+		t.Fatalf("derived PostsBasePath = %q, want /blog", derived)
+	}
+	if derived != settings.PostsBasePath {
+		t.Fatalf("derived %q != stored %q, Settings save would move archive", derived, settings.PostsBasePath)
+	}
+	// Also verify archive still at /blog after no-op
+	archRoute2, err := queries.GetRouteByPath(ctx, "/blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archRoute2.Path != "/blog" {
+		t.Fatalf("after no-op, archive path = %q, want /blog", archRoute2.Path)
+	}
+}

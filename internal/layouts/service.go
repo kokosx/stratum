@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/kokosx/stratum/internal/blocks"
@@ -44,13 +43,7 @@ func defaultRandomID() (string, error) {
 
 func SetRandomID(fn func() (string, error)) { randomID = fn }
 
-const maxNestingDepth = 8
-
 func (s *Service) Create(ctx context.Context, name, contentTypeID string) (string, error) {
-	return s.CreateWithParent(ctx, name, contentTypeID, "")
-}
-
-func (s *Service) CreateWithParent(ctx context.Context, name, contentTypeID, parentID string) (string, error) {
 	if stringsTrim(name) == "" {
 		return "", errors.New("name is required")
 	}
@@ -59,11 +52,6 @@ func (s *Service) CreateWithParent(ctx context.Context, name, contentTypeID, par
 	}
 	if _, err := s.queries.GetContentType(ctx, contentTypeID); err != nil {
 		return "", errors.New("invalid content type")
-	}
-	if parentID != "" {
-		if err := s.validateParent(ctx, "", parentID, contentTypeID); err != nil {
-			return "", err
-		}
 	}
 	id, err := randomID()
 	if err != nil {
@@ -93,11 +81,7 @@ func (s *Service) CreateWithParent(ctx context.Context, name, contentTypeID, par
 	}
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
-	parentNull := sql.NullString{}
-	if parentID != "" {
-		parentNull = sql.NullString{String: parentID, Valid: true}
-	}
-	if err := qtx.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: id, Name: name, ContentTypeID: contentTypeID, PublishedRevisionID: sql.NullString{}, ParentTemplateID: parentNull, CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := qtx.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: id, Name: name, ContentTypeID: contentTypeID, PublishedRevisionID: sql.NullString{}, CreatedAt: now, UpdatedAt: now}); err != nil {
 		return "", err
 	}
 	if err := qtx.CreateLayoutTemplateRevision(ctx, db.CreateLayoutTemplateRevisionParams{ID: revID, TemplateID: id, RevisionNumber: 1, DocumentJson: docJSON, CreatedAt: now}); err != nil {
@@ -110,10 +94,6 @@ func (s *Service) CreateWithParent(ctx context.Context, name, contentTypeID, par
 }
 
 func (s *Service) SaveDraft(ctx context.Context, templateID, name, docJSON, authorID string) error {
-	return s.SaveDraftWithParent(ctx, templateID, name, docJSON, "", authorID, false)
-}
-
-func (s *Service) SaveDraftWithParent(ctx context.Context, templateID, name, docJSON, parentID string, authorID string, parentProvided bool) error {
 	if name == "" {
 		return errors.New("name is required")
 	}
@@ -134,14 +114,6 @@ func (s *Service) SaveDraftWithParent(ctx context.Context, templateID, name, doc
 	if s.db == nil {
 		return errors.New("database is not configured")
 	}
-	// Validate parent if provided
-	if parentProvided {
-		if parentID != "" {
-			if err := s.validateParent(ctx, templateID, parentID, tmpl.ContentTypeID); err != nil {
-				return err
-			}
-		}
-	}
 	now := time.Now().Unix()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -161,17 +133,6 @@ func (s *Service) SaveDraftWithParent(ctx context.Context, templateID, name, doc
 	} else {
 		_ = qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID})
 	}
-	if parentProvided {
-		if parentID == "" {
-			if err := qtx.ClearLayoutTemplateParent(ctx, db.ClearLayoutTemplateParentParams{UpdatedAt: now, ID: templateID}); err != nil {
-				return err
-			}
-		} else {
-			if err := qtx.UpdateLayoutTemplateParent(ctx, db.UpdateLayoutTemplateParentParams{ParentTemplateID: sql.NullString{String: parentID, Valid: true}, UpdatedAt: now, ID: templateID}); err != nil {
-				return err
-			}
-		}
-	}
 	revID, err := randomID()
 	if err != nil {
 		return err
@@ -188,10 +149,6 @@ func (s *Service) SaveDraftWithParent(ctx context.Context, templateID, name, doc
 }
 
 func (s *Service) Publish(ctx context.Context, templateID, name, docJSON, authorID string) error {
-	return s.PublishWithParent(ctx, templateID, name, docJSON, "", authorID, false)
-}
-
-func (s *Service) PublishWithParent(ctx context.Context, templateID, name, docJSON, parentID string, authorID string, parentProvided bool) error {
 	tmpl, err := s.queries.GetLayoutTemplate(ctx, templateID)
 	if err != nil {
 		return err
@@ -199,7 +156,6 @@ func (s *Service) PublishWithParent(ctx context.Context, templateID, name, docJS
 	if name == "" {
 		name = tmpl.Name
 	}
-	var doc *document.Document
 	var docString string
 	if docJSON != "" {
 		d, err := document.Decode([]byte(docJSON))
@@ -209,7 +165,6 @@ func (s *Service) PublishWithParent(ctx context.Context, templateID, name, docJS
 		if err := ValidateLayoutTemplateDocument(s.blocks, d); err != nil {
 			return err
 		}
-		doc = d
 		enc, _ := json.Marshal(d)
 		docString = string(enc)
 	} else {
@@ -218,13 +173,6 @@ func (s *Service) PublishWithParent(ctx context.Context, templateID, name, docJS
 			return err
 		}
 		docString = latest.DocumentJson
-		d, _ := document.Decode([]byte(docString))
-		doc = d
-	}
-	if parentProvided && parentID != "" {
-		if err := s.validateParent(ctx, templateID, parentID, tmpl.ContentTypeID); err != nil {
-			return err
-		}
 	}
 	if s.db == nil {
 		return errors.New("database is not configured")
@@ -264,82 +212,10 @@ func (s *Service) PublishWithParent(ctx context.Context, templateID, name, docJS
 			return err
 		}
 	}
-	if parentProvided {
-		if parentID == "" {
-			if err := qtx.ClearLayoutTemplateParent(ctx, db.ClearLayoutTemplateParentParams{UpdatedAt: now, ID: templateID}); err != nil {
-				return err
-			}
-		} else {
-			if err := qtx.UpdateLayoutTemplateParent(ctx, db.UpdateLayoutTemplateParentParams{ParentTemplateID: sql.NullString{String: parentID, Valid: true}, UpdatedAt: now, ID: templateID}); err != nil {
-				return err
-			}
-		}
-	}
 	if err := qtx.SetLayoutTemplatePublishedRevision(ctx, db.SetLayoutTemplatePublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, UpdatedAt: now, ID: templateID}); err != nil {
 		return err
 	}
-	_ = doc
 	return tx.Commit()
-}
-
-func (s *Service) SetParent(ctx context.Context, templateID, parentID string) error {
-	tmpl, err := s.queries.GetLayoutTemplate(ctx, templateID)
-	if err != nil {
-		return err
-	}
-	if parentID == "" {
-		if s.db == nil {
-			return errors.New("database is not configured")
-		}
-		return s.queries.UpdateLayoutTemplateParent(ctx, db.UpdateLayoutTemplateParentParams{ParentTemplateID: sql.NullString{}, UpdatedAt: time.Now().Unix(), ID: templateID})
-	}
-	if err := s.validateParent(ctx, templateID, parentID, tmpl.ContentTypeID); err != nil {
-		return err
-	}
-	now := time.Now().Unix()
-	if s.db != nil {
-		return s.queries.UpdateLayoutTemplateParent(ctx, db.UpdateLayoutTemplateParentParams{ParentTemplateID: sql.NullString{String: parentID, Valid: true}, UpdatedAt: now, ID: templateID})
-	}
-	return s.queries.UpdateLayoutTemplateParent(ctx, db.UpdateLayoutTemplateParentParams{ParentTemplateID: sql.NullString{String: parentID, Valid: true}, UpdatedAt: now, ID: templateID})
-}
-
-func (s *Service) validateParent(ctx context.Context, templateID, parentID, contentTypeID string) error {
-	if parentID == templateID {
-		return errors.New("template cannot inherit from itself")
-	}
-	parent, err := s.queries.GetLayoutTemplate(ctx, parentID)
-	if err != nil {
-		return errors.New("parent template not found")
-	}
-	if parent.ContentTypeID != contentTypeID {
-		return errors.New("parent template must belong to the same content type")
-	}
-	if !parent.PublishedRevisionID.Valid {
-		return errors.New("parent template must be published")
-	}
-	// Cycle detection and depth limit
-	visited := map[string]bool{templateID: true}
-	depth := 1
-	current := parentID
-	for current != "" {
-		if visited[current] {
-			return errors.New("template nesting cycle detected")
-		}
-		visited[current] = true
-		depth++
-		if depth > maxNestingDepth {
-			return fmt.Errorf("template nesting depth exceeds the %d level limit", maxNestingDepth)
-		}
-		t, err := s.queries.GetLayoutTemplate(ctx, current)
-		if err != nil {
-			break
-		}
-		if !t.ParentTemplateID.Valid || t.ParentTemplateID.String == "" {
-			break
-		}
-		current = t.ParentTemplateID.String
-	}
-	return nil
 }
 
 func (s *Service) SetDefault(ctx context.Context, templateID string) error {
@@ -384,6 +260,3 @@ func stringsTrim(s string) string {
 	}
 	return s[j:k]
 }
-
-// Ensure strings import is used
-var _ = strings.TrimSpace

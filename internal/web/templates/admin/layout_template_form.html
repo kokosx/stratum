@@ -10,13 +10,7 @@
       {{ range .Content.ContentTypes }}<option value="{{ .ID }}" {{ if eq $.Content.ContentTypeID .ID }}selected{{ end }}>{{ .DisplayName }}</option>{{ end }}
     </select>
   </label>
-  <label>Parent template (optional)
-    <select name="parent_template_id">
-      <option value="">— No parent —</option>
-      {{ range .Content.ParentOptions }}<option value="{{ .ID }}" {{ if eq $.Content.ParentID .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}
-    </select>
-    <p class="field-desc">Parent → Child → Entry. Parent must be published, same content type, and not create a cycle. Depth limit is 8.</p>
-  </label>
+
   <div class="form-actions">
     <a class="button" href="{{ .Content.BackURL }}">Cancel</a>
     <button class="button button-primary" type="submit">Create template</button>

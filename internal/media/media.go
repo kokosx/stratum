@@ -36,8 +36,6 @@ var (
 	ErrDimensionsTooLarge = errors.New("media: image dimensions too large")
 	// ErrTooManyPixels means the image has too many pixels.
 	ErrTooManyPixels = errors.New("media: image has too many pixels")
-	// ErrSVGUnsafe means the SVG contains unsafe or unsupported content.
-	ErrSVGUnsafe = errors.New("media: SVG upload rejected: the file contains unsupported or unsafe elements")
 	// ErrDerivativeFailed means variant generation failed.
 	ErrDerivativeFailed = errors.New("media: derivative generation failed")
 )

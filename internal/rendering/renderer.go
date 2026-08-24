@@ -74,10 +74,6 @@ type RenderContext struct {
 	Collections map[string][]ArchiveEntry
 	ArchiveURL  string // legacy URL of the post archive
 	LCPNodeID   string
-	// LCPConsumed is a request-scoped flag shared by all scoped copies so the
-	// Priority claim is consumed exactly once even when a Collection renders the
-	// same node ID for multiple entries.
-	LCPConsumed *bool
 	// LCP is the unified request-scoped state for the current render. When
 	// non-nil it is shared across all scoped copies (Collection per-entry).
 	LCP       *LCPState
@@ -478,17 +474,9 @@ func (r *Renderer) renderNode(ctx context.Context, node document.Node, rc Render
 // decoding or defaults processing. It is the fast path used for published pages
 // after the document has been prepared once and cached.
 func (r *Renderer) RenderPreparedDocumentContext(ctx context.Context, pd *PreparedDocument, rc RenderContext) (template.HTML, error) {
-	// Initialise shared LCP state if caller did not. Registry.RenderPrepared
-	// normally does this, but direct callers (tests) may not.
+	// Initialise shared LCP state if caller did not.
 	if rc.LCP == nil {
 		rc.LCP = &LCPState{}
-	}
-	if rc.LCPConsumed == nil {
-		rc.LCPConsumed = &rc.LCP.Consumed
-	} else {
-		// Keep both in sync: LCP.Consumed is the source of truth.
-		rc.LCP.Consumed = *rc.LCPConsumed
-		rc.LCPConsumed = &rc.LCP.Consumed
 	}
 	// Resolve LCP winner if not already set. The winner is the first
 	// High candidate that has a real image (per-entry for collection),
@@ -533,33 +521,22 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 	}
 
 	priority := false
-	if node.ID == rc.LCPNodeID && (rc.LCPConsumed == nil || !*rc.LCPConsumed) && (rc.LCP == nil || !rc.LCP.Consumed) {
+	if node.ID == rc.LCPNodeID && rc.LCP != nil && !rc.LCP.Consumed {
 		// Only claim if this actual instance has a real image. For a
 		// Collection-embedded featured-image the first entry may be a
 		// placeholder while the second has media; the second should win.
 		if view, ok := r.hasActualImage(node, rc); ok {
 			priority = true
-			// log.Printf("CLAIM node=%s viewSrc=%q LCP=%p consumed=%v", node.ID, view.Src, rc.LCP, rc.LCP.Consumed)
-			if rc.LCP != nil {
-				rc.LCP.Consumed = true
-				rc.LCP.PreloadHref = view.Src
-				rc.LCP.PreloadSrcSet = view.SrcSet
-				rc.LCP.PreloadView = view
-				if s, _ := node.Settings["sizes"].(string); s != "" {
-					rc.LCP.PreloadSizes = s
-				} else {
-					rc.LCP.PreloadSizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
-				}
-				// log.Printf("SET preload href=%q", view.Src)
+			rc.LCP.Consumed = true
+			rc.LCP.PreloadHref = view.Src
+			rc.LCP.PreloadSrcSet = view.SrcSet
+			rc.LCP.PreloadView = view
+			if s, _ := node.Settings["sizes"].(string); s != "" {
+				rc.LCP.PreloadSizes = s
+			} else {
+				rc.LCP.PreloadSizes = "(min-width: 768px) min(100vw, 1200px), 100vw"
 			}
-			if rc.LCPConsumed != nil {
-				*rc.LCPConsumed = true
-			}
-		} else {
-			// log.Printf("NOIMAGE node=%s LCPNodeID=%s", node.ID, rc.LCPNodeID)
 		}
-	} else if node.ID == rc.LCPNodeID {
-		// log.Printf("SKIP consumed node=%s", node.ID)
 	}
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: priority}); err != nil {

@@ -173,16 +173,22 @@ func TestProcessImageRejectsUnsupportedAndSvg(t *testing.T) {
 	if _, err := ProcessImage([]byte("this is not an image")); err == nil {
 		t.Fatal("ProcessImage accepted garbage bytes")
 	}
-	// Safe SVG should be accepted (sanitized)
-	if _, err := ProcessImage([]byte("<svg xmlns='http://www.w3.org/2000/svg'><rect width='10' height='10' fill='blue'/></svg>")); err != nil {
-		t.Fatalf("ProcessImage rejected safe SVG: %v", err)
+	// All SVG uploads are rejected (SVG support may be added later with a reviewed sanitization policy)
+	if _, err := ProcessImage([]byte("<svg xmlns='http://www.w3.org/2000/svg'><rect width='10' height='10' fill='blue'/></svg>")); err == nil {
+		t.Fatal("ProcessImage accepted SVG")
 	}
-	// Unsafe SVG must be rejected
 	if _, err := ProcessImage([]byte("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>")); err == nil {
 		t.Fatal("ProcessImage accepted unsafe SVG with <script>")
 	}
 	if _, err := ProcessImage([]byte("<svg xmlns='http://www.w3.org/2000/svg'><g onload='alert(1)'><rect width='10' height='10'/></g></svg>")); err == nil {
 		t.Fatal("ProcessImage accepted SVG with event handler")
+	}
+	// Ensure error is unsupported format
+	if _, err := ProcessImage([]byte("<svg></svg>")); err != ErrUnsupportedFormat && !strings.Contains(err.Error(), "SVG") {
+		// Allow wrapped ErrUnsupportedFormat
+		if !strings.Contains(err.Error(), "unsupported") {
+			t.Fatalf("SVG error should be unsupported, got %v", err)
+		}
 	}
 }
 

@@ -33,28 +33,6 @@ type PreparedDocument struct {
 	UsedBlocks     []BlockKey
 	HighPriority   []LCPCandidate
 	AutoCandidates []LCPCandidate
-	// LCPCandidate kept for backward compat inside tests that directly inspect it.
-	// New code must call ResolveLCP.
-	LCPCandidate string
-}
-
-// ResolveLCP returns the final LCP node ID according to the policy:
-//
-//	explicit high that actually exists (featured only if Entry has image) first,
-//	then first existing auto candidate,
-//	else none.
-func (pd *PreparedDocument) ResolveLCP(hasFeaturedImage bool) string {
-	for _, c := range pd.HighPriority {
-		if !c.RequiresFeatured || hasFeaturedImage {
-			return c.ID
-		}
-	}
-	for _, c := range pd.AutoCandidates {
-		if !c.RequiresFeatured || hasFeaturedImage {
-			return c.ID
-		}
-	}
-	return ""
 }
 
 // BlockKey identifies the exact versioned definition whose CSS a document uses.

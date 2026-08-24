@@ -298,11 +298,7 @@ func (h *Handler) applySiteIcon(ctx context.Context, newIcon string) error {
 	}
 	// Validate and generate before touching the site_settings row.
 	if newIcon != "" {
-		// Quick validation: asset must exist and not be SVG
 		if asset, aerr := h.media.Get(ctx, newIcon); aerr == nil {
-			if asset.MimeType == "image/svg+xml" {
-				return fmt.Errorf("This image cannot be used as a Site Icon: SVG is not supported for favicons. Choose a square raster image (PNG, JPEG, WebP or GIF) of at least 512×512")
-			}
 			if asset.Width > 0 && asset.Height > 0 && asset.Width != asset.Height {
 				// Allow but warn; generation will center-crop.
 			}
@@ -310,10 +306,6 @@ func (h *Handler) applySiteIcon(ctx context.Context, newIcon string) error {
 			return fmt.Errorf("Selected image is no longer available")
 		}
 		if err := h.media.GenerateFaviconVariants(ctx, newIcon); err != nil {
-			// Preserve previous working icon; wrap with actionable message
-			if errors.Is(err, media.ErrSVGUnsafe) {
-				return fmt.Errorf("This image cannot be used as a Site Icon: SVG is not supported for favicons")
-			}
 			return fmt.Errorf("Site Icon generation failed: %w", err)
 		}
 	}

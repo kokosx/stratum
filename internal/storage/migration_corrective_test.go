@@ -34,14 +34,14 @@ func TestCorrectiveMigrationIndexes(t *testing.T) {
 		indexes[name] = true
 	}
 	// Must have
-	mustHave := []string{"idx_routes_archive_content_type", "idx_routes_redirect_to", "idx_routes_entry_type_path", "idx_layout_templates_parent"}
+	mustHave := []string{"idx_routes_archive_content_type", "idx_routes_redirect_to", "idx_routes_entry_type_path"}
 	for _, idx := range mustHave {
 		if !indexes[idx] {
 			t.Fatalf("expected index %s missing, have %v", idx, indexes)
 		}
 	}
-	// Must NOT have redundant
-	mustNotHave := []string{"idx_routes_content_type", "idx_routes_path_type", "idx_routes_archive_content", "idx_entries_published_content", "idx_entry_revisions_entry_number", "idx_layout_template_revisions_published"}
+	// Must NOT have redundant (including removed parent index)
+	mustNotHave := []string{"idx_routes_content_type", "idx_routes_path_type", "idx_routes_archive_content", "idx_entries_published_content", "idx_entry_revisions_entry_number", "idx_layout_template_revisions_published", "idx_layout_templates_parent"}
 	for _, idx := range mustNotHave {
 		if indexes[idx] {
 			t.Fatalf("redundant index %s should have been dropped", idx)

@@ -67,8 +67,11 @@ func TestPrepareSelectsOneNonDecorativeImageForLCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.LCPCandidate != "high" {
-		t.Fatalf("LCPCandidate = %q, want first manual high image", prepared.LCPCandidate)
+	if len(prepared.HighPriority) == 0 || prepared.HighPriority[0].ID != "high" {
+		t.Fatalf("HighPriority = %#v, want first manual high image", prepared.HighPriority)
+	}
+	if len(prepared.AutoCandidates) == 0 || prepared.AutoCandidates[0].ID != "first" {
+		t.Fatalf("AutoCandidates = %#v, want first auto", prepared.AutoCandidates)
 	}
 	if len(prepared.UsedBlocks) != 1 || prepared.UsedBlocks[0].Name != "core/image" {
 		t.Fatalf("UsedBlocks = %#v, want core/image once", prepared.UsedBlocks)

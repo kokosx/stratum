@@ -92,7 +92,8 @@ WHERE e.content_type_id = ?
   AND e.published_revision_id IS NOT NULL
 ORDER BY
     COALESCE(e.first_published_at, e.published_at) DESC,
-    e.published_at DESC
+    e.published_at DESC,
+    e.id DESC
 LIMIT ? OFFSET ?;
 
 -- name: ListPublishedEntriesByContentTypeAsc :many
@@ -114,5 +115,6 @@ WHERE e.content_type_id = ?
   AND e.published_revision_id IS NOT NULL
 ORDER BY
     COALESCE(e.first_published_at, e.published_at) ASC,
-    e.published_at ASC
+    e.published_at ASC,
+    e.id ASC
 LIMIT ? OFFSET ?;

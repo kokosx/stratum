@@ -246,18 +246,16 @@ func (r *Registry) Prepare(doc *document.Document) (*rendering.PreparedDocument,
 	})
 	prepared.HighPriority = high
 	prepared.AutoCandidates = auto
-	prepared.LCPCandidate = prepared.ResolveLCP(true) // best-effort for legacy direct access
 	return prepared, nil
 }
 
 // PreparedCache returns a cached PreparedDocument for a published revision,
 // preparing and caching it on first use. revisionID uniquely identifies the
-// immutable revision; the entry is dropped automatically when the registry
-// generation changes.
+// immutable revision; the entry is scoped by registry generation.
 func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*rendering.PreparedDocument, error) {
 	if revisionID != "" {
 		gen := r.generation.Load()
-		key := revisionID
+		key := fmt.Sprintf("%d:%s", gen, revisionID)
 		r.preparedMu.Lock()
 		if r.prepared == nil {
 			r.prepared = make(map[string]*rendering.PreparedDocument)
@@ -271,9 +269,42 @@ func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*re
 		if err != nil {
 			return nil, err
 		}
+		if r.generation.Load() != gen {
+			// Registry changed while preparing; don't cache under stale generation.
+			// Re-prepare with current generation.
+			gen2 := r.generation.Load()
+			key2 := fmt.Sprintf("%d:%s", gen2, revisionID)
+			r.preparedMu.Lock()
+			if pd2, ok := r.prepared[key2]; ok {
+				r.preparedMu.Unlock()
+				return pd2, nil
+			}
+			r.preparedMu.Unlock()
+			pd2, err := r.Prepare(doc)
+			if err != nil {
+				return nil, err
+			}
+			r.preparedMu.Lock()
+			if r.prepared == nil {
+				r.prepared = make(map[string]*rendering.PreparedDocument)
+			}
+			if existing, ok := r.prepared[key2]; ok {
+				r.preparedMu.Unlock()
+				return existing, nil
+			}
+			r.prepared[key2] = pd2
+			r.preparedMu.Unlock()
+			return pd2, nil
+		}
 		r.preparedMu.Lock()
+		if r.prepared == nil {
+			r.prepared = make(map[string]*rendering.PreparedDocument)
+		}
+		if existing, ok := r.prepared[key]; ok {
+			r.preparedMu.Unlock()
+			return existing, nil
+		}
 		r.prepared[key] = pd
-		_ = gen
 		r.preparedMu.Unlock()
 		return pd, nil
 	}
@@ -281,24 +312,17 @@ func (r *Registry) PreparedCache(revisionID string, doc *document.Document) (*re
 }
 
 // RenderPrepared renders a PreparedDocument through the current renderer without
-// any JSON decoding or defaults processing. The single LCP candidate chosen at
-// prepare time is bound here, so exactly one image node renders eager with
-// fetchpriority=high regardless of which pipeline supplies the context.
+// any JSON decoding or defaults processing. LCP winner is chosen at render time
+// by the renderer (single source of truth), so no pre-selection happens here.
 func (r *Registry) RenderPrepared(ctx context.Context, pd *rendering.PreparedDocument, rc rendering.RenderContext) (template.HTML, error) {
 	current := r.snapshot.Load()
 	if current == nil {
 		return "", fmt.Errorf("block registry is not initialized")
 	}
-	hasFeatured := rc.Entry.FeaturedImage != ""
-	rc.LCPNodeID = pd.ResolveLCP(hasFeatured)
-	// Collection renders the same LCP node ID for multiple entries. The claim
-	// must be consumed exactly once per request; share the flag across all
-	// scoped copies.
-	consumed := false
-	rc.LCPConsumed = &consumed
-	// If the LCP candidate is inside a Collection, the outer hasFeatured may be
-	// empty (shell vs first entry). Resolve again with scoped featured check.
-	// The fallback in renderer ensures only one instance becomes Priority:true.
+	if rc.LCP == nil {
+		rc.LCP = &rendering.LCPState{}
+	}
+	rc.LCPNodeID = ""
 	return current.renderer.RenderPreparedDocumentContext(ctx, pd, rc)
 }
 
