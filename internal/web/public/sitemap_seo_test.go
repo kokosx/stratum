@@ -45,6 +45,7 @@ func TestSitemapExcludesNoindexEntries(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 
 	// A regular indexable entry for contrast.
 	seedEntry(t, queries, "idx", "page", "idx", "/idx", "active", "idx-r1", 1, "Indexable", 200, true)

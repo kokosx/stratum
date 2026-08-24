@@ -36,6 +36,7 @@ func seedDocEntry(t *testing.T, handler *Handler, queries *db.Queries, id, path,
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: id + "-route", Path: path, EntryID: sql.NullString{String: id, Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 }
 
@@ -225,6 +226,7 @@ func TestFeaturedImageDimensionsAndVersionedURLs(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "feat-route", Path: "/feat", EntryID: sql.NullString{String: "feat", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 
 	body := renderPath(t, handler, "/feat")

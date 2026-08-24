@@ -360,7 +360,7 @@ func (h *Handler) publishLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if h.runtime != nil {
-		h.runtime.InvalidateLayoutTemplates()
+		h.runtime.InvalidateLayoutTemplate(id)
 	}
 	if isDatastarRequest(r) {
 		writeSSE(w, toastEvent("success", "Template published."))

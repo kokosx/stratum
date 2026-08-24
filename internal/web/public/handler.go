@@ -2,7 +2,6 @@ package public
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/compress"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
@@ -31,6 +31,8 @@ import (
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
 )
+
+var testRouteRegistry sync.Map // maps *db.Queries -> *Handler for test auto-reload
 
 type Handler struct {
 	queries        *db.Queries
@@ -50,13 +52,18 @@ func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes
 	if err != nil {
 		return nil, err
 	}
-	return NewHandlerWithHub(hub)
+	h, err := NewHandlerWithHub(hub)
+	if err != nil {
+		return nil, err
+	}
+	testRouteRegistry.Store(queries, h)
+	return h, nil
 }
 
 // NewHandlerWithHub builds a public handler around a shared runtime coordinator
 // so admin write paths and the public frontend share the same caches.
 func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
-	return &Handler{
+	h := &Handler{
 		queries:        hub.Queries,
 		blocks:         hub.Blocks,
 		themes:         hub.Themes,
@@ -64,7 +71,12 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		hub:            hub,
 		layoutsService: layouts.NewService(nil, hub.Queries, hub.Blocks),
 		dev:            os.Getenv("STRATUM_ENV") != "production",
-	}, nil
+	}
+	testRouteRegistry.Store(hub.Queries, h)
+	// Targeted warmup: homepage and main archive page 1 if available.
+	// Best effort; failures are logged inside WarmCache.
+	h.WarmCache(context.Background())
+	return h, nil
 }
 
 // Hub exposes the shared runtime coordinator so callers can invalidate caches.
@@ -143,7 +155,7 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 				isArchive = true
 			}
 		} else {
-			if rt, err := h.queries.GetRouteByPath(r.Context(), base); err == nil && rt.RouteType == routing.RouteTypeArchive {
+			if rt, ok := h.hub.Routes.Lookup(base); ok && rt.RouteType == routing.RouteTypeArchive {
 				isArchive = true
 			}
 		}
@@ -164,8 +176,8 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Redirect routes left by slug changes (e.g. /old → /new). Checked only on
-	// page-cache miss so a warm cache never pays for GetRouteByPath.
-	if route, rerr := h.queries.GetRouteByPath(r.Context(), r.URL.Path); rerr == nil && route.RouteType == "redirect" && route.RedirectTo.Valid && route.RedirectTo.String != "" {
+	// page-cache miss so a warm cache never pays for DB.
+	if route, ok := h.hub.Routes.Lookup(r.URL.Path); ok && route.RouteType == "redirect" && route.RedirectTo.Valid && route.RedirectTo.String != "" {
 		status := http.StatusMovedPermanently
 		if route.RedirectStatus.Valid && route.RedirectStatus.Int64 != 0 {
 			status = int(route.RedirectStatus.Int64)
@@ -215,14 +227,25 @@ func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pageca
 		w.Header().Set("X-Robots-Tag", entry.Robots)
 	}
 
-	acceptGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
-	if acceptGzip && len(entry.Gzip) > 0 {
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Content-Length", strconv.Itoa(len(entry.Gzip)))
-		if r.Method != http.MethodHead {
-			_, _ = w.Write(entry.Gzip)
+	switch compress.NegotiateEncoding(r.Header.Get("Accept-Encoding")) {
+	case "br":
+		if len(entry.Brotli) > 0 {
+			w.Header().Set("Content-Encoding", "br")
+			w.Header().Set("Content-Length", strconv.Itoa(len(entry.Brotli)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(entry.Brotli)
+			}
+			return
 		}
-		return
+	case "gzip":
+		if len(entry.Gzip) > 0 {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Length", strconv.Itoa(len(entry.Gzip)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(entry.Gzip)
+			}
+			return
+		}
 	}
 
 	w.Header().Set("Content-Length", strconv.Itoa(len(entry.HTML)))
@@ -237,64 +260,91 @@ func (h *Handler) renderPage(ctx context.Context, origin, path string) (pagecach
 		return pagecache.Entry{}, fmt.Errorf("site runtime not initialized")
 	}
 
-	// Use the single routing.Resolver for exact + pagination resolution.
-	// The full-page cache hit path (serveCachedPage) stays without DB; Resolve
-	// runs only on miss.
-	resolver := routing.NewResolver(h.queries)
-	resolved, err := resolver.Resolve(ctx, path)
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			return pagecache.Entry{}, err
+	normalized := routing.NormalizePath(path)
+	snap := h.hub.Routes.Current()
+
+	// Pagination child: /blog/page/2 or /page/2
+	if base, page, ok := routing.ParsePagination(normalized); ok {
+		if page < 1 {
+			return pagecache.Entry{}, sql.ErrNoRows
 		}
-	} else {
-		if resolved.Pagination.IsPagination {
-			base := resolved.Pagination.BasePath
-			pg := resolved.Pagination.Page
-			if pg < 1 {
-				return pagecache.Entry{}, sql.ErrNoRows
+		isArchive := false
+		if base == "/" {
+			if siteSnap.HomepageMode == "latest_posts" {
+				isArchive = true
 			}
-			if base == "/" {
-				if snap := h.hub.Site.Current(); snap != nil && snap.HomepageMode == "latest_posts" {
-					return h.renderArchivePage(ctx, origin, "/", pg, siteSnap)
-				}
-			} else {
-				if rt, rerr := h.queries.GetRouteByPath(ctx, base); rerr == nil && rt.RouteType == routing.RouteTypeArchive {
-					return h.renderArchivePage(ctx, origin, base, pg, siteSnap)
-				}
-				// Resolver guarantees base is archive for non-home pagination
-				return h.renderArchivePage(ctx, origin, base, pg, siteSnap)
-			}
+		} else if rt, ok2 := snap.ByPath[base]; ok2 && rt.RouteType == routing.RouteTypeArchive {
+			isArchive = true
 		}
-		if resolved.Route != nil {
-			switch resolved.Route.RouteType {
-			case routing.RouteTypeRedirect:
-				return pagecache.Entry{}, sql.ErrNoRows
-			case routing.RouteTypeArchive:
-				return h.renderArchivePage(ctx, origin, path, 1, siteSnap)
-			case routing.RouteTypeEntry:
-				return h.renderEntryByRoute(ctx, origin, path, *resolved.Route, siteSnap)
-			case routing.RouteTypeSystem:
+		if isArchive {
+			// canonical /blog/page/1 already handled in serveCachedPage, but also handle here
+			if page == 1 {
 				return pagecache.Entry{}, sql.ErrNoRows
 			}
+			return h.renderArchivePage(ctx, origin, base, page, siteSnap)
 		}
 	}
 
-	// 3. fallback to old entry path (compat for direct)
-	entry, err2 := h.queries.GetPublishedEntryByPath(ctx, path)
-	if err2 != nil {
-		return pagecache.Entry{}, err2
+	// Homepage latest_posts: "/" is the posts archive (snapshot may still contain old entry route, but mode wins).
+	if normalized == "/" && siteSnap.HomepageMode == "latest_posts" {
+		return h.renderArchivePage(ctx, origin, "/", 1, siteSnap)
 	}
-	return h.renderEntry(ctx, origin, path, entry, siteSnap)
+
+	// Exact route lookup via immutable snapshot (zero DB).
+	if rt, ok := snap.ByPath[normalized]; ok {
+		switch rt.RouteType {
+		case routing.RouteTypeRedirect:
+			return pagecache.Entry{}, sql.ErrNoRows
+		case routing.RouteTypeArchive:
+			return h.renderArchivePage(ctx, origin, normalized, 1, siteSnap)
+		case routing.RouteTypeEntry:
+			return h.renderEntryByRoute(ctx, origin, normalized, rt, siteSnap)
+		case routing.RouteTypeSystem:
+			return pagecache.Entry{}, sql.ErrNoRows
+		}
+	}
+
+	// Route snapshot is authoritative when loaded. A miss means 404 without DB.
+	// Only fall back to DB if the runtime is genuinely uninitialized (e.g. no
+	// snapshot yet or empty snapshot on first boot before any routes exist).
+	if snap == nil || len(snap.ByPath) == 0 {
+		entry, err2 := h.queries.GetPublishedEntryByPath(ctx, normalized)
+		if err2 != nil {
+			return pagecache.Entry{}, err2
+		}
+		return h.renderEntry(ctx, origin, normalized, entry, siteSnap)
+	}
+	return pagecache.Entry{}, sql.ErrNoRows
 }
 
-func (h *Handler) renderEntryByRoute(ctx context.Context, origin, path string, route db.Route, siteSnap *site.Snapshot) (pagecache.Entry, error) {
+func (h *Handler) renderEntryByRoute(ctx context.Context, origin, path string, route routing.Route, siteSnap *site.Snapshot) (pagecache.Entry, error) {
 	if !route.EntryID.Valid {
 		return pagecache.Entry{}, sql.ErrNoRows
 	}
-	// reuse existing by loading the published via path (it joins on route)
-	entry, err := h.queries.GetPublishedEntryByPath(ctx, path)
+	row, err := h.queries.GetPublishedEntryByID(ctx, route.EntryID.String)
 	if err != nil {
 		return pagecache.Entry{}, err
+	}
+	entry := db.GetPublishedEntryByPathRow{
+		ID:               row.ID,
+		ContentTypeID:    row.ContentTypeID,
+		Slug:             row.Slug,
+		Status:           row.Status,
+		PublishedAt:      row.PublishedAt,
+		FirstPublishedAt: row.FirstPublishedAt,
+		RevisionID:       row.RevisionID,
+		Title:            row.Title,
+		Excerpt:          row.Excerpt,
+		DocumentJson:     row.DocumentJson,
+		SeoTitle:         row.SeoTitle,
+		SeoDescription:   row.SeoDescription,
+		CanonicalUrl:     row.CanonicalUrl,
+		FeaturedMediaID:  row.FeaturedMediaID,
+		SocialMediaID:    row.SocialMediaID,
+		SeoRobotsIndex:   row.SeoRobotsIndex,
+		SeoRobotsFollow:  row.SeoRobotsFollow,
+		SchemaMode:       row.SchemaMode,
+		LayoutTemplateID: row.LayoutTemplateID,
 	}
 	return h.renderEntry(ctx, origin, path, entry, siteSnap)
 }
@@ -356,13 +406,23 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render: %w", err)
 	}
-	gz, _ := gzipBytes(html)
+	gz, _ := compress.Gzip(html)
+	br, _ := compress.Brotli(html)
+	tags := []string{"entry:" + entry.ID, "site", "navigation", "theme"}
+	if entry.LayoutTemplateID.Valid && entry.LayoutTemplateID.String != "" {
+		tags = append(tags, "layout:"+entry.LayoutTemplateID.String)
+	}
+	for _, ct := range collectionContentTypes(prepared) {
+		tags = append(tags, "content-type:"+ct)
+	}
 	return pagecache.Entry{
 		HTML:        html,
 		Gzip:        gz,
+		Brotli:      br,
 		ETag:        pagecache.ComputeETag(html),
 		Robots:      resolved.Robots,
 		ContentType: "text/html; charset=utf-8",
+		Tags:        tags,
 	}, nil
 }
 
@@ -373,7 +433,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	// Generic archive: content type comes from the archive route's content_type_id.
 	// Fallback to post for legacy routes / shell-less home archive.
 	archiveContentType := "post"
-	if rt, err := h.queries.GetRouteByPath(ctx, archivePath); err == nil && rt.ContentTypeID.Valid && rt.ContentTypeID.String != "" {
+	if rt, ok := h.hub.Routes.Lookup(archivePath); ok && rt.ContentTypeID.Valid && rt.ContentTypeID.String != "" {
 		archiveContentType = rt.ContentTypeID.String
 	} else if ct := routing.ContentTypeForArchive(archivePath, siteSnap.PostsBasePath, siteSnap.HomepageMode); ct != "" {
 		archiveContentType = ct
@@ -426,14 +486,14 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		})
 	}
 
-	// Load shell page (Posts Page) directly by entry ID via archive route
+	// Load shell page (Posts Page) directly by entry ID via archive route (snapshot, zero DB for route).
 	var shellRow *db.GetPublishedEntryByIDRow
 	var prepared *rendering.PreparedDocument
 	var shellTitle, shellDesc, shellSeoTitle, shellSeoDesc, shellFeatured, shellSocial string
 	var shellRobotsIndex, shellRobotsFollow *bool
 	var shellCanonical string
 	shellFound := false
-	if rt, rerr := h.queries.GetRouteByPath(ctx, archivePath); rerr == nil && rt.RouteType == "archive" && rt.EntryID.Valid {
+	if rt, ok := h.hub.Routes.Lookup(archivePath); ok && rt.RouteType == "archive" && rt.EntryID.Valid {
 		if s, serr := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); serr == nil {
 			tmp := s
 			shellRow = &tmp
@@ -602,14 +662,77 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render archive: %w", err)
 	}
-	gz, _ := gzipBytes(html)
+	gz, _ := compress.Gzip(html)
+	br, _ := compress.Brotli(html)
+	tags := []string{"content-type:" + archiveContentType, "site", "navigation", "theme"}
+	if shellRow != nil && shellRow.ID != "" {
+		tags = append(tags, "entry:"+shellRow.ID)
+		if shellRow.LayoutTemplateID.Valid && shellRow.LayoutTemplateID.String != "" {
+			tags = append(tags, "layout:"+shellRow.LayoutTemplateID.String)
+		}
+	}
+	if prepared != nil {
+		for _, ct := range collectionContentTypes(prepared) {
+			// Archive shell may also have query collections needing same tag; dedup handled by cache
+			tags = append(tags, "content-type:"+ct)
+		}
+	}
+	// Deduplicate tags
+	seen := make(map[string]struct{}, len(tags))
+	uniq := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if _, ok := seen[t]; !ok {
+			seen[t] = struct{}{}
+			uniq = append(uniq, t)
+		}
+	}
 	return pagecache.Entry{
 		HTML:        html,
 		Gzip:        gz,
+		Brotli:      br,
 		ETag:        pagecache.ComputeETag(html),
 		Robots:      resolved.Robots,
 		ContentType: "text/html; charset=utf-8",
+		Tags:        uniq,
 	}, nil
+}
+
+func collectionContentTypes(prepared *rendering.PreparedDocument) []string {
+	if prepared == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	var walk func([]rendering.PreparedNode)
+	walk = func(nodes []rendering.PreparedNode) {
+		for _, n := range nodes {
+			if n.Block == "core/collection" {
+				ct, _ := n.Settings["contentType"].(string)
+				if ct == "" {
+					ct, _ = n.Settings["content_type"].(string)
+				}
+				if ct == "" {
+					ct = "post"
+				}
+				src, _ := n.Settings["source"].(string)
+				if src == "" {
+					src = "query"
+				}
+				// Only query/automatic collections depend on content-type listing
+				if src == "query" || src == "automatic" {
+					if _, ok := seen[ct]; !ok {
+						seen[ct] = struct{}{}
+						out = append(out, ct)
+					}
+				}
+			}
+			if len(n.Children) > 0 {
+				walk(n.Children)
+			}
+		}
+	}
+	walk(prepared.Nodes)
+	return out
 }
 
 func siteIconURL(snap *site.Snapshot, m *media.Service) string {
@@ -652,7 +775,7 @@ func (h *Handler) serveFeed(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body, gz, etag, ok := h.hub.Feed.Get()
+	body, gz, br, etag, ok := h.hub.Feed.GetBrotli()
 	if !ok {
 		built, err := h.buildFeed(r.Context(), siteSnap)
 		if err != nil {
@@ -660,12 +783,13 @@ func (h *Handler) serveFeed(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		gz, _ = gzipBytes(built)
+		gz, _ = compress.Gzip(built)
+		br, _ = compress.Brotli(built)
 		etag = pagecache.ComputeETag(built)
-		h.hub.Feed.Set(built, gz, etag)
+		h.hub.Feed.SetWithBrotli(built, gz, br, etag)
 		body = built
 	}
-	h.writeText(w, r, body, gz, etag, "application/rss+xml; charset=utf-8", "public, max-age=300")
+	h.writeText(w, r, body, gz, br, etag, "application/rss+xml; charset=utf-8", "public, max-age=300")
 }
 
 func (h *Handler) buildFeed(ctx context.Context, siteSnap *site.Snapshot) ([]byte, error) {
@@ -1130,9 +1254,10 @@ func (h *Handler) buildArchiveEntries(ctx context.Context, rows []db.ListPublish
 		}
 	}
 	mediaCache := map[string]rendering.MediaView{}
-	for _, id := range featIDs {
-		if v, ok := h.media.MediaView(ctx, id); ok {
-			mediaCache[id] = v
+	if h.media != nil && len(featIDs) > 0 {
+		mediaCache = h.media.MediaViews(ctx, featIDs)
+		if mediaCache == nil {
+			mediaCache = map[string]rendering.MediaView{}
 		}
 	}
 	out := make([]rendering.ArchiveEntry, 0, len(rows))
@@ -1226,7 +1351,7 @@ func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.Pre
 	if err != nil || len(rows) == 0 {
 		return nil
 	}
-	// Batch media
+	// Batch media via real batch (bounded queries).
 	featIDs := make([]string, 0, len(rows))
 	for _, r := range rows {
 		if r.FeaturedMediaID.Valid && r.FeaturedMediaID.String != "" {
@@ -1234,9 +1359,10 @@ func (h *Handler) latestCollections(ctx context.Context, prepared *rendering.Pre
 		}
 	}
 	mediaCache := map[string]rendering.MediaView{}
-	for _, id := range featIDs {
-		if v, ok := h.media.MediaView(ctx, id); ok {
-			mediaCache[id] = v
+	if h.media != nil && len(featIDs) > 0 {
+		mediaCache = h.media.MediaViews(ctx, featIDs)
+		if mediaCache == nil {
+			mediaCache = map[string]rendering.MediaView{}
 		}
 	}
 	full := make([]rendering.ArchiveEntry, 0, len(rows))
@@ -1407,7 +1533,7 @@ func (h *Handler) serveSitemap(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body, gz, etag, ok := h.hub.Sitemap.Get()
+	body, gz, br, etag, ok := h.hub.Sitemap.GetBrotli()
 	if !ok {
 		built, err := h.buildSitemap(r.Context(), siteSnap)
 		if err != nil {
@@ -1415,12 +1541,13 @@ func (h *Handler) serveSitemap(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		gz, _ = gzipBytes(built)
+		gz, _ = compress.Gzip(built)
+		br, _ = compress.Brotli(built)
 		etag = pagecache.ComputeETag(built)
-		h.hub.Sitemap.Set(built, gz, etag)
+		h.hub.Sitemap.SetWithBrotli(built, gz, br, etag)
 		body = built
 	}
-	h.writeText(w, r, body, gz, etag, "application/xml; charset=utf-8", "public, max-age=300")
+	h.writeText(w, r, body, gz, br, etag, "application/xml; charset=utf-8", "public, max-age=300")
 }
 
 func (h *Handler) buildSitemap(ctx context.Context, siteSnap *site.Snapshot) ([]byte, error) {
@@ -1542,7 +1669,7 @@ func (h *Handler) marshalSitemap(urlset sitemapURLSet) ([]byte, error) {
 
 func (h *Handler) serveRobots(w http.ResponseWriter, r *http.Request) {
 	siteSnap := h.hub.Site.Current()
-	body, gz, etag, ok := h.hub.Robots.Get()
+	body, gz, br, etag, ok := h.hub.Robots.GetBrotli()
 	if !ok {
 		built := site.BuildRobots(site.RobotsInput{
 			Mode:            siteSnap.RobotsMode,
@@ -1551,15 +1678,16 @@ func (h *Handler) serveRobots(w http.ResponseWriter, r *http.Request) {
 			SiteURL:         siteSnap.SiteURL,
 			Custom:          siteSnap.RobotsCustom,
 		})
-		gz, _ = gzipBytes([]byte(built))
+		gz, _ = compress.Gzip([]byte(built))
+		br, _ = compress.Brotli([]byte(built))
 		etag = pagecache.ComputeETag([]byte(built))
-		h.hub.Robots.Set([]byte(built), gz, etag)
+		h.hub.Robots.SetWithBrotli([]byte(built), gz, br, etag)
 		body = []byte(built)
 	}
-	h.writeText(w, r, body, gz, etag, "text/plain; charset=utf-8", "public, max-age=300")
+	h.writeText(w, r, body, gz, br, etag, "text/plain; charset=utf-8", "public, max-age=300")
 }
 
-func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz []byte, etag, ctype, cacheControl string) {
+func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz, br []byte, etag, ctype, cacheControl string) {
 	w.Header().Set("Vary", "Accept-Encoding")
 	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
 		w.Header().Set("ETag", etag)
@@ -1570,13 +1698,25 @@ func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz []b
 	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", cacheControl)
-	if acceptGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip"); acceptGzip && len(gz) > 0 {
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
-		if r.Method != http.MethodHead {
-			_, _ = w.Write(gz)
+	switch compress.NegotiateEncoding(r.Header.Get("Accept-Encoding")) {
+	case "br":
+		if len(br) > 0 {
+			w.Header().Set("Content-Encoding", "br")
+			w.Header().Set("Content-Length", strconv.Itoa(len(br)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(br)
+			}
+			return
 		}
-		return
+	case "gzip":
+		if len(gz) > 0 {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(gz)
+			}
+			return
+		}
 	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	if r.Method != http.MethodHead {
@@ -1585,6 +1725,7 @@ func (h *Handler) writeText(w http.ResponseWriter, r *http.Request, body, gz []b
 }
 
 // serveMedia streams a stored media derivative using Range-capable serving.
+// Warm requests use the in-memory serve metadata cache (zero SQLite).
 func (h *Handler) serveMedia(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/media/")
 	parts := strings.SplitN(rest, "/", 2)
@@ -1605,8 +1746,64 @@ func (h *Handler) serveMedia(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	// ETag from serve metadata (content hash) for immutable variants.
+	if _, _, etag, _, ok := h.media.ServeMeta(r.Context(), id, kind); ok && etag != "" {
+		w.Header().Set("ETag", etag)
+	}
 	http.ServeContent(w, r, id+kind, time.Time{}, f)
 	_ = size
+}
+
+// WarmCache pre-renders the homepage and main archive (page 1) into the page
+// cache so a restart does not start cold. Failures are logged and do not
+// affect the caller; the cache simply stays empty for that path.
+func (h *Handler) WarmCache(ctx context.Context) {
+	siteSnap := h.hub.Site.Current()
+	if siteSnap == nil {
+		return
+	}
+	paths := []string{"/"}
+	arch := routing.PostsArchivePath(siteSnap.PostsBasePath)
+	if siteSnap.HomepageMode != "latest_posts" && arch != "/" && arch != "" {
+		// Avoid duplicate "/" when homepage is latest posts
+		found := false
+		for _, p := range paths {
+			if p == arch {
+				found = true
+				break
+			}
+		}
+		if !found {
+			paths = append(paths, arch)
+		}
+	}
+	origin := strings.TrimSpace(siteSnap.SiteURL)
+	if origin == "" {
+		origin = "http://warmup.invalid"
+	}
+	for _, p := range paths {
+		// Only warm if route exists or is homepage archive; otherwise skip.
+		if p != "/" {
+			if rt, ok := h.hub.Routes.Lookup(p); !ok || rt.RouteType != routing.RouteTypeArchive {
+				// Still allow entry at that path? For safety, try anyway
+			}
+		}
+		entry, err := h.renderPage(ctx, origin, p)
+		if err != nil {
+			continue
+		}
+		key := pagecache.Key("", p)
+		if siteSnap.SiteURL == "" {
+			// When Site URL is empty, cache key includes origin; use warmup origin as well.
+			// Production with SiteURL set uses empty origin key, so warm with empty origin.
+			// Keep both for dev compatibility: store under warmup origin key; actual request with empty SiteURL will use request origin, so it won't hit warm.
+			// For correctness we store under empty origin key when SiteURL is set, else skip warming.
+			if origin == "http://warmup.invalid" {
+				continue
+			}
+		}
+		h.hub.Pages.Set(key, entry, entry.Tags...)
+	}
 }
 
 // serveFavicon redirects the legacy /favicon.ico to the immutable favicon media
@@ -1651,19 +1848,14 @@ func requestOrigin(r *http.Request) string {
 type RenderInput = rendering.RenderInput
 
 func gzipBytes(b []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	gw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := gw.Write(b); err != nil {
-		return nil, err
-	}
-	if err := gw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return compress.Gzip(b)
 }
+
+func brotliBytes(b []byte) ([]byte, error) {
+	return compress.Brotli(b)
+}
+
+var _ = bytes.MinRead
 
 func stringValue(value sql.NullString) string {
 	if value.Valid {

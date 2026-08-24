@@ -43,10 +43,11 @@ type Service struct {
 	store   Storage
 	views   *mediaViewCache
 	favicon *faviconViewCache
+	serve   *serveCache
 }
 
 func NewService(queries *db.Queries, store Storage) *Service {
-	return &Service{queries: queries, store: store, views: &mediaViewCache{views: make(map[string]rendering.MediaView)}, favicon: &faviconViewCache{views: make(map[string]rendering.FaviconView)}}
+	return &Service{queries: queries, store: store, views: &mediaViewCache{views: make(map[string]rendering.MediaView)}, favicon: &faviconViewCache{views: make(map[string]rendering.FaviconView)}, serve: newServeCache()}
 }
 
 // InvalidateView drops the cached rendering view for one asset. Called after
@@ -54,12 +55,14 @@ func NewService(queries *db.Queries, store Storage) *Service {
 func (s *Service) InvalidateView(id string) {
 	s.views.invalidate(id)
 	s.favicon.invalidate(id)
+	s.serve.deleteByMediaID(id)
 }
 
 // InvalidateAllViews drops every cached view. Used on bulk changes.
 func (s *Service) InvalidateAllViews() {
 	s.views.invalidateAll()
 	s.favicon.invalidateAll()
+	s.serve.invalidateAll()
 }
 
 func (c *mediaViewCache) get(id string) (rendering.MediaView, bool) {
@@ -310,12 +313,34 @@ func (s *Service) ReadVariant(ctx context.Context, id, kind string) ([]byte, str
 
 // OpenVariant returns a seekable, closable handle to a stored derivative for
 // streaming (Range requests, no full read into RAM). The caller must close it.
+// Warm serving uses the in-memory serve metadata index (zero DB).
 func (s *Service) OpenVariant(ctx context.Context, id, kind string) (*os.File, int64, string, error) {
-	if kind == "" || kind == "original" {
+	if kind == "" {
+		kind = "original"
+	}
+	// strip query string
+	if idx := strings.Index(kind, "?"); idx != -1 {
+		kind = kind[:idx]
+	}
+
+	// Fast path: metadata in RAM
+	if meta, ok := s.serve.get(id, kind); ok {
+		f, _, err := s.store.Open(ctx, meta.StorageKey)
+		if err == nil {
+			// Use cached size/mime; size from storage may differ but prefer cached for consistency
+			return f, meta.Size, meta.MIME, nil
+		}
+		// stale entry (e.g. deleted on disk) – evict and fall through to DB
+		s.serve.delete(id, kind)
+	}
+
+	if kind == "original" {
 		m, err := s.queries.GetMedia(ctx, id)
 		if err != nil {
 			return nil, 0, "", err
 		}
+		// populate serve cache for future hits
+		s.serve.set(id, kind, serveMeta{StorageKey: m.StorageKey, MIME: m.MimeType, Size: m.FileSize, ETag: etagForOriginal(m.StorageKey, m.FileSize)})
 		f, size, err := s.store.Open(ctx, m.StorageKey)
 		if err != nil {
 			return nil, 0, "", err
@@ -326,11 +351,27 @@ func (s *Service) OpenVariant(ctx context.Context, id, kind string) (*os.File, i
 	if err != nil {
 		return nil, 0, "", err
 	}
+	s.serve.set(id, kind, serveMeta{StorageKey: v.StorageKey, MIME: v.MimeType, Size: v.FileSize, ETag: etagFromHash(v.ContentHash)})
 	f, size, err := s.store.Open(ctx, v.StorageKey)
 	if err != nil {
 		return nil, 0, "", err
 	}
 	return f, size, v.MimeType, nil
+}
+
+// ServeMeta returns the cached serve metadata for an asset variant if present (zero DB).
+// It is used by the public handler to set immutable cache headers and ETag without DB.
+func (s *Service) ServeMeta(ctx context.Context, id, kind string) (storageKey, mime, etag string, size int64, ok bool) {
+	if kind == "" {
+		kind = "original"
+	}
+	if idx := strings.Index(kind, "?"); idx != -1 {
+		kind = kind[:idx]
+	}
+	if meta, hit := s.serve.get(id, kind); hit {
+		return meta.StorageKey, meta.MIME, meta.ETag, meta.Size, true
+	}
+	return "", "", "", 0, false
 }
 
 // GenerateFaviconVariants (re)builds the square favicon sizes from the asset. It
@@ -382,31 +423,13 @@ func (s *Service) GenerateFaviconVariants(ctx context.Context, id string) error 
 	return nil
 }
 
-// MediaView implements rendering.MediaProvider, resolving an asset id into the
-// URLs and dimensions a block template needs. Src/SrcSet resolve the
-// native-format responsive variants (falling back to the original), and
-// WebPSrcSet resolves the WebP derivative set so templates can emit a
-// <picture> source only when one exists.
-func (s *Service) MediaView(ctx context.Context, id string) (rendering.MediaView, bool) {
-	if view, ok := s.views.get(id); ok {
-		return view, true
-	}
-	m, err := s.queries.GetMedia(ctx, id)
-	if err != nil {
-		return rendering.MediaView{}, false
-	}
-	variants, err := s.queries.ListMediaVariants(ctx, id)
-	if err != nil {
-		return rendering.MediaView{}, false
-	}
-
+func buildMediaView(m db.Medium, variants []db.MediaVariant) rendering.MediaView {
 	view := rendering.MediaView{
 		ID:     m.ID,
 		Alt:    m.AltText,
 		Width:  intVal(m.Width),
 		Height: intVal(m.Height),
 	}
-
 	native := make([]respVariant, 0, len(variants))
 	webp := make([]respVariant, 0, len(variants))
 	defaultWidth := 0
@@ -436,8 +459,94 @@ func (s *Service) MediaView(ctx context.Context, id string) (rendering.MediaView
 	} else {
 		view.Src = "/media/" + m.ID + "/original"
 	}
+	return view
+}
+
+// MediaView implements rendering.MediaProvider, resolving an asset id into the
+// URLs and dimensions a block template needs. Src/SrcSet resolve the
+// native-format responsive variants (falling back to the original), and
+// WebPSrcSet resolves the WebP derivative set so templates can emit a
+// <picture> source only when one exists.
+func (s *Service) MediaView(ctx context.Context, id string) (rendering.MediaView, bool) {
+	if view, ok := s.views.get(id); ok {
+		return view, true
+	}
+	m, err := s.queries.GetMedia(ctx, id)
+	if err != nil {
+		return rendering.MediaView{}, false
+	}
+	variants, err := s.queries.ListMediaVariants(ctx, id)
+	if err != nil {
+		return rendering.MediaView{}, false
+	}
+	view := buildMediaView(m, variants)
 	s.views.set(id, view)
 	return view, true
+}
+
+// MediaViews returns MediaViews for the given ids in at most two DB queries.
+// It checks the per-ID cache first, batch-fetches missing metadata via
+// ListMediaByIDs / ListMediaVariantsByMediaIDs, populates the cache, and
+// returns all available views. Warm callers pay zero DB.
+func (s *Service) MediaViews(ctx context.Context, ids []string) map[string]rendering.MediaView {
+	if len(ids) == 0 {
+		return nil
+	}
+	// Deduplicate preserving input order for cache check
+	seen := make(map[string]struct{}, len(ids))
+	uniq := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return nil
+	}
+	result := make(map[string]rendering.MediaView, len(uniq))
+	missing := make([]string, 0, len(uniq))
+	for _, id := range uniq {
+		if v, ok := s.views.get(id); ok {
+			result[id] = v
+		} else {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return result
+	}
+	mediaRows, err := s.queries.ListMediaByIDs(ctx, missing)
+	if err != nil {
+		return result
+	}
+	variantRows, err := s.queries.ListMediaVariantsByMediaIDs(ctx, missing)
+	if err != nil {
+		return result
+	}
+	mediaByID := make(map[string]db.Medium, len(mediaRows))
+	for _, m := range mediaRows {
+		mediaByID[m.ID] = m
+	}
+	variantsByID := make(map[string][]db.MediaVariant, len(missing))
+	for _, v := range variantRows {
+		variantsByID[v.MediaID] = append(variantsByID[v.MediaID], v)
+	}
+	for _, id := range missing {
+		m, ok := mediaByID[id]
+		if !ok {
+			continue
+		}
+		vars := variantsByID[id]
+		view := buildMediaView(m, vars)
+		s.views.set(id, view)
+		result[id] = view
+	}
+	return result
 }
 
 // respVariant is one srcset candidate: derivative width and its public URL.

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
@@ -17,6 +18,7 @@ import (
 
 // newSlugTestHarness builds an admin handler (for entry writes) and a public
 // handler (to verify how redirects are actually served) over one seeded database.
+// Both handlers share the same runtimehub so route snapshot reloads are visible to public.
 func newSlugTestHarness(t *testing.T) (*Handler, *db.Queries, *publicweb.Handler) {
 	t.Helper()
 	ctx := context.Background()
@@ -32,7 +34,8 @@ func newSlugTestHarness(t *testing.T) (*Handler, *db.Queries, *publicweb.Handler
 		t.Fatal(err)
 	}
 	queries := db.New(database.DB)
-	registry, err := blocks.NewRegistry(ctx, queries)
+	mediaService := newTestMedia(t, queries)
+	registry, err := blocks.NewRegistry(ctx, queries, mediaService)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,11 +43,16 @@ func newSlugTestHarness(t *testing.T) (*Handler, *db.Queries, *publicweb.Handler
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminHandler, err := NewHandler(database.DB, queries, nil, registry, themeRuntime, newTestMedia(t, queries))
+	// Shared runtime hub so admin reloads are visible to public (snapshot coherence).
+	sharedHub, err := runtimehub.New(queries, registry, themeRuntime, mediaService)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicHandler, err := publicweb.NewHandler(queries, registry, themeRuntime, newTestMedia(t, queries))
+	adminHandler, err := NewHandler(database.DB, queries, nil, registry, themeRuntime, mediaService, sharedHub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicHandler, err := publicweb.NewHandlerWithHub(sharedHub)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +67,10 @@ func publishEntryAt(t *testing.T, h *Handler, entryID, slug string, create bool)
 		create, true)
 	if err != nil {
 		t.Fatalf("publish %s: %v", slug, err)
+	}
+	// Keep route snapshot coherent for public handler (admin and public share hub via test harness).
+	if h.runtime != nil {
+		_ = h.runtime.Routes.Reload(context.Background())
 	}
 }
 

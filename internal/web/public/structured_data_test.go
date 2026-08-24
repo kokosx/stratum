@@ -177,6 +177,7 @@ func TestStructuredDataWebPageForPageContentType(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "team-route", Path: "/team", EntryID: sql.NullString{String: "team", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 
 	doc := structuredDoc(t, handler, "/team")
@@ -226,6 +227,7 @@ func TestStructuredDataBlogPostingForPostContentType(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "post-sd-route", Path: "/blog/hello", EntryID: sql.NullString{String: "post-sd", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 
 	doc := structuredDoc(t, handler, "/blog/hello")
@@ -284,6 +286,7 @@ func TestStructuredDataDatePublishedStaysFixedOnRepublish(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "dates-route", Path: "/blog/dates", EntryID: sql.NullString{String: "dates", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	publishRevision(t, queries, "dates", "dates-r1", 1700000000)
 	handler.Hub().Pages.InvalidateAll()
 

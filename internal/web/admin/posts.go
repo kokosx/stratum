@@ -55,7 +55,7 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
-		h.runtime.InvalidateContent()
+		h.runtime.InvalidateEntry(entryID, postContentType)
 	}
 	if r.FormValue("publish") != "" {
 		h.setFlash(w, "Post published.")

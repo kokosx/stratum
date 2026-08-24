@@ -43,9 +43,18 @@ func (r *handlerContentReader) Query(ctx context.Context, contentType string, li
 	}
 	mediaCache := map[string]rendering.MediaView{}
 	if r.media != nil {
-		for _, id := range featIDs {
-			if v, ok := r.media.MediaView(ctx, id); ok {
-				mediaCache[id] = v
+		if batcher, ok := r.media.(interface {
+			MediaViews(ctx context.Context, ids []string) map[string]rendering.MediaView
+		}); ok {
+			mediaCache = batcher.MediaViews(ctx, featIDs)
+			if mediaCache == nil {
+				mediaCache = map[string]rendering.MediaView{}
+			}
+		} else {
+			for _, id := range featIDs {
+				if v, ok := r.media.MediaView(ctx, id); ok {
+					mediaCache[id] = v
+				}
 			}
 		}
 	}

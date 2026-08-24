@@ -108,6 +108,7 @@ func TestDraftSeoDoesNotLeakToPublic(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	// Published revision with its own SEO values.
 	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
 		ID:             rev1ID,

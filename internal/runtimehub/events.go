@@ -10,12 +10,12 @@ import (
 type EventType string
 
 const (
-	EventEntryPublished        EventType = "EntryPublished"
-	EventEntryRouteChanged     EventType = "EntryRouteChanged"
-	EventMediaUpdated          EventType = "MediaUpdated"
-	EventThemeUpdated          EventType = "ThemeUpdated"
-	EventNavigationUpdated     EventType = "NavigationUpdated"
-	EventSiteSettingsUpdated   EventType = "SiteSettingsUpdated"
+	EventEntryPublished          EventType = "EntryPublished"
+	EventEntryRouteChanged       EventType = "EntryRouteChanged"
+	EventMediaUpdated            EventType = "MediaUpdated"
+	EventThemeUpdated            EventType = "ThemeUpdated"
+	EventNavigationUpdated       EventType = "NavigationUpdated"
+	EventSiteSettingsUpdated     EventType = "SiteSettingsUpdated"
 	EventLayoutTemplatePublished EventType = "LayoutTemplatePublished"
 )
 
@@ -59,8 +59,8 @@ func (d *Dispatcher) Dispatch(e Event) {
 
 // WireRuntime subscribes the Runtime's cache invalidation to domain events.
 func (r *Runtime) WireDispatcher(d *Dispatcher) {
-	d.Subscribe(EventEntryPublished, func(Event) { r.InvalidateContent() })
-	d.Subscribe(EventEntryRouteChanged, func(Event) { r.InvalidateContent() })
+	d.Subscribe(EventEntryPublished, func(Event) { _ = r.ReloadRoutes(context.Background()); r.InvalidateContent() })
+	d.Subscribe(EventEntryRouteChanged, func(Event) { _ = r.ReloadRoutes(context.Background()); r.InvalidateContent() })
 	d.Subscribe(EventMediaUpdated, func(Event) { r.InvalidateMediaAll() })
 	d.Subscribe(EventThemeUpdated, func(Event) { _ = r.ReloadTheme(context.Background()) })
 	d.Subscribe(EventNavigationUpdated, func(Event) { _ = r.ReloadNavigation(context.Background()) })

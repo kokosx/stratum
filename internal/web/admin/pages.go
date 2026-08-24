@@ -64,7 +64,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
-		h.runtime.InvalidateContent()
+		h.runtime.InvalidateEntry(entryID, pageContentType)
 	}
 	if r.FormValue("publish") != "" {
 		h.setFlash(w, "Page published.")
@@ -238,12 +238,13 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, publish)
 	if saveErr == nil && publish && h.runtime != nil {
-		// Reload site settings so a Posts Page slug change (P0) that updated
-		// posts_base_path is visible to the public renderer's site snapshot.
-		// ReloadSite already invalidates page cache, sitemap, robots and feed;
-		// on error fall back to plain invalidation so the publish still succeeds.
-		if err := h.runtime.ReloadSite(r.Context()); err != nil {
-			h.runtime.InvalidateContent()
+		// Selective invalidation: only pages that depend on this entry or its
+		// content type are dropped. Routes are reloaded for the new slug.
+		h.runtime.InvalidateEntry(entryID, contentType)
+		// If this entry is the Posts Page, posts_base_path may have changed – ensure site snapshot is fresh.
+		// We still reload site but only invalidate site tag if reload succeeds; fallback already handled by InvalidateEntry.
+		if s, err := h.queries.GetSiteSettings(r.Context()); err == nil && s.PostsPageEntryID.Valid && s.PostsPageEntryID.String == entryID {
+			_ = h.runtime.ReloadSite(r.Context())
 		}
 	}
 	if isDatastarRequest(r) {

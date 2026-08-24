@@ -100,6 +100,7 @@ func TestSocialTitleDescriptionFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "seo1-route", Path: "/seo1", EntryID: sql.NullString{String: "seo1", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/seo1", nil))
@@ -129,6 +130,7 @@ func TestSocialTitleDescriptionFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "seo2-route", Path: "/seo2", EntryID: sql.NullString{String: "seo2", Valid: true}, RouteType: "entry", CreatedAt: 2, UpdatedAt: 2}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/seo2", nil))
@@ -160,6 +162,7 @@ func TestSocialImageOverride(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "img1-route", Path: "/img1", EntryID: sql.NullString{String: "img1", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/img1", nil))
@@ -201,6 +204,7 @@ func TestSocialFeaturedFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "img2-route", Path: "/img2", EntryID: sql.NullString{String: "img2", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/img2", nil))
@@ -230,6 +234,7 @@ func TestSocialGlobalFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "img3-route", Path: "/img3", EntryID: sql.NullString{String: "img3", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/img3", nil))
@@ -256,6 +261,7 @@ func TestSocialAbsoluteURLs(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "abs1-route", Path: "/abs1", EntryID: sql.NullString{String: "abs1", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	req := httptest.NewRequest(http.MethodGet, "/abs1", nil)
 	req.Host = "example.com"
@@ -294,6 +300,7 @@ func TestSocialAbsoluteURLs(t *testing.T) {
 	if err := queries2.CreateRoute(ctx2, db.CreateRouteParams{ID: "abs2-route", Path: "/abs2", EntryID: sql.NullString{String: "abs2", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries2)
 	handler2.Hub().Pages.InvalidateAll()
 	req2 := httptest.NewRequest(http.MethodGet, "/abs2", nil)
 	req2.Host = "fallback.test"
@@ -325,6 +332,7 @@ func TestSocialDraftDoesNotLeak(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "draft1-route", Path: "/draft1", EntryID: sql.NullString{String: "draft1", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/draft1", nil))
@@ -374,6 +382,7 @@ func TestSocialTwitterSharesOG(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "tw1-route", Path: "/tw1", EntryID: sql.NullString{String: "tw1", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tw1", nil))

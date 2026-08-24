@@ -94,6 +94,7 @@ func TestDescriptionFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "desc1-route", Path: "/desc1", EntryID: sql.NullString{String: "desc1", Valid: true}, RouteType: "entry", CreatedAt: 100, UpdatedAt: 100}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/desc1", nil))
@@ -126,6 +127,7 @@ func TestDescriptionFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "desc2-route", Path: "/desc2", EntryID: sql.NullString{String: "desc2", Valid: true}, RouteType: "entry", CreatedAt: 200, UpdatedAt: 200}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/desc2", nil))
@@ -151,6 +153,7 @@ func TestDescriptionFallback(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "desc3-route", Path: "/desc3", EntryID: sql.NullString{String: "desc3", Valid: true}, RouteType: "entry", CreatedAt: 300, UpdatedAt: 300}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	handler.Hub().Pages.InvalidateAll()
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/desc3", nil))
@@ -335,6 +338,7 @@ func TestFeaturedImageDraftDoesNotLeak(t *testing.T) {
 	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "feat-route", Path: routePath, EntryID: sql.NullString{String: entryID, Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
 		ID: "feat-r1", EntryID: entryID, RevisionNumber: 1, Title: "Feat", DocumentJson: docWithFeatured, CreatedAt: 1,
 		FeaturedMediaID: sql.NullString{String: "media_A", Valid: true},

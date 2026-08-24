@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kokosx/stratum/internal/blocks"
@@ -14,6 +15,25 @@ import (
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
 )
+
+// testHandlerRegistry maps queries pointer to handler for seedEntry auto-reload.
+// It keeps route snapshot coherent when tests insert routes directly via queries.
+var testHandlerRegistry sync.Map // map[*db.Queries]*Handler
+
+func reloadRoutesForTest(t *testing.T, queries *db.Queries) {
+	t.Helper()
+	if v, ok := testHandlerRegistry.Load(queries); ok {
+		if h, ok2 := v.(*Handler); ok2 && h != nil && h.Hub() != nil && h.Hub().Routes != nil {
+			_ = h.Hub().Routes.Reload(context.Background())
+			return
+		}
+	}
+	if v, ok := testRouteRegistry.Load(queries); ok {
+		if h, ok2 := v.(*Handler); ok2 && h != nil && h.Hub() != nil && h.Hub().Routes != nil {
+			_ = h.Hub().Routes.Reload(context.Background())
+		}
+	}
+}
 
 // setupSite returns a public handler backed by a fresh database seeded with the
 // default content. The returned queries allow tests to mutate site settings and
@@ -48,6 +68,8 @@ func setupSite(t *testing.T) (*Handler, *db.Queries) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testHandlerRegistry.Store(queries, handler)
+	t.Cleanup(func() { testHandlerRegistry.Delete(queries) })
 	return handler, queries
 }
 
@@ -129,6 +151,7 @@ func seedEntry(t *testing.T, queries *db.Queries, id, contentType, slug, path, s
 	}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 }
 
 func TestSitemapDisabledReturns404(t *testing.T) {
@@ -188,6 +211,7 @@ func TestSitemapExcludesNonPublic(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	reloadRoutesForTest(t, queries)
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sitemap.xml", nil))

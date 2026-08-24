@@ -114,6 +114,11 @@ func (d *Database) Seed(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("seed site settings: %w", err)
 	}
+	// Default speculation rules to prefetch+moderate for instant navigation without aggressive prerender.
+	// Existing sites keep their configured value; this only updates fresh seeds that still have the old 'off' default.
+	if _, err := tx.ExecContext(ctx, `UPDATE site_settings SET speculation_mode='prefetch', speculation_eagerness='moderate' WHERE id=1 AND speculation_mode='off'`); err != nil {
+		return fmt.Errorf("seed speculation defaults: %w", err)
+	}
 
 	// --- Navigation (reuse default menus created by migration) ---
 	// Ensure default menus exist (idempotent) and populate with sensible starter items.
