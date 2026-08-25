@@ -35,7 +35,11 @@ func Restore(ctx context.Context, archivePath, dataDir string) error {
 	}
 
 	// 3. Extract into temp directory
-	tmpExtract, err := os.MkdirTemp("", "stratum-restore-extract-*")
+	if err := os.MkdirAll(filepath.Dir(dataDir), 0755); err != nil {
+		return fmt.Errorf("create restore parent: %w", err)
+	}
+	// Stage beside the data directory so every later rename is same-filesystem.
+	tmpExtract, err := os.MkdirTemp(filepath.Dir(dataDir), ".stratum-restore-*")
 	if err != nil {
 		return err
 	}
@@ -65,8 +69,9 @@ func Restore(ctx context.Context, archivePath, dataDir string) error {
 		if err := extractFile(f, dest); err != nil {
 			return fmt.Errorf("extract %s: %w", f.Name, err)
 		}
-		// Restore permissions
-		_ = os.Chmod(dest, 0600)
+		if err := os.Chmod(dest, 0600); err != nil {
+			return err
+		}
 	}
 
 	// Verify extracted DB again
@@ -74,7 +79,7 @@ func Restore(ctx context.Context, archivePath, dataDir string) error {
 	if _, err := os.Stat(extractedDB); err != nil {
 		return fmt.Errorf("extracted database missing: %w", err)
 	}
-	if err := checkIntegrityDB(extractedDB); err != nil {
+	if _, _, err := checkIntegrityDB(extractedDB); err != nil {
 		return fmt.Errorf("extracted db integrity: %w", err)
 	}
 
@@ -86,29 +91,16 @@ func Restore(ctx context.Context, archivePath, dataDir string) error {
 	// 5. Create safety backup if live data exists
 	liveDBPath := filepath.Join(dataDir, "stratum.db")
 	if _, err := os.Stat(liveDBPath); err == nil {
-		// Open live DB to snapshot for safety backup
-		liveDB, err := storage.Open(liveDBPath)
-		if err == nil {
-			// Use backup.Create to make safety backup
-			// Avoid recursion: directly call snapshot
-			timestamp := time.Now().UTC().Format("2006-01-02-150405")
-			safetyName := fmt.Sprintf("pre-restore-%s.zip", timestamp)
-			safetyPath := filepath.Join(dataDir, safetyName)
-			// We need a DB handle; use liveDB.DB
-			// Create a temp storage.Database for safety backup creation via our Create func
-			// To avoid import cycle, we do manual VACUUM INTO for safety backup
-			// Simpler: call Create with same dataDir but output safety path
-			// But Create will try to snapshot live DB again – that's fine
-			// Use a helper
-			_ = liveDB.Close()
-			// Create safety backup using a fresh DB handle
-			if err := createSafetyBackup(dataDir, safetyPath); err != nil {
-				// Log but do not fail restore
-				fmt.Fprintf(os.Stderr, "warning: could not create pre-restore safety backup: %v\n", err)
-			} else {
-				fmt.Fprintf(os.Stderr, "created pre-restore safety backup: %s\n", safetyPath)
-			}
+		timestamp := time.Now().UTC().Format("2006-01-02-150405")
+		backupDir := filepath.Join(dataDir, "backups")
+		if err := os.MkdirAll(backupDir, 0700); err != nil {
+			return fmt.Errorf("create safety backup directory: %w", err)
 		}
+		safetyPath := filepath.Join(backupDir, fmt.Sprintf("pre-restore-%s.zip", timestamp))
+		if err := createSafetyBackup(dataDir, safetyPath); err != nil {
+			return fmt.Errorf("create mandatory pre-restore safety backup: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "created pre-restore safety backup: %s\n", safetyPath)
 	}
 
 	// 6. Prepare live paths

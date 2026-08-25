@@ -224,20 +224,12 @@ func runBackupCreate(ctx context.Context, args []string) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer database.Close()
-	if err := database.Migrate(ctx); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
 	queries := db.New(database.DB)
-	archivePath, err := backup.Create(ctx, database, queries, dataDir, output)
+	result, err := backup.CreateResult(ctx, database, queries, dataDir, output)
 	if err != nil {
 		return err
 	}
-	info, _ := os.Stat(archivePath)
-	sizeStr := ""
-	if info != nil {
-		sizeStr = fmt.Sprintf("%d bytes", info.Size())
-	}
-	fmt.Printf("Backup created: %s (%s)\n", archivePath, sizeStr)
+	fmt.Printf("Backup created: %s\nSchema version: %s\nDB size: %d bytes\nMedia: %d files, %d bytes\nArchive size: %d bytes\n", result.Path, result.SchemaVersion, result.DatabaseSize, result.MediaCount, result.MediaBytes, result.ArchiveSize)
 	return nil
 }
 
@@ -262,8 +254,12 @@ func runBackupRestore(ctx context.Context, archive string) error {
 }
 
 func runSearchRebuild(ctx context.Context) error {
-	// Search uses FTS5/Turso native FTS which is not available in this build (see backup/search prompt)
-	// For now, report clearly.
-	fmt.Println("Search rebuild: FTS5/Turso native FTS not available in current tursogo build (see PROMPT 9 report). No index to rebuild.")
-	return nil
+	available, err := storage.NativeFTSAvailable(ctx, filepath.Join(os.TempDir(), fmt.Sprintf("stratum-fts-probe-%d.db", time.Now().UnixNano())))
+	if err != nil {
+		return fmt.Errorf("probe Turso native FTS: %w", err)
+	}
+	if !available {
+		return fmt.Errorf("Turso native FTS is unavailable in the current tursogo/platform build: %s", "CREATE INDEX fts_probe_idx ON fts_probe USING fts (title, body): Parse error: index method is an experimental feature. Enable with --experimental-index-method flag")
+	}
+	return fmt.Errorf("search index is not implemented for this build")
 }

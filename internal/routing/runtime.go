@@ -36,15 +36,15 @@ func (r *Runtime) Reload(ctx context.Context) error {
 		visibility          string
 		publishedRevisionID string
 	}{}
-	if visRows, err := r.queries.ListEntryRouteVisibilities(ctx); err == nil {
-		for _, v := range visRows {
-			visMap[v.EntryID] = struct {
-				visibility          string
-				publishedRevisionID string
-			}{visibility: v.Visibility, publishedRevisionID: v.PublishedRevisionID.String}
-		}
-	} else {
-		// If vis query fails, keep snapshot with empty visibilities; password routes will fallback to DB check.
+	visRows, err := r.queries.ListEntryRouteVisibilities(ctx)
+	if err != nil {
+		return err
+	}
+	for _, v := range visRows {
+		visMap[v.EntryID] = struct {
+			visibility          string
+			publishedRevisionID string
+		}{visibility: v.Visibility, publishedRevisionID: v.PublishedRevisionID.String}
 	}
 	m := make(map[string]Route, len(rows))
 	for _, row := range rows {

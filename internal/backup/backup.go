@@ -11,28 +11,40 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/version"
 )
 
 const (
-	Format         = "stratum-backup"
-	Version        = 1
-	DatabaseName   = "database.sqlite"
-	ManifestName   = "manifest.json"
-	MediaPrefix    = "media/"
-	StratumVersion = "dev"
+	Format       = "stratum-backup"
+	Version      = 1
+	DatabaseName = "database.sqlite"
+	ManifestName = "manifest.json"
+	MediaPrefix  = "media/"
 )
+
+type Result struct {
+	Path, SchemaVersion                   string
+	DatabaseSize, MediaBytes, ArchiveSize int64
+	MediaCount                            int
+}
 
 // Create creates a portable backup archive.
 // dataDir is the Stratum data directory (contains stratum.db and media/).
 // outputPath is the desired ZIP path; if empty a default name is generated in the current directory.
 // It returns the archive path.
 func Create(ctx context.Context, database *storage.Database, queries *db.Queries, dataDir, outputPath string) (string, error) {
+	result, err := CreateResult(ctx, database, queries, dataDir, outputPath)
+	return result.Path, err
+}
+
+// CreateResult snapshots the database first, stages the managed media set named
+// by that snapshot, then atomically publishes a verified archive.
+func CreateResult(ctx context.Context, database *storage.Database, queries *db.Queries, dataDir, outputPath string) (Result, error) {
 	if dataDir == "" {
 		dataDir = "data"
 	}
@@ -44,7 +56,7 @@ func Create(ctx context.Context, database *storage.Database, queries *db.Queries
 		if os.IsNotExist(err) {
 			// Fresh site – still create backup with empty DB snapshot
 		} else {
-			return "", fmt.Errorf("stat database: %w", err)
+			return Result{}, fmt.Errorf("stat database: %w", err)
 		}
 	}
 
@@ -55,72 +67,58 @@ func Create(ctx context.Context, database *storage.Database, queries *db.Queries
 	// Ensure output directory exists
 	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", fmt.Errorf("create output dir: %w", err)
+			return Result{}, fmt.Errorf("create output dir: %w", err)
 		}
+	}
+	if _, err := os.Stat(outputPath); err == nil {
+		return Result{}, fmt.Errorf("backup output already exists: %s", outputPath)
+	} else if !os.IsNotExist(err) {
+		return Result{}, fmt.Errorf("stat backup output: %w", err)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "stratum-backup-*")
 	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
+		return Result{}, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	// 1. Consistent DB snapshot via VACUUM INTO (online safe)
 	snapshotPath := filepath.Join(tmpDir, "snapshot.db")
 	if err := snapshotDB(ctx, database.DB, snapshotPath); err != nil {
-		return "", fmt.Errorf("snapshot database: %w", err)
+		return Result{}, fmt.Errorf("snapshot database: %w", err)
 	}
 
 	// 2. Compute DB checksum and size
 	dbSHA, dbSize, err := fileSHA256(snapshotPath)
 	if err != nil {
-		return "", fmt.Errorf("hash snapshot: %w", err)
+		return Result{}, fmt.Errorf("hash snapshot: %w", err)
+	}
+	schemaVer, mediaKeys, err := snapshotMetadata(ctx, snapshotPath)
+	if err != nil {
+		return Result{}, err
 	}
 
-	// 3. Collect media files (complete managed storage)
+	// Database rows are authoritative. Originals and media variants are preserved;
+	// unrelated files under media/ are deliberately excluded.
+	stageRoot := filepath.Join(tmpDir, "media")
 	var mediaFiles []FileEntry
 	var mediaTotal int64
-	if info, err := os.Stat(mediaRoot); err == nil && info.IsDir() {
-		err = filepath.Walk(mediaRoot, func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if info.IsDir() {
-				return nil
-			}
-			rel, err := filepath.Rel(mediaRoot, path)
-			if err != nil {
-				return err
-			}
-			// Normalize to forward slashes for ZIP
-			zipPath := filepath.ToSlash(filepath.Join(MediaPrefix, rel))
-			// Prevent path traversal and absolute
-			if strings.Contains(zipPath, "..") || filepath.IsAbs(zipPath) {
-				return fmt.Errorf("invalid media path %q", zipPath)
-			}
-			sha, size, err := fileSHA256(path)
-			if err != nil {
-				return err
-			}
-			mediaFiles = append(mediaFiles, FileEntry{Path: zipPath, SHA256: sha, Size: size})
-			mediaTotal += size
-			return nil
-		})
+	for _, key := range mediaKeys {
+		zipPath := MediaPrefix + key
+		if !validArchivePath(zipPath) {
+			return Result{}, fmt.Errorf("invalid managed media key %q", key)
+		}
+		source := filepath.Join(mediaRoot, filepath.FromSlash(key))
+		dest := filepath.Join(stageRoot, filepath.FromSlash(key))
+		if err := copyRegularFile(source, dest); err != nil {
+			return Result{}, fmt.Errorf("stage managed media %q: %w", key, err)
+		}
+		sha, size, err := fileSHA256(dest)
 		if err != nil {
-			return "", fmt.Errorf("walk media: %w", err)
+			return Result{}, err
 		}
-	}
-	sort.Slice(mediaFiles, func(i, j int) bool { return mediaFiles[i].Path < mediaFiles[j].Path })
-
-	// 4. Schema version
-	schemaVer := ""
-	if queries != nil {
-		if v, err := database.CurrentSchemaVersion(ctx); err == nil {
-			schemaVer = v
-		}
-	}
-	if schemaVer == "" {
-		schemaVer = storage.LatestAvailableMigration()
+		mediaFiles = append(mediaFiles, FileEntry{Path: zipPath, SHA256: sha, Size: size})
+		mediaTotal += size
 	}
 
 	manifest := Manifest{
@@ -128,46 +126,50 @@ func Create(ctx context.Context, database *storage.Database, queries *db.Queries
 		Version:        Version,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 		SchemaVersion:  schemaVer,
-		StratumVersion: StratumVersion,
+		StratumVersion: version.Version,
 		Database:       DatabaseName,
 		MediaRoot:      MediaPrefix,
 		DatabaseSHA256: dbSHA,
+		DatabaseSize:   dbSize,
 		MediaCount:     len(mediaFiles),
 		Files:          mediaFiles,
 	}
 	if err := manifest.Validate(); err != nil {
-		return "", err
+		return Result{}, err
 	}
 
-	// 5. Create ZIP
-	outFile, err := os.Create(outputPath)
+	// Write beside the final output so rename is atomic.
+	outFile, err := os.CreateTemp(filepath.Dir(outputPath), ".backup.zip.tmp-*")
 	if err != nil {
-		return "", fmt.Errorf("create archive: %w", err)
+		return Result{}, fmt.Errorf("create archive: %w", err)
 	}
-	defer outFile.Close()
+	tmpOutput := outFile.Name()
+	defer os.Remove(tmpOutput)
 	zipWriter := zip.NewWriter(outFile)
 	defer zipWriter.Close()
 
 	// Ensure restrictive permissions
-	if err := os.Chmod(outputPath, 0600); err != nil {
-		// non-fatal
+	if err := outFile.Chmod(0600); err != nil {
+		return Result{}, err
 	}
 
 	// Add database
 	if err := addFileToZip(zipWriter, snapshotPath, DatabaseName, 0600); err != nil {
-		return "", fmt.Errorf("add database to zip: %w", err)
+		return Result{}, fmt.Errorf("add database to zip: %w", err)
 	}
 	// Add media files
 	for _, fe := range mediaFiles {
-		// fe.Path is like "media/originals/xxx.jpg" – strip prefix to get local path
 		rel := strings.TrimPrefix(fe.Path, MediaPrefix)
-		localPath := filepath.Join(mediaRoot, filepath.FromSlash(rel))
+		localPath := filepath.Join(stageRoot, filepath.FromSlash(rel))
 		if err := addFileToZip(zipWriter, localPath, fe.Path, 0600); err != nil {
-			return "", fmt.Errorf("add media %s: %w", fe.Path, err)
+			return Result{}, fmt.Errorf("add media %s: %w", fe.Path, err)
 		}
 	}
 	// Add manifest (must be last, after we know all files)
-	manifestData, _ := json.MarshalIndent(manifest, "", "  ")
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return Result{}, err
+	}
 	header := &zip.FileHeader{
 		Name:   ManifestName,
 		Method: zip.Deflate,
@@ -175,30 +177,39 @@ func Create(ctx context.Context, database *storage.Database, queries *db.Queries
 	header.SetMode(0600)
 	w, err := zipWriter.CreateHeader(header)
 	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 	if _, err := w.Write(manifestData); err != nil {
-		return "", err
+		return Result{}, err
 	}
 
 	if err := zipWriter.Close(); err != nil {
-		return "", err
+		return Result{}, err
+	}
+	if err := outFile.Sync(); err != nil {
+		return Result{}, err
 	}
 	if err := outFile.Close(); err != nil {
-		return "", err
+		return Result{}, err
 	}
-
-	info, _ := os.Stat(outputPath)
-	_ = dbSize
-	_ = mediaTotal
-	_ = info
-
-	return outputPath, nil
+	if err := Verify(tmpOutput); err != nil {
+		return Result{}, fmt.Errorf("verify created archive: %w", err)
+	}
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return Result{}, err
+	}
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Path: outputPath, SchemaVersion: schemaVer, DatabaseSize: dbSize, MediaCount: len(mediaFiles), MediaBytes: mediaTotal, ArchiveSize: info.Size()}, nil
 }
 
 func snapshotDB(ctx context.Context, db *sql.DB, dest string) error {
 	// Ensure dest does not exist (VACUUM INTO fails if exists)
-	_ = os.Remove(dest)
+	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	// Quote path for SQL: replace single quote with ''
 	safe := strings.ReplaceAll(dest, "'", "''")
 	_, err := db.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", safe))
@@ -231,8 +242,7 @@ func fileSHA256(path string) (string, int64, error) {
 }
 
 func addFileToZip(zw *zip.Writer, localPath, zipPath string, mode os.FileMode) error {
-	// Prevent traversal
-	if strings.Contains(zipPath, "..") || filepath.IsAbs(zipPath) {
+	if !validArchivePath(zipPath) {
 		return fmt.Errorf("invalid zip path %q", zipPath)
 	}
 	// Reject symlinks
@@ -260,4 +270,61 @@ func addFileToZip(zw *zip.Writer, localPath, zipPath string, mode os.FileMode) e
 	}
 	_, err = io.Copy(w, f)
 	return err
+}
+
+func copyRegularFile(source, dest string) error {
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("not a regular file")
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+func snapshotMetadata(ctx context.Context, snapshotPath string) (string, []string, error) {
+	database, err := storage.Open(snapshotPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("open snapshot: %w", err)
+	}
+	defer database.Close()
+	var schema string
+	if err := database.DB.QueryRowContext(ctx, `SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&schema); err != nil {
+		return "", nil, fmt.Errorf("read snapshot schema_migrations: %w", err)
+	}
+	rows, err := database.DB.QueryContext(ctx, `SELECT storage_key FROM media UNION SELECT storage_key FROM media_variants ORDER BY storage_key`)
+	if err != nil {
+		return "", nil, fmt.Errorf("list snapshot media: %w", err)
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return "", nil, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return "", nil, err
+	}
+	return schema, keys, nil
 }

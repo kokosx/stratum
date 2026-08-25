@@ -191,6 +191,10 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	// The route snapshot carries the immutable visibility so we can decide before the cache lookup (zero DB for normal public).
 	normalizedPath := routing.NormalizePath(r.URL.Path)
 	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+		if rt.Visibility == "private" {
+			http.NotFound(w, r)
+			return
+		}
 		// Snapshot is the security boundary: if snapshot says password, never serve from shared cache.
 		if rt.Visibility == "password" {
 			// Verify via DB (DB is source of truth) but bypass cache regardless.
@@ -200,8 +204,24 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 			}
 			// Snapshot stale (now public): fall through to normal cache path.
 		} else if rt.Visibility == "" {
-			// Snapshot without visibility (old snapshot or fallback): check DB on miss path after cache miss logic below.
-			// We keep the old on-miss password check after redirect handling for this case.
+			// Never use a shared cached response without security metadata. This
+			// only occurs for a stale/malformed route row; resolve it from the DB.
+			row, err := h.queries.GetPublishedEntryByID(r.Context(), rt.EntryID.String)
+			if err != nil || row.Visibility == "private" {
+				http.NotFound(w, r)
+				return
+			}
+			if row.Visibility == "password" {
+				h.servePasswordPage(w, r, row, normalizedPath, origin)
+				return
+			}
+			entry, err := h.renderPage(r.Context(), origin, r.URL.Path)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			h.writePage(w, r, entry)
+			return
 		}
 		// For public visibility, proceed to cache; private has no route.
 	}
@@ -225,14 +245,6 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Redirect(w, r, route.RedirectTo.String, status)
 		return
-	}
-
-	// Fallback password check for routes where snapshot had no visibility (e.g., not yet reloaded) – keep on-miss to preserve zero-DB warm public.
-	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid && rt.Visibility == "" {
-		if row, err := h.queries.GetPublishedEntryByID(r.Context(), rt.EntryID.String); err == nil && row.Visibility == "password" {
-			h.servePasswordPage(w, r, row, normalizedPath, origin)
-			return
-		}
 	}
 
 	entry, err := h.hub.Pages.Do(key, func() (pagecache.Entry, error) {

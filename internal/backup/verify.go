@@ -10,18 +10,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/kokosx/stratum/internal/storage"
 	_ "turso.tech/database/tursogo"
 )
 
-// Verify opens archive and validates manifest, paths, checksums, and DB integrity.
-// It does not modify the filesystem.
-func Verify(archivePath string) error {
-	_, err := verifyInternal(archivePath, true)
-	return err
-}
+const (
+	maxArchiveEntries = 100_000
+	maxArchiveBytes   = int64(1 << 40) // a guardrail, not a media quota
+)
+
+// Verify validates an untrusted backup archive without changing live data.
+func Verify(archivePath string) error { _, err := verifyInternal(archivePath, true); return err }
 
 func verifyInternal(archivePath string, checkIntegrity bool) (*Manifest, error) {
 	r, err := zip.OpenReader(archivePath)
@@ -29,13 +29,27 @@ func verifyInternal(archivePath string, checkIntegrity bool) (*Manifest, error) 
 		return nil, fmt.Errorf("open archive: %w", err)
 	}
 	defer r.Close()
+	if len(r.File) > maxArchiveEntries {
+		return nil, fmt.Errorf("archive has too many entries")
+	}
 
-	// Find manifest
 	var manifestFile *zip.File
+	seen := map[string]struct{}{}
+	var total uint64
 	for _, f := range r.File {
+		if !validArchivePath(f.Name) || f.FileInfo().Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("invalid zip path %q", f.Name)
+		}
+		if _, ok := seen[f.Name]; ok {
+			return nil, fmt.Errorf("duplicate zip path %q", f.Name)
+		}
+		seen[f.Name] = struct{}{}
+		total += f.UncompressedSize64
+		if total > uint64(maxArchiveBytes) {
+			return nil, fmt.Errorf("archive uncompressed size exceeds limit")
+		}
 		if f.Name == ManifestName {
 			manifestFile = f
-			break
 		}
 	}
 	if manifestFile == nil {
@@ -45,10 +59,16 @@ func verifyInternal(archivePath string, checkIntegrity bool) (*Manifest, error) 
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(rc)
-	rc.Close()
-	if err != nil {
-		return nil, err
+	data, readErr := io.ReadAll(io.LimitReader(rc, maxManifestBytes+1))
+	closeErr := rc.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(data) > maxManifestBytes {
+		return nil, fmt.Errorf("manifest exceeds %d bytes", maxManifestBytes)
 	}
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -58,99 +78,89 @@ func verifyInternal(archivePath string, checkIntegrity bool) (*Manifest, error) 
 		return nil, err
 	}
 
-	// Validate paths and collect expected files
-	expected := map[string]FileEntry{
-		m.Database: {Path: m.Database, SHA256: m.DatabaseSHA256},
-	}
+	expected := map[string]FileEntry{m.Database: {Path: m.Database, SHA256: m.DatabaseSHA256, Size: m.DatabaseSize}}
 	for _, fe := range m.Files {
-		if fe.Path == ManifestName || fe.Path == m.Database {
-			return nil, fmt.Errorf("invalid file path in manifest: %s", fe.Path)
-		}
-		if strings.Contains(fe.Path, "..") || filepath.IsAbs(fe.Path) || strings.HasPrefix(fe.Path, "/") {
-			return nil, fmt.Errorf("path traversal in manifest: %s", fe.Path)
-		}
 		if _, ok := expected[fe.Path]; ok {
 			return nil, fmt.Errorf("duplicate path %s", fe.Path)
 		}
 		expected[fe.Path] = fe
 	}
-
-	// Check all files in ZIP are expected and verify checksums
 	found := map[string]bool{}
 	for _, f := range r.File {
 		if f.Name == ManifestName {
 			continue
 		}
-		// Path safety
-		if strings.Contains(f.Name, "..") || filepath.IsAbs(f.Name) {
-			return nil, fmt.Errorf("zip slip path %q", f.Name)
-		}
-		// Check symlink (zip FileHeader Mode)
-		if f.FileInfo().Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("symlink not allowed: %s", f.Name)
-		}
 		fe, ok := expected[f.Name]
 		if !ok {
 			return nil, fmt.Errorf("unexpected file in archive: %s", f.Name)
 		}
-		found[f.Name] = true
-		// Verify checksum
+		if int64(f.UncompressedSize64) != fe.Size {
+			return nil, fmt.Errorf("size mismatch for %s", f.Name)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
 		h := sha256.New()
-		if _, err := io.Copy(h, rc); err != nil {
-			rc.Close()
-			return nil, err
+		n, copyErr := io.Copy(h, rc)
+		closeErr := rc.Close()
+		if copyErr != nil {
+			return nil, copyErr
 		}
-		rc.Close()
-		got := hex.EncodeToString(h.Sum(nil))
-		if fe.SHA256 != "" && got != fe.SHA256 {
-			return nil, fmt.Errorf("checksum mismatch for %s: got %s want %s", f.Name, got, fe.SHA256)
+		if closeErr != nil {
+			return nil, closeErr
 		}
+		if n != fe.Size {
+			return nil, fmt.Errorf("streamed size mismatch for %s", f.Name)
+		}
+		if got := hex.EncodeToString(h.Sum(nil)); got != fe.SHA256 {
+			return nil, fmt.Errorf("checksum mismatch for %s", f.Name)
+		}
+		found[f.Name] = true
 	}
-	// Ensure all expected files present
-	for path := range expected {
-		if !found[path] {
-			return nil, fmt.Errorf("missing file in archive: %s", path)
-		}
-	}
-
-	// Verify DB integrity via temp extraction
-	if checkIntegrity {
-		tmpDir, err := os.MkdirTemp("", "stratum-verify-*")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(tmpDir)
-		// Extract DB to temp
-		var dbFile *zip.File
-		for _, f := range r.File {
-			if f.Name == m.Database {
-				dbFile = f
-				break
-			}
-		}
-		if dbFile == nil {
-			return nil, fmt.Errorf("missing database file")
-		}
-		tmpDB := filepath.Join(tmpDir, "verify.db")
-		if err := extractFile(dbFile, tmpDB); err != nil {
-			return nil, fmt.Errorf("extract db: %w", err)
-		}
-		if err := checkIntegrityDB(tmpDB); err != nil {
-			return nil, err
-		}
-		// Check schema version not future
-		if m.SchemaVersion != "" {
-			latest := storage.LatestAvailableMigration()
-			if latest != "" && m.SchemaVersion > latest {
-				return nil, fmt.Errorf("backup schema %s is newer than supported %s – refusing restore", m.SchemaVersion, latest)
-			}
+	for name := range expected {
+		if !found[name] {
+			return nil, fmt.Errorf("missing file in archive: %s", name)
 		}
 	}
 
+	if !checkIntegrity {
+		return &m, nil
+	}
+	tmpDir, err := os.MkdirTemp("", "stratum-verify-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+	var dbFile *zip.File
+	for _, f := range r.File {
+		if f.Name == DatabaseName {
+			dbFile = f
+			break
+		}
+	}
+	if dbFile == nil {
+		return nil, fmt.Errorf("missing database file")
+	}
+	tmpDB := filepath.Join(tmpDir, "verify.db")
+	if err := extractFile(dbFile, tmpDB); err != nil {
+		return nil, fmt.Errorf("extract db: %w", err)
+	}
+	schema, mediaKeys, err := checkIntegrityDB(tmpDB)
+	if err != nil {
+		return nil, err
+	}
+	if schema != m.SchemaVersion {
+		return nil, fmt.Errorf("schema version mismatch: archive has %s, manifest has %s", schema, m.SchemaVersion)
+	}
+	if latest := storage.LatestAvailableMigration(); latest != "" && schema > latest {
+		return nil, fmt.Errorf("backup schema %s is newer than supported %s", schema, latest)
+	}
+	for _, key := range mediaKeys {
+		if _, ok := expected[MediaPrefix+key]; !ok {
+			return nil, fmt.Errorf("backup database references missing media %q", key)
+		}
+	}
 	return &m, nil
 }
 
@@ -163,44 +173,70 @@ func extractFile(zf *zip.File, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return err
 	}
-	out, err := os.Create(dest)
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, rc)
-	return err
-}
-
-func checkIntegrityDB(path string) error {
-	db, err := sql.Open("turso", path)
-	if err != nil {
-		return fmt.Errorf("open temp db: %w", err)
+	n, copyErr := io.Copy(out, rc)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
 	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	var result string
-	// quick_check is faster than integrity_check
-	err = db.QueryRow("PRAGMA integrity_check").Scan(&result)
-	if err != nil {
-		return fmt.Errorf("integrity_check query: %w", err)
+	if closeErr != nil {
+		return closeErr
 	}
-	if result != "ok" {
-		return fmt.Errorf("integrity_check failed: %s", result)
+	if n != int64(zf.UncompressedSize64) {
+		return fmt.Errorf("extracted size mismatch")
 	}
-	// Also check that schema_migrations exists
 	return nil
 }
 
-func fileSHA256ForVerify(path string) (string, error) {
-	f, err := os.Open(path)
+func checkIntegrityDB(path string) (string, []string, error) {
+	db, err := sql.Open("turso", path)
 	if err != nil {
-		return "", err
+		return "", nil, fmt.Errorf("open temp db: %w", err)
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	defer db.Close()
+	var result string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&result); err != nil {
+		return "", nil, err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	if result != "ok" {
+		return "", nil, fmt.Errorf("integrity_check failed: %s", result)
+	}
+	rows, err := db.Query("PRAGMA foreign_key_check")
+	if err != nil {
+		return "", nil, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		return "", nil, fmt.Errorf("foreign_key_check failed")
+	}
+	if err := rows.Err(); err != nil {
+		return "", nil, err
+	}
+	var schema string
+	if err := db.QueryRow("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&schema); err != nil {
+		return "", nil, fmt.Errorf("read schema_migrations: %w", err)
+	}
+	mediaRows, err := db.Query(`SELECT storage_key FROM media UNION SELECT storage_key FROM media_variants`)
+	if err != nil {
+		return "", nil, err
+	}
+	defer mediaRows.Close()
+	var keys []string
+	for mediaRows.Next() {
+		var key string
+		if err := mediaRows.Scan(&key); err != nil {
+			return "", nil, err
+		}
+		if !validArchivePath(MediaPrefix + key) {
+			return "", nil, fmt.Errorf("invalid managed media key %q", key)
+		}
+		keys = append(keys, key)
+	}
+	if err := mediaRows.Err(); err != nil {
+		return "", nil, err
+	}
+	return schema, keys, nil
 }
