@@ -23,6 +23,7 @@ import (
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/pagecache"
+	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/routing"
 	"github.com/kokosx/stratum/internal/runtimehub"
@@ -45,6 +46,8 @@ type Handler struct {
 	// warnNoSiteURL guards the one-time production warning about canonical
 	// URLs falling back to the request Host.
 	warnNoSiteURL sync.Once
+	unlockStore   *publishing.UnlockStore
+	unlockLimiter *publishing.UnlockLimiter
 }
 
 func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
@@ -71,6 +74,8 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		hub:            hub,
 		layoutsService: layouts.NewService(nil, hub.Queries, hub.Blocks),
 		dev:            os.Getenv("STRATUM_ENV") != "production",
+		unlockStore:    publishing.NewUnlockStore(),
+		unlockLimiter:  publishing.NewUnlockLimiter(),
 	}
 	testRouteRegistry.Store(hub.Queries, h)
 	// Targeted warmup: homepage and main archive page 1 if available.
@@ -88,6 +93,22 @@ func (h *Handler) AssetURLs() (blocksCSS, themeCSS, themeJS string) {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Password-protected pages accept POST for unlock form.
+	if r.Method == http.MethodPost {
+		if strings.HasPrefix(r.URL.Path, "/media/") {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Only allow POST for password-protected entry routes; other POSTs remain 405.
+		if h.isPasswordProtectedPath(r.Context(), r.URL.Path) {
+			h.servePasswordPost(w, r)
+			return
+		}
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -186,6 +207,16 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Password-protected pages bypass the shared page cache entirely to avoid leaking unlocked content.
+	// Check on miss only to preserve zero-DB warm path for normal pages.
+	normalizedPath := routing.NormalizePath(r.URL.Path)
+	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+		if row, err := h.queries.GetPublishedEntryByID(r.Context(), rt.EntryID.String); err == nil && row.Visibility == "password" {
+			h.servePasswordPage(w, r, row, normalizedPath, origin)
+			return
+		}
+	}
+
 	entry, err := h.hub.Pages.Do(key, func() (pagecache.Entry, error) {
 		return h.renderPage(r.Context(), origin, r.URL.Path)
 	})
@@ -203,6 +234,239 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Server-Timing", "cache;desc=\"miss\"")
 	}
 	h.writePage(w, r, entry)
+}
+
+func (h *Handler) isPasswordProtectedPath(ctx context.Context, path string) bool {
+	normalized := routing.NormalizePath(path)
+	snap := h.hub.Routes.Current()
+	if snap != nil {
+		if rt, ok := snap.ByPath[normalized]; ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+			if row, err := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); err == nil && row.Visibility == "password" {
+				return true
+			}
+		}
+		return false
+	}
+	// Fallback when snapshot not loaded: check DB directly
+	if row, err := h.queries.GetPublishedEntryByPath(ctx, normalized); err == nil && row.Visibility == "password" {
+		return true
+	}
+	return false
+}
+
+func (h *Handler) servePasswordPage(w http.ResponseWriter, r *http.Request, row db.GetPublishedEntryByIDRow, path, origin string) {
+	// Check unlock cookie
+	cookieName := h.unlockStore.CookieName(row.ID)
+	now := time.Now().Unix()
+	if cookie, err := r.Cookie(cookieName); err == nil {
+		if h.unlockStore.Valid(cookie.Value, row.ID, row.RevisionID, now) {
+			// Unlock valid: render entry content with private no-store headers (bypass global cache)
+			entry := db.GetPublishedEntryByPathRow{
+				ID: row.ID, ContentTypeID: row.ContentTypeID, Slug: row.Slug, Status: row.Status,
+				PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID,
+				Title: row.Title, Excerpt: row.Excerpt, DocumentJson: row.DocumentJson, FieldsJson: row.FieldsJson,
+				SeoTitle: row.SeoTitle, SeoDescription: row.SeoDescription, CanonicalUrl: row.CanonicalUrl,
+				FeaturedMediaID: row.FeaturedMediaID, SocialMediaID: row.SocialMediaID,
+				SeoRobotsIndex: row.SeoRobotsIndex, SeoRobotsFollow: row.SeoRobotsFollow, SchemaMode: row.SchemaMode,
+				LayoutTemplateID: row.LayoutTemplateID, Visibility: row.Visibility, PasswordHash: row.PasswordHash,
+				Sticky: row.Sticky, ReviewState: row.ReviewState,
+			}
+			siteSnap := h.hub.Site.Current()
+			if siteSnap == nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			page, err := h.renderEntry(r.Context(), origin, path, entry, siteSnap)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					http.NotFound(w, r)
+					return
+				}
+				log.Printf("render password unlocked page: %v", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			// Write with private no-store (never cache)
+			w.Header().Set("Content-Type", page.ContentType)
+			w.Header().Set("Cache-Control", "private, no-store")
+			w.Header().Set("Vary", "Accept-Encoding")
+			if page.Robots != "" {
+				w.Header().Set("X-Robots-Tag", page.Robots)
+			}
+			// ETag still for conditional but private
+			w.Header().Set("ETag", page.ETag)
+			if etagWeakMatch(r.Header.Get("If-None-Match"), page.ETag) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			enc, ok := compress.NegotiateEncoding(r.Header.Get("Accept-Encoding"))
+			if !ok {
+				http.Error(w, "Not Acceptable", http.StatusNotAcceptable)
+				return
+			}
+			switch enc {
+			case "br":
+				if len(page.Brotli) > 0 {
+					w.Header().Set("Content-Encoding", "br")
+					w.Header().Set("Content-Length", strconv.Itoa(len(page.Brotli)))
+					if r.Method != http.MethodHead {
+						_, _ = w.Write(page.Brotli)
+					}
+					return
+				}
+			case "gzip":
+				if len(page.Gzip) > 0 {
+					w.Header().Set("Content-Encoding", "gzip")
+					w.Header().Set("Content-Length", strconv.Itoa(len(page.Gzip)))
+					if r.Method != http.MethodHead {
+						_, _ = w.Write(page.Gzip)
+					}
+					return
+				}
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(page.HTML)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(page.HTML)
+			}
+			return
+		}
+	}
+	// Not unlocked: serve gate
+	h.servePasswordGate(w, r, row, "", false)
+}
+
+func (h *Handler) servePasswordGate(w http.ResponseWriter, r *http.Request, row db.GetPublishedEntryByIDRow, errorMsg string, rateLimited bool) {
+	siteSnap := h.hub.Site.Current()
+	origin := requestOrigin(r)
+	_ = siteSnap
+	_ = origin
+	gateContent := `<div class="stratum-password-gate" style="max-width:480px;margin:60px auto;padding:24px;border:1px solid #dcdcde;background:#fff;">` +
+		`<h1 style="margin:0 0 12px;">Protected Content</h1>` +
+		`<p>This content is password protected.</p>` +
+		`<form method="post" action="` + template.HTMLEscapeString(r.URL.Path) + `">` +
+		`<label>Password<input type="password" name="stratum_password" required style="width:100%;padding:8px;border:1px solid #8c8f94;border-radius:3px;margin:8px 0;"></label>` +
+		`<button type="submit" class="button button-primary" style="padding:8px 16px;background:#2271b1;color:#fff;border:none;border-radius:3px;cursor:pointer;">Unlock</button>` +
+		`</form>`
+	if errorMsg != "" {
+		gateContent += `<p style="color:#b42318;margin-top:12px;">` + template.HTMLEscapeString(errorMsg) + `</p>`
+	}
+	if rateLimited {
+		gateContent += `<p style="color:#b42318;">Too many attempts. Please try again later.</p>`
+	}
+	gateContent += `</div>`
+
+	html := []byte(`<!doctype html><html><head><meta charset="utf-8"><title>Protected</title></head><body>` + gateContent + `</body></html>`)
+	gz, _ := compress.Gzip(html)
+	br, _ := compress.Brotli(html)
+	etag := pagecache.ComputeETag(html)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Vary", "Accept-Encoding")
+	// Never cache gate in global cache
+	if h.dev {
+		w.Header().Set("Server-Timing", "cache;desc=\"miss\"")
+	}
+	enc, ok := compress.NegotiateEncoding(r.Header.Get("Accept-Encoding"))
+	if !ok {
+		http.Error(w, "Not Acceptable", http.StatusNotAcceptable)
+		return
+	}
+	switch enc {
+	case "br":
+		if len(br) > 0 {
+			w.Header().Set("Content-Encoding", "br")
+			w.Header().Set("Content-Length", strconv.Itoa(len(br)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(br)
+			}
+			return
+		}
+	case "gzip":
+		if len(gz) > 0 {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(gz)
+			}
+			return
+		}
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(html)))
+	if r.Method != http.MethodHead {
+		_, _ = w.Write(html)
+	}
+}
+
+func (h *Handler) servePasswordPost(w http.ResponseWriter, r *http.Request) {
+	normalized := routing.NormalizePath(r.URL.Path)
+	snap := h.hub.Routes.Current()
+	var entryID string
+	if snap != nil {
+		if rt, ok := snap.ByPath[normalized]; ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+			entryID = rt.EntryID.String
+		}
+	}
+	if entryID == "" {
+		// Fallback DB lookup
+		if row, err := h.queries.GetPublishedEntryByPath(r.Context(), normalized); err == nil {
+			entryID = row.ID
+		}
+	}
+	if entryID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	row, err := h.queries.GetPublishedEntryByID(r.Context(), entryID)
+	if err != nil || row.Visibility != "password" {
+		http.NotFound(w, r)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	password := r.FormValue("stratum_password")
+	if password == "" {
+		password = r.FormValue("password")
+	}
+	clientIP := r.RemoteAddr
+	// Use X-Forwarded-For if present for limiter key (but not trust fully)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		clientIP = strings.Split(xff, ",")[0]
+	}
+	clientIP = strings.TrimSpace(strings.Split(clientIP, ":")[0])
+	limiterKey := publishing.ClientKey(entryID, clientIP)
+	now := time.Now().Unix()
+	if !h.unlockLimiter.Allow(limiterKey, now) {
+		h.servePasswordGate(w, r, row, "", true)
+		return
+	}
+	// Verify password hash
+	if row.PasswordHash.String == "" || !publishing.CheckPassword(row.PasswordHash.String, password) {
+		h.unlockLimiter.Record(limiterKey, false, now)
+		h.servePasswordGate(w, r, row, "Invalid password.", false)
+		return
+	}
+	h.unlockLimiter.Record(limiterKey, true, now)
+	// Success: create token
+	token, expires := h.unlockStore.Create(row.ID, row.RevisionID, now)
+	cookieName := h.unlockStore.CookieName(row.ID)
+	secure := r.TLS != nil
+	// Also consider site URL scheme? For dev, not secure.
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+		Expires:  time.Unix(expires, 0),
+		MaxAge:   int(expires - now),
+	})
+	// Redirect GET back to same canonical URL (Post/Redirect/Get)
+	http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 }
 
 func etagWeakMatch(header, etag string) bool {

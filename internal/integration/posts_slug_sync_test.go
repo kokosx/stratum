@@ -143,5 +143,3 @@ func TestPostsPageSlugSyncOnPublish(t *testing.T) {
 		t.Fatalf("archive /news route not correct: %+v", rt2)
 	}
 }
-
-

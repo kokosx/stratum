@@ -57,6 +57,8 @@ func (s *LifecycleService) MoveToTrash(ctx context.Context, entryID string) erro
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
+	// Cancel any scheduled publication for trashed entry
+	_ = qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by trash", Valid: true}, EntryID: entryID})
 	if err := qtx.MoveEntryToTrash(ctx, db.MoveEntryToTrashParams{TrashedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entryID}); err != nil {
 		return err
 	}
@@ -317,6 +319,7 @@ func (s *LifecycleService) BulkTrash(ctx context.Context, contentTypeID string, 
 	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
 	for _, id := range ids {
+		_ = qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by trash", Valid: true}, EntryID: id})
 		if err := qtx.MoveEntryToTrash(ctx, db.MoveEntryToTrashParams{TrashedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"html"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
@@ -135,6 +136,25 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 	if revision.LayoutTemplateID.Valid {
 		layoutID = revision.LayoutTemplateID.String
 	}
+	// Publishing metadata for editor panel
+	visibility := revision.Visibility
+	if visibility == "" {
+		visibility = "public"
+	}
+	sticky := revision.Sticky != 0
+	// Scheduled job
+	var scheduledAt string
+	var scheduledUnix int64
+	hasScheduled := false
+	if job, err := h.queries.GetActivePublicationJobByEntry(r.Context(), entry.ID); err == nil {
+		hasScheduled = true
+		scheduledUnix = job.ScheduledAt
+		loc := time.UTC
+		if l, err := time.LoadLocation(settings.Timezone); err == nil {
+			loc = l
+		}
+		scheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
+	}
 	h.renderEntryForm(w, r, entryFormData{
 		Heading:               "Edit Page",
 		Action:                "/admin/pages/" + entry.ID,
@@ -171,18 +191,59 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		ParentEntryID:         stringValue(revision.ParentEntryID),
 		MenuOrder:             revision.MenuOrder,
 		Revisions:             h.revisionHistory(r.Context(), entry),
+		Visibility:            visibility,
+		Sticky:                sticky,
+		SupportsSticky:        content.DefinitionFor(pageContentType).Capabilities.SupportsSticky,
+		ScheduledAt:           scheduledAt,
+		ScheduledAtUnix:       scheduledUnix,
+		HasScheduled:          hasScheduled,
+		ReviewState:           revision.ReviewState,
 	}, "pages")
 }
 
 // entryEditorStatus derives the displayed status label and public URL for an
-// entry from its publish state.
+// entry from its publish state, including scheduled and pending.
 func (h *Handler) entryEditorStatus(r *http.Request, entry db.Entry) (string, string) {
+	latest, err := h.queries.GetLatestEntryRevision(r.Context(), entry.ID)
+	hasScheduled := false
+	var scheduledAt int64
+	if job, err2 := h.queries.GetActivePublicationJobByEntry(r.Context(), entry.ID); err2 == nil {
+		hasScheduled = true
+		scheduledAt = job.ScheduledAt
+	}
+	if hasScheduled {
+		publicURL := ""
+		if path := h.entryPublicPath(r, entry.ID); path != "" {
+			publicURL = absoluteURL(r, path)
+		}
+		// Show scheduled time in site timezone if possible
+		loc := time.UTC
+		if settings, err := h.queries.GetSiteSettings(r.Context()); err == nil {
+			if l, err := time.LoadLocation(settings.Timezone); err == nil {
+				loc = l
+			}
+		}
+		when := time.Unix(scheduledAt, 0).In(loc).Format("2006-01-02 15:04")
+		return "Scheduled (" + when + ")", publicURL
+	}
 	if !entry.PublishedRevisionID.Valid {
+		if err == nil && latest.ReviewState == "pending" {
+			return "Pending Review", ""
+		}
 		return "Draft", ""
+	}
+	// Has published
+	if err == nil && latest.ReviewState == "pending" && latest.ID != entry.PublishedRevisionID.String {
+		// If latest is pending and unpublished changes, still show Published but badge will indicate pending? For now return Pending Review with unpublished?
+		// Keep Published as primary but pending draft exists.
 	}
 	publicURL := ""
 	if path := h.entryPublicPath(r, entry.ID); path != "" {
 		publicURL = absoluteURL(r, path)
+	}
+	if err == nil && latest.ID != entry.PublishedRevisionID.String {
+		// Published with unpublished changes – status remains Published, badge handled elsewhere
+		return "Published", publicURL
 	}
 	return "Published", publicURL
 }
@@ -213,6 +274,12 @@ func (h *Handler) unpublishPage(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) previewPageRevision(w http.ResponseWriter, r *http.Request) {
 	h.previewRevision(w, r, pageContentType)
+}
+func (h *Handler) schedulePage(w http.ResponseWriter, r *http.Request) {
+	h.scheduleEntry(w, r, pageContentType, "pages")
+}
+func (h *Handler) cancelSchedulePage(w http.ResponseWriter, r *http.Request) {
+	h.cancelScheduleEntry(w, r, pageContentType, "pages")
 }
 
 // updateEntry is shared by Pages and Posts. It validates the posted input and

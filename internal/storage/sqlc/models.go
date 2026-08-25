@@ -75,6 +75,10 @@ type EntryRevision struct {
 	MenuOrder        int64          `json:"menu_order"`
 	Slug             string         `json:"slug"`
 	FieldsJson       string         `json:"fields_json"`
+	Visibility       string         `json:"visibility"`
+	PasswordHash     sql.NullString `json:"password_hash"`
+	Sticky           int64          `json:"sticky"`
+	ReviewState      string         `json:"review_state"`
 }
 
 type EntryRevisionTerm struct {
@@ -155,6 +159,18 @@ type NavigationMenu struct {
 	Slug      string `json:"slug"`
 	CreatedAt int64  `json:"created_at"`
 	UpdatedAt int64  `json:"updated_at"`
+}
+
+type PublicationJob struct {
+	ID          string         `json:"id"`
+	EntryID     string         `json:"entry_id"`
+	RevisionID  string         `json:"revision_id"`
+	ScheduledAt int64          `json:"scheduled_at"`
+	Status      string         `json:"status"`
+	CreatedBy   sql.NullString `json:"created_by"`
+	CreatedAt   int64          `json:"created_at"`
+	UpdatedAt   int64          `json:"updated_at"`
+	LastError   sql.NullString `json:"last_error"`
 }
 
 type Route struct {

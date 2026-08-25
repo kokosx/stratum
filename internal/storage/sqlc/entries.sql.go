@@ -274,6 +274,8 @@ type GetEntryBySlugParams struct {
 	Slug          string `json:"slug"`
 }
 
+// NOTE: This query is not used for public Page lookup (which must use routes).
+// It exists for test setup and non-hierarchical content type lookups.
 func (q *Queries) GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) (Entry, error) {
 	row := q.db.QueryRowContext(ctx, getEntryBySlug, arg.ContentTypeID, arg.Slug)
 	var i Entry

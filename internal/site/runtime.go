@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/rendering"
+	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
 // Runtime holds an immutable, render-ready snapshot of the site settings. Site
@@ -38,7 +38,7 @@ type Snapshot struct {
 
 	SpeculationMode      string
 	SpeculationEagerness string
-	SpeculationRulesJSON  string
+	SpeculationRulesJSON string
 
 	SocialLinks []rendering.SiteSocialLink
 

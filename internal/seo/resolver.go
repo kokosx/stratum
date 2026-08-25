@@ -209,22 +209,22 @@ func (r *Resolver) Resolve(in Input) Resolved {
 
 	twitterCard := "summary_large_image"
 
-		og := OpenGraphView{
-			Title:       raw,
-			Description: desc,
-			URL:         canonical,
-			Type:        ogType,
-			Image:       ogImage,
-			SiteName:    strings.TrimSpace(in.Site.Title),
-			Locale:      OGLocale(in.Site.Language),
-		}
-		tw := TwitterView{
-			Card:        twitterCard,
-			Title:       raw,
-			Description: desc,
-			Image:       ogImage,
-			Site:        strings.TrimSpace(in.Site.TwitterSite),
-		}
+	og := OpenGraphView{
+		Title:       raw,
+		Description: desc,
+		URL:         canonical,
+		Type:        ogType,
+		Image:       ogImage,
+		SiteName:    strings.TrimSpace(in.Site.Title),
+		Locale:      OGLocale(in.Site.Language),
+	}
+	tw := TwitterView{
+		Card:        twitterCard,
+		Title:       raw,
+		Description: desc,
+		Image:       ogImage,
+		Site:        strings.TrimSpace(in.Site.TwitterSite),
+	}
 
 	return Resolved{
 		Title:               title,

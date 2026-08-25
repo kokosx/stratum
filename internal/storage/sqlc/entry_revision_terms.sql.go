@@ -13,7 +13,8 @@ import (
 const countPublishedEntriesByTerm = `-- name: CountPublishedEntriesByTerm :one
 SELECT COUNT(*) FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
-WHERE entry_revision_terms.term_id = ?
+INNER JOIN entry_revisions pr ON pr.id = entries.published_revision_id
+WHERE entry_revision_terms.term_id = ? AND pr.visibility = 'public'
 `
 
 func (q *Queries) CountPublishedEntriesByTerm(ctx context.Context, termID string) (int64, error) {
@@ -38,8 +39,8 @@ FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
 INNER JOIN entry_revisions AS latest_revision ON latest_revision.id = entries.published_revision_id
 INNER JOIN routes ON routes.entry_id = entries.id AND routes.route_type = 'entry'
-WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
-ORDER BY entries.published_at DESC, entries.id DESC
+WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL AND latest_revision.visibility = 'public'
+ORDER BY latest_revision.sticky DESC, entries.published_at DESC, entries.id DESC
 LIMIT ? OFFSET ?
 `
 
@@ -110,8 +111,8 @@ FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
 INNER JOIN entry_revisions AS latest_revision ON latest_revision.id = entries.published_revision_id
 INNER JOIN routes ON routes.entry_id = entries.id AND routes.route_type = 'entry'
-WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
-ORDER BY entries.published_at ASC, entries.id ASC
+WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL AND latest_revision.visibility = 'public'
+ORDER BY latest_revision.sticky DESC, entries.published_at ASC, entries.id ASC
 LIMIT ? OFFSET ?
 `
 
@@ -179,7 +180,8 @@ func (q *Queries) ListPublishedEntriesByTermAsc(ctx context.Context, arg ListPub
 const listPublishedEntriesByTermCount = `-- name: ListPublishedEntriesByTermCount :one
 SELECT COUNT(*) FROM entries
 INNER JOIN entry_revision_terms ON entry_revision_terms.revision_id = entries.published_revision_id
-WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+INNER JOIN entry_revisions pr ON pr.id = entries.published_revision_id
+WHERE entry_revision_terms.term_id = ? AND entries.content_type_id = ? AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL AND pr.visibility = 'public'
 `
 
 type ListPublishedEntriesByTermCountParams struct {

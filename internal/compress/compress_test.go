@@ -22,7 +22,7 @@ func TestNegotiateEncodingTable(t *testing.T) {
 		{"*", "br", true},
 		{"*;q=0", "", false},
 		{"gzip;q=0.5,*;q=0.8", "br", true},
-		{"br;q=garbage", "", true}, // garbage q=0, so br not acceptable, fallback to identity
+		{"br;q=garbage", "", true},           // garbage q=0, so br not acceptable, fallback to identity
 		{"br;q=0.5, gzip;q=0.5", "br", true}, // tie br wins
 	}
 	for _, tc := range tests {

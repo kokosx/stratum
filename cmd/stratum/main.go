@@ -12,6 +12,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
@@ -90,6 +91,12 @@ func serve(application *app.App) error {
 	}
 	adminHandler.SetPreviewRenderer(publicHandler.RenderPreview)
 	adminHandler.SetDocumentPreviewRenderer(publicHandler.RenderEditableDocument)
+
+	// Scheduled publishing runs as part of stratum serve.
+	scheduler := publishing.NewSchedulerWithHub(application.Database.DB, application.Queries, hub)
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	go scheduler.Start(schedCtx)
+	defer schedCancel()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

@@ -83,7 +83,7 @@ func newPostsRegistry(t *testing.T) *Registry {
 	reg.snapshot.Store(&snapshot{
 		renderer: r,
 		definitions: map[BlockKey]*Definition{
-			{Name: "core/posts", Version: 1}: {Namespace: "core", Name: "posts", Version: 1, Schema: mustParseSchema(postsSchema), Template: postsTemplate, Styles: postsStyles},
+			{Name: "core/posts", Version: 1}:   {Namespace: "core", Name: "posts", Version: 1, Schema: mustParseSchema(postsSchema), Template: postsTemplate, Styles: postsStyles},
 			{Name: "core/section", Version: 1}: {Namespace: "core", Name: "section", Version: 1, Schema: mustParseSchema(sectionSchema), Template: `<section>{{ .Children }}</section>`},
 		},
 		blockStyles: map[rendering.BlockKey]string{
@@ -182,7 +182,7 @@ func TestCorePostsPaginationOnlyInArchiveMode(t *testing.T) {
 func TestCorePostsShowFlags(t *testing.T) {
 	reg := newPostsRegistry(t)
 	cases := []struct {
-		settings string
+		settings       string
 		mustContain    []string
 		mustNotContain []string
 	}{

@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	CancelActivePublicationJobsForEntry(ctx context.Context, arg CancelActivePublicationJobsForEntryParams) error
 	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
 	ClearLayoutTemplatePublishedRevision(ctx context.Context, arg ClearLayoutTemplatePublishedRevisionParams) error
 	ClearPublishedRevision(ctx context.Context, arg ClearPublishedRevisionParams) error
@@ -32,6 +33,7 @@ type Querier interface {
 	CreateMediaVariant(ctx context.Context, arg CreateMediaVariantParams) (MediaVariant, error)
 	CreateNavigationItem(ctx context.Context, arg CreateNavigationItemParams) error
 	CreateNavigationMenu(ctx context.Context, arg CreateNavigationMenuParams) error
+	CreatePublicationJob(ctx context.Context, arg CreatePublicationJobParams) error
 	CreateRoute(ctx context.Context, arg CreateRouteParams) error
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateTaxonomy(ctx context.Context, arg CreateTaxonomyParams) error
@@ -43,6 +45,7 @@ type Querier interface {
 	DeleteNavigationItemsByMenu(ctx context.Context, menuID string) error
 	DeleteNavigationLocationsForMenu(ctx context.Context, menuID string) error
 	DeleteNavigationMenu(ctx context.Context, id string) error
+	DeletePublicationJobsForEntry(ctx context.Context, entryID string) error
 	DeleteRoute(ctx context.Context, id string) error
 	DeleteRoutesByEntryID(ctx context.Context, entryID sql.NullString) error
 	DeleteSession(ctx context.Context, tokenHash string) error
@@ -51,12 +54,15 @@ type Querier interface {
 	DeleteTerm(ctx context.Context, id string) error
 	DeleteTermsForRevision(ctx context.Context, revisionID string) error
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
+	GetActivePublicationJobByEntry(ctx context.Context, entryID string) (PublicationJob, error)
 	GetArchiveRouteByContentType(ctx context.Context, contentTypeID sql.NullString) (Route, error)
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
 	GetContentType(ctx context.Context, id string) (ContentType, error)
 	GetContentTypeWithDefault(ctx context.Context, id string) (ContentType, error)
 	GetEntriesByIDs(ctx context.Context, arg GetEntriesByIDsParams) ([]Entry, error)
 	GetEntry(ctx context.Context, id string) (Entry, error)
+	// NOTE: This query is not used for public Page lookup (which must use routes).
+	// It exists for test setup and non-hierarchical content type lookups.
 	GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) (Entry, error)
 	GetEntryRevision(ctx context.Context, id string) (EntryRevision, error)
 	GetEntryRoute(ctx context.Context, entryID sql.NullString) (Route, error)
@@ -69,6 +75,8 @@ type Querier interface {
 	GetMediaVariant(ctx context.Context, arg GetMediaVariantParams) (MediaVariant, error)
 	GetNavigationMenu(ctx context.Context, id string) (NavigationMenu, error)
 	GetNavigationMenuBySlug(ctx context.Context, slug string) (NavigationMenu, error)
+	GetPublicationJob(ctx context.Context, id string) (PublicationJob, error)
+	GetPublicationJobByEntryAndRevision(ctx context.Context, arg GetPublicationJobByEntryAndRevisionParams) (PublicationJob, error)
 	GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error)
 	GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error)
 	GetPublishedLayoutTemplateRevision(ctx context.Context, id string) (LayoutTemplateRevision, error)
@@ -93,6 +101,7 @@ type Querier interface {
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListChildTerms(ctx context.Context, parentID sql.NullString) ([]Term, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
+	ListDuePublicationJobs(ctx context.Context, scheduledAt int64) ([]PublicationJob, error)
 	ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
@@ -107,6 +116,7 @@ type Querier interface {
 	ListNavigationLocations(ctx context.Context) ([]NavigationLocation, error)
 	ListNavigationLocationsForMenu(ctx context.Context, menuID string) ([]string, error)
 	ListNavigationMenus(ctx context.Context) ([]NavigationMenu, error)
+	ListPublicationJobsForEntry(ctx context.Context, entryID string) ([]PublicationJob, error)
 	ListPublishedEntriesByContentType(ctx context.Context, arg ListPublishedEntriesByContentTypeParams) ([]ListPublishedEntriesByContentTypeRow, error)
 	ListPublishedEntriesByContentTypeAsc(ctx context.Context, arg ListPublishedEntriesByContentTypeAscParams) ([]ListPublishedEntriesByContentTypeAscRow, error)
 	ListPublishedEntriesByTerm(ctx context.Context, arg ListPublishedEntriesByTermParams) ([]ListPublishedEntriesByTermRow, error)
@@ -126,8 +136,8 @@ type Querier interface {
 	// Returns every URL that belongs in the sitemap: published and active entries
 	// of public content types that own an entry-type route and resolve as
 	// indexable. Drafts (no published revision), private/trash entries,
-	// non-public content types, redirect/system routes, admin/preview URLs and
-	// noindex revisions are all excluded by the joins and filters below.
+	// private/password visibility, non-public content types, redirect/system routes,
+	// admin/preview URLs and noindex revisions are all excluded by the joins and filters below.
 	// <lastmod> comes from the published revision timestamp, so a newer draft
 	// never changes the sitemap.
 	ListSitemapEntries(ctx context.Context) ([]ListSitemapEntriesRow, error)
@@ -166,6 +176,7 @@ type Querier interface {
 	UpdateMediaMetadata(ctx context.Context, arg UpdateMediaMetadataParams) error
 	UpdateNavigationMenu(ctx context.Context, arg UpdateNavigationMenuParams) error
 	UpdatePerformanceSettings(ctx context.Context, arg UpdatePerformanceSettingsParams) error
+	UpdatePublicationJobStatus(ctx context.Context, arg UpdatePublicationJobStatusParams) error
 	UpdateReadingSettings(ctx context.Context, arg UpdateReadingSettingsParams) error
 	UpdateRoute(ctx context.Context, arg UpdateRouteParams) error
 	UpdateSEOSettings(ctx context.Context, arg UpdateSEOSettingsParams) error

@@ -100,6 +100,16 @@
 .seo-serp-url { color: #006621; font-size: .82rem; margin: .15rem 0; word-break: break-all; }
 .seo-serp-description { color: #333; font-size: .85rem; line-height: 1.4; }
 
+.richtext-control { border: 1px solid #8c8f94; border-radius: 3px; background: #fff; }
+.richtext-control__toolbar { display: flex; gap: 4px; padding: 6px; border-bottom: 1px solid #dcdcde; background: #f6f7f7; flex-wrap: wrap; }
+.richtext-control__toolbar .button { padding: 4px 8px; font-size: 12px; border: 1px solid #c3c4c7; background: #fff; border-radius: 3px; cursor: pointer; min-width: 32px; }
+.richtext-control__toolbar .button:hover { border-color: #2271b1; background: #f6f7f7; }
+.richtext-control__toolbar .button.is-active { background: #2271b1; color: #fff; border-color: #2271b1; }
+.richtext-control__toolbar .button:disabled { opacity: 0.5; cursor: not-allowed; }
+.richtext-control__editor { min-height: 80px; padding: 8px 9px; outline: none; border: none; font: inherit; line-height: 1.5; }
+.richtext-control__editor:focus { outline: none; }
+.richtext-control:focus-within { border-color: #2271b1; box-shadow: 0 0 0 1px #2271b1; }
+
 /* P1.50: Focus-visible standard */
 .button:focus-visible, .catalog-item:focus-visible, .node__actions button:focus-visible, .menu a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #2271b1; outline-offset: 2px; }
 

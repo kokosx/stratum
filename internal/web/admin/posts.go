@@ -3,6 +3,9 @@ package admin
 import (
 	"log"
 	"net/http"
+	"time"
+
+	"github.com/kokosx/stratum/internal/content"
 )
 
 const postContentType = "post"
@@ -78,6 +81,23 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 	if revision.LayoutTemplateID.Valid {
 		layoutID = revision.LayoutTemplateID.String
 	}
+	visibility := revision.Visibility
+	if visibility == "" {
+		visibility = "public"
+	}
+	sticky := revision.Sticky != 0
+	var scheduledAt string
+	var scheduledUnix int64
+	hasScheduled := false
+	if job, err := h.queries.GetActivePublicationJobByEntry(r.Context(), entry.ID); err == nil {
+		hasScheduled = true
+		scheduledUnix = job.ScheduledAt
+		loc := time.UTC
+		if l, err := time.LoadLocation(settings.Timezone); err == nil {
+			loc = l
+		}
+		scheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
+	}
 	h.renderEntryForm(w, r, entryFormData{
 		Heading:          "Edit Post",
 		Action:           "/admin/posts/" + entry.ID,
@@ -109,6 +129,13 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		LayoutTemplateID: layoutID,
 		LayoutTemplates:  h.loadLayoutTemplateOptions(r.Context(), postContentType),
 		Revisions:        h.revisionHistory(r.Context(), entry),
+		Visibility:       visibility,
+		Sticky:           sticky,
+		SupportsSticky:   content.DefinitionFor(postContentType).Capabilities.SupportsSticky,
+		ScheduledAt:      scheduledAt,
+		ScheduledAtUnix:  scheduledUnix,
+		HasScheduled:     hasScheduled,
+		ReviewState:      revision.ReviewState,
 	}, "posts")
 }
 
@@ -128,4 +155,10 @@ func (h *Handler) unpublishPost(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) previewPostRevision(w http.ResponseWriter, r *http.Request) {
 	h.previewRevision(w, r, postContentType)
+}
+func (h *Handler) schedulePost(w http.ResponseWriter, r *http.Request) {
+	h.scheduleEntry(w, r, postContentType, "posts")
+}
+func (h *Handler) cancelSchedulePost(w http.ResponseWriter, r *http.Request) {
+	h.cancelScheduleEntry(w, r, postContentType, "posts")
 }

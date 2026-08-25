@@ -71,6 +71,52 @@
 	       {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish">Unpublish</button>{{ end }}
     </div>
   </header>
+  <section class="panel publishing-panel" style="margin:12px 0;padding:16px;display:grid;gap:12px;">
+    <h3 style="margin:0;">Publishing</h3>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+      <span>Status: <strong>{{ .Content.Status }}</strong></span>
+      {{ if .Content.HasScheduled }}<span>Scheduled for {{ .Content.ScheduledAt }} <button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button></span>{{ end }}
+    </div>
+    <div style="display:grid;gap:8px;max-width:480px;">
+      <label class="form-field">Visibility
+        <select name="visibility" id="entry-visibility">
+          <option value="public" {{ if eq .Content.Visibility "public" }}selected{{ end }}>Public</option>
+          <option value="private" {{ if eq .Content.Visibility "private" }}selected{{ end }}>Private</option>
+          <option value="password" {{ if eq .Content.Visibility "password" }}selected{{ end }}>Password Protected</option>
+        </select>
+      </label>
+      <label class="form-field" id="entry-password-field" {{ if ne .Content.Visibility "password" }}hidden{{ end }}>Password
+        <input type="password" name="password" placeholder="{{ if eq .Content.Visibility "password" }}Leave blank to keep{{ else }}Enter password{{ end }}">
+      </label>
+      {{ if .Content.SupportsSticky }}
+      <label class="check-row"><input type="checkbox" name="sticky" value="1" {{ if .Content.Sticky }}checked{{ end }}> Sticky post (show first in lists)</label>
+      {{ end }}
+      <label class="form-field">Publish date/time
+        <input type="datetime-local" name="scheduled_at" value="{{ .Content.ScheduledAt }}">
+        <span class="field-desc">Leave empty to publish immediately. Time is in site timezone.</span>
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
+        <button class="button" type="submit" name="review_state" value="pending" formaction="{{ .Content.Action }}" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Submit for Review</button>
+        {{ if .Content.HasScheduled }}
+        <button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Reschedule</button>
+        {{ else }}
+        <button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Schedule</button>
+        {{ end }}
+        <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">{{ if eq .Content.Status "Published" }}Update{{ else }}Publish{{ end }}</button>
+        {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish" data-on:click__prevent="@post('{{ .Content.Action }}/unpublish', {contentType: 'form'})">Unpublish</button>{{ end }}
+      </div>
+    </div>
+  </section>
+  <script>
+    (function(){
+      var vis = document.getElementById('entry-visibility');
+      var pwdField = document.getElementById('entry-password-field');
+      if (!vis || !pwdField) return;
+      function toggle(){ pwdField.hidden = vis.value !== 'password'; }
+      vis.addEventListener('change', toggle);
+    })();
+  </script>
   {{ if .Content.Hierarchical }}
   <section class="panel" style="margin:12px 0;padding:16px;">
     <h3 style="margin:0 0 8px;">Page Attributes</h3>

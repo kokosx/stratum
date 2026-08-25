@@ -11,6 +11,8 @@ WHERE id IN (sqlc.slice('ids'))
   AND content_type_id = sqlc.arg('content_type_id');
 
 -- name: GetEntryBySlug :one
+-- NOTE: This query is not used for public Page lookup (which must use routes).
+-- It exists for test setup and non-hierarchical content type lookups.
 SELECT *
 FROM entries
 WHERE content_type_id = ?

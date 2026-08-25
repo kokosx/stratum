@@ -724,69 +724,332 @@
     editor.setAttribute("role", "textbox");
     editor.setAttribute("aria-multiline", "true");
 
-    function command(label, commandName, argument) {
-      const button = element("button", "button", label);
-      button.type = "button";
-      button.addEventListener("mousedown", (event) => event.preventDefault());
-      button.addEventListener("click", () => {
-        editor.focus();
-        document.execCommand(commandName, false, argument);
-        save();
-      });
-      toolbar.append(button);
-    }
-    command("B", "bold");
-    command("I", "italic");
-    command("S", "strikeThrough");
-    command("Code", "formatBlock", "code");
-    const link = element("button", "button", "Link");
-    link.type = "button";
-    link.addEventListener("mousedown", (event) => event.preventDefault());
-    link.addEventListener("click", () => {
-      const href = window.prompt("Link URL");
-      if (href) {
-        editor.focus();
-        document.execCommand("createLink", false, href);
-        save();
-      }
-    });
-    toolbar.append(link);
+    let model = value && value.version === 1 && Array.isArray(value.content) ? clone(value) : { version: 1, content: [] };
 
-    function serialize(node, marks, content) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (node.textContent) content.push({ text: node.textContent, ...(marks.length ? { marks } : {}) });
-        return;
-      }
-      const tag = node.nodeName.toLowerCase();
-      let next = marks;
-      if (tag === "strong" || tag === "b") next = [...marks, { type: "bold" }];
-      if (tag === "em" || tag === "i") next = [...marks, { type: "italic" }];
-      if (tag === "s" || tag === "strike") next = [...marks, { type: "strike" }];
-      if (tag === "code") next = [...marks, { type: "code" }];
-      if (tag === "a" && node.getAttribute("href")) next = [...marks, { type: "link", href: node.getAttribute("href") }];
-      node.childNodes.forEach((child) => serialize(child, next, content));
+    function clone(v) { return JSON.parse(JSON.stringify(v)); }
+
+    function isSafeLink(href) {
+      if (!href) return false;
+      if (href.startsWith("#") || href.startsWith("/") ) return !href.startsWith("//");
+      try {
+        const u = new URL(href, "http://example.com");
+        const scheme = u.protocol.replace(":","").toLowerCase();
+        return ["http","https","mailto","tel"].includes(scheme) && !href.startsWith("//");
+      } catch { return false; }
     }
-    function save() {
+
+    function sameMarks(a,b){
+      if (!a && !b) return true;
+      if (!a || !b) return false;
+      if (a.length !== b.length) return false;
+      const sa = [...a].sort((x,y)=> x.type===y.type ? (x.href||"").localeCompare(y.href||"") : x.type.localeCompare(y.type));
+      const sb = [...b].sort((x,y)=> x.type===y.type ? (x.href||"").localeCompare(y.href||"") : x.type.localeCompare(y.type));
+      for (let i=0;i<sa.length;i++) if (sa[i].type!==sb[i].type || sa[i].href!==sb[i].href) return false;
+      return true;
+    }
+
+    function getSelectionOffsets() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount===0) return null;
+      const range = sel.getRangeAt(0);
+      if (!editor.contains(range.commonAncestorContainer) && range.commonAncestorContainer!==editor) return null;
+      const preStart = document.createRange();
+      preStart.selectNodeContents(editor);
+      preStart.setEnd(range.startContainer, range.startOffset);
+      const start = preStart.toString().length;
+      const preEnd = document.createRange();
+      preEnd.selectNodeContents(editor);
+      preEnd.setEnd(range.endContainer, range.endOffset);
+      const end = preEnd.toString().length;
+      return { start, end };
+    }
+
+    function setSelectionOffsets(start, end) {
+      const sel = window.getSelection();
+      if (!sel) return;
+      let charIndex = 0;
+      let startNode, startOffset, endNode, endOffset;
+      const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+      let node;
+      while ((node = walker.nextNode())) {
+        const nextIndex = charIndex + node.textContent.length;
+        if (startNode === undefined && start >= charIndex && start <= nextIndex) {
+          startNode = node;
+          startOffset = start - charIndex;
+        }
+        if (endNode === undefined && end >= charIndex && end <= nextIndex) {
+          endNode = node;
+          endOffset = end - charIndex;
+        }
+        charIndex = nextIndex;
+        if (startNode && endNode) break;
+      }
+      if (startNode && endNode) {
+        const range = document.createRange();
+        range.setStart(startNode, startOffset);
+        range.setEnd(endNode, endOffset);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+
+    function renderEditorFromModel() {
+      editor.replaceChildren();
+      for (const run of model.content) {
+        let node = document.createTextNode(run.text || "");
+        const marks = [...(run.marks||[])].sort((a,b)=> a.type===b.type ? (a.href||"").localeCompare(b.href||"") : a.type.localeCompare(b.type));
+        for (const mark of marks) {
+          const wrapper = document.createElement(mark.type === "bold" ? "strong" : mark.type === "italic" ? "em" : mark.type === "strike" ? "s" : mark.type === "code" ? "code" : "a");
+          if (mark.type === "link") wrapper.setAttribute("href", mark.href || "");
+          wrapper.append(node);
+          node = wrapper;
+        }
+        editor.append(node);
+      }
+    }
+
+    function normalizeModel() {
+      const out = [];
+      for (const run of model.content) {
+        if (!run.text) continue;
+        if (out.length>0 && sameMarks(out[out.length-1].marks, run.marks)) {
+          out[out.length-1].text += run.text;
+        } else {
+          // deduplicate marks per run
+          if (run.marks && run.marks.length) {
+            const uniq = {};
+            for (const m of run.marks) uniq[m.type + "\x00" + (m.href||"")] = m;
+            let marks = Object.values(uniq);
+            // enforce max one link per run
+            const links = marks.filter(m=>m.type==="link");
+            if (links.length>1) marks = marks.filter(m=>m.type!=="link").concat([links[0]]);
+            marks.sort((a,b)=> a.type===b.type ? (a.href||"").localeCompare(b.href||"") : a.type.localeCompare(b.type));
+            run.marks = marks;
+          }
+          out.push(run);
+        }
+      }
+      model.content = out;
+    }
+
+    function applyMark(markType, href) {
+      const sel = getSelectionOffsets();
+      if (!sel || sel.start===sel.end) return;
+      if (markType==="link" && !isSafeLink(href)) return;
+      const newContent = [];
+      let pos=0;
+      for (const run of model.content) {
+        const runStart = pos;
+        const runEnd = pos + run.text.length;
+        pos = runEnd;
+        if (runEnd <= sel.start || runStart >= sel.end) {
+          newContent.push(clone(run));
+          continue;
+        }
+        const beforeLen = Math.max(0, sel.start - runStart);
+        const afterLen = Math.max(0, runEnd - sel.end);
+        const selectedLen = run.text.length - beforeLen - afterLen;
+        if (beforeLen>0) {
+          newContent.push({ text: run.text.slice(0, beforeLen), ...(run.marks?{marks: clone(run.marks)}:{}) });
+        }
+        let selectedText = run.text.slice(beforeLen, beforeLen+selectedLen);
+        let marks = run.marks ? clone(run.marks) : [];
+        if (markType==="link") {
+          marks = marks.filter(m=>m.type!=="link");
+          marks.push({type:"link", href});
+        } else {
+          const has = marks.some(m=>m.type===markType);
+          if (has) marks = marks.filter(m=>m.type!==markType);
+          else marks.push({type:markType});
+        }
+        const uniq={};
+        for (const m of marks) uniq[m.type + "\x00" + (m.href||"")] = m;
+        marks = Object.values(uniq);
+        marks.sort((a,b)=> a.type===b.type ? (a.href||"").localeCompare(b.href||"") : a.type.localeCompare(b.type));
+        // enforce one link
+        const linkMarks = marks.filter(m=>m.type==="link");
+        if (linkMarks.length>1) marks = marks.filter(m=>m.type!=="link").concat([linkMarks[0]]);
+        newContent.push({ text: selectedText, ...(marks.length?{marks}:{}) });
+        if (afterLen>0) {
+          newContent.push({ text: run.text.slice(run.text.length-afterLen), ...(run.marks?{marks: clone(run.marks)}:{}) });
+        }
+      }
+      model.content = newContent;
+      normalizeModel();
+      // enforce limits modestly
+      if (model.content.length>200) model.content = model.content.slice(0,200);
+      let total=0; for (const r of model.content) total+=r.text.length;
+      if (total>10000) {
+        // truncate last run
+        let excess = total-10000;
+        for (let i=model.content.length-1;i>=0 && excess>0;i--) {
+          if (model.content[i].text.length > excess) {
+            model.content[i].text = model.content[i].text.slice(0, -excess);
+            excess=0;
+          } else {
+            excess -= model.content[i].text.length;
+            model.content.splice(i,1);
+          }
+        }
+      }
+      renderEditorFromModel();
+      setSelectionOffsets(sel.start, sel.end);
+      saveModel();
+      updateToolbarState();
+    }
+
+    function saveModel() {
+      update(clone(model));
+    }
+
+    function serializeFromDOM() {
+      function serialize(node, marks, content) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          if (node.textContent) content.push({ text: node.textContent, ...(marks.length ? { marks: clone(marks) } : {}) });
+          return;
+        }
+        const tag = node.nodeName.toLowerCase();
+        let next = marks;
+        if (tag === "strong" || tag === "b") next = [...marks, { type: "bold" }];
+        if (tag === "em" || tag === "i") next = [...marks, { type: "italic" }];
+        if (tag === "s" || tag === "strike") next = [...marks, { type: "strike" }];
+        if (tag === "code") next = [...marks, { type: "code" }];
+        if (tag === "a" && node.getAttribute("href")) next = [...marks, { type: "link", href: node.getAttribute("href") }];
+        node.childNodes.forEach((child) => serialize(child, next, content));
+      }
       const content = [];
       editor.childNodes.forEach((child) => serialize(child, [], content));
-      update({ version: 1, content });
+      model = { version: 1, content };
+      normalizeModel();
+      saveModel();
     }
-    function appendRun(run) {
-      let node = document.createTextNode(run.text || "");
-      (run.marks || []).forEach((mark) => {
-        const wrapper = document.createElement(mark.type === "bold" ? "strong" : mark.type === "italic" ? "em" : mark.type === "strike" ? "s" : mark.type === "code" ? "code" : "a");
-        if (mark.type === "link") wrapper.href = mark.href || "";
-        wrapper.append(node);
-        node = wrapper;
+
+    function updateToolbarState() {
+      const sel = getSelectionOffsets();
+      const buttons = toolbar.querySelectorAll("button");
+      // Reset
+      buttons.forEach(b=>b.classList.remove("is-active"));
+      if (!sel || sel.start===sel.end) return;
+      // Determine marks that are present in entire selection
+      let pos=0;
+      let selectedMarks = null;
+      let first = true;
+      for (const run of model.content) {
+        const runStart=pos;
+        const runEnd=pos+run.text.length;
+        pos=runEnd;
+        if (runEnd <= sel.start || runStart >= sel.end) continue;
+        const marks = run.marks||[];
+        if (first) { selectedMarks = new Set(marks.map(m=>m.type + (m.href? ":"+m.href : ""))); first=false; }
+        else {
+          const cur = new Set(marks.map(m=>m.type + (m.href? ":"+m.href:"")));
+          for (const key of [...selectedMarks]) if (!cur.has(key)) selectedMarks.delete(key);
+        }
+      }
+      if (!selectedMarks) return;
+      for (const btn of buttons) {
+        const type = btn.dataset.mark;
+        if (!type) continue;
+        if ([...selectedMarks].some(k=>k===type || k.startsWith(type+":"))) btn.classList.add("is-active");
+      }
+    }
+
+    function createToolbarButton(label, markType, href) {
+      const btn = element("button", "button", label);
+      btn.type = "button";
+      btn.dataset.mark = markType;
+      btn.addEventListener("mousedown", (e)=> e.preventDefault());
+      btn.addEventListener("click", () => {
+        editor.focus();
+        if (markType==="link") {
+          const sel = getSelectionOffsets();
+          if (!sel || sel.start===sel.end) return;
+          const url = window.prompt("Link URL");
+          if (!url) return;
+          if (!isSafeLink(url)) { window.alert("Invalid URL. Use /path, #anchor, https://, http://, mailto:, tel:"); return; }
+          applyMark("link", url);
+        } else {
+          applyMark(markType);
+        }
       });
-      editor.append(node);
+      return btn;
     }
-    (value?.content || []).forEach(appendRun);
-    editor.addEventListener("input", save);
-    editor.addEventListener("paste", (event) => {
-      event.preventDefault();
-      document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+
+    toolbar.append(createToolbarButton("B","bold"));
+    toolbar.append(createToolbarButton("I","italic"));
+    toolbar.append(createToolbarButton("S","strike"));
+    toolbar.append(createToolbarButton("Code","code"));
+    toolbar.append(createToolbarButton("Link","link"));
+
+    renderEditorFromModel();
+    updateToolbarState();
+
+    editor.addEventListener("input", () => {
+      serializeFromDOM();
+      updateToolbarState();
     });
+    editor.addEventListener("keyup", updateToolbarState);
+    editor.addEventListener("mouseup", updateToolbarState);
+    document.addEventListener("selectionchange", () => {
+      if (document.activeElement===editor || editor.contains(document.activeElement)) updateToolbarState();
+    });
+    editor.addEventListener("paste", (e) => {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData).getData("text/plain") || "";
+      const normalized = text.replace(/\r\n/g, " ").replace(/\n/g, " ").replace(/\r/g, " ");
+      const sel = getSelectionOffsets();
+      if (!sel) return;
+      // Insert normalized text at selection
+      const before = model.content.slice();
+      let pos=0;
+      const newContent=[];
+      let inserted=false;
+      for (const run of before) {
+        const runStart=pos;
+        const runEnd=pos+run.text.length;
+        pos=runEnd;
+        if (!inserted && sel.start>=runStart && sel.start<=runEnd) {
+          const beforeLen = sel.start - runStart;
+          const afterLen = runEnd - sel.end;
+          if (beforeLen>0) newContent.push({text: run.text.slice(0, beforeLen), ...(run.marks?{marks: clone(run.marks)}:{})});
+          if (normalized) newContent.push({text: normalized});
+          if (afterLen>0) newContent.push({text: run.text.slice(run.text.length-afterLen), ...(run.marks?{marks: clone(run.marks)}:{})});
+          // handle runs after selection
+          inserted=true;
+        } else if (inserted) {
+          if (runEnd <= sel.start || runStart >= sel.end) newContent.push(clone(run));
+          // else skip selected runs (they were replaced)
+        } else {
+          if (runEnd <= sel.start) newContent.push(clone(run));
+          else if (runStart >= sel.end) {
+            if (!inserted) {
+              if (normalized) newContent.push({text: normalized});
+              inserted=true;
+            }
+            newContent.push(clone(run));
+          }
+        }
+      }
+      if (!inserted && normalized) {
+        // append at end
+        newContent.push({text: normalized});
+      }
+      // If selection was empty and at end, handling above may have missed
+      model.content = newContent;
+      normalizeModel();
+      renderEditorFromModel();
+      const newPos = sel.start + normalized.length;
+      setSelectionOffsets(newPos, newPos);
+      saveModel();
+    });
+    editor.addEventListener("keydown", (e) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase()==="b") { e.preventDefault(); applyMark("bold"); }
+      if (mod && e.key.toLowerCase()==="i") { e.preventDefault(); applyMark("italic"); }
+      if (mod && e.key.toLowerCase()==="k") { e.preventDefault(); const sel=getSelectionOffsets(); if (!sel||sel.start===sel.end) return; const url=window.prompt("Link URL"); if (!url) return; if (!isSafeLink(url)) { window.alert("Invalid URL"); return; } applyMark("link", url); }
+      if (e.key==="Enter") { e.preventDefault(); }
+    });
+
     container.append(toolbar, editor);
     return container;
   }

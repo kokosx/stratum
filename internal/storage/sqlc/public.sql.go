@@ -13,10 +13,12 @@ import (
 const countPublishedEntriesByContentType = `-- name: CountPublishedEntriesByContentType :one
 SELECT COUNT(*)
 FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
 JOIN routes rt ON rt.entry_id = e.id
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND r.visibility = 'public'
   AND rt.route_type = 'entry'
 `
 
@@ -48,7 +50,11 @@ SELECT
     r.seo_robots_index,
     r.seo_robots_follow,
     r.schema_mode,
-    r.layout_template_id
+    r.layout_template_id,
+    r.visibility,
+    r.password_hash,
+    r.sticky,
+    r.review_state
 FROM entries e
 JOIN entry_revisions r
     ON r.id = e.published_revision_id
@@ -79,6 +85,10 @@ type GetPublishedEntryByIDRow struct {
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 	SchemaMode       string         `json:"schema_mode"`
 	LayoutTemplateID sql.NullString `json:"layout_template_id"`
+	Visibility       string         `json:"visibility"`
+	PasswordHash     sql.NullString `json:"password_hash"`
+	Sticky           int64          `json:"sticky"`
+	ReviewState      string         `json:"review_state"`
 }
 
 func (q *Queries) GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error) {
@@ -105,6 +115,10 @@ func (q *Queries) GetPublishedEntryByID(ctx context.Context, id string) (GetPubl
 		&i.SeoRobotsFollow,
 		&i.SchemaMode,
 		&i.LayoutTemplateID,
+		&i.Visibility,
+		&i.PasswordHash,
+		&i.Sticky,
+		&i.ReviewState,
 	)
 	return i, err
 }
@@ -131,7 +145,11 @@ SELECT
     r.seo_robots_index,
     r.seo_robots_follow,
     r.schema_mode,
-    r.layout_template_id
+    r.layout_template_id,
+    r.visibility,
+    r.password_hash,
+    r.sticky,
+    r.review_state
 
 FROM routes rt
 
@@ -169,6 +187,10 @@ type GetPublishedEntryByPathRow struct {
 	SeoRobotsFollow  sql.NullInt64  `json:"seo_robots_follow"`
 	SchemaMode       string         `json:"schema_mode"`
 	LayoutTemplateID sql.NullString `json:"layout_template_id"`
+	Visibility       string         `json:"visibility"`
+	PasswordHash     sql.NullString `json:"password_hash"`
+	Sticky           int64          `json:"sticky"`
+	ReviewState      string         `json:"review_state"`
 }
 
 func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (GetPublishedEntryByPathRow, error) {
@@ -195,6 +217,10 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 		&i.SeoRobotsFollow,
 		&i.SchemaMode,
 		&i.LayoutTemplateID,
+		&i.Visibility,
+		&i.PasswordHash,
+		&i.Sticky,
+		&i.ReviewState,
 	)
 	return i, err
 }
@@ -210,14 +236,17 @@ SELECT
     r.excerpt,
     r.featured_media_id,
     r.fields_json,
-    rt.path AS route_path
+    rt.path AS route_path,
+    r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
 JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND r.visibility = 'public'
 ORDER BY
+    r.sticky DESC,
     COALESCE(e.first_published_at, e.published_at) DESC,
     e.published_at DESC,
     e.id DESC
@@ -241,6 +270,7 @@ type ListPublishedEntriesByContentTypeRow struct {
 	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
 	FieldsJson       string         `json:"fields_json"`
 	RoutePath        string         `json:"route_path"`
+	Sticky           int64          `json:"sticky"`
 }
 
 func (q *Queries) ListPublishedEntriesByContentType(ctx context.Context, arg ListPublishedEntriesByContentTypeParams) ([]ListPublishedEntriesByContentTypeRow, error) {
@@ -263,6 +293,7 @@ func (q *Queries) ListPublishedEntriesByContentType(ctx context.Context, arg Lis
 			&i.FeaturedMediaID,
 			&i.FieldsJson,
 			&i.RoutePath,
+			&i.Sticky,
 		); err != nil {
 			return nil, err
 		}
@@ -288,14 +319,17 @@ SELECT
     r.excerpt,
     r.featured_media_id,
     r.fields_json,
-    rt.path AS route_path
+    rt.path AS route_path,
+    r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
 JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND r.visibility = 'public'
 ORDER BY
+    r.sticky DESC,
     COALESCE(e.first_published_at, e.published_at) ASC,
     e.published_at ASC,
     e.id ASC
@@ -319,6 +353,7 @@ type ListPublishedEntriesByContentTypeAscRow struct {
 	FeaturedMediaID  sql.NullString `json:"featured_media_id"`
 	FieldsJson       string         `json:"fields_json"`
 	RoutePath        string         `json:"route_path"`
+	Sticky           int64          `json:"sticky"`
 }
 
 func (q *Queries) ListPublishedEntriesByContentTypeAsc(ctx context.Context, arg ListPublishedEntriesByContentTypeAscParams) ([]ListPublishedEntriesByContentTypeAscRow, error) {
@@ -341,6 +376,7 @@ func (q *Queries) ListPublishedEntriesByContentTypeAsc(ctx context.Context, arg 
 			&i.FeaturedMediaID,
 			&i.FieldsJson,
 			&i.RoutePath,
+			&i.Sticky,
 		); err != nil {
 			return nil, err
 		}

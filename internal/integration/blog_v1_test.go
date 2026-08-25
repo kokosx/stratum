@@ -72,9 +72,15 @@ func saveReadingSettings(t *testing.T, client *http.Client, serverURL string, qu
 		"site_represents": {"organization"},
 		"csrf_token":      {genCSRF},
 	}
-	if row.SiteTitle == "" { genForm.Set("site_title", "Test Site") }
-	if row.Language == "" { genForm.Set("language", "en") }
-	if row.Timezone == "" { genForm.Set("timezone", "UTC") }
+	if row.SiteTitle == "" {
+		genForm.Set("site_title", "Test Site")
+	}
+	if row.Language == "" {
+		genForm.Set("language", "en")
+	}
+	if row.Timezone == "" {
+		genForm.Set("timezone", "UTC")
+	}
 	respGen := postForm(t, client, serverURL, "/admin/settings/general", genForm)
 	if respGen.StatusCode != http.StatusSeeOther {
 		body := bodyString(t, respGen)
@@ -91,8 +97,12 @@ func saveReadingSettings(t *testing.T, client *http.Client, serverURL string, qu
 		"title_separator":  {row.TitleSeparator},
 		"csrf_token":       {seoCSRF},
 	}
-	if row.RobotsMode == "" { seoForm.Set("robots_mode", "managed") }
-	if row.TitleSeparator == "" { seoForm.Set("title_separator", "–") }
+	if row.RobotsMode == "" {
+		seoForm.Set("robots_mode", "managed")
+	}
+	if row.TitleSeparator == "" {
+		seoForm.Set("title_separator", "–")
+	}
 	respSEO := postForm(t, client, serverURL, "/admin/settings/seo", seoForm)
 	if respSEO.StatusCode != http.StatusSeeOther {
 		body := bodyString(t, respSEO)
@@ -142,7 +152,7 @@ func TestBlogV1HappyPath(t *testing.T) {
 		t.Logf("deleting leftover route at /blog type=%s entry=%v", rt.RouteType, rt.EntryID)
 		_ = queries.DeleteRoute(ctx, rt.ID)
 	}
-createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
+	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(1100 * time.Millisecond)
 	blogEntry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	if err != nil {

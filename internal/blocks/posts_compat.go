@@ -14,12 +14,13 @@ import (
 // renderable.
 //
 // Mapping:
-//   source "archive" / "automatic" → "context" (uses Route.Archive)
-//   source "latest"               → "query"   (uses ContentReader)
-//   limit                         → limit
-//   other posts settings (layout etc) are dropped – the new Collection relies
-//   on its children for presentation, but an empty-children fallback renders the
-//   classic card so old docs without children still look correct.
+//
+//	source "archive" / "automatic" → "context" (uses Route.Archive)
+//	source "latest"               → "query"   (uses ContentReader)
+//	limit                         → limit
+//	other posts settings (layout etc) are dropped – the new Collection relies
+//	on its children for presentation, but an empty-children fallback renders the
+//	classic card so old docs without children still look correct.
 func migrateLegacyPostsInPlace(doc *document.Document) *document.Document {
 	if doc == nil {
 		return nil

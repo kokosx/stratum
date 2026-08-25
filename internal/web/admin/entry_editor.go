@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -21,7 +22,9 @@ import (
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/rendering"
+	"github.com/kokosx/stratum/internal/richtext"
 	"github.com/kokosx/stratum/internal/routing"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/taxonomy"
@@ -116,6 +119,14 @@ type entryFormData struct {
 	Revisions           []revisionHistoryItem
 	CustomFields        []customFieldControl
 	FieldValues         map[string]any
+	Visibility          string
+	Sticky              bool
+	SupportsSticky      bool
+	ScheduledAt         string
+	ScheduledAtUnix     int64
+	HasScheduled        bool
+	ReviewState         string
+	PublishError        string
 }
 
 type revisionHistoryItem struct {
@@ -161,6 +172,11 @@ type entryInput struct {
 	parentEntryID    string
 	menuOrder        int64
 	fields           map[string]any
+	visibility       string
+	password         string
+	sticky           bool
+	reviewState      string
+	scheduledAt      string // raw datetime-local value
 }
 
 // renderEntryForm bootstraps the shared block editor and renders the common
@@ -298,14 +314,65 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 			data.TaxonomyPanels = panels
 		}
 	}
+	// Publishing panel defaults: populate from latest revision if editing and not already set (e.g. after validation error we preserve posted values via entryFormData)
+	if data.EntryID != "" && data.Visibility == "" {
+		if rev, err := h.queries.GetLatestEntryRevision(r.Context(), data.EntryID); err == nil {
+			if data.Visibility == "" {
+				data.Visibility = rev.Visibility
+				if data.Visibility == "" {
+					data.Visibility = "public"
+				}
+			}
+			if !data.Sticky && rev.Sticky != 0 {
+				data.Sticky = true
+			}
+			if data.ReviewState == "" {
+				data.ReviewState = rev.ReviewState
+			}
+			data.SupportsSticky = content.DefinitionFor(data.ContentTypeID).Capabilities.SupportsSticky
+			// Scheduled job
+			if job, err := h.queries.GetActivePublicationJobByEntry(r.Context(), data.EntryID); err == nil {
+				data.HasScheduled = true
+				data.ScheduledAtUnix = job.ScheduledAt
+				// Format for datetime-local in site timezone
+				if settings, err := h.queries.GetSiteSettings(r.Context()); err == nil {
+					loc := time.UTC
+					if l, err := time.LoadLocation(settings.Timezone); err == nil {
+						loc = l
+					}
+					data.ScheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
+				} else {
+					data.ScheduledAt = time.Unix(job.ScheduledAt, 0).Format("2006-01-02T15:04")
+				}
+			} else {
+				data.SupportsSticky = content.DefinitionFor(data.ContentTypeID).Capabilities.SupportsSticky
+			}
+		}
+	}
+	if data.Visibility == "" {
+		data.Visibility = "public"
+	}
+	if data.ReviewState == "" {
+		data.ReviewState = "draft"
+	}
+	if data.SupportsSticky == false && data.ContentTypeID != "" {
+		data.SupportsSticky = content.DefinitionFor(data.ContentTypeID).Capabilities.SupportsSticky
+	}
 	doc, err := document.Decode([]byte(data.DocumentJSON))
 	if err != nil {
 		log.Printf("prepare editor document: %v", err)
 		http.Error(w, "Invalid stored document", http.StatusInternalServerError)
 		return
 	}
+	// In-memory migration for editor: historical v1 text/heading get Rich Text control without mutating stored JSON.
+	migratedDoc := migrateDocumentForEditor(doc)
+	migratedJSON, err := json.Marshal(migratedDoc)
+	if err != nil {
+		migratedJSON = []byte(data.DocumentJSON)
+		migratedDoc = doc
+	}
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(data.DocumentJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/editor/preview",
+		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview",
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -504,8 +571,45 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		}
 		layoutTemplateID = sql.NullString{String: tmplID, Valid: true}
 	}
+	// Derive revision-scoped publication metadata
+	visibility := input.visibility
+	if visibility == "" {
+		visibility = "public"
+	}
+	reviewState := input.reviewState
+	if reviewState == "" {
+		reviewState = "draft"
+	}
+	var passwordHash sql.NullString
+	stickyVal := int64(0)
+	if input.sticky {
+		if !content.DefinitionFor(contentType).Capabilities.SupportsSticky {
+			return errors.New("this content type does not support sticky")
+		}
+		stickyVal = 1
+	}
+	if visibility == "password" {
+		if strings.TrimSpace(input.password) != "" {
+			hash, err := publishing.HashPassword(strings.TrimSpace(input.password))
+			if err != nil {
+				return fmt.Errorf("hash password: %w", err)
+			}
+			passwordHash = sql.NullString{String: hash, Valid: true}
+		} else if !create && latest.Visibility == "password" && latest.PasswordHash.Valid && latest.PasswordHash.String != "" {
+			passwordHash = latest.PasswordHash
+		} else {
+			return errors.New("password is required for password protected visibility")
+		}
+	} else {
+		// public/private must not have hash
+		passwordHash = sql.NullString{}
+	}
+	if visibility == "public" || visibility == "private" {
+		// ensure no hash
+		passwordHash = sql.NullString{}
+	}
 	if !create && publish {
-		matches, err := revisionMatchesInput(ctx, qtx, latest, input, string(documentJSON), fieldsJSON, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID, robotsIndex, robotsFollow, schemaMode, layoutTemplateID, termIDs)
+		matches, err := revisionMatchesInput(ctx, qtx, latest, input, string(documentJSON), fieldsJSON, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID, robotsIndex, robotsFollow, schemaMode, layoutTemplateID, termIDs, visibility, passwordHash, stickyVal, reviewState)
 		if err != nil {
 			return err
 		}
@@ -522,6 +626,7 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 			SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
 			LayoutTemplateID: layoutTemplateID, ParentEntryID: nullableString(input.parentEntryID), MenuOrder: input.menuOrder,
 			DocumentJson: string(documentJSON), FieldsJson: fieldsJSON, CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
+			Visibility: visibility, PasswordHash: passwordHash, Sticky: stickyVal, ReviewState: reviewState,
 		}); err != nil {
 			return fmt.Errorf("create entry revision: %w", err)
 		}
@@ -547,56 +652,17 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		}
 	}
 	if publish {
-		// Validate posts-page shell: only one paginated archive Posts block.
-		if err := validatePostsBlocksForPublish(ctx, qtx, entryID, doc); err != nil {
+		// Use shared publication logic so admin immediate publish and scheduler share the same implementation.
+		entry, err := qtx.GetEntry(ctx, entryID)
+		if err != nil {
+			return fmt.Errorf("load entry for publish: %w", err)
+		}
+		rev, err := qtx.GetEntryRevision(ctx, revisionID)
+		if err != nil {
+			return fmt.Errorf("load revision for publish: %w", err)
+		}
+		if err := publishing.PublishWithQueries(ctx, qtx, entry, rev, now); err != nil {
 			return err
-		}
-		// Central routing policy: compute the public path via routing.EntryPath.
-		postsBase := ""
-		if settings.PostsBasePath != "" {
-			postsBase = settings.PostsBasePath
-		}
-		computedPath := routing.EntryPath(contentType, input.slug, postsBase)
-		// If this entry is the current Posts Page shell, its route is the archive
-		// route (type=archive) at PostsBase, not a normal entry route derived from slug.
-		// Publishing the shell must atomically move the archive route, redirect the old
-		// archive, update posts_base_path, and remap post singles so the new slug is
-		// live without a separate Settings save (P0 correctness).
-		if isPostsPage && contentType == "page" {
-			oldBase := settings.PostsBasePath
-			if oldBase == "" {
-				oldBase = routing.DefaultPostsBase
-			}
-			newBase := routing.NormalizePath("/" + strings.Trim(input.slug, "/"))
-			if oldBase != newBase {
-				if err := routing.ValidatePostsBasePath(newBase); err != nil {
-					return err
-				}
-				if err := routing.SyncPostsPageSlugChanged(ctx, qtx, entryID, input.slug, oldBase, newBase, settings.HomepageMode, now); err != nil {
-					return err
-				}
-			}
-			// Archive shell has no entry-type route; its public presence is the archive route.
-		} else if content.DefinitionFor(contentType).Capabilities.Hierarchical {
-			if _, err := routing.SyncHierarchyPublish(ctx, qtx, routing.HierarchyEntry{
-				EntryID: entryID, ContentTypeID: contentType, Slug: input.slug, Status: "active", Title: input.title,
-				ParentEntryID: input.parentEntryID, MenuOrder: input.menuOrder,
-			}, now); err != nil {
-				return err
-			}
-		} else {
-			if err := h.upsertEntryRoute(ctx, qtx, entryID, computedPath, now); err != nil {
-				return err
-			}
-		}
-		// Record the first publication before it can be overwritten: published_at
-		// moves on every re-publish, but structured data needs a stable
-		// datePublished that survives later updates.
-		if err := qtx.SetFirstPublishedAtIfNull(ctx, db.SetFirstPublishedAtIfNullParams{FirstPublishedAt: sql.NullInt64{Int64: now, Valid: true}, ID: entryID}); err != nil {
-			return fmt.Errorf("record first publication: %w", err)
-		}
-		if err := qtx.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revisionID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entryID}); err != nil {
-			return fmt.Errorf("publish entry revision: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -618,8 +684,16 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	return nil
 }
 
-func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryRevision, input entryInput, documentJSON, fieldsJSON string, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID sql.NullString, robotsIndex, robotsFollow sql.NullInt64, schemaMode string, layoutTemplateID sql.NullString, termIDs []string) (bool, error) {
-	if revision.Slug != input.slug || revision.Title != input.title || revision.DocumentJson != documentJSON || revision.FieldsJson != fieldsJSON || revision.Excerpt != excerpt || revision.SeoTitle != seoTitle || revision.SeoDescription != seoDescription || revision.CanonicalUrl != canonicalURL || revision.FeaturedMediaID != featuredMediaID || revision.SocialMediaID != socialMediaID || revision.SeoRobotsIndex != robotsIndex || revision.SeoRobotsFollow != robotsFollow || revision.SchemaMode != schemaMode || revision.LayoutTemplateID != layoutTemplateID || revision.ParentEntryID != nullableString(input.parentEntryID) || revision.MenuOrder != input.menuOrder {
+func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryRevision, input entryInput, documentJSON, fieldsJSON string, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID sql.NullString, robotsIndex, robotsFollow sql.NullInt64, schemaMode string, layoutTemplateID sql.NullString, termIDs []string, visibility string, passwordHash sql.NullString, sticky int64, reviewState string) (bool, error) {
+	if revision.Slug != input.slug || revision.Title != input.title || revision.DocumentJson != documentJSON || revision.FieldsJson != fieldsJSON || revision.Excerpt != excerpt || revision.SeoTitle != seoTitle || revision.SeoDescription != seoDescription || revision.CanonicalUrl != canonicalURL || revision.FeaturedMediaID != featuredMediaID || revision.SocialMediaID != socialMediaID || revision.SeoRobotsIndex != robotsIndex || revision.SeoRobotsFollow != robotsFollow || revision.SchemaMode != schemaMode || revision.LayoutTemplateID != layoutTemplateID || revision.ParentEntryID != nullableString(input.parentEntryID) || revision.MenuOrder != input.menuOrder || revision.Visibility != visibility || revision.ReviewState != reviewState || revision.Sticky != sticky {
+		return false, nil
+	}
+	if visibility == "password" {
+		// For password, compare hash presence and if input password was blank we reused latest hash, so compare directly
+		if revision.PasswordHash != passwordHash {
+			return false, nil
+		}
+	} else if revision.PasswordHash.Valid {
 		return false, nil
 	}
 	terms, err := q.ListTermsForRevision(ctx, revision.ID)
@@ -672,6 +746,7 @@ func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID
 		ParentEntryID: revision.ParentEntryID, MenuOrder: revision.MenuOrder,
 		FieldsJson: revision.FieldsJson,
 		CreatedBy:  nullableString(authorID), CreatedAt: time.Now().Unix(),
+		Visibility: revision.Visibility, PasswordHash: revision.PasswordHash, Sticky: revision.Sticky, ReviewState: "draft",
 	}); err != nil {
 		return err
 	}
@@ -739,7 +814,10 @@ func (h *Handler) unpublishEntry(w http.ResponseWriter, r *http.Request, content
 		http.NotFound(w, r)
 		return
 	}
-	if err := content.NewLifecycleService(h.database, h.queries).Unpublish(r.Context(), entry.ID); err != nil {
+	if h.publishing == nil {
+		h.publishing = publishing.New(h.database, h.queries)
+	}
+	if err := h.publishing.Unpublish(r.Context(), entry.ID, time.Now().Unix()); err != nil {
 		if errors.Is(err, content.ErrProtectedPage) {
 			h.setFlash(w, "Change Site Settings before unpublishing the Homepage or Posts Page.")
 		} else if errors.Is(err, content.ErrPublishedDescendants) {
@@ -758,6 +836,125 @@ func (h *Handler) unpublishEntry(w http.ResponseWriter, r *http.Request, content
 	}
 	h.setFlash(w, "Entry unpublished.")
 	http.Redirect(w, r, "/admin/"+activeMenu+"/"+entry.ID+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) scheduleEntry(w http.ResponseWriter, r *http.Request, contentType, activeMenu string) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	entryID := r.PathValue("id")
+	input, err := readEntryInput(r, contentType)
+	if err != nil {
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, err)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
+		return
+	}
+	scheduledAt, err := h.parseScheduledAt(r)
+	if err != nil {
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, err)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
+		return
+	}
+	user, err := h.currentUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Create a draft revision from current input (preserve visibility etc.)
+	if err := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, false); err != nil {
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, err)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
+		return
+	}
+	latest, err := h.queries.GetLatestEntryRevision(r.Context(), entryID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().Unix()
+	if h.publishing == nil {
+		h.publishing = publishing.New(h.database, h.queries)
+	}
+	if err := h.publishing.Schedule(r.Context(), entryID, latest.ID, scheduledAt, user.ID, now); err != nil {
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, err)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
+		return
+	}
+	if isDatastarRequest(r) {
+		h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, nil)
+		// Also need to patch scheduled status? The fragment will show scheduled via entryEditorStatus after reload.
+		return
+	}
+	h.setFlash(w, contentTypeTitle(contentType)+" scheduled.")
+	http.Redirect(w, r, "/admin/"+activeMenu+"/"+entryID+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) cancelScheduleEntry(w http.ResponseWriter, r *http.Request, contentType, activeMenu string) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	entryID := r.PathValue("id")
+	if h.publishing == nil {
+		h.publishing = publishing.New(h.database, h.queries)
+	}
+	if err := h.publishing.CancelSchedule(r.Context(), entryID, time.Now().Unix()); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if isDatastarRequest(r) {
+		// Re-render status fragment
+		view := h.editorStatusView(r, entryID, false, nil)
+		var buf bytes.Buffer
+		_ = h.entryTemplate.ExecuteTemplate(&buf, "editor-status-region", view)
+		writeSSE(w, patchElementsEvent("inner", "#editor-status-region", buf.String()), toastEvent("success", "Schedule cancelled."))
+		return
+	}
+	h.setFlash(w, "Schedule cancelled.")
+	http.Redirect(w, r, "/admin/"+activeMenu+"/"+entryID+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) parseScheduledAt(r *http.Request) (int64, error) {
+	raw := strings.TrimSpace(r.FormValue("scheduled_at"))
+	if raw == "" {
+		return 0, errors.New("scheduled time is required")
+	}
+	settings, err := h.queries.GetSiteSettings(r.Context())
+	timezone := "UTC"
+	if err == nil && strings.TrimSpace(settings.Timezone) != "" {
+		timezone = settings.Timezone
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	// datetime-local may be "2006-01-02T15:04" or with seconds
+	var t time.Time
+	t, err = time.ParseInLocation("2006-01-02T15:04", raw, loc)
+	if err != nil {
+		t, err = time.ParseInLocation("2006-01-02T15:04:05", raw, loc)
+		if err != nil {
+			return 0, errors.New("invalid scheduled time")
+		}
+	}
+	unix := t.Unix()
+	if unix <= time.Now().Unix() {
+		return 0, errors.New("scheduled time must be in the future")
+	}
+	return unix, nil
 }
 
 func (h *Handler) previewRevision(w http.ResponseWriter, r *http.Request, contentType string) {
@@ -896,6 +1093,30 @@ func readEntryInput(r *http.Request, contentTypes ...string) (entryInput, error)
 		parentEntryID:    strings.TrimSpace(r.FormValue("parent_entry_id")),
 		taxonomyValues:   postedTaxonomyValues(r),
 		fields:           rawFieldValues(r, content.DefinitionFor(contentType)),
+		visibility:       strings.TrimSpace(r.FormValue("visibility")),
+		password:         r.FormValue("password"),
+		sticky:           r.FormValue("sticky") == "1" || r.FormValue("sticky") == "on" || r.FormValue("sticky") == "true",
+		reviewState:      strings.TrimSpace(r.FormValue("review_state")),
+		scheduledAt:      strings.TrimSpace(r.FormValue("scheduled_at")),
+	}
+	if input.visibility == "" {
+		input.visibility = "public"
+	}
+	if input.visibility != "public" && input.visibility != "private" && input.visibility != "password" {
+		return input, errors.New("invalid visibility")
+	}
+	if input.visibility == "password" && strings.TrimSpace(input.password) == "" {
+		// Allow blank password when editing existing password-protected revision and keeping previous hash.
+		// Validation of required password will happen in writeEntry when creating new revision with no existing hash.
+	}
+	if !content.DefinitionFor(contentType).Capabilities.SupportsSticky && input.sticky {
+		return input, errors.New("this content type does not support sticky")
+	}
+	if input.reviewState == "" {
+		input.reviewState = "draft"
+	}
+	if input.reviewState != "draft" && input.reviewState != "pending" {
+		return input, errors.New("invalid review state")
 	}
 	if raw := strings.TrimSpace(r.FormValue("menu_order")); raw != "" {
 		order, err := strconv.ParseInt(raw, 10, 64)
@@ -1160,6 +1381,38 @@ func validatePostsBlocksForPublish(ctx context.Context, qtx *db.Queries, entryID
 		return errors.New("Only one paginated archive Posts block can be used on a Posts Page.")
 	}
 	return nil
+}
+
+func migrateDocumentForEditor(doc *document.Document) *document.Document {
+	if doc == nil {
+		return nil
+	}
+	// Use document migration registry if available, but keep simple in-memory copy for editor.
+	// This intentionally does not check registry existence; v2 is always present after migration 044.
+	clone := *doc
+	clone.Nodes = migrateNodesForEditor(doc.Nodes)
+	return &clone
+}
+
+func migrateNodesForEditor(nodes []document.Node) []document.Node {
+	out := make([]document.Node, len(nodes))
+	for i, n := range nodes {
+		if (n.Block == "core/text" || n.Block == "core/heading") && n.Version == 1 {
+			var props map[string]any
+			if json.Unmarshal(n.Props, &props) == nil {
+				if v, ok := props["text"].(string); ok {
+					props["text"] = richtext.RichText{Version: richtext.Version, Content: []richtext.Run{{Text: v}}}
+					if data, err := json.Marshal(props); err == nil {
+						n.Props = data
+						n.Version = 2
+					}
+				}
+			}
+		}
+		n.Children = migrateNodesForEditor(n.Children)
+		out[i] = n
+	}
+	return out
 }
 
 func randomID() (string, error) {

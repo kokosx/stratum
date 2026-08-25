@@ -20,6 +20,7 @@ import (
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
+	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -54,6 +55,8 @@ type Handler struct {
 	layoutsService               *layouts.Service
 	previewRenderer              func(context.Context, string, string, map[string]any, string) ([]byte, error)
 	documentPreview              func(context.Context, RenderInput) ([]byte, error)
+	publishing                   *publishing.Service
+	scheduler                    *publishing.Scheduler
 }
 
 type LayoutData struct {
@@ -203,6 +206,8 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		themes:                       themeRuntime,
 		runtime:                      runtime,
 		layoutsService:               layouts.NewService(database, queries, blockRegistry),
+		publishing:                   publishing.New(database, queries),
+		scheduler:                    publishing.NewScheduler(database, queries),
 	}, nil
 }
 
@@ -232,6 +237,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/pages/{id}", h.requireAuth(h.savePage))
 	mux.HandleFunc("POST /admin/pages/{id}/publish", h.requireAuth(h.publishPage))
 	mux.HandleFunc("POST /admin/pages/{id}/unpublish", h.requireAuth(h.unpublishPage))
+	mux.HandleFunc("POST /admin/pages/{id}/schedule", h.requireAuth(h.schedulePage))
+	mux.HandleFunc("POST /admin/pages/{id}/cancel-schedule", h.requireAuth(h.cancelSchedulePage))
 	mux.HandleFunc("POST /admin/pages/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restorePageRevision))
 	mux.HandleFunc("GET /admin/pages/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewPageRevision))
 	mux.HandleFunc("POST /admin/pages/{id}/trash", h.requireAuth(h.trashPage))
@@ -246,6 +253,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/posts/{id}", h.requireAuth(h.savePost))
 	mux.HandleFunc("POST /admin/posts/{id}/publish", h.requireAuth(h.publishPost))
 	mux.HandleFunc("POST /admin/posts/{id}/unpublish", h.requireAuth(h.unpublishPost))
+	mux.HandleFunc("POST /admin/posts/{id}/schedule", h.requireAuth(h.schedulePost))
+	mux.HandleFunc("POST /admin/posts/{id}/cancel-schedule", h.requireAuth(h.cancelSchedulePost))
 	mux.HandleFunc("POST /admin/posts/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restorePostRevision))
 	mux.HandleFunc("GET /admin/posts/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewPostRevision))
 	mux.HandleFunc("POST /admin/posts/{id}/trash", h.requireAuth(h.trashPost))
@@ -542,9 +551,17 @@ func (h *Handler) authorizeEntryRequest(r *http.Request, user auth.User, content
 	if err != nil || entry.ContentTypeID != contentType {
 		return false
 	}
-	if strings.Contains(r.URL.Path, "/publish") || strings.Contains(r.URL.Path, "/unpublish") {
+	if strings.Contains(r.URL.Path, "/revisions/") {
+		if strings.Contains(r.URL.Path, "/preview") && r.Method == http.MethodGet {
+			action = authz.EntryRead
+		} else if strings.Contains(r.URL.Path, "/restore") {
+			action = authz.EntryEdit
+		} else {
+			action = authz.EntryDelete
+		}
+	} else if strings.Contains(r.URL.Path, "/publish") || strings.Contains(r.URL.Path, "/unpublish") || strings.Contains(r.URL.Path, "/schedule") {
 		action = authz.EntryPublish
-	} else if strings.Contains(r.URL.Path, "/trash") || strings.Contains(r.URL.Path, "/restore") || strings.Contains(r.URL.Path, "/delete") || strings.Contains(r.URL.Path, "/revisions/") {
+	} else if strings.Contains(r.URL.Path, "/trash") || strings.Contains(r.URL.Path, "/restore") || strings.Contains(r.URL.Path, "/delete") {
 		action = authz.EntryDelete
 	} else if r.Method == http.MethodPost || strings.HasSuffix(r.URL.Path, "/edit") {
 		action = authz.EntryEdit

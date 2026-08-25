@@ -20,7 +20,11 @@ SELECT
     r.seo_robots_index,
     r.seo_robots_follow,
     r.schema_mode,
-    r.layout_template_id
+    r.layout_template_id,
+    r.visibility,
+    r.password_hash,
+    r.sticky,
+    r.review_state
 
 FROM routes rt
 
@@ -57,7 +61,11 @@ SELECT
     r.seo_robots_index,
     r.seo_robots_follow,
     r.schema_mode,
-    r.layout_template_id
+    r.layout_template_id,
+    r.visibility,
+    r.password_hash,
+    r.sticky,
+    r.review_state
 FROM entries e
 JOIN entry_revisions r
     ON r.id = e.published_revision_id
@@ -69,10 +77,12 @@ LIMIT 1;
 -- name: CountPublishedEntriesByContentType :one
 SELECT COUNT(*)
 FROM entries e
+JOIN entry_revisions r ON r.id = e.published_revision_id
 JOIN routes rt ON rt.entry_id = e.id
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND r.visibility = 'public'
   AND rt.route_type = 'entry';
 
 -- name: ListPublishedEntriesByContentType :many
@@ -86,14 +96,17 @@ SELECT
     r.excerpt,
     r.featured_media_id,
     r.fields_json,
-    rt.path AS route_path
+    rt.path AS route_path,
+    r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
 JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND r.visibility = 'public'
 ORDER BY
+    r.sticky DESC,
     COALESCE(e.first_published_at, e.published_at) DESC,
     e.published_at DESC,
     e.id DESC
@@ -110,14 +123,17 @@ SELECT
     r.excerpt,
     r.featured_media_id,
     r.fields_json,
-    rt.path AS route_path
+    rt.path AS route_path,
+    r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
 JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
+  AND r.visibility = 'public'
 ORDER BY
+    r.sticky DESC,
     COALESCE(e.first_published_at, e.published_at) ASC,
     e.published_at ASC,
     e.id ASC
