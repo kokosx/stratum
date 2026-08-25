@@ -330,3 +330,52 @@ func TestPublicToPasswordDoesNotLeakCache(t *testing.T) {
 		t.Fatalf("should show gate")
 	}
 }
+
+func TestUnknownRouteVisibilityNeverServesSharedCache(t *testing.T) {
+	handler, database, queries, svc := newPasswordHarness(t)
+	defer database.Close()
+	ctx := context.Background()
+	now := int64(1000)
+	queries.CreateEntry(ctx, db.CreateEntryParams{ID: "unknown-vis", ContentTypeID: "page", Slug: "unknown-vis", Status: "active", CreatedAt: now, UpdatedAt: now})
+	queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "unknown-vis-r1", EntryID: "unknown-vis", RevisionNumber: 1, Slug: "unknown-vis", Title: "Public", DocumentJson: `{"version":1,"nodes":[{"id":"a","block":"core/text","version":2,"props":{"text":{"version":1,"content":[{"text":"Cached Public Content"}]}}}]}`, CreatedAt: now})
+	if err := svc.PublishRevision(ctx, "unknown-vis", "unknown-vis-r1", now+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Hub().Routes.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/unknown-vis", nil))
+	if first.Code != http.StatusOK || !strings.Contains(first.Body.String(), "Cached Public Content") {
+		t.Fatalf("failed to warm public cache: %d %s", first.Code, first.Body.String())
+	}
+
+	queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "unknown-vis-r2", EntryID: "unknown-vis", RevisionNumber: 2, Slug: "unknown-vis", Title: "Private", DocumentJson: `{"version":1,"nodes":[]}`, Visibility: "private", CreatedAt: now + 2})
+	if err := svc.PublishRevision(ctx, "unknown-vis", "unknown-vis-r2", now+3); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/unknown-vis"); err == sql.ErrNoRows {
+		if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "unknown-vis-route", Path: "/unknown-vis", EntryID: sql.NullString{String: "unknown-vis", Valid: true}, RouteType: "entry", CreatedAt: now + 3, UpdatedAt: now + 3}); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Hub().Routes.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a malformed/stale route snapshot without visibility metadata.
+	snapshot := handler.Hub().Routes.Current()
+	route := snapshot.ByPath["/unknown-vis"]
+	route.Visibility = ""
+	snapshot.ByPath["/unknown-vis"] = route
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/unknown-vis", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown visibility served cached private content: %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Cached Public Content") {
+		t.Fatal("shared cache leaked when route visibility was unknown")
+	}
+}

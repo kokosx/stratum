@@ -3,78 +3,49 @@ package backup
 import (
 	"archive/zip"
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"github.com/kokosx/stratum/internal/datalock"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
-	_ "turso.tech/database/tursogo"
 )
 
-// Restore validates archive and atomically replaces the live site.
-// It creates a safety backup of the current site first (unless dataDir empty).
-func Restore(ctx context.Context, archivePath, dataDir string) error {
+// Restore validates an archive and atomically replaces the live site.
+func Restore(ctx context.Context, archivePath, dataDir string) (err error) {
 	if dataDir == "" {
 		dataDir = "data"
 	}
-	// 1. Validate archive completely (including integrity)
+	lock, err := datalock.Acquire(dataDir)
+	if err != nil {
+		return fmt.Errorf("acquire exclusive data directory access: %w", err)
+	}
+	defer func() {
+		if closeErr := lock.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
+
 	manifest, err := verifyInternal(archivePath, true)
 	if err != nil {
 		return fmt.Errorf("backup verification failed: %w", err)
 	}
-
-	// 2. Check schema compatibility (already done in verify, but re-check)
-	latest := storage.LatestAvailableMigration()
-	if manifest.SchemaVersion != "" && latest != "" && manifest.SchemaVersion > latest {
+	if latest := storage.LatestAvailableMigration(); latest != "" && storage.CompareMigrationVersions(manifest.SchemaVersion, latest) > 0 {
 		return fmt.Errorf("backup schema %s newer than supported %s", manifest.SchemaVersion, latest)
 	}
 
-	// 3. Extract into temp directory
-	if err := os.MkdirAll(filepath.Dir(dataDir), 0755); err != nil {
-		return fmt.Errorf("create restore parent: %w", err)
-	}
-	// Stage beside the data directory so every later rename is same-filesystem.
 	tmpExtract, err := os.MkdirTemp(filepath.Dir(dataDir), ".stratum-restore-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create restore staging directory: %w", err)
 	}
 	defer os.RemoveAll(tmpExtract)
-
-	r, err := zip.OpenReader(archivePath)
-	if err != nil {
+	if err := extractArchive(archivePath, tmpExtract); err != nil {
 		return err
 	}
-	defer r.Close()
 
-	// Extract all files with path safety
-	for _, f := range r.File {
-		if strings.Contains(f.Name, "..") || filepath.IsAbs(f.Name) {
-			return fmt.Errorf("zip slip: %s", f.Name)
-		}
-		if f.FileInfo().Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink not allowed: %s", f.Name)
-		}
-		dest := filepath.Join(tmpExtract, filepath.FromSlash(f.Name))
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return err
-		}
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		if err := extractFile(f, dest); err != nil {
-			return fmt.Errorf("extract %s: %w", f.Name, err)
-		}
-		if err := os.Chmod(dest, 0600); err != nil {
-			return err
-		}
-	}
-
-	// Verify extracted DB again
 	extractedDB := filepath.Join(tmpExtract, manifest.Database)
 	if _, err := os.Stat(extractedDB); err != nil {
 		return fmt.Errorf("extracted database missing: %w", err)
@@ -83,211 +54,203 @@ func Restore(ctx context.Context, archivePath, dataDir string) error {
 		return fmt.Errorf("extracted db integrity: %w", err)
 	}
 
-	// 4. Check exclusive access (require no active server)
-	if err := checkExclusiveAccess(dataDir); err != nil {
-		return fmt.Errorf("restore requires exclusive access (stop stratum serve first): %w", err)
-	}
-
-	// 5. Create safety backup if live data exists
 	liveDBPath := filepath.Join(dataDir, "stratum.db")
 	if _, err := os.Stat(liveDBPath); err == nil {
-		timestamp := time.Now().UTC().Format("2006-01-02-150405")
-		backupDir := filepath.Join(dataDir, "backups")
-		if err := os.MkdirAll(backupDir, 0700); err != nil {
-			return fmt.Errorf("create safety backup directory: %w", err)
+		safetyPath, err := uniqueSafetyPath(filepath.Join(dataDir, "backups"))
+		if err != nil {
+			return err
 		}
-		safetyPath := filepath.Join(backupDir, fmt.Sprintf("pre-restore-%s.zip", timestamp))
 		if err := createSafetyBackup(dataDir, safetyPath); err != nil {
 			return fmt.Errorf("create mandatory pre-restore safety backup: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "created pre-restore safety backup: %s\n", safetyPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat live database: %w", err)
 	}
 
-	// 6. Prepare live paths
 	liveMediaRoot := filepath.Join(dataDir, "media")
-	backupMediaRoot := filepath.Join(tmpExtract, strings.TrimSuffix(manifest.MediaRoot, "/"))
-	// Ensure dataDir exists
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	stagedMediaRoot := filepath.Join(tmpExtract, strings.TrimSuffix(manifest.MediaRoot, "/"))
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+	oldDB := liveDBPath + ".pre-restore.bak"
+	oldMedia := liveMediaRoot + ".pre-restore.bak"
+	if err := removeIfExists(oldDB); err != nil {
+		return fmt.Errorf("remove previous database rollback file: %w", err)
+	}
+	if err := os.RemoveAll(oldMedia); err != nil {
+		return fmt.Errorf("remove previous media rollback directory: %w", err)
+	}
+
+	dbMoved, mediaMoved := false, false
+	rollback := func(cause error) error {
+		return errors.Join(cause, restoreRollback(liveDBPath, liveMediaRoot, oldDB, oldMedia, dbMoved, mediaMoved))
+	}
+	if exists, err := pathExists(liveDBPath); err != nil {
 		return err
-	}
-
-	// 7. Atomic replacement
-	// Keep old state for rollback
-	oldDBBackup := liveDBPath + ".pre-restore.bak"
-	oldMediaBackup := liveMediaRoot + ".pre-restore.bak"
-	// Clean previous bak
-	_ = os.Remove(oldDBBackup)
-	_ = os.RemoveAll(oldMediaBackup)
-
-	// Move live DB aside if exists
-	if _, err := os.Stat(liveDBPath); err == nil {
-		if err := os.Rename(liveDBPath, oldDBBackup); err != nil {
-			return fmt.Errorf("backup live db: %w", err)
+	} else if exists {
+		if err := os.Rename(liveDBPath, oldDB); err != nil {
+			return fmt.Errorf("move live database aside: %w", err)
 		}
+		dbMoved = true
 	}
-	// Move live media aside if exists
-	if _, err := os.Stat(liveMediaRoot); err == nil {
-		if err := os.Rename(liveMediaRoot, oldMediaBackup); err != nil {
-			// Rollback DB
-			if _, err2 := os.Stat(oldDBBackup); err2 == nil {
-				_ = os.Rename(oldDBBackup, liveDBPath)
-			}
-			return fmt.Errorf("backup live media: %w", err)
+	if exists, err := pathExists(liveMediaRoot); err != nil {
+		return rollback(err)
+	} else if exists {
+		if err := os.Rename(liveMediaRoot, oldMedia); err != nil {
+			return rollback(fmt.Errorf("move live media aside: %w", err))
 		}
+		mediaMoved = true
 	}
-
-	// Move extracted DB into place
 	if err := os.Rename(extractedDB, liveDBPath); err != nil {
-		// Rollback
-		_ = os.Rename(oldDBBackup, liveDBPath)
-		if _, err2 := os.Stat(oldMediaBackup); err2 == nil {
-			_ = os.Rename(oldMediaBackup, liveMediaRoot)
-		}
-		return fmt.Errorf("restore db: %w", err)
+		return rollback(fmt.Errorf("restore database: %w", err))
 	}
-	_ = os.Chmod(liveDBPath, 0600)
-	// Move extracted media into place (if any)
-	if _, err := os.Stat(backupMediaRoot); err == nil {
-		if err := os.Rename(backupMediaRoot, liveMediaRoot); err != nil {
-			// Try copy fallback if rename across filesystems
-			if err := copyDir(backupMediaRoot, liveMediaRoot); err != nil {
-				// Rollback DB
-				_ = os.Remove(liveDBPath)
-				_ = os.Rename(oldDBBackup, liveDBPath)
-				_ = os.RemoveAll(liveMediaRoot)
-				if _, err2 := os.Stat(oldMediaBackup); err2 == nil {
-					_ = os.Rename(oldMediaBackup, liveMediaRoot)
-				}
-				return fmt.Errorf("restore media: %w", err)
-			}
+	if err := os.Chmod(liveDBPath, 0o600); err != nil {
+		return rollback(fmt.Errorf("set restored database permissions: %w", err))
+	}
+	if exists, err := pathExists(stagedMediaRoot); err != nil {
+		return rollback(err)
+	} else if exists {
+		if err := os.Rename(stagedMediaRoot, liveMediaRoot); err != nil {
+			return rollback(fmt.Errorf("restore media: %w", err))
 		}
-	} else {
-		// No media in backup – ensure live media is removed (or keep old? we already moved old aside, so create empty)
-		_ = os.MkdirAll(liveMediaRoot, 0755)
+	} else if err := os.MkdirAll(liveMediaRoot, 0o755); err != nil {
+		return rollback(fmt.Errorf("create restored media directory: %w", err))
+	}
+	if err := syncDir(dataDir); err != nil {
+		return rollback(fmt.Errorf("sync restored data directory: %w", err))
 	}
 
-	// Sync parent dir
-	if f, err := os.Open(dataDir); err == nil {
-		_ = f.Sync()
-		_ = f.Close()
-	}
-
-	// 8. Run migrations on restored DB (in case older schema)
 	restoredDB, err := storage.Open(liveDBPath)
 	if err != nil {
-		// Rollback
-		_ = os.Remove(liveDBPath)
-		if _, err2 := os.Stat(oldDBBackup); err2 == nil {
-			_ = os.Rename(oldDBBackup, liveDBPath)
-		}
-		if _, err2 := os.Stat(oldMediaBackup); err2 == nil {
-			_ = os.RemoveAll(liveMediaRoot)
-			_ = os.Rename(oldMediaBackup, liveMediaRoot)
-		}
-		return fmt.Errorf("open restored db: %w", err)
+		return rollback(fmt.Errorf("open restored database: %w", err))
 	}
 	if err := restoredDB.Migrate(ctx); err != nil {
-		restoredDB.Close()
-		// Rollback
-		_ = os.Remove(liveDBPath)
-		if _, err2 := os.Stat(oldDBBackup); err2 == nil {
-			_ = os.Rename(oldDBBackup, liveDBPath)
-		}
-		_ = os.RemoveAll(liveMediaRoot)
-		if _, err2 := os.Stat(oldMediaBackup); err2 == nil {
-			_ = os.Rename(oldMediaBackup, liveMediaRoot)
-		}
-		return fmt.Errorf("migrate restored db: %w", err)
+		closeErr := restoredDB.Close()
+		return rollback(errors.Join(fmt.Errorf("migrate restored database: %w", err), closeErr))
 	}
-	restoredDB.Close()
+	if err := restoredDB.Close(); err != nil {
+		return rollback(fmt.Errorf("close restored database: %w", err))
+	}
+	if _, _, err := checkIntegrityDB(liveDBPath); err != nil {
+		return rollback(fmt.Errorf("verify migrated database: %w", err))
+	}
+	if err := removeIfExists(oldDB); err != nil {
+		return fmt.Errorf("cleanup database rollback file: %w", err)
+	}
+	if err := os.RemoveAll(oldMedia); err != nil {
+		return fmt.Errorf("cleanup media rollback directory: %w", err)
+	}
+	return syncDir(dataDir)
+}
 
-	// 9. Cleanup old backups (keep one safety backup, remove the .bak we created for rollback)
-	// The safety backup we created earlier is the official pre-restore backup; the .bak for atomicity can be removed after success
-	_ = os.Remove(oldDBBackup)
-	_ = os.RemoveAll(oldMediaBackup)
-
-	// Search index is rebuildable – if FTS exists, it was restored as part of DB snapshot; but we should ensure consistency
-	// For now, nothing to do (derived index will be rebuilt on next publish or via CLI 'search rebuild' if existed)
+func extractArchive(archivePath, destRoot string) (err error) {
+	r, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("open archive: %w", err)
+	}
+	defer func() {
+		if closeErr := r.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close archive: %w", closeErr))
+		}
+	}()
+	for _, f := range r.File {
+		if !validArchivePath(f.Name) || f.FileInfo().Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("invalid archive path %q", f.Name)
+		}
+		dest := filepath.Join(destRoot, filepath.FromSlash(f.Name))
+		if err := extractFile(f, dest); err != nil {
+			return fmt.Errorf("extract %s: %w", f.Name, err)
+		}
+		if err := os.Chmod(dest, 0o600); err != nil {
+			return fmt.Errorf("set extracted file permissions: %w", err)
+		}
+	}
 	return nil
 }
 
-func checkExclusiveAccess(dataDir string) error {
-	dbPath := filepath.Join(dataDir, "stratum.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil
+func uniqueSafetyPath(backupDir string) (string, error) {
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return "", fmt.Errorf("create safety backup directory: %w", err)
 	}
-	db, err := sql.Open("turso", dbPath)
+	f, err := os.CreateTemp(backupDir, "pre-restore-*.zip")
 	if err != nil {
-		return err
+		return "", fmt.Errorf("reserve safety backup path: %w", err)
 	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	// Try to get exclusive lock via BEGIN IMMEDIATE
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		if strings.Contains(err.Error(), "busy") || strings.Contains(err.Error(), "locked") {
-			return fmt.Errorf("database is locked")
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("close safety backup reservation: %w", err)
+	}
+	if err := os.Remove(path); err != nil {
+		return "", fmt.Errorf("release safety backup reservation: %w", err)
+	}
+	return path, nil
+}
+
+func restoreRollback(liveDB, liveMedia, oldDB, oldMedia string, dbMoved, mediaMoved bool) error {
+	var errs []error
+	if err := removeIfExists(liveDB); err != nil {
+		errs = append(errs, fmt.Errorf("remove restored database: %w", err))
+	}
+	if err := os.RemoveAll(liveMedia); err != nil {
+		errs = append(errs, fmt.Errorf("remove restored media: %w", err))
+	}
+	if dbMoved {
+		if err := os.Rename(oldDB, liveDB); err != nil {
+			errs = append(errs, fmt.Errorf("restore original database: %w", err))
 		}
+	}
+	if mediaMoved {
+		if err := os.Rename(oldMedia, liveMedia); err != nil {
+			errs = append(errs, fmt.Errorf("restore original media: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func removeIfExists(path string) error {
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	// Try to do a dummy write lock
-	_, err = tx.ExecContext(ctx, "SELECT 1 FROM schema_migrations LIMIT 1")
-	if err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	_ = tx.Rollback()
 	return nil
+}
+
+func pathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func syncDir(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 func createSafetyBackup(dataDir, dest string) error {
 	dbPath := filepath.Join(dataDir, "stratum.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		return nil
+	} else if err != nil {
+		return err
 	}
 	database, err := storage.Open(dbPath)
 	if err != nil {
 		return err
 	}
-	defer database.Close()
 	queries := db.New(database.DB)
-	ctx := context.Background()
-	_, err = Create(ctx, database, queries, dataDir, dest)
-	return err
-}
-
-func copyDir(src, dest string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dest, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlink not allowed: %s", path)
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
-		}
-		out, err := os.Create(target)
-		if err != nil {
-			return err
-		}
-		_, err = io.Copy(out, in)
-		out.Close()
-		if err != nil {
-			return err
-		}
-		return os.Chmod(target, 0600)
-	})
+	_, backupErr := Create(context.Background(), database, queries, dataDir, dest)
+	closeErr := database.Close()
+	return errors.Join(backupErr, closeErr)
 }

@@ -3,8 +3,11 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"path/filepath"
 	"testing"
+
+	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
 func TestCorrectiveMigrationIndexes(t *testing.T) {
@@ -85,5 +88,50 @@ func TestMigrationImmutable032034(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("036 corrective migration not applied")
+	}
+}
+
+func TestMigration047RemovesLegacyPrivateEntryRoute(t *testing.T) {
+	ctx := context.Background()
+	database, err := Open(filepath.Join(t.TempDir(), "private-route.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(database.DB)
+	if err := queries.CreateContentType(ctx, db.CreateContentTypeParams{ID: "test-page", DisplayName: "Test Page", PluralName: "Test Pages", ConfigJson: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateEntry(ctx, db.CreateEntryParams{ID: "private-entry", ContentTypeID: "test-page", Slug: "private", Status: "active", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "private-r1", EntryID: "private-entry", RevisionNumber: 1, Slug: "private", Title: "Private", DocumentJson: `{"version":1,"nodes":[]}`, Visibility: "private", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: "private-r1", Valid: true}, PublishedAt: sql.NullInt64{Int64: 1, Valid: true}, UpdatedAt: 1, ID: "private-entry"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.CreateRoute(ctx, db.CreateRouteParams{ID: "private-route", Path: "/private", EntryID: sql.NullString{String: "private-entry", Valid: true}, RouteType: "entry", CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	migration, err := fs.ReadFile(migrationFiles, "schema/047_remove_legacy_private_routes.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB.ExecContext(ctx, string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetRouteByPath(ctx, "/private"); err != sql.ErrNoRows {
+		t.Fatalf("private legacy route was not removed: %v", err)
+	}
+	if _, err := queries.GetEntry(ctx, "private-entry"); err != nil {
+		t.Fatalf("entry was removed: %v", err)
+	}
+	if _, err := queries.GetEntryRevision(ctx, "private-r1"); err != nil {
+		t.Fatalf("revision was removed: %v", err)
 	}
 }

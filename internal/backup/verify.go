@@ -2,10 +2,12 @@ package backup
 
 import (
 	"archive/zip"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -146,30 +148,38 @@ func verifyInternal(archivePath string, checkIntegrity bool) (*Manifest, error) 
 	if err := extractFile(dbFile, tmpDB); err != nil {
 		return nil, fmt.Errorf("extract db: %w", err)
 	}
-	schema, mediaKeys, err := checkIntegrityDB(tmpDB)
+	schema, mediaFiles, err := checkIntegrityDB(tmpDB)
 	if err != nil {
 		return nil, err
 	}
 	if schema != m.SchemaVersion {
 		return nil, fmt.Errorf("schema version mismatch: archive has %s, manifest has %s", schema, m.SchemaVersion)
 	}
-	if latest := storage.LatestAvailableMigration(); latest != "" && schema > latest {
+	if latest := storage.LatestAvailableMigration(); latest != "" && storage.CompareMigrationVersions(schema, latest) > 0 {
 		return nil, fmt.Errorf("backup schema %s is newer than supported %s", schema, latest)
 	}
-	for _, key := range mediaKeys {
-		if _, ok := expected[MediaPrefix+key]; !ok {
-			return nil, fmt.Errorf("backup database references missing media %q", key)
+	for _, media := range mediaFiles {
+		file, ok := expected[MediaPrefix+media.key]
+		if !ok {
+			return nil, fmt.Errorf("backup database references missing media %q", media.key)
+		}
+		if file.Size != media.size {
+			return nil, fmt.Errorf("media size mismatch for %q: archive=%d database=%d", media.key, file.Size, media.size)
 		}
 	}
 	return &m, nil
 }
 
-func extractFile(zf *zip.File, dest string) error {
+func extractFile(zf *zip.File, dest string) (err error) {
 	rc, err := zf.Open()
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() {
+		if closeErr := rc.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return err
 	}
@@ -191,7 +201,12 @@ func extractFile(zf *zip.File, dest string) error {
 	return nil
 }
 
-func checkIntegrityDB(path string) (string, []string, error) {
+type managedMedia struct {
+	key  string
+	size int64
+}
+
+func checkIntegrityDB(path string) (string, []managedMedia, error) {
 	db, err := sql.Open("turso", path)
 	if err != nil {
 		return "", nil, fmt.Errorf("open temp db: %w", err)
@@ -219,24 +234,55 @@ func checkIntegrityDB(path string) (string, []string, error) {
 	if err := db.QueryRow("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&schema); err != nil {
 		return "", nil, fmt.Errorf("read schema_migrations: %w", err)
 	}
-	mediaRows, err := db.Query(`SELECT storage_key FROM media UNION SELECT storage_key FROM media_variants`)
+	media, err := managedMediaRows(context.Background(), db)
 	if err != nil {
 		return "", nil, err
 	}
-	defer mediaRows.Close()
-	var keys []string
-	for mediaRows.Next() {
-		var key string
-		if err := mediaRows.Scan(&key); err != nil {
-			return "", nil, err
-		}
-		if !validArchivePath(MediaPrefix + key) {
-			return "", nil, fmt.Errorf("invalid managed media key %q", key)
-		}
-		keys = append(keys, key)
+	return schema, media, nil
+}
+
+// managedMediaRows discovers media tables because archives may predate variants.
+func managedMediaRows(ctx context.Context, database *sql.DB) ([]managedMedia, error) {
+	tables, err := database.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('media', 'media_variants') ORDER BY name`)
+	if err != nil {
+		return nil, err
 	}
-	if err := mediaRows.Err(); err != nil {
-		return "", nil, err
+	var names []string
+	for tables.Next() {
+		var table string
+		if err := tables.Scan(&table); err != nil {
+			_ = tables.Close()
+			return nil, err
+		}
+		names = append(names, table)
 	}
-	return schema, keys, nil
+	if err := tables.Close(); err != nil {
+		return nil, err
+	}
+	if err := tables.Err(); err != nil {
+		return nil, err
+	}
+	var result []managedMedia
+	for _, table := range names {
+		rows, err := database.QueryContext(ctx, `SELECT storage_key, file_size FROM `+table+` ORDER BY storage_key`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var media managedMedia
+			if err := rows.Scan(&media.key, &media.size); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if !validArchivePath(MediaPrefix+media.key) || media.size < 0 {
+				_ = rows.Close()
+				return nil, fmt.Errorf("invalid managed media %q", media.key)
+			}
+			result = append(result, media)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

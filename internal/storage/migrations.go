@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 //go:embed schema/*.sql
@@ -178,8 +180,29 @@ func (d *Database) applyTransitionalMarkersIfNeeded(ctx context.Context) error {
 	return nil
 }
 
-// LatestAvailableMigration returns the lexicographically greatest migration filename
-// embedded in the binary (e.g. "046_normalize_private_status.sql").
+// CompareMigrationVersions orders migration filenames by their numeric prefix,
+// avoiding incorrect ordering once a migration number exceeds a digit boundary.
+func CompareMigrationVersions(a, b string) int {
+	parse := func(v string) (int, bool) {
+		i := strings.IndexByte(v, '_')
+		if i <= 0 {
+			return 0, false
+		}
+		n, err := strconv.Atoi(v[:i])
+		return n, err == nil
+	}
+	an, aok := parse(a)
+	bn, bok := parse(b)
+	if aok && bok && an != bn {
+		if an < bn {
+			return -1
+		}
+		return 1
+	}
+	return strings.Compare(a, b)
+}
+
+// LatestAvailableMigration returns the greatest embedded migration version.
 func LatestAvailableMigration() string {
 	entries, err := fs.ReadDir(migrationFiles, "schema")
 	if err != nil {
@@ -194,7 +217,7 @@ func LatestAvailableMigration() string {
 		if len(name) < 4 || name[len(name)-4:] != ".sql" {
 			continue
 		}
-		if name > max {
+		if CompareMigrationVersions(name, max) > 0 {
 			max = name
 		}
 	}

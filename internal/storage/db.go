@@ -15,13 +15,24 @@ type Database struct {
 }
 
 func Open(path string) (*Database, error) {
+	return open(path, path)
+}
+
+// OpenWithExperimentalIndexMethod opens a separate connection with Turso's
+// experimental native index methods enabled. Search capability probing uses it
+// so the normal CMS connection remains on the stable driver configuration.
+func OpenWithExperimentalIndexMethod(path string) (*Database, error) {
+	return open(path, path+"?experimental=index_method")
+}
+
+func open(path, dsn string) (*Database, error) {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create database directory: %w", err)
 		}
 	}
 
-	db, err := sql.Open("turso", path)
+	db, err := sql.Open("turso", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

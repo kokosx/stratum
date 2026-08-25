@@ -93,7 +93,7 @@ func CreateResult(ctx context.Context, database *storage.Database, queries *db.Q
 	if err != nil {
 		return Result{}, fmt.Errorf("hash snapshot: %w", err)
 	}
-	schemaVer, mediaKeys, err := snapshotMetadata(ctx, snapshotPath)
+	schemaVer, mediaFilesDB, err := snapshotMetadata(ctx, snapshotPath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -103,7 +103,8 @@ func CreateResult(ctx context.Context, database *storage.Database, queries *db.Q
 	stageRoot := filepath.Join(tmpDir, "media")
 	var mediaFiles []FileEntry
 	var mediaTotal int64
-	for _, key := range mediaKeys {
+	for _, media := range mediaFilesDB {
+		key := media.key
 		zipPath := MediaPrefix + key
 		if !validArchivePath(zipPath) {
 			return Result{}, fmt.Errorf("invalid managed media key %q", key)
@@ -116,6 +117,9 @@ func CreateResult(ctx context.Context, database *storage.Database, queries *db.Q
 		sha, size, err := fileSHA256(dest)
 		if err != nil {
 			return Result{}, err
+		}
+		if size != media.size {
+			return Result{}, fmt.Errorf("managed media %q size differs from database: file=%d database=%d", key, size, media.size)
 		}
 		mediaFiles = append(mediaFiles, FileEntry{Path: zipPath, SHA256: sha, Size: size})
 		mediaTotal += size
@@ -197,6 +201,9 @@ func CreateResult(ctx context.Context, database *storage.Database, queries *db.Q
 	}
 	if err := os.Rename(tmpOutput, outputPath); err != nil {
 		return Result{}, err
+	}
+	if err := syncDir(filepath.Dir(outputPath)); err != nil {
+		return Result{}, fmt.Errorf("sync backup output directory: %w", err)
 	}
 	info, err := os.Stat(outputPath)
 	if err != nil {
@@ -300,7 +307,7 @@ func copyRegularFile(source, dest string) error {
 	return closeErr
 }
 
-func snapshotMetadata(ctx context.Context, snapshotPath string) (string, []string, error) {
+func snapshotMetadata(ctx context.Context, snapshotPath string) (string, []managedMedia, error) {
 	database, err := storage.Open(snapshotPath)
 	if err != nil {
 		return "", nil, fmt.Errorf("open snapshot: %w", err)
@@ -310,21 +317,9 @@ func snapshotMetadata(ctx context.Context, snapshotPath string) (string, []strin
 	if err := database.DB.QueryRowContext(ctx, `SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&schema); err != nil {
 		return "", nil, fmt.Errorf("read snapshot schema_migrations: %w", err)
 	}
-	rows, err := database.DB.QueryContext(ctx, `SELECT storage_key FROM media UNION SELECT storage_key FROM media_variants ORDER BY storage_key`)
+	media, err := managedMediaRows(ctx, database.DB)
 	if err != nil {
 		return "", nil, fmt.Errorf("list snapshot media: %w", err)
 	}
-	defer rows.Close()
-	var keys []string
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return "", nil, err
-		}
-		keys = append(keys, key)
-	}
-	if err := rows.Err(); err != nil {
-		return "", nil, err
-	}
-	return schema, keys, nil
+	return schema, media, nil
 }

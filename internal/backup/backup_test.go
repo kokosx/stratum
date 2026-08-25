@@ -75,10 +75,10 @@ func TestBackupPopulatedSite(t *testing.T) {
 	ctx := context.Background()
 	// Create a page and a post with revisions
 	now := int64(1000)
-	queries.CreateEntry(ctx, db.CreateEntryParams{ID: "page1", ContentTypeID: "page", Slug: "about", Status: "active", CreatedAt: now, UpdatedAt: now})
-	queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "page1-r1", EntryID: "page1", RevisionNumber: 1, Slug: "about", Title: "About", DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
+	queries.CreateEntry(ctx, db.CreateEntryParams{ID: "page1", ContentTypeID: "page", Slug: "backup-about", Status: "active", CreatedAt: now, UpdatedAt: now})
+	queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: "page1-r1", EntryID: "page1", RevisionNumber: 1, Slug: "backup-about", Title: "About", DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
 	queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: "page1-r1", Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: "page1"})
-	queries.CreateRoute(ctx, db.CreateRouteParams{ID: "r1", Path: "/about", EntryID: sql.NullString{String: "page1", Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now})
+	queries.CreateRoute(ctx, db.CreateRouteParams{ID: "r1", Path: "/backup-about", EntryID: sql.NullString{String: "page1", Valid: true}, RouteType: "entry", CreatedAt: now, UpdatedAt: now})
 
 	archive := filepath.Join(t.TempDir(), "pop.zip")
 	if _, err := Create(ctx, database, queries, dir, archive); err != nil {
@@ -100,10 +100,10 @@ func TestBackupPopulatedSite(t *testing.T) {
 	defer restoredDB.Close()
 	restoredQueries := db.New(restoredDB.DB)
 	entry, err := restoredQueries.GetEntry(ctx, "page1")
-	if err != nil || entry.Slug != "about" {
+	if err != nil || entry.Slug != "backup-about" {
 		t.Fatalf("restored entry missing: %v", err)
 	}
-	route, err := restoredQueries.GetRouteByPath(ctx, "/about")
+	route, err := restoredQueries.GetRouteByPath(ctx, "/backup-about")
 	if err != nil || route.EntryID.String != "page1" {
 		t.Fatalf("restored route missing")
 	}
@@ -165,6 +165,53 @@ func TestBackupMediaIncluded(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("media not in archive")
+	}
+}
+
+func TestBackupRejectsMediaSizeMismatch(t *testing.T) {
+	dir, database, queries := newTestDataDir(t)
+	ctx := context.Background()
+	path := filepath.Join(dir, "media", "originals", "size.jpg")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("actual"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.CreateMedia(ctx, db.CreateMediaParams{ID: "size", OriginalFilename: "size.jpg", StorageKey: "originals/size.jpg", MimeType: "image/jpeg", AssetType: "image", FileSize: 99, CreatedAt: 1, UpdatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(ctx, database, queries, dir, filepath.Join(t.TempDir(), "size.zip")); err == nil {
+		t.Fatal("backup with database/media size mismatch succeeded")
+	}
+}
+
+func TestCheckIntegrityDBSupportsMediaWithoutVariantsTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	database, err := storage.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for _, statement := range []string{
+		`CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`,
+		`INSERT INTO schema_migrations VALUES ('001_initial.sql', 1)`,
+		`CREATE TABLE media (storage_key TEXT NOT NULL, file_size INTEGER NOT NULL)`,
+		`INSERT INTO media VALUES ('originals/old.jpg', 3)`,
+	} {
+		if _, err := database.DB.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, media, err := checkIntegrityDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(media) != 1 || media[0].key != "originals/old.jpg" || media[0].size != 3 {
+		t.Fatalf("unexpected media discovery: %#v", media)
 	}
 }
 
@@ -289,7 +336,7 @@ func TestRestoreExactContent(t *testing.T) {
 	ctx := context.Background()
 	now := int64(1000)
 	// Create taxonomy
-	queries.CreateTaxonomy(ctx, db.CreateTaxonomyParams{ID: "cat", PluralName: "Categories", SingularName: "Category", Hierarchical: 1})
+	queries.CreateTaxonomy(ctx, db.CreateTaxonomyParams{ID: "cat", ContentTypeID: "post", PluralName: "Categories", SingularName: "Category", Hierarchical: 1, Public: 1, RouteBase: sql.NullString{String: "categories", Valid: true}, CreatedAt: now, UpdatedAt: now})
 	queries.CreateTerm(ctx, db.CreateTermParams{ID: "term1", TaxonomyID: "cat", Name: "Tech", Slug: "tech"})
 	// Create entry with hierarchy, custom fields, etc.
 	queries.CreateEntry(ctx, db.CreateEntryParams{ID: "parent1", ContentTypeID: "page", Slug: "parent", Status: "active", CreatedAt: now, UpdatedAt: now})

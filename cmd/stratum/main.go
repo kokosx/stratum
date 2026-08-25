@@ -14,6 +14,7 @@ import (
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/backup"
+	"github.com/kokosx/stratum/internal/datalock"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/storage"
@@ -50,6 +51,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  backup verify <archive>")
 		fmt.Fprintln(os.Stderr, "  backup restore <archive>")
 		os.Exit(2)
+	}
+
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	var dataLock *datalock.Lock
+	var err error
+	if command == "serve" {
+		dataLock, err = datalock.Acquire(dataDir)
+		if err != nil {
+			log.Fatal("Stratum data directory is already in use by another process.")
+		}
+		defer dataLock.Close()
 	}
 
 	application, err := app.New(ctx)
@@ -254,12 +269,10 @@ func runBackupRestore(ctx context.Context, archive string) error {
 }
 
 func runSearchRebuild(ctx context.Context) error {
-	available, err := storage.NativeFTSAvailable(ctx, filepath.Join(os.TempDir(), fmt.Sprintf("stratum-fts-probe-%d.db", time.Now().UnixNano())))
-	if err != nil {
-		return fmt.Errorf("probe Turso native FTS: %w", err)
-	}
-	if !available {
-		return fmt.Errorf("Turso native FTS is unavailable in the current tursogo/platform build: %s", "CREATE INDEX fts_probe_idx ON fts_probe USING fts (title, body): Parse error: index method is an experimental feature. Enable with --experimental-index-method flag")
+	probePath := filepath.Join(os.TempDir(), fmt.Sprintf("stratum-fts-probe-%d.db", time.Now().UnixNano()))
+	defer os.Remove(probePath)
+	if err := storage.ProbeNativeFTS(ctx, probePath); err != nil {
+		return fmt.Errorf("Turso native FTS unavailable: %w", err)
 	}
 	return fmt.Errorf("search index is not implemented for this build")
 }
