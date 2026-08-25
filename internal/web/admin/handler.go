@@ -22,6 +22,7 @@ import (
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
+	"github.com/kokosx/stratum/internal/search"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
@@ -181,6 +182,11 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
+	publisher := publishing.New(database, queries)
+	searchService := search.New(database, blockRegistry)
+	publisher.SetSearchRefresh(searchService.RefreshEntry)
+	scheduler := publishing.NewScheduler(database, queries)
+	scheduler.SetSearchRefresh(searchService.RefreshEntry)
 	return &Handler{
 		database:                     database,
 		queries:                      queries,
@@ -206,8 +212,8 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		themes:                       themeRuntime,
 		runtime:                      runtime,
 		layoutsService:               layouts.NewService(database, queries, blockRegistry),
-		publishing:                   publishing.New(database, queries),
-		scheduler:                    publishing.NewScheduler(database, queries),
+		publishing:                   publisher,
+		scheduler:                    scheduler,
 	}, nil
 }
 

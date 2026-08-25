@@ -308,13 +308,13 @@ func copyRegularFile(source, dest string) error {
 }
 
 func snapshotMetadata(ctx context.Context, snapshotPath string) (string, []managedMedia, error) {
-	database, err := storage.Open(snapshotPath)
+	database, err := storage.OpenReadOnly(snapshotPath)
 	if err != nil {
 		return "", nil, fmt.Errorf("open snapshot: %w", err)
 	}
 	defer database.Close()
-	var schema string
-	if err := database.DB.QueryRowContext(ctx, `SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`).Scan(&schema); err != nil {
+	schema, err := database.CurrentSchemaVersion(ctx)
+	if err != nil {
 		return "", nil, fmt.Errorf("read snapshot schema_migrations: %w", err)
 	}
 	media, err := managedMediaRows(ctx, database.DB)

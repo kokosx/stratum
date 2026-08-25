@@ -13,11 +13,12 @@ import (
 
 // Scheduler runs durable scheduled publications as part of stratum serve.
 type Scheduler struct {
-	db       *sql.DB
-	queries  *db.Queries
-	hub      *runtimehub.Runtime
-	interval time.Duration
-	stopCh   chan struct{}
+	db            *sql.DB
+	queries       *db.Queries
+	hub           *runtimehub.Runtime
+	searchRefresh func(context.Context, string) error
+	interval      time.Duration
+	stopCh        chan struct{}
 }
 
 func NewScheduler(database *sql.DB, queries *db.Queries) *Scheduler {
@@ -37,6 +38,9 @@ func NewSchedulerWithHub(database *sql.DB, queries *db.Queries, hub *runtimehub.
 }
 
 func (s *Scheduler) SetHub(hub *runtimehub.Runtime) { s.hub = hub }
+
+// SetSearchRefresh refreshes a published entry after its transaction commits.
+func (s *Scheduler) SetSearchRefresh(fn func(context.Context, string) error) { s.searchRefresh = fn }
 
 // SetInterval overrides ticker interval (for tests).
 func (s *Scheduler) SetInterval(d time.Duration) { s.interval = d }
@@ -190,6 +194,11 @@ func (s *Scheduler) runOne(ctx context.Context, job db.PublicationJob, now int64
 		s.hub.Pages.InvalidateAll()
 		s.hub.Sitemap.Invalidate()
 		s.hub.Feed.Invalidate()
+	}
+	if s.searchRefresh != nil {
+		if err := s.searchRefresh(context.Background(), entry.ID); err != nil {
+			log.Printf("publishing scheduler: search refresh after entry %s: %v (publication remains committed)", entry.ID, err)
+		}
 	}
 	log.Printf("publishing scheduler: published entry %s revision %s (job %s)", entry.ID, rev.ID, job.ID)
 	return nil

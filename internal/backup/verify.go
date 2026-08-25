@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 
 	"github.com/kokosx/stratum/internal/storage"
-	_ "turso.tech/database/tursogo"
 )
 
 const (
@@ -207,11 +206,12 @@ type managedMedia struct {
 }
 
 func checkIntegrityDB(path string) (string, []managedMedia, error) {
-	db, err := sql.Open("turso", path)
+	database, err := storage.OpenReadOnly(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("open temp db: %w", err)
 	}
-	defer db.Close()
+	defer database.Close()
+	db := database.DB
 	var result string
 	if err := db.QueryRow("PRAGMA integrity_check").Scan(&result); err != nil {
 		return "", nil, err
@@ -230,8 +230,8 @@ func checkIntegrityDB(path string) (string, []managedMedia, error) {
 	if err := rows.Err(); err != nil {
 		return "", nil, err
 	}
-	var schema string
-	if err := db.QueryRow("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&schema); err != nil {
+	schema, err := database.CurrentSchemaVersion(context.Background())
+	if err != nil {
 		return "", nil, fmt.Errorf("read schema_migrations: %w", err)
 	}
 	media, err := managedMediaRows(context.Background(), db)

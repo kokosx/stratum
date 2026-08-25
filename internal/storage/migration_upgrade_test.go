@@ -159,7 +159,7 @@ func TestMigrationUpgradePathFreshVsUpgraded(t *testing.T) {
 	var cnt int
 	err = freshDB.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('layout_templates') WHERE name='parent_template_id'`).Scan(&cnt)
 	if err != nil {
-		t.Logf("pragma check err (tursogo may not support): %v", err)
+		t.Logf("pragma check error: %v", err)
 	} else if cnt != 0 {
 		t.Fatalf("fresh still has parent column")
 	} else {

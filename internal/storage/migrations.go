@@ -53,7 +53,7 @@ func (d *Database) Migrate(ctx context.Context) error {
 			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
 		}
 
-		if entry.Name() == "041_revision_scoped_slug.sql" {
+		if entry.Name() == "037_remove_layout_parent.sql" || entry.Name() == "041_revision_scoped_slug.sql" {
 			if err := d.migrateEntriesRebuild(ctx, entry.Name(), sql); err != nil {
 				return err
 			}
@@ -88,15 +88,34 @@ func (d *Database) applyMigration(ctx context.Context, name string, migration []
 // migrateEntriesRebuild always restores foreign key enforcement on the single
 // SQLite connection, including failed DDL and migration-record paths.
 func (d *Database) migrateEntriesRebuild(ctx context.Context, name string, migration []byte) (err error) {
-	if _, err = d.DB.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+	conn, err := d.DB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("get migration connection for %s: %w", name, err)
+	}
+	defer conn.Close()
+	if _, err = conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
 		return fmt.Errorf("disable foreign keys for %s: %w", name, err)
 	}
 	defer func() {
-		if _, restoreErr := d.DB.ExecContext(ctx, "PRAGMA foreign_keys = ON"); restoreErr != nil && err == nil {
+		if _, restoreErr := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON"); restoreErr != nil && err == nil {
 			err = fmt.Errorf("restore foreign keys after %s: %w", name, restoreErr)
 		}
 	}()
-	return d.applyMigration(ctx, name, migration)
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin migration %s: %w", name, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, string(migration)); err != nil {
+		return fmt.Errorf("apply migration %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version, applied_at) VALUES (?, unixepoch())", name); err != nil {
+		return fmt.Errorf("record migration %s: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration %s: %w", name, err)
+	}
+	return nil
 }
 
 // applyTransitionalMarkersIfNeeded detects a previous short-lived set of
@@ -227,11 +246,20 @@ func LatestAvailableMigration() string {
 // CurrentSchemaVersion returns the latest applied migration version from the DB,
 // or empty if none.
 func (d *Database) CurrentSchemaVersion(ctx context.Context) (string, error) {
-	var v string
-	err := d.DB.QueryRowContext(ctx, "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&v)
+	rows, err := d.DB.QueryContext(ctx, "SELECT version FROM schema_migrations")
 	if err != nil {
-		// No migrations yet
 		return "", nil
 	}
-	return v, nil
+	defer rows.Close()
+	var latest string
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return "", err
+		}
+		if CompareMigrationVersions(version, latest) > 0 {
+			latest = version
+		}
+	}
+	return latest, rows.Err()
 }

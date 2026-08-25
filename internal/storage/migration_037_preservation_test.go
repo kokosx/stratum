@@ -56,7 +56,7 @@ func TestMigration037PreservesLayoutDataAndFK(t *testing.T) {
 	if fkBefore != 0 {
 		t.Fatalf("fk before %d", fkBefore)
 	}
-	// Now run 037 as migration runner would (BeginTx + Exec file)
+	// Now run 037 through the migration runner's single-connection FK handling.
 	sqlBytes, err := os.ReadFile(filepath.Join("schema", "037_remove_layout_parent.sql"))
 	if err != nil {
 		// Fallback to embedded via migrationFiles? Try alternate path
@@ -65,16 +65,11 @@ func TestMigration037PreservesLayoutDataAndFK(t *testing.T) {
 			t.Fatalf("read 037: %v", err)
 		}
 	}
-	tx, err := database.DB.BeginTx(ctx, nil)
-	if err != nil {
+	if _, err := database.DB.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = '037_remove_layout_parent.sql'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
-		tx.Rollback()
+	if err := database.migrateEntriesRebuild(ctx, "037_remove_layout_parent.sql", sqlBytes); err != nil {
 		t.Fatalf("exec 037: %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatalf("commit 037: %v", err)
 	}
 	// Assert preservation
 	var name, pub string
@@ -152,7 +147,7 @@ func TestDropColumnSupportOnTurso(t *testing.T) {
 		}
 	} else {
 		tx.Rollback()
-		t.Logf("DROP COLUMN failed as expected on tursogo (self-FK): %v", err)
+		t.Logf("DROP COLUMN failed as expected with a self-FK: %v", err)
 		// This is the expected path for current Turso, so rebuild is required
 		if cnt == 0 {
 			// Clean up added column for other tests

@@ -28,6 +28,7 @@ import (
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/routing"
 	"github.com/kokosx/stratum/internal/runtimehub"
+	"github.com/kokosx/stratum/internal/search"
 	"github.com/kokosx/stratum/internal/seo"
 	"github.com/kokosx/stratum/internal/site"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -49,6 +50,7 @@ type Handler struct {
 	warnNoSiteURL sync.Once
 	unlockStore   *publishing.UnlockStore
 	unlockLimiter *publishing.UnlockLimiter
+	search        *search.Service
 }
 
 func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
@@ -77,6 +79,9 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		dev:            os.Getenv("STRATUM_ENV") != "production",
 		unlockStore:    publishing.NewUnlockStore(),
 		unlockLimiter:  publishing.NewUnlockLimiter(),
+	}
+	if database, ok := hub.Queries.DB().(*sql.DB); ok {
+		h.search = search.New(database, hub.Blocks)
 	}
 	testRouteRegistry.Store(hub.Queries, h)
 	// Targeted warmup: homepage and main archive page 1 if available.
@@ -121,6 +126,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/favicon.ico" {
 		h.serveFavicon(w, r)
+		return
+	}
+	if r.URL.Path == "/search" {
+		h.serveSearch(w, r)
 		return
 	}
 

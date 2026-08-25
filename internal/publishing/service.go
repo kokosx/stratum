@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/kokosx/stratum/internal/content"
@@ -19,13 +20,18 @@ import (
 
 // Service owns the shared publication semantics for both admin immediate publish and scheduler.
 type Service struct {
-	db      *sql.DB
-	queries *db.Queries
+	db            *sql.DB
+	queries       *db.Queries
+	searchRefresh func(context.Context, string) error
 }
 
 func New(database *sql.DB, queries *db.Queries) *Service {
 	return &Service{db: database, queries: queries}
 }
+
+// SetSearchRefresh wires the rebuildable search projection without making
+// publication depend on a concrete search package.
+func (s *Service) SetSearchRefresh(fn func(context.Context, string) error) { s.searchRefresh = fn }
 
 // PublishRevision atomically publishes the exact revision. It is the single implementation used by admin and scheduler.
 func (s *Service) PublishRevision(ctx context.Context, entryID, revisionID string, now int64) error {
@@ -58,6 +64,11 @@ func (s *Service) PublishRevision(ctx context.Context, entryID, revisionID strin
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit publish: %w", err)
+	}
+	if s.searchRefresh != nil {
+		if err := s.searchRefresh(context.Background(), entryID); err != nil {
+			log.Printf("search refresh after publishing entry %s: %v (publication remains committed)", entryID, err)
+		}
 	}
 	return nil
 }
@@ -377,7 +388,15 @@ func (s *Service) Unpublish(ctx context.Context, entryID string, now int64) erro
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if s.searchRefresh != nil {
+		if err := s.searchRefresh(context.Background(), entryID); err != nil {
+			log.Printf("search removal after unpublishing entry %s: %v (unpublish remains committed)", entryID, err)
+		}
+	}
+	return nil
 }
 
 func randomID() (string, error) {

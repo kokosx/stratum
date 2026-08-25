@@ -17,6 +17,7 @@ import (
 	"github.com/kokosx/stratum/internal/datalock"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
+	"github.com/kokosx/stratum/internal/search"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
@@ -132,6 +133,7 @@ func serve(application *app.App) error {
 
 	// Scheduled publishing runs as part of stratum serve.
 	scheduler := publishing.NewSchedulerWithHub(application.Database.DB, application.Queries, hub)
+	scheduler.SetSearchRefresh(search.New(application.Database.DB, application.Blocks).RefreshEntry)
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	go scheduler.Start(schedCtx)
 	defer schedCancel()
@@ -269,10 +271,15 @@ func runBackupRestore(ctx context.Context, archive string) error {
 }
 
 func runSearchRebuild(ctx context.Context) error {
-	probePath := filepath.Join(os.TempDir(), fmt.Sprintf("stratum-fts-probe-%d.db", time.Now().UnixNano()))
-	defer os.Remove(probePath)
-	if err := storage.ProbeNativeFTS(ctx, probePath); err != nil {
-		return fmt.Errorf("Turso native FTS unavailable: %w", err)
+	application, err := app.New(ctx)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("search index is not implemented for this build")
+	defer application.Close()
+	count, err := search.New(application.Database.DB, application.Blocks).Rebuild(ctx)
+	if err != nil {
+		return fmt.Errorf("rebuild search index: %w", err)
+	}
+	fmt.Printf("Search index rebuilt: %d entries\n", count)
+	return nil
 }
