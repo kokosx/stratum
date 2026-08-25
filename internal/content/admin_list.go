@@ -14,6 +14,8 @@ const (
 	AdminStatusAll       AdminStatus = "all"
 	AdminStatusPublished AdminStatus = "published"
 	AdminStatusDraft     AdminStatus = "draft"
+	AdminStatusPending   AdminStatus = "pending"
+	AdminStatusScheduled AdminStatus = "scheduled"
 	AdminStatusPrivate   AdminStatus = "private"
 	AdminStatusTrash     AdminStatus = "trash"
 )
@@ -25,6 +27,10 @@ func NormalizeAdminStatus(raw string) AdminStatus {
 		return AdminStatusPublished
 	case "draft":
 		return AdminStatusDraft
+	case "pending":
+		return AdminStatusPending
+	case "scheduled":
+		return AdminStatusScheduled
 	case "private":
 		return AdminStatusPrivate
 	case "trash":
@@ -60,7 +66,7 @@ func (q EntryAdminListQuery) Normalized() EntryAdminListQuery {
 		q.Status = AdminStatusAll
 	}
 	switch q.Status {
-	case AdminStatusAll, AdminStatusPublished, AdminStatusDraft, AdminStatusPrivate, AdminStatusTrash:
+	case AdminStatusAll, AdminStatusPublished, AdminStatusDraft, AdminStatusPending, AdminStatusScheduled, AdminStatusPrivate, AdminStatusTrash:
 	default:
 		q.Status = AdminStatusAll
 	}
@@ -71,6 +77,8 @@ type EntryStatusCounts struct {
 	All       int64
 	Published int64
 	Draft     int64
+	Pending   int64
+	Scheduled int64
 	Private   int64
 	Trash     int64
 }
@@ -83,14 +91,21 @@ type AdminListResult struct {
 }
 
 // AdminEntry is the admin-list boundary. Storage rows stay inside the repository.
+// It carries enough revision/schedule metadata to derive workflow status without N+1 queries.
 type AdminEntry struct {
-	ID                  string
-	Slug                string
-	Status              string
-	UpdatedAt           int64
-	PublishedRevisionID string
-	Title               string
-	PublicPath          string
+	ID                   string
+	Slug                 string
+	Status               string // lifecycle: active/trash
+	UpdatedAt            int64
+	PublishedRevisionID  string
+	LatestRevisionID     string
+	LatestReviewState    string
+	PublishedVisibility  string
+	PublishedReviewState string
+	HasSchedule          bool
+	ScheduledAt          int64
+	Title                string
+	PublicPath           string
 }
 
 func (r *Repository) AdminList(ctx context.Context, q EntryAdminListQuery) (*AdminListResult, error) {
@@ -134,14 +149,31 @@ func (r *Repository) AdminList(ctx context.Context, q EntryAdminListQuery) (*Adm
 		All:       nullFloatToInt(countsRow.AllCount),
 		Published: nullFloatToInt(countsRow.PublishedCount),
 		Draft:     nullFloatToInt(countsRow.DraftCount),
+		Pending:   nullFloatToInt(countsRow.PendingCount),
+		Scheduled: nullFloatToInt(countsRow.ScheduledCount),
 		Private:   nullFloatToInt(countsRow.PrivateCount),
 		Trash:     nullFloatToInt(countsRow.TrashCount),
 	}
 	entries := make([]AdminEntry, 0, len(rows))
 	for _, row := range rows {
-		entry := AdminEntry{ID: row.ID, Slug: row.Slug, Status: row.Status, UpdatedAt: row.UpdatedAt}
+		entry := AdminEntry{ID: row.ID, Slug: row.Slug, Status: row.Status, UpdatedAt: row.UpdatedAt, HasSchedule: row.HasSchedule != 0}
 		if row.PublishedRevisionID.Valid {
 			entry.PublishedRevisionID = row.PublishedRevisionID.String
+		}
+		if row.LatestRevisionID.Valid {
+			entry.LatestRevisionID = row.LatestRevisionID.String
+		}
+		if row.LatestReviewState.Valid {
+			entry.LatestReviewState = row.LatestReviewState.String
+		}
+		if row.PublishedVisibility.Valid {
+			entry.PublishedVisibility = row.PublishedVisibility.String
+		}
+		if row.PublishedReviewState.Valid {
+			entry.PublishedReviewState = row.PublishedReviewState.String
+		}
+		if row.ScheduledAt.Valid {
+			entry.ScheduledAt = row.ScheduledAt.Int64
 		}
 		if row.Title.Valid {
 			entry.Title = row.Title.String

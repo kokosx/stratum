@@ -7,25 +7,48 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/backup"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
+	"github.com/kokosx/stratum/internal/storage"
+	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
 )
 
 func main() {
 	ctx := context.Background()
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		if err := runBackup(ctx, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "search" {
+		if len(os.Args) > 2 && os.Args[2] == "rebuild" {
+			if err := runSearchRebuild(ctx); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		fmt.Fprintln(os.Stderr, "usage: stratum search rebuild")
+		os.Exit(2)
+	}
 	command := "serve"
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
 	if command != "serve" && command != "migrate" && command != "seed" {
-		fmt.Fprintln(os.Stderr, "usage: stratum [serve|migrate|seed]")
+		fmt.Fprintln(os.Stderr, "usage: stratum [serve|migrate|seed|backup|search]")
+		fmt.Fprintln(os.Stderr, "  backup create [--output path]")
+		fmt.Fprintln(os.Stderr, "  backup verify <archive>")
+		fmt.Fprintln(os.Stderr, "  backup restore <archive>")
 		os.Exit(2)
 	}
 
@@ -144,5 +167,103 @@ func serve(application *app.App) error {
 		return err
 	}
 	log.Println("Stopped")
+	return nil
+}
+
+func runBackup(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: stratum backup <create|verify|restore> [...]")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "create":
+		return runBackupCreate(ctx, args[1:])
+	case "verify":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: stratum backup verify <archive>")
+			os.Exit(2)
+		}
+		return runBackupVerify(args[1])
+	case "restore":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "usage: stratum backup restore <archive>")
+			os.Exit(2)
+		}
+		return runBackupRestore(ctx, args[1])
+	default:
+		fmt.Fprintf(os.Stderr, "unknown backup command %q\n", args[0])
+		os.Exit(2)
+	}
+	return nil
+}
+
+func runBackupCreate(ctx context.Context, args []string) error {
+	output := ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--output" || args[i] == "-o" {
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for %s", args[i])
+			}
+			output = args[i+1]
+			i++
+		} else if args[i] == "--help" || args[i] == "-h" {
+			fmt.Println("usage: stratum backup create [--output path]")
+			return nil
+		} else {
+			return fmt.Errorf("unknown flag %q", args[i])
+		}
+	}
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	// Open DB for snapshot
+	dbPath := filepath.Join(dataDir, "stratum.db")
+	database, err := storage.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	queries := db.New(database.DB)
+	archivePath, err := backup.Create(ctx, database, queries, dataDir, output)
+	if err != nil {
+		return err
+	}
+	info, _ := os.Stat(archivePath)
+	sizeStr := ""
+	if info != nil {
+		sizeStr = fmt.Sprintf("%d bytes", info.Size())
+	}
+	fmt.Printf("Backup created: %s (%s)\n", archivePath, sizeStr)
+	return nil
+}
+
+func runBackupVerify(archive string) error {
+	if err := backup.Verify(archive); err != nil {
+		return fmt.Errorf("verify failed: %w", err)
+	}
+	fmt.Printf("Backup verified: %s\n", archive)
+	return nil
+}
+
+func runBackupRestore(ctx context.Context, archive string) error {
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	if err := backup.Restore(ctx, archive, dataDir); err != nil {
+		return err
+	}
+	fmt.Printf("Backup restored from %s\n", archive)
+	return nil
+}
+
+func runSearchRebuild(ctx context.Context) error {
+	// Search uses FTS5/Turso native FTS which is not available in this build (see backup/search prompt)
+	// For now, report clearly.
+	fmt.Println("Search rebuild: FTS5/Turso native FTS not available in current tursogo build (see PROMPT 9 report). No index to rebuild.")
 	return nil
 }

@@ -20,7 +20,7 @@ func TestArchiveShellWithLayoutTemplate(t *testing.T) {
 	// Create Home and Blog pages
 	createAndPublishPage(t, client, server.URL, "Home", "home-page", simpleDoc("Home"))
 	time.Sleep(200 * time.Millisecond)
-	homeEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
+	homeEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
 
 	// Clean seeded blog if exists
 	if _, err := queries.GetEntry(ctx, "seed-blog"); err == nil {
@@ -31,7 +31,7 @@ func TestArchiveShellWithLayoutTemplate(t *testing.T) {
 	}
 	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(200 * time.Millisecond)
-	blogEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
+	blogEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	saveReadingSettings(t, client, server.URL, queries, homeEntry.ID, blogEntry.ID, "/blog", "10")
 
 	// Create layout template for page type? Actually archive uses page's content type? Posts page is page, but layout for archive is derived from Posts Page's layout_template_id. Create layout for page.

@@ -156,6 +156,33 @@ func PublishWithQueries(ctx context.Context, qtx *db.Queries, entry db.Entry, re
 	}
 	def := content.DefinitionFor(entry.ContentTypeID)
 	isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entry.ID
+	isHomepage := settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entry.ID
+	// Homepage and Posts Page must remain publicly routable; they cannot be private or password-protected.
+	if (isHomepage || isPostsPage) && (rev.Visibility == "private" || rev.Visibility == "password") {
+		return content.ErrProtectedPage
+	}
+	// Publishing a hierarchical entry as private removes its route; reject if public descendants would become orphaned.
+	if rev.Visibility == "private" && def.Capabilities.Hierarchical {
+		rows, err := qtx.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
+		if err != nil {
+			return err
+		}
+		nodes := make([]content.HierarchyNode, 0, len(rows))
+		for _, r := range rows {
+			parent := ""
+			if r.ParentEntryID.Valid {
+				parent = r.ParentEntryID.String
+			}
+			nodes = append(nodes, content.HierarchyNode{EntryID: r.EntryID, ParentEntryID: parent})
+		}
+		h, err := content.NewHierarchy(nodes)
+		if err != nil {
+			return err
+		}
+		if len(h.Descendants(entry.ID)) != 0 {
+			return content.ErrPublishedDescendants
+		}
+	}
 	switch rev.Visibility {
 	case "private":
 		if route, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entry.ID, Valid: true}); err == nil {
@@ -283,6 +310,7 @@ func (s *Service) CancelSchedule(ctx context.Context, entryID string, now int64)
 }
 
 // Unpublish clears published revision and cancels any scheduled job.
+// Validation happens before any destructive mutation.
 func (s *Service) Unpublish(ctx context.Context, entryID string, now int64) error {
 	entry, err := s.queries.GetEntry(ctx, entryID)
 	if err != nil {
@@ -291,17 +319,54 @@ func (s *Service) Unpublish(ctx context.Context, entryID string, now int64) erro
 	if s.db == nil {
 		return errors.New("database not configured")
 	}
-	// Check protected same as lifecycle?
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
-	// Cancel schedule first
-	_ = qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{
+
+	// Validate special-page protection before mutation.
+	settings, err := qtx.GetSiteSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entry.ID {
+		return content.ErrProtectedPage
+	}
+	if settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entry.ID {
+		return content.ErrProtectedPage
+	}
+
+	// Validate hierarchical descendants before destructive changes.
+	if content.DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical {
+		rows, err := qtx.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
+		if err != nil {
+			return err
+		}
+		nodes := make([]content.HierarchyNode, 0, len(rows))
+		for _, r := range rows {
+			parent := ""
+			if r.ParentEntryID.Valid {
+				parent = r.ParentEntryID.String
+			}
+			nodes = append(nodes, content.HierarchyNode{EntryID: r.EntryID, ParentEntryID: parent})
+		}
+		h, err := content.NewHierarchy(nodes)
+		if err != nil {
+			return err
+		}
+		if len(h.Descendants(entryID)) != 0 {
+			return content.ErrPublishedDescendants
+		}
+	}
+
+	// Cancel active scheduled publication atomically within transaction.
+	if err := qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{
 		UpdatedAt: now, EntryID: entryID, LastError: sql.NullString{String: "cancelled by unpublish", Valid: true},
-	})
+	}); err != nil {
+		return err
+	}
 	if err := qtx.ClearPublishedRevision(ctx, db.ClearPublishedRevisionParams{UpdatedAt: now, ID: entryID}); err != nil {
 		return err
 	}
@@ -311,24 +376,6 @@ func (s *Service) Unpublish(ctx context.Context, entryID string, now int64) erro
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
-	}
-	// Also need to check published descendants? For simplicity reuse lifecycle check inline
-	if entry.PublishedRevisionID.Valid {
-		// Use content hierarchy check for published descendants
-		rows, _ := qtx.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
-		nodes := make([]content.HierarchyNode, 0, len(rows))
-		for _, r := range rows {
-			parent := ""
-			if r.ParentEntryID.Valid {
-				parent = r.ParentEntryID.String
-			}
-			nodes = append(nodes, content.HierarchyNode{EntryID: r.EntryID, ParentEntryID: parent})
-		}
-		if h, err := content.NewHierarchy(nodes); err == nil {
-			if len(h.Descendants(entryID)) != 0 {
-				return content.ErrPublishedDescendants
-			}
-		}
 	}
 	return tx.Commit()
 }

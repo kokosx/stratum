@@ -21,6 +21,9 @@ type Route struct {
 	RedirectStatus sql.NullInt64
 	CreatedAt      int64
 	UpdatedAt      int64
+	// Publication metadata for entry routes (only set when RouteType == entry).
+	PublishedRevisionID sql.NullString
+	Visibility          string // "public", "password", "private" (private routes are deleted, so typically not present)
 }
 
 func (r Route) IsArchive() bool { return r.RouteType == RouteTypeArchive }

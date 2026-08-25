@@ -927,6 +927,49 @@ func (h *Handler) cancelScheduleEntry(w http.ResponseWriter, r *http.Request, co
 	http.Redirect(w, r, "/admin/"+activeMenu+"/"+entryID+"/edit", http.StatusSeeOther)
 }
 
+func (h *Handler) submitReviewEntry(w http.ResponseWriter, r *http.Request, contentType, activeMenu string) {
+	if !h.validCSRF(r) {
+		if isDatastarRequest(r) {
+			writeSSE(w, patchElementsEvent("outer", "", editorErrorFragment(errors.New("invalid security token"))), toastEvent("error", "Invalid security token"))
+			return
+		}
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	entryID := r.PathValue("id")
+	input, err := readEntryInput(r, contentType)
+	if err != nil {
+		if isDatastarRequest(r) {
+			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, err)
+			return
+		}
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, err)
+		return
+	}
+	// Force pending review state via dedicated endpoint – avoids relying on clicked button value in Datastar form serialization.
+	input.reviewState = "pending"
+	if _, _, err := h.entryAndLatestRevision(r.Context(), entryID, contentType); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	user, err := h.currentUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, false)
+	if isDatastarRequest(r) {
+		h.editorSaveFragment(w, r, contentType, activeMenu, entryID, false, input, saveErr)
+		return
+	}
+	if saveErr != nil {
+		h.renderEntryError(w, r, contentType, activeMenu, entryID, input, saveErr)
+		return
+	}
+	h.setFlash(w, "Submitted for review.")
+	http.Redirect(w, r, "/admin/"+activeMenu+"/"+entryID+"/edit", http.StatusSeeOther)
+}
+
 func (h *Handler) parseScheduledAt(r *http.Request) (int64, error) {
 	raw := strings.TrimSpace(r.FormValue("scheduled_at"))
 	if raw == "" {

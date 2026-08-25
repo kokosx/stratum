@@ -11,7 +11,7 @@ import (
 )
 
 const cancelActivePublicationJobsForEntry = `-- name: CancelActivePublicationJobsForEntry :exec
-UPDATE publication_jobs SET status = 'cancelled', updated_at = ?, last_error = ?3 WHERE entry_id = ? AND status = 'scheduled'
+UPDATE publication_jobs SET status = 'cancelled', updated_at = ?1, last_error = ?2 WHERE entry_id = ?3 AND status = 'scheduled'
 `
 
 type CancelActivePublicationJobsForEntryParams struct {
@@ -207,7 +207,7 @@ func (q *Queries) ListPublicationJobsForEntry(ctx context.Context, entryID strin
 }
 
 const updatePublicationJobStatus = `-- name: UpdatePublicationJobStatus :exec
-UPDATE publication_jobs SET status = ?, updated_at = ?, last_error = ?4 WHERE id = ?
+UPDATE publication_jobs SET status = ?1, updated_at = ?2, last_error = ?3 WHERE id = ?4
 `
 
 type UpdatePublicationJobStatusParams struct {

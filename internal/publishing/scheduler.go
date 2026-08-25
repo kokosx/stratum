@@ -117,32 +117,61 @@ func (s *Scheduler) runOne(ctx context.Context, job db.PublicationJob, now int64
 	}
 	entry, err := qtx.GetEntry(ctx, current.EntryID)
 	if err != nil {
-		_ = s.markFailedWithTx(ctx, qtx, current.ID, now, "entry not found")
-		_ = tx.Commit()
-		return errors.New("entry not found")
+		origErr := errors.New("entry not found")
+		if markErr := s.markFailedWithTx(ctx, qtx, current.ID, now, "entry not found"); markErr != nil {
+			log.Printf("publishing scheduler: failed to mark job %s as failed after %v: %v", current.ID, origErr, markErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			log.Printf("publishing scheduler: commit after marking job %s failed (original %v) failed: %v", current.ID, origErr, commitErr)
+			return commitErr
+		}
+		return origErr
 	}
 	if entry.Status == "trash" {
-		_ = s.markFailedWithTx(ctx, qtx, current.ID, now, "entry is in trash")
-		_ = tx.Commit()
-		return errors.New("entry is in trash")
+		origErr := errors.New("entry is in trash")
+		if markErr := s.markFailedWithTx(ctx, qtx, current.ID, now, "entry is in trash"); markErr != nil {
+			log.Printf("publishing scheduler: failed to mark job %s as failed after %v: %v", current.ID, origErr, markErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			log.Printf("publishing scheduler: commit after marking job %s failed (original %v) failed: %v", current.ID, origErr, commitErr)
+			return commitErr
+		}
+		return origErr
 	}
 	rev, err := qtx.GetEntryRevision(ctx, current.RevisionID)
 	if err != nil {
-		_ = s.markFailedWithTx(ctx, qtx, current.ID, now, "revision not found")
-		_ = tx.Commit()
-		return errors.New("revision not found")
+		origErr := errors.New("revision not found")
+		if markErr := s.markFailedWithTx(ctx, qtx, current.ID, now, "revision not found"); markErr != nil {
+			log.Printf("publishing scheduler: failed to mark job %s as failed after %v: %v", current.ID, origErr, markErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			log.Printf("publishing scheduler: commit after marking job %s failed (original %v) failed: %v", current.ID, origErr, commitErr)
+			return commitErr
+		}
+		return origErr
 	}
 	if rev.EntryID != current.EntryID {
-		_ = s.markFailedWithTx(ctx, qtx, current.ID, now, "revision does not belong to entry")
-		_ = tx.Commit()
-		return errors.New("revision mismatch")
+		origErr := errors.New("revision does not belong to entry")
+		if markErr := s.markFailedWithTx(ctx, qtx, current.ID, now, "revision does not belong to entry"); markErr != nil {
+			log.Printf("publishing scheduler: failed to mark job %s as failed after %v: %v", current.ID, origErr, markErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			log.Printf("publishing scheduler: commit after marking job %s failed (original %v) failed: %v", current.ID, origErr, commitErr)
+			return commitErr
+		}
+		return origErr
 	}
 	if err := s.publishWithQueries(ctx, qtx, entry, rev, now); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		_ = s.markFailedWithTx(ctx, qtx, current.ID, now, err.Error())
-		_ = tx.Commit()
+		if markErr := s.markFailedWithTx(ctx, qtx, current.ID, now, err.Error()); markErr != nil {
+			log.Printf("publishing scheduler: failed to mark job %s as failed after publish error %v: %v", current.ID, err, markErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			log.Printf("publishing scheduler: commit after marking job %s failed (publish error %v) failed: %v", current.ID, err, commitErr)
+			return commitErr
+		}
 		return err
 	}
 	if err := qtx.UpdatePublicationJobStatus(ctx, db.UpdatePublicationJobStatusParams{
@@ -151,11 +180,13 @@ func (s *Scheduler) runOne(ctx context.Context, job db.PublicationJob, now int64
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		log.Printf("publishing scheduler: commit for job %s after publish failed: %v", current.ID, err)
 		return err
 	}
 	if s.hub != nil {
-		// Invalidate caches and reload routes so new published revision is visible immediately.
-		s.hub.Routes.Reload(context.Background())
+		if err := s.hub.Routes.Reload(context.Background()); err != nil {
+			log.Printf("publishing scheduler: post-publish route reload failed for job %s (entry %s rev %s): %v (DB remains source of truth)", current.ID, entry.ID, rev.ID, err)
+		}
 		s.hub.Pages.InvalidateAll()
 		s.hub.Sitemap.Invalidate()
 		s.hub.Feed.Invalidate()

@@ -184,7 +184,7 @@ func TestVerticalSliceSetupToPublish(t *testing.T) {
 	}
 	createResp.Body.Close()
 
-	entry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "hello"})
+	entry, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "hello"})
 	if err != nil {
 		t.Fatalf("created entry not found: %v", err)
 	}

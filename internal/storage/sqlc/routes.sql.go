@@ -267,6 +267,42 @@ func (q *Queries) ListArchiveRoutes(ctx context.Context) ([]Route, error) {
 	return items, nil
 }
 
+const listEntryRouteVisibilities = `-- name: ListEntryRouteVisibilities :many
+SELECT entries.id AS entry_id, entry_revisions.visibility AS visibility, entries.published_revision_id AS published_revision_id
+FROM entries
+JOIN entry_revisions ON entry_revisions.id = entries.published_revision_id
+WHERE entries.published_revision_id IS NOT NULL
+`
+
+type ListEntryRouteVisibilitiesRow struct {
+	EntryID             string         `json:"entry_id"`
+	Visibility          string         `json:"visibility"`
+	PublishedRevisionID sql.NullString `json:"published_revision_id"`
+}
+
+func (q *Queries) ListEntryRouteVisibilities(ctx context.Context) ([]ListEntryRouteVisibilitiesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listEntryRouteVisibilities)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEntryRouteVisibilitiesRow{}
+	for rows.Next() {
+		var i ListEntryRouteVisibilitiesRow
+		if err := rows.Scan(&i.EntryID, &i.Visibility, &i.PublishedRevisionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRedirectsToTarget = `-- name: ListRedirectsToTarget :many
 SELECT id, path, entry_id, route_type, redirect_to, redirect_status, created_at, updated_at, content_type_id, taxonomy_id, term_id
 FROM routes

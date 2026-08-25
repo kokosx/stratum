@@ -94,7 +94,7 @@ func TestEditorPreviewSharesPublicRenderingPipeline(t *testing.T) {
 	}
 	r := postForm(t, client, server.URL, "/admin/pages", createForm)
 	r.Body.Close()
-	entry, err := queries.GetEntryBySlug(context.Background(), db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "preview-parity"})
+	entry, err := queries.GetFlatEntryBySlug(context.Background(), db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "preview-parity"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestImageCenterAlignmentVerified(t *testing.T) {
 	}
 	cr := postForm(t, client, server.URL, "/admin/pages", createForm)
 	cr.Body.Close()
-	entry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "image-test"})
+	entry, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "image-test"})
 	if err != nil {
 		t.Fatal(err)
 	}

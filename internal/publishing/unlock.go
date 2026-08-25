@@ -24,9 +24,11 @@ func NewUnlockStore() *UnlockStore {
 	return &UnlockStore{tokens: make(map[string]unlockEntry)}
 }
 
-func (s *UnlockStore) Create(entryID, revisionID string, now int64) (string, int64) {
+func (s *UnlockStore) Create(entryID, revisionID string, now int64) (string, int64, error) {
 	b := make([]byte, 32)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", 0, err
+	}
 	token := base64.RawURLEncoding.EncodeToString(b)
 	expires := now + int64(unlockExpiry.Seconds())
 	s.mu.Lock()
@@ -38,7 +40,7 @@ func (s *UnlockStore) Create(entryID, revisionID string, now int64) (string, int
 		}
 	}
 	s.tokens[token] = unlockEntry{EntryID: entryID, RevisionID: revisionID, ExpiresAt: expires}
-	return token, expires
+	return token, expires, nil
 }
 
 func (s *UnlockStore) Valid(token, entryID, revisionID string, now int64) bool {

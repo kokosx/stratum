@@ -37,18 +37,28 @@ LEFT JOIN entry_revisions AS latest_revision
         FROM entry_revisions
         WHERE entry_id = entries.id
     )
+LEFT JOIN entry_revisions AS published_revision
+    ON published_revision.id = entries.published_revision_id
+LEFT JOIN publication_jobs AS active_job
+    ON active_job.entry_id = entries.id AND active_job.status = 'scheduled'
 WHERE entries.content_type_id = ?1
 	AND (?2 IS NULL OR entries.author_id = ?2)
    AND (
       ?3 = ''
       OR (
-          ?3 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+          ?3 = 'published' AND entries.status != 'trash' AND entries.published_revision_id IS NOT NULL AND published_revision.visibility IN ('public','password')
       )
       OR (
-          ?3 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
+          ?3 = 'draft' AND entries.status != 'trash' AND entries.published_revision_id IS NULL AND latest_revision.review_state = 'draft' AND active_job.id IS NULL
       )
       OR (
-          ?3 = 'private' AND entries.status = 'private'
+          ?3 = 'pending' AND entries.status != 'trash' AND latest_revision.review_state = 'pending' AND latest_revision.id != COALESCE(entries.published_revision_id,'')
+      )
+      OR (
+          ?3 = 'scheduled' AND entries.status != 'trash' AND active_job.id IS NOT NULL
+      )
+      OR (
+          ?3 = 'private' AND entries.status != 'trash' AND published_revision.visibility = 'private'
       )
       OR (
           ?3 = 'trash' AND entries.status = 'trash'
@@ -85,14 +95,27 @@ func (q *Queries) CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminPa
 
 const countEntriesByAdminStatus = `-- name: CountEntriesByAdminStatus :one
 SELECT
-    SUM(CASE WHEN status != 'trash' THEN 1 ELSE 0 END) AS all_count,
-    SUM(CASE WHEN status = 'active' AND published_revision_id IS NOT NULL THEN 1 ELSE 0 END) AS published_count,
-    SUM(CASE WHEN status = 'active' AND published_revision_id IS NULL THEN 1 ELSE 0 END) AS draft_count,
-    SUM(CASE WHEN status = 'private' THEN 1 ELSE 0 END) AS private_count,
-    SUM(CASE WHEN status = 'trash' THEN 1 ELSE 0 END) AS trash_count
+    SUM(CASE WHEN entries.status != 'trash' THEN 1 ELSE 0 END) AS all_count,
+    SUM(CASE WHEN entries.status != 'trash' AND entries.published_revision_id IS NOT NULL AND published_revision.visibility IN ('public','password') THEN 1 ELSE 0 END) AS published_count,
+    SUM(CASE WHEN entries.status != 'trash' AND entries.published_revision_id IS NULL AND latest_revision.review_state = 'draft' AND active_job.id IS NULL THEN 1 ELSE 0 END) AS draft_count,
+    SUM(CASE WHEN entries.status != 'trash' AND published_revision.visibility = 'private' THEN 1 ELSE 0 END) AS private_count,
+    SUM(CASE WHEN latest_revision.review_state = 'pending' AND latest_revision.id != COALESCE(entries.published_revision_id,'') AND entries.status != 'trash' THEN 1 ELSE 0 END) AS pending_count,
+    SUM(CASE WHEN active_job.id IS NOT NULL AND entries.status != 'trash' THEN 1 ELSE 0 END) AS scheduled_count,
+    SUM(CASE WHEN entries.status = 'trash' THEN 1 ELSE 0 END) AS trash_count
 FROM entries
-WHERE content_type_id = ?1
-  AND (?2 IS NULL OR author_id = ?2)
+LEFT JOIN entry_revisions AS latest_revision
+    ON latest_revision.entry_id = entries.id
+    AND latest_revision.revision_number = (
+        SELECT MAX(revision_number)
+        FROM entry_revisions
+        WHERE entry_id = entries.id
+    )
+LEFT JOIN entry_revisions AS published_revision
+    ON published_revision.id = entries.published_revision_id
+LEFT JOIN publication_jobs AS active_job
+    ON active_job.entry_id = entries.id AND active_job.status = 'scheduled'
+WHERE entries.content_type_id = ?1
+  AND (?2 IS NULL OR entries.author_id = ?2)
 `
 
 type CountEntriesByAdminStatusParams struct {
@@ -105,6 +128,8 @@ type CountEntriesByAdminStatusRow struct {
 	PublishedCount sql.NullFloat64 `json:"published_count"`
 	DraftCount     sql.NullFloat64 `json:"draft_count"`
 	PrivateCount   sql.NullFloat64 `json:"private_count"`
+	PendingCount   sql.NullFloat64 `json:"pending_count"`
+	ScheduledCount sql.NullFloat64 `json:"scheduled_count"`
 	TrashCount     sql.NullFloat64 `json:"trash_count"`
 }
 
@@ -116,6 +141,8 @@ func (q *Queries) CountEntriesByAdminStatus(ctx context.Context, arg CountEntrie
 		&i.PublishedCount,
 		&i.DraftCount,
 		&i.PrivateCount,
+		&i.PendingCount,
+		&i.ScheduledCount,
 		&i.TrashCount,
 	)
 	return i, err
@@ -261,7 +288,7 @@ func (q *Queries) GetEntry(ctx context.Context, id string) (Entry, error) {
 	return i, err
 }
 
-const getEntryBySlug = `-- name: GetEntryBySlug :one
+const getFlatEntryBySlug = `-- name: GetFlatEntryBySlug :one
 SELECT id, content_type_id, slug, status, author_id, published_revision_id, created_at, updated_at, published_at, featured_media_id, first_published_at, status_before_trash, trashed_at
 FROM entries
 WHERE content_type_id = ?
@@ -269,15 +296,16 @@ WHERE content_type_id = ?
 LIMIT 1
 `
 
-type GetEntryBySlugParams struct {
+type GetFlatEntryBySlugParams struct {
 	ContentTypeID string `json:"content_type_id"`
 	Slug          string `json:"slug"`
 }
 
-// NOTE: This query is not used for public Page lookup (which must use routes).
-// It exists for test setup and non-hierarchical content type lookups.
-func (q *Queries) GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) (Entry, error) {
-	row := q.db.QueryRowContext(ctx, getEntryBySlug, arg.ContentTypeID, arg.Slug)
+// NOTE: MUST NOT be used for hierarchical content types (e.g. page).
+// Public Page lookup must use routes (Route path -> Entry). This helper exists only
+// for flat content-type tests and non-hierarchical lookups; prefer route-based lookup in production.
+func (q *Queries) GetFlatEntryBySlug(ctx context.Context, arg GetFlatEntryBySlugParams) (Entry, error) {
+	row := q.db.QueryRowContext(ctx, getFlatEntryBySlug, arg.ContentTypeID, arg.Slug)
 	var i Entry
 	err := row.Scan(
 		&i.ID,
@@ -304,7 +332,13 @@ SELECT
     entries.status,
     entries.updated_at,
     entries.published_revision_id,
+    latest_revision.id AS latest_revision_id,
     latest_revision.title,
+    latest_revision.review_state AS latest_review_state,
+    published_revision.visibility AS published_visibility,
+    published_revision.review_state AS published_review_state,
+    active_job.scheduled_at AS scheduled_at,
+    CASE WHEN active_job.id IS NOT NULL THEN 1 ELSE 0 END AS has_schedule,
     public_route.path AS public_path
 FROM entries
 LEFT JOIN entry_revisions AS latest_revision
@@ -314,6 +348,10 @@ LEFT JOIN entry_revisions AS latest_revision
         FROM entry_revisions
         WHERE entry_id = entries.id
     )
+LEFT JOIN entry_revisions AS published_revision
+    ON published_revision.id = entries.published_revision_id
+LEFT JOIN publication_jobs AS active_job
+    ON active_job.entry_id = entries.id AND active_job.status = 'scheduled'
 LEFT JOIN routes AS public_route
     ON public_route.id = (
         SELECT id
@@ -328,13 +366,19 @@ WHERE entries.content_type_id = ?1
    AND (
       ?3 = ''
       OR (
-          ?3 = 'published' AND entries.status = 'active' AND entries.published_revision_id IS NOT NULL
+          ?3 = 'published' AND entries.status != 'trash' AND entries.published_revision_id IS NOT NULL AND published_revision.visibility IN ('public','password')
       )
       OR (
-          ?3 = 'draft' AND entries.status = 'active' AND entries.published_revision_id IS NULL
+          ?3 = 'draft' AND entries.status != 'trash' AND entries.published_revision_id IS NULL AND latest_revision.review_state = 'draft' AND active_job.id IS NULL
       )
       OR (
-          ?3 = 'private' AND entries.status = 'private'
+          ?3 = 'pending' AND entries.status != 'trash' AND latest_revision.review_state = 'pending' AND latest_revision.id != COALESCE(entries.published_revision_id,'')
+      )
+      OR (
+          ?3 = 'scheduled' AND entries.status != 'trash' AND active_job.id IS NOT NULL
+      )
+      OR (
+          ?3 = 'private' AND entries.status != 'trash' AND published_revision.visibility = 'private'
       )
       OR (
           ?3 = 'trash' AND entries.status = 'trash'
@@ -362,13 +406,19 @@ type ListEntriesAdminParams struct {
 }
 
 type ListEntriesAdminRow struct {
-	ID                  string         `json:"id"`
-	Slug                string         `json:"slug"`
-	Status              string         `json:"status"`
-	UpdatedAt           int64          `json:"updated_at"`
-	PublishedRevisionID sql.NullString `json:"published_revision_id"`
-	Title               sql.NullString `json:"title"`
-	PublicPath          sql.NullString `json:"public_path"`
+	ID                   string         `json:"id"`
+	Slug                 string         `json:"slug"`
+	Status               string         `json:"status"`
+	UpdatedAt            int64          `json:"updated_at"`
+	PublishedRevisionID  sql.NullString `json:"published_revision_id"`
+	LatestRevisionID     sql.NullString `json:"latest_revision_id"`
+	Title                sql.NullString `json:"title"`
+	LatestReviewState    sql.NullString `json:"latest_review_state"`
+	PublishedVisibility  sql.NullString `json:"published_visibility"`
+	PublishedReviewState sql.NullString `json:"published_review_state"`
+	ScheduledAt          sql.NullInt64  `json:"scheduled_at"`
+	HasSchedule          int64          `json:"has_schedule"`
+	PublicPath           sql.NullString `json:"public_path"`
 }
 
 func (q *Queries) ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error) {
@@ -393,7 +443,13 @@ func (q *Queries) ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminPara
 			&i.Status,
 			&i.UpdatedAt,
 			&i.PublishedRevisionID,
+			&i.LatestRevisionID,
 			&i.Title,
+			&i.LatestReviewState,
+			&i.PublishedVisibility,
+			&i.PublishedReviewState,
+			&i.ScheduledAt,
+			&i.HasSchedule,
 			&i.PublicPath,
 		); err != nil {
 			return nil, err

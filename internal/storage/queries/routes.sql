@@ -71,3 +71,9 @@ SELECT * FROM routes WHERE taxonomy_id = ? AND term_id = ? LIMIT 1;
 
 -- name: ListTaxonomyArchiveRoutes :many
 SELECT * FROM routes WHERE route_type = 'archive' AND taxonomy_id IS NOT NULL ORDER BY path;
+
+-- name: ListEntryRouteVisibilities :many
+SELECT entries.id AS entry_id, entry_revisions.visibility AS visibility, entries.published_revision_id AS published_revision_id
+FROM entries
+JOIN entry_revisions ON entry_revisions.id = entries.published_revision_id
+WHERE entries.published_revision_id IS NOT NULL;

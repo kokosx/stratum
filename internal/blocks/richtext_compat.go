@@ -32,13 +32,32 @@ func migrateRichTextV1ToV2(node document.Node) (document.Node, error) {
 
 // migrateLegacyRichTextInPlace upgrades legacy string props only in the
 // render/edit copy using the block migration registry. Published revision JSON remains immutable.
-// The generic walker looks up migrators via the registry instead of hardcoding block names.
 func migrateLegacyRichTextInPlace(doc *document.Document, definitions map[BlockKey]*Definition) *document.Document {
 	if doc == nil {
 		return nil
 	}
-	// Only migrate if target v2 definitions are present (preserves test registries that only have v1).
-	if definitions[BlockKey{Name: "core/text", Version: 2}] == nil && definitions[BlockKey{Name: "core/heading", Version: 2}] == nil {
+	// Generic guard: only migrate if at least one node has a registered migrator and its target definition is present.
+	// This preserves test registries that only have v1 definitions without hardcoding block names.
+	hasApplicable := false
+	var check func([]document.Node)
+	check = func(nodes []document.Node) {
+		for _, n := range nodes {
+			if richTextMigrationRegistry.CanMigrate(n.Block, n.Version) {
+				if definitions[BlockKey{Name: n.Block, Version: int64(n.Version + 1)}] != nil {
+					hasApplicable = true
+					return
+				}
+			}
+			if len(n.Children) > 0 {
+				check(n.Children)
+				if hasApplicable {
+					return
+				}
+			}
+		}
+	}
+	check(doc.Nodes)
+	if !hasApplicable {
 		return doc
 	}
 	migrated, err := richTextMigrationRegistry.MigrateDocument(doc)

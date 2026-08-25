@@ -45,7 +45,7 @@ func TestCategoryArchiveUsesPublishedRevisionAssignments(t *testing.T) {
 	if body := bodyString(t, getPath(t, client, server.URL, "/category/category-a")); !strings.Contains(body, "Taxonomy Post") {
 		t.Fatalf("published category missing post: %s", body)
 	}
-	post, err := queries.GetEntryBySlug(context.Background(), db.GetEntryBySlugParams{ContentTypeID: "post", Slug: "taxonomy-post"})
+	post, err := queries.GetFlatEntryBySlug(context.Background(), db.GetFlatEntryBySlugParams{ContentTypeID: "post", Slug: "taxonomy-post"})
 	if err != nil {
 		t.Fatal(err)
 	}

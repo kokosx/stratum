@@ -75,7 +75,7 @@
     <h3 style="margin:0;">Publishing</h3>
     <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
       <span>Status: <strong>{{ .Content.Status }}</strong></span>
-      {{ if .Content.HasScheduled }}<span>Scheduled for {{ .Content.ScheduledAt }} <button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button></span>{{ end }}
+      {{ if .Content.HasScheduled }}<span>Publish: {{ .Content.ScheduledAt }} <button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button></span>{{ end }}
     </div>
     <div style="display:grid;gap:8px;max-width:480px;">
       <label class="form-field">Visibility
@@ -96,14 +96,12 @@
         <span class="field-desc">Leave empty to publish immediately. Time is in site timezone.</span>
       </label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
-        <button class="button" type="submit" name="review_state" value="pending" formaction="{{ .Content.Action }}" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Submit for Review</button>
+        <button class="button" type="submit" name="review_state" value="pending" formaction="{{ .Content.Action }}/submit-review" data-on:click__prevent="@post('{{ .Content.Action }}/submit-review', {contentType: 'form'})">Submit for Review</button>
         {{ if .Content.HasScheduled }}
         <button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Reschedule</button>
         {{ else }}
         <button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Schedule</button>
         {{ end }}
-        <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">{{ if eq .Content.Status "Published" }}Update{{ else }}Publish{{ end }}</button>
         {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish" data-on:click__prevent="@post('{{ .Content.Action }}/unpublish', {contentType: 'form'})">Unpublish</button>{{ end }}
       </div>
     </div>

@@ -14,10 +14,10 @@ WHERE status = 'scheduled' AND scheduled_at <= ?
 ORDER BY scheduled_at ASC;
 
 -- name: UpdatePublicationJobStatus :exec
-UPDATE publication_jobs SET status = ?, updated_at = ?, last_error = sqlc.narg(last_error) WHERE id = ?;
+UPDATE publication_jobs SET status = sqlc.arg(status), updated_at = sqlc.arg(updated_at), last_error = sqlc.narg(last_error) WHERE id = sqlc.arg(id);
 
 -- name: CancelActivePublicationJobsForEntry :exec
-UPDATE publication_jobs SET status = 'cancelled', updated_at = ?, last_error = sqlc.narg(last_error) WHERE entry_id = ? AND status = 'scheduled';
+UPDATE publication_jobs SET status = 'cancelled', updated_at = sqlc.arg(updated_at), last_error = sqlc.narg(last_error) WHERE entry_id = sqlc.arg(entry_id) AND status = 'scheduled';
 
 -- name: DeletePublicationJobsForEntry :exec
 DELETE FROM publication_jobs WHERE entry_id = ?;

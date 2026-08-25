@@ -110,15 +110,16 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		if entry.Title != "" {
 			title = entry.Title
 		}
+		// Private entries have no public route; never show View link.
 		publicURL := ""
-		if entry.Status == "active" && entry.PublishedRevisionID != "" {
+		if entry.Status != "trash" && entry.PublishedRevisionID != "" && entry.PublishedVisibility != "private" {
 			publicURL = entry.PublicPath
 		}
 		items = append(items, EntryData{
 			ID:           entry.ID,
 			Title:        title,
 			Slug:         entry.Slug,
-			Status:       entryStatus(entry.Status, entry.PublishedRevisionID != ""),
+			Status:       adminRowStatus(entry),
 			UpdatedAt:    time.Unix(entry.UpdatedAt, 0).Format("2 Jan 2006, 15:04"),
 			PublicURL:    publicURL,
 			RawStatus:    entry.Status,
@@ -192,6 +193,47 @@ func entryStatus(status string, hasPublishedRevision bool) string {
 	}
 	if hasPublishedRevision {
 		return "Published"
+	}
+	return "Draft"
+}
+
+func adminRowStatus(e content.AdminEntry) string {
+	if e.Status == "trash" {
+		return "Trash"
+	}
+	if e.HasSchedule {
+		when := time.Unix(e.ScheduledAt, 0).Format("2 Jan 15:04")
+		return "Scheduled · " + when
+	}
+	if e.PublishedVisibility == "private" {
+		if e.LatestReviewState == "pending" && e.LatestRevisionID != "" && e.LatestRevisionID != e.PublishedRevisionID {
+			return "Private · Pending Review"
+		}
+		if e.LatestRevisionID != "" && e.LatestRevisionID != e.PublishedRevisionID {
+			return "Private · Unpublished changes"
+		}
+		return "Private"
+	}
+	if e.PublishedVisibility == "password" {
+		if e.LatestReviewState == "pending" && e.LatestRevisionID != "" && e.LatestRevisionID != e.PublishedRevisionID {
+			return "Password Protected · Pending Review"
+		}
+		if e.LatestRevisionID != "" && e.LatestRevisionID != e.PublishedRevisionID {
+			return "Password Protected · Unpublished changes"
+		}
+		return "Password Protected"
+	}
+	if e.PublishedRevisionID != "" {
+		if e.LatestReviewState == "pending" && e.LatestRevisionID != e.PublishedRevisionID {
+			return "Published · Pending Review"
+		}
+		if e.LatestRevisionID != "" && e.LatestRevisionID != e.PublishedRevisionID {
+			return "Published · Unpublished changes"
+		}
+		return "Published"
+	}
+	if e.LatestReviewState == "pending" {
+		return "Pending Review"
 	}
 	return "Draft"
 }

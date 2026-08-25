@@ -10,6 +10,8 @@
   <li><a href="{{ $base }}?status=all{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "all" }}class="current" aria-current="page"{{ end }}>All <span class="count">({{ $counts.All }})</span></a> |</li>
   <li><a href="{{ $base }}?status=published{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "published" }}class="current" aria-current="page"{{ end }}>Published <span class="count">({{ $counts.Published }})</span></a> |</li>
   <li><a href="{{ $base }}?status=draft{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "draft" }}class="current" aria-current="page"{{ end }}>Draft <span class="count">({{ $counts.Draft }})</span></a> |</li>
+  <li><a href="{{ $base }}?status=pending{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "pending" }}class="current" aria-current="page"{{ end }}>Pending <span class="count">({{ $counts.Pending }})</span></a> |</li>
+  <li><a href="{{ $base }}?status=scheduled{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "scheduled" }}class="current" aria-current="page"{{ end }}>Scheduled <span class="count">({{ $counts.Scheduled }})</span></a> |</li>
   <li><a href="{{ $base }}?status=private{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "private" }}class="current" aria-current="page"{{ end }}>Private <span class="count">({{ $counts.Private }})</span></a> |</li>
   <li><a href="{{ $base }}?status=trash{{ if $search }}&search={{ $search }}{{ end }}" {{ if eq $cur "trash" }}class="current" aria-current="page"{{ end }}>Trash <span class="count">({{ $counts.Trash }})</span></a></li>
 </ul>

@@ -202,50 +202,49 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 }
 
 // entryEditorStatus derives the displayed status label and public URL for an
-// entry from its publish state, including scheduled and pending.
+// entry from its publish state, including scheduled, pending, private and password.
 func (h *Handler) entryEditorStatus(r *http.Request, entry db.Entry) (string, string) {
 	latest, err := h.queries.GetLatestEntryRevision(r.Context(), entry.ID)
 	hasScheduled := false
-	var scheduledAt int64
-	if job, err2 := h.queries.GetActivePublicationJobByEntry(r.Context(), entry.ID); err2 == nil {
+	if _, err2 := h.queries.GetActivePublicationJobByEntry(r.Context(), entry.ID); err2 == nil {
 		hasScheduled = true
-		scheduledAt = job.ScheduledAt
 	}
 	if hasScheduled {
 		publicURL := ""
 		if path := h.entryPublicPath(r, entry.ID); path != "" {
 			publicURL = absoluteURL(r, path)
 		}
-		// Show scheduled time in site timezone if possible
-		loc := time.UTC
-		if settings, err := h.queries.GetSiteSettings(r.Context()); err == nil {
-			if l, err := time.LoadLocation(settings.Timezone); err == nil {
-				loc = l
-			}
-		}
-		when := time.Unix(scheduledAt, 0).In(loc).Format("2006-01-02 15:04")
-		return "Scheduled (" + when + ")", publicURL
+		return "Scheduled", publicURL
 	}
+	// Determine base status from published visibility.
 	if !entry.PublishedRevisionID.Valid {
 		if err == nil && latest.ReviewState == "pending" {
 			return "Pending Review", ""
 		}
 		return "Draft", ""
 	}
-	// Has published
-	if err == nil && latest.ReviewState == "pending" && latest.ID != entry.PublishedRevisionID.String {
-		// If latest is pending and unpublished changes, still show Published but badge will indicate pending? For now return Pending Review with unpublished?
-		// Keep Published as primary but pending draft exists.
+	// Has published – inspect visibility for Private/Password labels.
+	baseStatus := "Published"
+	if pubRev, pErr := h.queries.GetEntryRevision(r.Context(), entry.PublishedRevisionID.String); pErr == nil {
+		switch pubRev.Visibility {
+		case "private":
+			baseStatus = "Private"
+		case "password":
+			baseStatus = "Password Protected"
+		}
 	}
 	publicURL := ""
 	if path := h.entryPublicPath(r, entry.ID); path != "" {
 		publicURL = absoluteURL(r, path)
 	}
+	// If unpublished draft exists, communicate both states.
 	if err == nil && latest.ID != entry.PublishedRevisionID.String {
-		// Published with unpublished changes – status remains Published, badge handled elsewhere
-		return "Published", publicURL
+		if latest.ReviewState == "pending" {
+			return baseStatus + " · Pending Review", publicURL
+		}
+		return baseStatus + " · Unpublished changes", publicURL
 	}
-	return "Published", publicURL
+	return baseStatus, publicURL
 }
 
 // entryPublicPath returns the public route path for an entry, or "" if it is
@@ -280,6 +279,9 @@ func (h *Handler) schedulePage(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) cancelSchedulePage(w http.ResponseWriter, r *http.Request) {
 	h.cancelScheduleEntry(w, r, pageContentType, "pages")
+}
+func (h *Handler) submitReviewPage(w http.ResponseWriter, r *http.Request) {
+	h.submitReviewEntry(w, r, pageContentType, "pages")
 }
 
 // updateEntry is shared by Pages and Posts. It validates the posted input and
@@ -425,11 +427,8 @@ func (h *Handler) editorStatusView(r *http.Request, entryID string, publish bool
 	status := "Draft"
 	publicURL := ""
 	if saveErr == nil {
-		if entry, err := h.queries.GetEntry(r.Context(), entryID); err == nil && entry.PublishedRevisionID.Valid {
-			status = "Published"
-			if path := h.entryPublicPath(r, entryID); path != "" {
-				publicURL = absoluteURL(r, path)
-			}
+		if entry, err := h.queries.GetEntry(r.Context(), entryID); err == nil {
+			status, publicURL = h.entryEditorStatus(r, entry)
 		}
 	}
 	return editorStatusView{Dirty: dirty, Status: status, PublicURL: publicURL}

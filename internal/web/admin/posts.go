@@ -162,3 +162,6 @@ func (h *Handler) schedulePost(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) cancelSchedulePost(w http.ResponseWriter, r *http.Request) {
 	h.cancelScheduleEntry(w, r, postContentType, "posts")
 }
+func (h *Handler) submitReviewPost(w http.ResponseWriter, r *http.Request) {
+	h.submitReviewEntry(w, r, postContentType, "posts")
+}

@@ -57,8 +57,10 @@ func (s *LifecycleService) MoveToTrash(ctx context.Context, entryID string) erro
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
-	// Cancel any scheduled publication for trashed entry
-	_ = qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by trash", Valid: true}, EntryID: entryID})
+	// Cancel any scheduled publication for trashed entry; failure must abort trash to avoid scheduled+trash invariant break.
+	if err := qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by trash", Valid: true}, EntryID: entryID}); err != nil {
+		return err
+	}
 	if err := qtx.MoveEntryToTrash(ctx, db.MoveEntryToTrashParams{TrashedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: entryID}); err != nil {
 		return err
 	}
@@ -87,7 +89,7 @@ func (s *LifecycleService) Restore(ctx context.Context, entryID string) error {
 		return errors.New("database not configured")
 	}
 	var targetPath string
-	needsRoute := needsPublicRoute(entry)
+	needsRoute := s.isPublicRestoreNeeded(ctx, s.queries, entry)
 	if needsRoute {
 		settings, err := s.queries.GetSiteSettings(ctx)
 		if err == nil {
@@ -255,7 +257,7 @@ func (s *LifecycleService) restorePath(ctx context.Context, q *db.Queries, entry
 }
 
 // Unpublish removes a public route only when no published child would remain
-// reachable beneath it.
+// reachable beneath it. It cancels any scheduled publication atomically.
 func (s *LifecycleService) Unpublish(ctx context.Context, entryID string) error {
 	entry, err := s.queries.GetEntry(ctx, entryID)
 	if err != nil {
@@ -267,13 +269,20 @@ func (s *LifecycleService) Unpublish(ctx context.Context, entryID string) error 
 	if err := s.assertNoPublishedDescendants(ctx, entry); err != nil {
 		return err
 	}
+	if s.db == nil {
+		return errors.New("database not configured")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	qtx := s.queries.WithTx(tx)
-	if err := qtx.ClearPublishedRevision(ctx, db.ClearPublishedRevisionParams{UpdatedAt: time.Now().Unix(), ID: entryID}); err != nil {
+	now := time.Now().Unix()
+	if err := qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by unpublish", Valid: true}, EntryID: entryID}); err != nil {
+		return err
+	}
+	if err := qtx.ClearPublishedRevision(ctx, db.ClearPublishedRevisionParams{UpdatedAt: now, ID: entryID}); err != nil {
 		return err
 	}
 	if route, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entryID, Valid: true}); err == nil {
@@ -319,7 +328,9 @@ func (s *LifecycleService) BulkTrash(ctx context.Context, contentTypeID string, 
 	qtx := s.queries.WithTx(tx)
 	now := time.Now().Unix()
 	for _, id := range ids {
-		_ = qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by trash", Valid: true}, EntryID: id})
+		if err := qtx.CancelActivePublicationJobsForEntry(ctx, db.CancelActivePublicationJobsForEntryParams{UpdatedAt: now, LastError: sql.NullString{String: "cancelled by trash", Valid: true}, EntryID: id}); err != nil {
+			return err
+		}
 		if err := qtx.MoveEntryToTrash(ctx, db.MoveEntryToTrashParams{TrashedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
 			return err
 		}
@@ -353,7 +364,7 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 		if e.Status != "trash" {
 			return fmt.Errorf("entry %s is not in trash", id)
 		}
-		if needsPublicRoute(e) {
+		if s.isPublicRestoreNeeded(ctx, s.queries, e) {
 			targetPath, err := s.restorePath(ctx, s.queries, e, settings.PostsBasePath)
 			if err != nil {
 				return err
@@ -381,7 +392,7 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 		if err != nil {
 			return err
 		}
-		needsRoute := needsPublicRoute(ent)
+		needsRoute := s.isPublicRestoreNeeded(ctx, qtx, ent)
 		targetPath := ""
 		if needsRoute {
 			s2 := settings
@@ -419,6 +430,20 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 
 func needsPublicRoute(entry db.Entry) bool {
 	return entry.PublishedRevisionID.Valid && entry.StatusBeforeTrash.Valid && entry.StatusBeforeTrash.String == "active"
+}
+
+func (s *LifecycleService) isPublicRestoreNeeded(ctx context.Context, q *db.Queries, entry db.Entry) bool {
+	if !needsPublicRoute(entry) {
+		return false
+	}
+	rev, err := q.GetEntryRevision(ctx, entry.PublishedRevisionID.String)
+	if err != nil {
+		return false
+	}
+	if rev.Visibility == "private" {
+		return false
+	}
+	return true
 }
 
 func (s *LifecycleService) BulkDeletePermanently(ctx context.Context, contentTypeID string, ids []string) error {

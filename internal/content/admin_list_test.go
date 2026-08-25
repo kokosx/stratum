@@ -32,13 +32,27 @@ func insertAdminEntry(t *testing.T, queries *db.Queries, id, contentType, slug, 
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().Unix()
-	if err := queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: contentType, Slug: slug, Status: status, CreatedAt: now, UpdatedAt: now}); err != nil {
+	// Normalize legacy private status to active + private visibility revision.
+	entryStatus := status
+	visibility := "public"
+	if status == "private" {
+		entryStatus = "active"
+		visibility = "private"
+	}
+	if err := queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: contentType, Slug: slug, Status: entryStatus, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("CreateEntry %s: %v", id, err)
 	}
 	revID := id + "-rev1"
 	doc := `{"version":1,"nodes":[]}`
-	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Title: title, DocumentJson: doc, CreatedAt: now}); err != nil {
+	if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Title: title, DocumentJson: doc, Visibility: visibility, CreatedAt: now}); err != nil {
 		t.Fatalf("CreateRevision %s: %v", id, err)
+	}
+	if status == "private" {
+		// Private entries are published with private visibility.
+		if err := queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
+			t.Fatalf("SetPublished %s: %v", id, err)
+		}
+		return
 	}
 	if publishedRevisionID.Valid {
 		if err := queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: publishedRevisionID, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
@@ -154,5 +168,152 @@ func TestAdminListUnknownStatusNormalized(t *testing.T) {
 	res, _ := repo.AdminList(ctx, EntryAdminListQuery{ContentType: ContentTypePage, Status: AdminStatus("unknown"), Page: 1, PerPage: 20})
 	if res == nil || res.Total != 1 {
 		t.Fatalf("unknown status should be normalized to all")
+	}
+}
+
+func TestAdminListWorkflowStatuses(t *testing.T) {
+	repo, _, queries := newAdminListHarness(t)
+	ctx := context.Background()
+	now := time.Now().Unix()
+
+	// Helper to create entry with latest revision and optionally published revision
+	create := func(id, slug, latestState, publishedVis string, withSchedule bool, status string) {
+		if status == "" {
+			status = "active"
+		}
+		if err := queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: "page", Slug: slug, Status: status, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatalf("CreateEntry %s: %v", id, err)
+		}
+		latestID := id + "-latest"
+		latestVis := "public"
+		if publishedVis == "private" || publishedVis == "password" {
+			latestVis = publishedVis
+		}
+		if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: latestID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Title " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now, Visibility: latestVis, ReviewState: latestState}); err != nil {
+			t.Fatalf("latest %s: %v", id, err)
+		}
+		if publishedVis != "" {
+			// Need published revision (maybe same as latest if latest is public and we want published)
+			pubID := id + "-pub"
+			if latestState == "draft" && publishedVis == "public" && !withSchedule {
+				// For published with no unpublished changes, make published same as latest
+				if err := queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: latestID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
+					t.Fatalf("set pub %s: %v", id, err)
+				}
+				if publishedVis == "private" || publishedVis == "password" {
+					// Need to set visibility correctly – already set via latest
+				}
+			} else {
+				// Create separate published revision
+				pubVis := publishedVis
+				if pubVis == "" {
+					pubVis = "public"
+				}
+				if err := queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: pubID, EntryID: id, RevisionNumber: 2, Slug: slug, Title: "Pub " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now - 10, Visibility: pubVis, ReviewState: "draft"}); err != nil {
+					// If duplicate, ignore
+				}
+				if err := queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: pubID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id}); err != nil {
+					t.Fatalf("set pub2 %s: %v", id, err)
+				}
+				// Latest already created as second revision? We already have latest as r1, need to make it r2 for unpublished cases
+				// For simplicity, for publishedWithDraft we already have latest as draft and pub as separate
+			}
+		}
+		if withSchedule {
+			// Create scheduled job for latest
+			jobID := id + "-job"
+			latest, _ := queries.GetLatestEntryRevision(ctx, id)
+			if err := queries.CreatePublicationJob(ctx, db.CreatePublicationJobParams{ID: jobID, EntryID: id, RevisionID: latest.ID, ScheduledAt: now + 10000, CreatedAt: now, UpdatedAt: now}); err != nil {
+				t.Fatalf("schedule %s: %v", id, err)
+			}
+		}
+		if status == "trash" {
+			queries.MoveEntryToTrash(ctx, db.MoveEntryToTrashParams{ID: id, TrashedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now})
+		}
+	}
+
+	// Draft: no published, latest draft, no schedule
+	create("draft1", "draft1", "draft", "", false, "active")
+	// Pending: latest pending, not published
+	create("pending1", "pending1", "pending", "", false, "active")
+	// Scheduled: active schedule
+	create("sched1", "sched1", "draft", "", true, "active")
+	// Published: public
+	create("pub1", "pub1", "draft", "public", false, "active")
+	// Published with unpublished draft
+	func() {
+		id := "pubWithDraft"
+		slug := "pubwithdraft"
+		queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: "page", Slug: slug, Status: "active", CreatedAt: now, UpdatedAt: now})
+		// Published rev
+		pubID := id + "-pub"
+		queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: pubID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Pub", DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now - 10, Visibility: "public", ReviewState: "draft"})
+		queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: pubID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id})
+		// Latest draft different
+		latestID := id + "-latest"
+		queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: latestID, EntryID: id, RevisionNumber: 2, Slug: slug, Title: "Latest Draft", DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now, Visibility: "public", ReviewState: "draft"})
+	}()
+	// Private: published private
+	create("private1", "private1", "draft", "private", false, "active")
+	// Password: published password – should be counted as published, not private
+	func() {
+		id := "pwd1"
+		slug := "pwd1"
+		queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: "page", Slug: slug, Status: "active", CreatedAt: now, UpdatedAt: now})
+		revID := id + "-r1"
+		queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Pwd", DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now, Visibility: "password", PasswordHash: sql.NullString{String: "$2a$10$dummyhashdummyhashdummyhashdummyha", Valid: true}, ReviewState: "draft"})
+		queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id})
+	}()
+	// Trash
+	create("trash1", "trash1", "draft", "", false, "trash")
+
+	resAll, _ := repo.AdminList(ctx, EntryAdminListQuery{ContentType: ContentTypePage, Status: AdminStatusAll, Page: 1, PerPage: 50})
+	if resAll.Counts.All != 7 {
+		t.Fatalf("All %d want 7", resAll.Counts.All)
+	}
+	if resAll.Counts.Published != 3 {
+		t.Fatalf("Published %d want 3 (pub1, pubWithDraft, pwd1)", resAll.Counts.Published)
+	}
+	if resAll.Counts.Draft != 1 {
+		t.Fatalf("Draft %d want 1 (draft1)", resAll.Counts.Draft)
+	}
+	if resAll.Counts.Pending != 1 {
+		t.Fatalf("Pending %d want 1", resAll.Counts.Pending)
+	}
+	if resAll.Counts.Scheduled != 1 {
+		t.Fatalf("Scheduled %d want 1", resAll.Counts.Scheduled)
+	}
+	if resAll.Counts.Private != 1 {
+		t.Fatalf("Private %d want 1", resAll.Counts.Private)
+	}
+	if resAll.Counts.Trash != 1 {
+		t.Fatalf("Trash %d want 1", resAll.Counts.Trash)
+	}
+
+	// Verify each tab returns expected rows
+	checkTab := func(status AdminStatus, wantIDs []string) {
+		res, _ := repo.AdminList(ctx, EntryAdminListQuery{ContentType: ContentTypePage, Status: status, Page: 1, PerPage: 50})
+		got := map[string]bool{}
+		for _, e := range res.Entries {
+			got[e.ID] = true
+		}
+		for _, want := range wantIDs {
+			if !got[want] {
+				t.Fatalf("status %s should contain %s, got %+v", status, want, got)
+			}
+		}
+	}
+	checkTab(AdminStatusPublished, []string{"pub1", "pubWithDraft", "pwd1"})
+	checkTab(AdminStatusDraft, []string{"draft1"})
+	checkTab(AdminStatusPending, []string{"pending1"})
+	checkTab(AdminStatusScheduled, []string{"sched1"})
+	checkTab(AdminStatusPrivate, []string{"private1"})
+	checkTab(AdminStatusTrash, []string{"trash1"})
+	// Password is published, not private
+	resPriv, _ := repo.AdminList(ctx, EntryAdminListQuery{ContentType: ContentTypePage, Status: AdminStatusPrivate, Page: 1, PerPage: 50})
+	for _, e := range resPriv.Entries {
+		if e.ID == "pwd1" {
+			t.Fatalf("password should not be in private tab")
+		}
 	}
 }

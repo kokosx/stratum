@@ -239,6 +239,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/pages/{id}/unpublish", h.requireAuth(h.unpublishPage))
 	mux.HandleFunc("POST /admin/pages/{id}/schedule", h.requireAuth(h.schedulePage))
 	mux.HandleFunc("POST /admin/pages/{id}/cancel-schedule", h.requireAuth(h.cancelSchedulePage))
+	mux.HandleFunc("POST /admin/pages/{id}/submit-review", h.requireAuth(h.submitReviewPage))
 	mux.HandleFunc("POST /admin/pages/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restorePageRevision))
 	mux.HandleFunc("GET /admin/pages/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewPageRevision))
 	mux.HandleFunc("POST /admin/pages/{id}/trash", h.requireAuth(h.trashPage))
@@ -255,6 +256,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/posts/{id}/unpublish", h.requireAuth(h.unpublishPost))
 	mux.HandleFunc("POST /admin/posts/{id}/schedule", h.requireAuth(h.schedulePost))
 	mux.HandleFunc("POST /admin/posts/{id}/cancel-schedule", h.requireAuth(h.cancelSchedulePost))
+	mux.HandleFunc("POST /admin/posts/{id}/submit-review", h.requireAuth(h.submitReviewPost))
 	mux.HandleFunc("POST /admin/posts/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restorePostRevision))
 	mux.HandleFunc("GET /admin/posts/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewPostRevision))
 	mux.HandleFunc("POST /admin/posts/{id}/trash", h.requireAuth(h.trashPost))
@@ -561,6 +563,8 @@ func (h *Handler) authorizeEntryRequest(r *http.Request, user auth.User, content
 		}
 	} else if strings.Contains(r.URL.Path, "/publish") || strings.Contains(r.URL.Path, "/unpublish") || strings.Contains(r.URL.Path, "/schedule") {
 		action = authz.EntryPublish
+	} else if strings.Contains(r.URL.Path, "/submit-review") {
+		action = authz.EntryEdit
 	} else if strings.Contains(r.URL.Path, "/trash") || strings.Contains(r.URL.Path, "/restore") || strings.Contains(r.URL.Path, "/delete") {
 		action = authz.EntryDelete
 	} else if r.Method == http.MethodPost || strings.HasSuffix(r.URL.Path, "/edit") {

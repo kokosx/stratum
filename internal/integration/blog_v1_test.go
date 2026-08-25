@@ -137,7 +137,7 @@ func TestBlogV1HappyPath(t *testing.T) {
 	// 1. Create + Publish Page "Home"
 	createAndPublishPage(t, client, server.URL, "Home", "home-page", simpleDoc("Home content"))
 	time.Sleep(1100 * time.Millisecond)
-	homeEntry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
+	homeEntry, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
 	if err != nil {
 		t.Fatalf("home entry not found: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestBlogV1HappyPath(t *testing.T) {
 	}
 	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(1100 * time.Millisecond)
-	blogEntry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
+	blogEntry, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	if err != nil {
 		t.Fatalf("blog entry not found: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestBlogV1HappyPath(t *testing.T) {
 
 	// Verify routes are /blog/slug (central routing policy)
 	for _, slug := range []string{"post-a", "post-b", "post-c"} {
-		p, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "post", Slug: slug})
+		p, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "post", Slug: slug})
 		r, err := queries.GetEntryRoute(ctx, sql.NullString{String: p.ID, Valid: true})
 		if err != nil {
 			t.Fatalf("post %s route not found: %v", slug, err)

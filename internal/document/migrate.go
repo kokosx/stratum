@@ -27,6 +27,15 @@ func (r *MigrationRegistry) Register(block string, fromVersion int, fn Migration
 	r.chains[block][fromVersion] = fn
 }
 
+// CanMigrate reports whether a migrator is registered for block@version.
+func (r *MigrationRegistry) CanMigrate(block string, version int) bool {
+	if r.chains[block] == nil {
+		return false
+	}
+	_, ok := r.chains[block][version]
+	return ok
+}
+
 // MigrateNode upgrades a single node deterministically through its migration
 // chain until no further migration is registered. The returned node has the
 // latest known version for its block.

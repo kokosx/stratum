@@ -177,3 +177,38 @@ func (d *Database) applyTransitionalMarkersIfNeeded(ctx context.Context) error {
 	}
 	return nil
 }
+
+// LatestAvailableMigration returns the lexicographically greatest migration filename
+// embedded in the binary (e.g. "046_normalize_private_status.sql").
+func LatestAvailableMigration() string {
+	entries, err := fs.ReadDir(migrationFiles, "schema")
+	if err != nil {
+		return ""
+	}
+	var max string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if len(name) < 4 || name[len(name)-4:] != ".sql" {
+			continue
+		}
+		if name > max {
+			max = name
+		}
+	}
+	return max
+}
+
+// CurrentSchemaVersion returns the latest applied migration version from the DB,
+// or empty if none.
+func (d *Database) CurrentSchemaVersion(ctx context.Context) (string, error) {
+	var v string
+	err := d.DB.QueryRowContext(ctx, "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1").Scan(&v)
+	if err != nil {
+		// No migrations yet
+		return "", nil
+	}
+	return v, nil
+}

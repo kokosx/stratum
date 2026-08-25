@@ -61,11 +61,12 @@ type Querier interface {
 	GetContentTypeWithDefault(ctx context.Context, id string) (ContentType, error)
 	GetEntriesByIDs(ctx context.Context, arg GetEntriesByIDsParams) ([]Entry, error)
 	GetEntry(ctx context.Context, id string) (Entry, error)
-	// NOTE: This query is not used for public Page lookup (which must use routes).
-	// It exists for test setup and non-hierarchical content type lookups.
-	GetEntryBySlug(ctx context.Context, arg GetEntryBySlugParams) (Entry, error)
 	GetEntryRevision(ctx context.Context, id string) (EntryRevision, error)
 	GetEntryRoute(ctx context.Context, entryID sql.NullString) (Route, error)
+	// NOTE: MUST NOT be used for hierarchical content types (e.g. page).
+	// Public Page lookup must use routes (Route path -> Entry). This helper exists only
+	// for flat content-type tests and non-hierarchical lookups; prefer route-based lookup in production.
+	GetFlatEntryBySlug(ctx context.Context, arg GetFlatEntryBySlugParams) (Entry, error)
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetLatestLayoutTemplateRevision(ctx context.Context, templateID string) (LayoutTemplateRevision, error)
 	GetLayoutTemplate(ctx context.Context, id string) (LayoutTemplate, error)
@@ -105,6 +106,7 @@ type Querier interface {
 	ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
+	ListEntryRouteVisibilities(ctx context.Context) ([]ListEntryRouteVisibilitiesRow, error)
 	ListLatestHierarchyForContentType(ctx context.Context, contentTypeID string) ([]ListLatestHierarchyForContentTypeRow, error)
 	ListLatestLayoutRevisions(ctx context.Context) ([]LayoutTemplateRevision, error)
 	ListLayoutTemplateRevisions(ctx context.Context, templateID string) ([]LayoutTemplateRevision, error)

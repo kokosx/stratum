@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -186,6 +187,25 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Password-protected entry routes bypass the shared full-page cache entirely.
+	// The route snapshot carries the immutable visibility so we can decide before the cache lookup (zero DB for normal public).
+	normalizedPath := routing.NormalizePath(r.URL.Path)
+	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+		// Snapshot is the security boundary: if snapshot says password, never serve from shared cache.
+		if rt.Visibility == "password" {
+			// Verify via DB (DB is source of truth) but bypass cache regardless.
+			if row, err := h.queries.GetPublishedEntryByID(r.Context(), rt.EntryID.String); err == nil && row.Visibility == "password" {
+				h.servePasswordPage(w, r, row, normalizedPath, origin)
+				return
+			}
+			// Snapshot stale (now public): fall through to normal cache path.
+		} else if rt.Visibility == "" {
+			// Snapshot without visibility (old snapshot or fallback): check DB on miss path after cache miss logic below.
+			// We keep the old on-miss password check after redirect handling for this case.
+		}
+		// For public visibility, proceed to cache; private has no route.
+	}
+
 	// Full-page cache HIT: serve without touching the database (including
 	// redirect lookups). Redirects and renders run only on miss.
 	if cached, ok := h.hub.Pages.Get(key); ok {
@@ -207,10 +227,8 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Password-protected pages bypass the shared page cache entirely to avoid leaking unlocked content.
-	// Check on miss only to preserve zero-DB warm path for normal pages.
-	normalizedPath := routing.NormalizePath(r.URL.Path)
-	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+	// Fallback password check for routes where snapshot had no visibility (e.g., not yet reloaded) – keep on-miss to preserve zero-DB warm public.
+	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid && rt.Visibility == "" {
 		if row, err := h.queries.GetPublishedEntryByID(r.Context(), rt.EntryID.String); err == nil && row.Visibility == "password" {
 			h.servePasswordPage(w, r, row, normalizedPath, origin)
 			return
@@ -241,6 +259,13 @@ func (h *Handler) isPasswordProtectedPath(ctx context.Context, path string) bool
 	snap := h.hub.Routes.Current()
 	if snap != nil {
 		if rt, ok := snap.ByPath[normalized]; ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
+			if rt.Visibility == "password" {
+				return true
+			}
+			if rt.Visibility != "" {
+				return false
+			}
+			// Fallback for snapshot without visibility (stale): check DB.
 			if row, err := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); err == nil && row.Visibility == "password" {
 				return true
 			}
@@ -431,12 +456,18 @@ func (h *Handler) servePasswordPost(w http.ResponseWriter, r *http.Request) {
 	if password == "" {
 		password = r.FormValue("password")
 	}
+	// Use RemoteAddr only; do not trust X-Forwarded-For without trusted proxy.
 	clientIP := r.RemoteAddr
-	// Use X-Forwarded-For if present for limiter key (but not trust fully)
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		clientIP = strings.Split(xff, ",")[0]
+	if host, _, err := net.SplitHostPort(clientIP); err == nil {
+		clientIP = host
+	} else {
+		// Fallback: trim without splitting (e.g. already bare IP or malformed)
+		clientIP = strings.TrimSpace(clientIP)
+		if idx := strings.LastIndex(clientIP, ":"); idx != -1 && strings.Count(clientIP, ":") == 1 {
+			clientIP = clientIP[:idx]
+		}
 	}
-	clientIP = strings.TrimSpace(strings.Split(clientIP, ":")[0])
+	clientIP = strings.TrimSpace(clientIP)
 	limiterKey := publishing.ClientKey(entryID, clientIP)
 	now := time.Now().Unix()
 	if !h.unlockLimiter.Allow(limiterKey, now) {
@@ -450,11 +481,18 @@ func (h *Handler) servePasswordPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.unlockLimiter.Record(limiterKey, true, now)
-	// Success: create token
-	token, expires := h.unlockStore.Create(row.ID, row.RevisionID, now)
+	// Success: create token; CSPRNG failure must not issue cookie.
+	token, expires, err := h.unlockStore.Create(row.ID, row.RevisionID, now)
+	if err != nil {
+		log.Printf("password unlock token creation failed: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 	cookieName := h.unlockStore.CookieName(row.ID)
 	secure := r.TLS != nil
-	// Also consider site URL scheme? For dev, not secure.
+	if siteSnap := h.hub.Site.Current(); siteSnap != nil && strings.HasPrefix(strings.TrimSpace(strings.ToLower(siteSnap.SiteURL)), "https://") {
+		secure = true
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     cookieName,
 		Value:    token,

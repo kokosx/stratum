@@ -25,7 +25,7 @@ func TestPostsPageSlugSyncOnPublish(t *testing.T) {
 	// Create Home page
 	createAndPublishPage(t, client, server.URL, "Home", "home-page", simpleDoc("Home content"))
 	time.Sleep(100 * time.Millisecond)
-	homeEntry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
+	homeEntry, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
 	if err != nil {
 		t.Fatalf("home entry not found: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestPostsPageSlugSyncOnPublish(t *testing.T) {
 	// Create Blog page slug=blog with archive block
 	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(100 * time.Millisecond)
-	blogEntry, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
+	blogEntry, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	if err != nil {
 		t.Fatalf("blog entry not found: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestPostsPageSlugSyncOnPublish(t *testing.T) {
 	// Publish a post
 	publishPostViaAPI(t, client, server.URL, "Hello Post", "hello-post", simpleDoc("Hello post content"))
 	time.Sleep(100 * time.Millisecond)
-	p, err := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "post", Slug: "hello-post"})
+	p, err := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "post", Slug: "hello-post"})
 	if err != nil {
 		t.Fatalf("post not found: %v", err)
 	}

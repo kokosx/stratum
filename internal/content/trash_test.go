@@ -54,11 +54,10 @@ func createPrivateEntry(t *testing.T, queries *db.Queries, id, ct, slug string) 
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().Unix()
-	_ = queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: ct, Slug: slug, Status: "private", CreatedAt: now, UpdatedAt: now})
+	_ = queries.CreateEntry(ctx, db.CreateEntryParams{ID: id, ContentTypeID: ct, Slug: slug, Status: "active", CreatedAt: now, UpdatedAt: now})
 	revID := id + "-r1"
-	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Private " + id, DocumentJson: `{"version":1,"nodes":[]}`, CreatedAt: now})
+	_ = queries.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: id, RevisionNumber: 1, Slug: slug, Title: "Private " + id, DocumentJson: `{"version":1,"nodes":[]}`, Visibility: "private", CreatedAt: now})
 	_ = queries.SetPublishedRevision(ctx, db.SetPublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, PublishedAt: sql.NullInt64{Int64: now, Valid: true}, UpdatedAt: now, ID: id})
-	_ = queries.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{ID: id, Slug: slug, Status: "private", UpdatedAt: now, PublishedAt: sql.NullInt64{Int64: now, Valid: true}})
 }
 
 func TestDraftTrashRestore(t *testing.T) {
@@ -114,8 +113,15 @@ func TestPrivateTrashRestore(t *testing.T) {
 		t.Fatalf("restore private: %v", err)
 	}
 	e, _ := queries.GetEntry(ctx, "priv1")
-	if e.Status != "private" {
-		t.Fatalf("expected private, got %s", e.Status)
+	if e.Status != "active" {
+		t.Fatalf("expected active after private restore, got %s", e.Status)
+	}
+	if !e.PublishedRevisionID.Valid {
+		t.Fatalf("private entry should still have published revision")
+	}
+	rev, _ := queries.GetEntryRevision(ctx, e.PublishedRevisionID.String)
+	if rev.Visibility != "private" {
+		t.Fatalf("expected private visibility, got %s", rev.Visibility)
 	}
 	if _, err := queries.GetRouteByPath(ctx, "/priv-one"); err == nil {
 		t.Fatal("private restore must not recreate a public route")

@@ -20,7 +20,7 @@ func TestPostsPageSlugCollisionRollback(t *testing.T) {
 	// Create Home and Blog
 	createAndPublishPage(t, client, server.URL, "Home", "home-page", simpleDoc("Home"))
 	time.Sleep(200 * time.Millisecond)
-	homeEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
+	homeEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
 	if _, err := queries.GetEntry(ctx, "seed-blog"); err == nil {
 		_ = queries.DeleteEntry(ctx, "seed-blog")
 	}
@@ -29,13 +29,13 @@ func TestPostsPageSlugCollisionRollback(t *testing.T) {
 	}
 	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(200 * time.Millisecond)
-	blogEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
+	blogEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	saveReadingSettings(t, client, server.URL, queries, homeEntry.ID, blogEntry.ID, "/blog", "10")
 
 	// Create another page at /news
 	createAndPublishPage(t, client, server.URL, "News", "news", simpleDoc("News page"))
 	time.Sleep(200 * time.Millisecond)
-	newsEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "news"})
+	newsEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "news"})
 	_ = newsEntry
 
 	// Publish a post
@@ -88,7 +88,7 @@ func TestPostsPageDoubleRenameRedirectFlattening(t *testing.T) {
 
 	createAndPublishPage(t, client, server.URL, "Home", "home-page", simpleDoc("Home"))
 	time.Sleep(200 * time.Millisecond)
-	homeEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
+	homeEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "home-page"})
 	if _, err := queries.GetEntry(ctx, "seed-blog"); err == nil {
 		_ = queries.DeleteEntry(ctx, "seed-blog")
 	}
@@ -97,7 +97,7 @@ func TestPostsPageDoubleRenameRedirectFlattening(t *testing.T) {
 	}
 	createAndPublishPage(t, client, server.URL, "Blog", "blog", blogDoc())
 	time.Sleep(200 * time.Millisecond)
-	blogEntry, _ := queries.GetEntryBySlug(ctx, db.GetEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
+	blogEntry, _ := queries.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: "page", Slug: "blog"})
 	saveReadingSettings(t, client, server.URL, queries, homeEntry.ID, blogEntry.ID, "/blog", "10")
 
 	// Rename blog -> news
