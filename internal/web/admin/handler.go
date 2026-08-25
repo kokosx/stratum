@@ -17,6 +17,7 @@ import (
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/comments"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
@@ -49,6 +50,7 @@ type Handler struct {
 	layoutTemplateEditorTemplate *template.Template
 	taxonomyTemplate             *template.Template
 	usersTemplate                *template.Template
+	commentsTemplate             *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -58,6 +60,7 @@ type Handler struct {
 	documentPreview              func(context.Context, RenderInput) ([]byte, error)
 	publishing                   *publishing.Service
 	scheduler                    *publishing.Scheduler
+	comments                     *comments.Service
 }
 
 type LayoutData struct {
@@ -181,12 +184,18 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	commentsTemplate, err := template.New("comments").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "comments.html")
+	if err != nil {
+		// Fallback to simple template if not yet created
+		commentsTemplate = template.New("comments")
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
 	publisher.SetSearchRefresh(searchService.RefreshEntry)
 	scheduler := publishing.NewScheduler(database, queries)
 	scheduler.SetSearchRefresh(searchService.RefreshEntry)
+	commentsService := comments.NewService(database, queries)
 	return &Handler{
 		database:                     database,
 		queries:                      queries,
@@ -204,6 +213,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		settingsTemplate:             settingsTemplate,
 		taxonomyTemplate:             taxonomyTemplate,
 		usersTemplate:                usersTemplate,
+		commentsTemplate:             commentsTemplate,
 		layoutTemplatesTemplate:      layoutTemplatesTemplate,
 		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
 		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
@@ -214,6 +224,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		layoutsService:               layouts.NewService(database, queries, blockRegistry),
 		publishing:                   publisher,
 		scheduler:                    scheduler,
+		comments:                     commentsService,
 	}, nil
 }
 
@@ -236,6 +247,14 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/users", h.requireAuth(h.createUser))
 	mux.HandleFunc("POST /admin/users/{id}", h.requireAuth(h.updateUser))
 	mux.HandleFunc("POST /admin/users/{id}/password", h.requireAuth(h.resetUserPassword))
+	mux.HandleFunc("GET /admin/comments", h.requireAuth(h.listComments))
+	mux.HandleFunc("POST /admin/comments/bulk", h.requireAuth(h.bulkComments))
+	mux.HandleFunc("POST /admin/comments/{id}/approve", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "approve") }))
+	mux.HandleFunc("POST /admin/comments/{id}/pending", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "pending") }))
+	mux.HandleFunc("POST /admin/comments/{id}/spam", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "spam") }))
+	mux.HandleFunc("POST /admin/comments/{id}/trash", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "trash") }))
+	mux.HandleFunc("POST /admin/comments/{id}/restore", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "restore") }))
+	mux.HandleFunc("POST /admin/comments/{id}/delete", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "delete") }))
 	mux.HandleFunc("GET /admin/pages", h.requireAuth(h.listPages))
 	mux.HandleFunc("GET /admin/pages/new", h.requireAuth(h.newPage))
 	mux.HandleFunc("POST /admin/pages", h.requireAuth(h.createPage))
@@ -437,10 +456,13 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 				if err := d.Seed(r.Context()); err != nil {
 					log.Printf("seed starter content: %v", err)
 				} else if h.runtime != nil {
-					// New routes and settings need a runtime reload.
+					// New routes and settings need a runtime reload. Routes MUST be
+					// reloaded: on a fresh install the snapshot was loaded empty at
+					// boot and is authoritative, so public pages would 404 until restart.
 					_ = h.runtime.ReloadSite(r.Context())
 					_ = h.runtime.ReloadNavigation(r.Context())
-					_ = h.blocks.Reload(r.Context())
+					_ = h.runtime.ReloadRoutes(r.Context())
+					_ = h.runtime.ReloadBlocks(r.Context())
 				}
 			}()
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
@@ -532,6 +554,8 @@ func (h *Handler) authorized(r *http.Request, user auth.User) bool {
 		return authz.Allows(user.Role, authz.ManageTaxonomies)
 	case strings.HasPrefix(path, "/admin/media"):
 		return authz.Allows(user.Role, authz.ManageMedia)
+	case strings.HasPrefix(path, "/admin/comments"):
+		return authz.Allows(user.Role, authz.ReadComments) || authz.Allows(user.Role, authz.ModerateComments)
 	case strings.HasPrefix(path, "/admin/pages"):
 		return h.authorizeEntryRequest(r, user, pageContentType)
 	case strings.HasPrefix(path, "/admin/posts"):

@@ -63,6 +63,18 @@ type LCPState struct {
 	PreloadView   MediaView
 }
 
+// CommentView is the public projection of a comment for templates. Email is never included.
+type CommentView struct {
+	ID         string
+	ParentID   string
+	AuthorName string
+	Body       string
+	BodyHTML   template.HTML
+	CreatedAt  string
+	CreatedISO string
+	Depth      int
+}
+
 // RenderContext carries request-time data that dynamic blocks bind to (the
 // current Entry and Site settings). It is the same for every node in a document.
 // In the editor preview it is empty, so dynamic blocks fall back to placeholders.
@@ -94,6 +106,12 @@ type RenderContext struct {
 	// is populated by the Collection block at render time so duplicate queries
 	// in one request hit the cache.
 	QueryCache map[string][]ArchiveEntry
+
+	// Comments is the approved comment tree for the current entry (public only).
+	Comments        []CommentView
+	CommentsCount   int
+	CommentsEnabled bool
+	CommentsEntryID string
 }
 
 // RouteContext is the generic route scope for the current request.

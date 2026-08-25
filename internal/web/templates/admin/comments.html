@@ -1,0 +1,111 @@
+{{ define "content" }}
+<div class="page-heading"><h1>Comments</h1></div>
+
+{{ $cur := .Content.Status }}
+{{ $search := .Content.Search }}
+{{ $counts := .Content.Counts }}
+<ul class="subsubsub" aria-label="Status filters">
+  <li><a href="/admin/comments?status=all{{ if $search }}&q={{ $search }}{{ end }}" {{ if eq $cur "all" }}class="current" aria-current="page"{{ end }}>All <span class="count">({{ index $counts "all" }})</span></a> |</li>
+  <li><a href="/admin/comments?status=pending{{ if $search }}&q={{ $search }}{{ end }}" {{ if eq $cur "pending" }}class="current" aria-current="page"{{ end }}>Pending <span class="count">({{ index $counts "pending" }})</span></a> |</li>
+  <li><a href="/admin/comments?status=approved{{ if $search }}&q={{ $search }}{{ end }}" {{ if eq $cur "approved" }}class="current" aria-current="page"{{ end }}>Approved <span class="count">({{ index $counts "approved" }})</span></a> |</li>
+  <li><a href="/admin/comments?status=spam{{ if $search }}&q={{ $search }}{{ end }}" {{ if eq $cur "spam" }}class="current" aria-current="page"{{ end }}>Spam <span class="count">({{ index $counts "spam" }})</span></a> |</li>
+  <li><a href="/admin/comments?status=trash{{ if $search }}&q={{ $search }}{{ end }}" {{ if eq $cur "trash" }}class="current" aria-current="page"{{ end }}>Trash <span class="count">({{ index $counts "trash" }})</span></a></li>
+</ul>
+
+<div class="tablenav top">
+  <form method="get" action="/admin/comments" class="search-box" role="search">
+    {{ if ne $cur "all" }}<input type="hidden" name="status" value="{{ $cur }}">{{ end }}
+    <label for="comment-search" class="screen-reader-text">Search comments</label>
+    <input type="search" id="comment-search" name="q" value="{{ $search }}" placeholder="Search comments">
+    <button type="submit" class="button">Search Comments</button>
+  </form>
+</div>
+
+<form method="post" action="/admin/comments/bulk" class="bulk-form">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <div class="tablenav">
+    <div class="alignleft actions bulkactions">
+      <label for="bulk-action-selector-top" class="screen-reader-text">Select bulk action</label>
+      <select name="action" id="bulk-action-selector-top">
+        <option value="">Bulk actions</option>
+        {{ if eq $cur "trash" }}
+          <option value="restore">Restore</option>
+          <option value="delete">Delete Permanently</option>
+        {{ else }}
+          <option value="approve">Approve</option>
+          <option value="pending">Mark Pending</option>
+          <option value="spam">Mark Spam</option>
+          <option value="trash">Move to Trash</option>
+        {{ end }}
+      </select>
+      <button type="submit" class="button">Apply</button>
+    </div>
+    {{ if gt .Content.Pages 1 }}
+    <div class="tablenav-pages">
+      <span class="displaying-num">{{ .Content.Total }} items</span>
+      <span class="pagination-links">
+        {{ if gt .Content.Page 1 }}<a class="button" href="/admin/comments?status={{ $cur }}{{ if $search }}&q={{ $search }}{{ end }}&page={{ subtract .Content.Page 1 }}">‹ Prev</a>{{ end }}
+        <span class="paging-input">Page {{ .Content.Page }} of {{ .Content.Pages }}</span>
+        {{ if lt .Content.Page .Content.Pages }}<a class="button" href="/admin/comments?status={{ $cur }}{{ if $search }}&q={{ $search }}{{ end }}&page={{ add .Content.Page 1 }}">Next ›</a>{{ end }}
+      </span>
+    </div>
+    {{ end }}
+  </div>
+
+  <div class="list-table-wrap">
+  <table class="list-table">
+    <thead>
+      <tr>
+        <th class="check-column"><input type="checkbox" id="cb-select-all" aria-label="Select all"></th>
+        <th>Author</th>
+        <th>Comment</th>
+        <th>In response to</th>
+        <th>Status</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Content.Comments }}
+      <tr>
+        <td class="check-column"><input type="checkbox" name="ids" value="{{ .ID }}" class="entry-checkbox"></td>
+        <td class="comment-author column-author"><strong>{{ .AuthorName }}</strong><br><span class="muted">{{ .AuthorEmail }}</span>{{ if .AuthorUrl }}<br><a href="{{ .AuthorUrl }}" target="_blank">{{ .AuthorUrl }}</a>{{ end }}</td>
+        <td class="comment-body column-comment">{{ .Body }}</td>
+        <td class="comment-entry column-response"><a href="/admin/posts/{{ .EntryID }}/edit">{{ .EntryID }}</a></td>
+        <td>{{ .Status }}</td>
+        <td>{{ .CreatedAt }}</td>
+      </tr>
+      <tr class="row-actions-row">
+        <td colspan="6">
+          <div class="row-actions">
+            {{ if eq .Status "pending" }}
+              <form method="post" action="/admin/comments/{{ .ID }}/approve" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Approve</button></form> |
+              <form method="post" action="/admin/comments/{{ .ID }}/spam" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Spam</button></form> |
+              <form method="post" action="/admin/comments/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Trash</button></form>
+            {{ else if eq .Status "approved" }}
+              <form method="post" action="/admin/comments/{{ .ID }}/pending" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Unapprove</button></form> |
+              <form method="post" action="/admin/comments/{{ .ID }}/spam" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Spam</button></form> |
+              <form method="post" action="/admin/comments/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Trash</button></form>
+            {{ else if eq .Status "spam" }}
+              <form method="post" action="/admin/comments/{{ .ID }}/approve" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Approve</button></form> |
+              <form method="post" action="/admin/comments/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Trash</button></form>
+            {{ else if eq .Status "trash" }}
+              <form method="post" action="/admin/comments/{{ .ID }}/restore" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Restore</button></form> |
+              <form method="post" action="/admin/comments/{{ .ID }}/delete" style="display:inline" onsubmit="return confirm('Delete permanently?')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link row-action-delete">Delete Permanently</button></form>
+            {{ end }}
+          </div>
+        </td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="6" class="muted">No comments found.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+  </div>
+</form>
+
+<script>
+  document.getElementById('cb-select-all')?.addEventListener('change', function(){
+    document.querySelectorAll('.entry-checkbox').forEach(function(cb){ cb.checked = document.getElementById('cb-select-all').checked; });
+  });
+</script>
+{{ end }}

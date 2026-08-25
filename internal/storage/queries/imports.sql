@@ -10,3 +10,6 @@ SELECT internal_id FROM import_mappings WHERE source = ? AND object_type = ? AND
 -- name: CreateImportMapping :exec
 INSERT INTO import_mappings (source, object_type, external_id, internal_id, run_id, created_at)
 VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: CountImportRunsForSource :one
+SELECT COUNT(*) FROM import_runs WHERE source = ?;

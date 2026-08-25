@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -508,35 +512,56 @@ func TestUnsupportedScriptRemoved(t *testing.T) {
 	}
 }
 
-// TestShortcodeNotExecutedShort verifies shortcode removed via htmlDocument (original test already covers stripShortcodes)
+// TestShortcodeNotExecutedViaHTML verifies known shortcodes are removed while
+// human bracketed prose survives, per the conservative policy.
 func TestShortcodeNotExecutedViaHTML(t *testing.T) {
-	warnings2 := []string{}
-	doc, err := htmlDocument(`<p>before [shortcode] after</p>`, nil, &warnings2)
+	warnings := []string{}
+	doc, err := htmlDocument(`<p>Before [gallery id="1"] mid [optional] after [0] end.</p>`, nil, &warnings)
 	if err != nil {
 		t.Fatalf("htmlDocument: %v", err)
 	}
 	if len(doc.Nodes) == 0 {
 		t.Fatalf("no nodes")
 	}
-	if strings.Contains(string(doc.Nodes[0].Props), "[shortcode]") {
-		t.Fatalf("shortcode leaked")
+	props := string(doc.Nodes[0].Props)
+	if strings.Contains(props, "gallery") {
+		t.Fatalf("shortcode leaked: %s", props)
+	}
+	if !strings.Contains(props, "[optional]") || !strings.Contains(props, "[0]") {
+		t.Fatalf("bracketed prose must be preserved: %s", props)
+	}
+}
+
+// testDownloader returns a Downloader whose resolver claims a PUBLIC IP for any
+// host while the dialer connects to the real httptest listener. This keeps the
+// production policy path fully exercised (no global bypass) in tests.
+func testDownloader(srv *httptest.Server, dialed *[]string) *Downloader {
+	return &Downloader{
+		Resolve: func(ctx context.Context, host string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil
+		},
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if dialed != nil {
+				*dialed = append(*dialed, addr)
+			}
+			var nd net.Dialer
+			return nd.DialContext(ctx, network, srv.Listener.Addr().String())
+		},
 	}
 }
 
 // TestFeaturedImageMapping verifies featured image resolved in second pass
 func TestFeaturedImageMapping(t *testing.T) {
-	AllowPrivateForTest = true
-	defer func() { AllowPrivateForTest = false }()
 	im, _, q, _ := newTestImporter(t)
 	ctx := context.Background()
-	// Create a fake image server
 	pngBytes := testPNGBytes(t, 100, 100)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
 		_, _ = w.Write(pngBytes)
 	}))
 	defer srv.Close()
-	attachmentURL := srv.URL + "/image.png"
+	im.Downloader = testDownloader(srv, nil)
+	attachmentURL := "http://media.example.test/image.png"
 	wxr := wxrHeader(fmt.Sprintf(`
 <item><title>Image</title><wp:post_id>10</wp:post_id><wp:post_type>attachment</wp:post_type><wp:status>inherit</wp:status><wp:attachment_url>%s</wp:attachment_url><wp:post_date_gmt>2020-01-02 03:04:05</wp:post_date_gmt></item>
 <item><title>Post</title><content:encoded><![CDATA[<p>hi</p>]]></content:encoded><wp:post_id>1</wp:post_id><wp:post_type>post</wp:post_type><wp:status>publish</wp:status><wp:post_name>post</wp:post_name><wp:post_date_gmt>2020-01-02 03:04:05</wp:post_date_gmt><dc:creator><![CDATA[author]]></dc:creator><wp:postmeta><wp:meta_key>_thumbnail_id</wp:meta_key><wp:meta_value>10</wp:meta_value></wp:postmeta></item>
@@ -558,8 +583,6 @@ func TestFeaturedImageMapping(t *testing.T) {
 
 // TestMediaUsesMediaService verifies media imported via service creates DB rows
 func TestMediaUsesMediaService(t *testing.T) {
-	AllowPrivateForTest = true
-	defer func() { AllowPrivateForTest = false }()
 	im, _, q, _ := newTestImporter(t)
 	ctx := context.Background()
 	pngBytes := testPNGBytes(t, 200, 200)
@@ -568,7 +591,8 @@ func TestMediaUsesMediaService(t *testing.T) {
 		_, _ = w.Write(pngBytes)
 	}))
 	defer srv.Close()
-	wxr := wxrHeader(fmt.Sprintf(`<item><title>Img</title><wp:post_id>10</wp:post_id><wp:post_type>attachment</wp:post_type><wp:status>inherit</wp:status><wp:attachment_url>%s/img.png</wp:attachment_url><wp:post_date_gmt>2020-01-02 03:04:05</wp:post_date_gmt></item>`, srv.URL))
+	im.Downloader = testDownloader(srv, nil)
+	wxr := wxrHeader(`<item><title>Img</title><wp:post_id>10</wp:post_id><wp:post_type>attachment</wp:post_type><wp:status>inherit</wp:status><wp:attachment_url>http://media.example.test/img.png</wp:attachment_url><wp:post_date_gmt>2020-01-02 03:04:05</wp:post_date_gmt></item>`)
 	f := writeWXR(t, wxr)
 	report, _, err := im.Import(ctx, f, Options{DownloadMedia: true})
 	if err != nil {
@@ -577,59 +601,149 @@ func TestMediaUsesMediaService(t *testing.T) {
 	if report.MediaImported != 1 {
 		t.Fatalf("MediaImported %d", report.MediaImported)
 	}
-	// Verify media row exists via queries
 	count, _ := q.CountMedia(ctx)
 	if count != 1 {
 		t.Fatalf("CountMedia = %d want 1", count)
 	}
 }
 
-// TestMediaSSRFLoopbackRejected verifies loopback blocked
+// TestMediaSSRFLoopbackRejected verifies loopback blocked by policy.
 func TestMediaSSRFLoopbackRejected(t *testing.T) {
-	if _, _, err := download(context.Background(), "http://127.0.0.1/a"); err == nil {
-		t.Fatalf("expected loopback rejected")
+	dl := newDownloader()
+	_, _, err := dl.Get(context.Background(), "http://127.0.0.1/a")
+	if err == nil || !errors.Is(err, errForbiddenAddress) {
+		t.Fatalf("expected forbidden-address rejection for loopback, got %v", err)
 	}
 }
 
-// TestMediaSSRFPrivateIPv4Rejected verifies private IPv4 blocked
+// TestMediaSSRFPrivateIPv4Rejected verifies private IPv4 ranges blocked.
 func TestMediaSSRFPrivateIPv4Rejected(t *testing.T) {
 	for _, raw := range []string{"http://192.168.1.2/a", "http://10.0.0.1/a", "http://172.16.0.1/a"} {
-		if _, _, err := download(context.Background(), raw); err == nil {
-			t.Fatalf("expected %s rejected", raw)
+		dl := newDownloader()
+		if _, _, err := dl.Get(context.Background(), raw); err == nil || !errors.Is(err, errForbiddenAddress) {
+			t.Fatalf("expected %s rejected as forbidden, got %v", raw, err)
 		}
 	}
 }
 
-// TestMediaSSRFIPv6Rejected verifies IPv6 loopback
+// TestMediaSSRFIPv6Rejected verifies IPv6 loopback blocked.
 func TestMediaSSRFIPv6Rejected(t *testing.T) {
-	if _, _, err := download(context.Background(), "http://[::1]/a"); err == nil {
-		t.Fatalf("expected ::1 rejected")
+	dl := newDownloader()
+	if _, _, err := dl.Get(context.Background(), "http://[::1]/a"); err == nil || !errors.Is(err, errForbiddenAddress) {
+		t.Fatalf("expected ::1 rejected, got %v", err)
 	}
 }
 
-// TestMediaRedirectRevalidated verifies redirect to private IP is blocked
+// TestMediaRedirectRevalidated proves the FAILURE is the redirect target's IP
+// policy: the initial endpoint is allowed via injected seams, and rejection only
+// occurs after following the redirect to a host resolving to a private address.
 func TestMediaRedirectRevalidated(t *testing.T) {
-	// Server that redirects to private IP
-	target := "http://192.168.1.1/private"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target, http.StatusFound)
+		http.Redirect(w, r, "http://rebind.example.test/private.png", http.StatusFound)
 	}))
 	defer srv.Close()
-	if _, _, err := download(context.Background(), srv.URL); err == nil {
-		t.Fatalf("expected redirect to private IP rejected")
+	redirects := 0
+	dl := &Downloader{
+		Resolve: func(ctx context.Context, host string) ([]net.IP, error) {
+			if host == "start.example.test" && redirects == 0 {
+				return []net.IP{net.ParseIP("93.184.216.34")}, nil
+			}
+			return []net.IP{net.ParseIP("192.168.1.1")}, nil // redirect target: FORBIDDEN
+		},
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var nd net.Dialer
+			return nd.DialContext(ctx, network, srv.Listener.Addr().String())
+		},
 	}
+	client := dl.client(context.Background())
+	resp, err := client.Get("http://start.example.test/entry.png")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("expected redirect target to be rejected by IP policy")
+	}
+	if !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("expected forbidden-address failure at redirect, got %v", err)
+	}
+	_ = redirects
 }
 
-// TestMediaSizeLimit verifies oversized file rejected
-func TestMediaSizeLimit(t *testing.T) {
+// TestMediaSizeLimitContentLength proves Content-Length above the limit fails
+// with ErrTooLarge BEFORE reading the body.
+func TestMediaSizeLimitContentLength(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", (10<<20)+1))
+		w.Header().Set("Content-Length", strconv.FormatInt(maxDownloadBytes+1, 10))
 		w.WriteHeader(200)
 		_, _ = w.Write(make([]byte, 1024))
 	}))
 	defer srv.Close()
-	if _, _, err := download(context.Background(), srv.URL+"/big.png"); err == nil {
-		t.Fatalf("expected size limit rejected")
+	dl := testDownloader(srv, nil)
+	_, _, err := dl.Get(context.Background(), "http://media.example.test/big.png")
+	if !errors.Is(err, media.ErrTooLarge) {
+		t.Fatalf("expected ErrTooLarge from Content-Length check, got %v", err)
+	}
+}
+
+// TestMediaSizeLimitStreaming proves a body WITHOUT trustworthy Content-Length
+// that streams past the limit is detected by the bounded reader (ErrTooLarge),
+// never silently truncated.
+func TestMediaSizeLimitStreaming(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.(http.Flusher).Flush()
+		chunk := make([]byte, 64<<10)
+		for i := 0; i < (maxDownloadBytes/(64<<10))+2; i++ {
+			_, _ = w.Write(chunk)
+			w.(http.Flusher).Flush()
+		}
+	}))
+	defer srv.Close()
+	dl := testDownloader(srv, nil)
+	body, _, err := dl.Get(context.Background(), "http://media.example.test/stream.png")
+	if err != nil {
+		t.Fatalf("initial Get should succeed; size enforced during read: %v", err)
+	}
+	defer body.Close()
+	_, readErr := io.Copy(io.Discard, body)
+	if !errors.Is(readErr, media.ErrTooLarge) {
+		t.Fatalf("expected streaming overflow ErrTooLarge, got %v", readErr)
+	}
+}
+
+// TestMediaDNSRebindingCannotReachForbiddenSecondAddress proves the VALIDATED IP
+// is what gets dialed: resolution #1 returns a public IP (validated), and even
+// though a hostile re-resolution would return a private one, the dialer receives
+// exactly the validated public IP — no second lookup happens.
+func TestMediaDNSRebindingCannotReachForbiddenSecondAddress(t *testing.T) {
+	resolutions := 0
+	var dialedHosts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(testPNGBytes(t, 4, 4))
+	}))
+	defer srv.Close()
+	dl := &Downloader{
+		Resolve: func(ctx context.Context, host string) ([]net.IP, error) {
+			resolutions++
+			if resolutions == 1 {
+				return []net.IP{net.ParseIP("93.184.216.34")}, nil // genuinely public, allowed
+			}
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil // rebinding attempt: must never be dialed
+		},
+		Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			dialedHosts = append(dialedHosts, addr)
+			var nd net.Dialer
+			return nd.DialContext(ctx, network, srv.Listener.Addr().String())
+		},
+	}
+	body, _, err := dl.Get(context.Background(), "http://evil.example.test/a.png")
+	if err != nil {
+		t.Fatalf("download should succeed against validated IP: %v", err)
+	}
+	body.Close()
+	if resolutions != 1 {
+		t.Fatalf("expected exactly ONE resolution (no TOCTOU), got %d", resolutions)
+	}
+	if len(dialedHosts) == 0 || !strings.HasPrefix(dialedHosts[0], "93.184.216.34:") {
+		t.Fatalf("dialer must receive validated IP, got %v", dialedHosts)
 	}
 }
 

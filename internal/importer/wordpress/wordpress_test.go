@@ -13,7 +13,7 @@ func TestParseWXRStreaming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].ID != "1" || items[0].Comments != 1 {
+	if len(items) != 1 || items[0].ID != "1" || len(items[0].Comments) != 1 {
 		t.Fatalf("unexpected items: %#v", items)
 	}
 	if len(terms) != 1 || terms[0].Slug != "news" {

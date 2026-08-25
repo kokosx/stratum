@@ -127,6 +127,8 @@ type entryFormData struct {
 	HasScheduled        bool
 	ReviewState         string
 	PublishError        string
+	CommentsEnabled     bool
+	SupportsComments    bool
 }
 
 type revisionHistoryItem struct {
@@ -177,6 +179,7 @@ type entryInput struct {
 	sticky           bool
 	reviewState      string
 	scheduledAt      string // raw datetime-local value
+	commentsEnabled  bool
 }
 
 // renderEntryForm bootstraps the shared block editor and renders the common
@@ -588,6 +591,10 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		}
 		stickyVal = 1
 	}
+	commentsEnabled := int64(0)
+	if content.DefinitionFor(contentType).Capabilities.SupportsComments && input.commentsEnabled {
+		commentsEnabled = 1
+	}
 	if visibility == "password" {
 		if strings.TrimSpace(input.password) != "" {
 			hash, err := publishing.HashPassword(strings.TrimSpace(input.password))
@@ -609,7 +616,7 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		passwordHash = sql.NullString{}
 	}
 	if !create && publish {
-		matches, err := revisionMatchesInput(ctx, qtx, latest, input, string(documentJSON), fieldsJSON, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID, robotsIndex, robotsFollow, schemaMode, layoutTemplateID, termIDs, visibility, passwordHash, stickyVal, reviewState)
+		matches, err := revisionMatchesInput(ctx, qtx, latest, input, string(documentJSON), fieldsJSON, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID, robotsIndex, robotsFollow, schemaMode, layoutTemplateID, termIDs, visibility, passwordHash, stickyVal, reviewState, commentsEnabled)
 		if err != nil {
 			return err
 		}
@@ -626,7 +633,7 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 			SeoRobotsIndex: robotsIndex, SeoRobotsFollow: robotsFollow, SchemaMode: schemaMode,
 			LayoutTemplateID: layoutTemplateID, ParentEntryID: nullableString(input.parentEntryID), MenuOrder: input.menuOrder,
 			DocumentJson: string(documentJSON), FieldsJson: fieldsJSON, CreatedBy: sql.NullString{String: authorID, Valid: true}, CreatedAt: now,
-			Visibility: visibility, PasswordHash: passwordHash, Sticky: stickyVal, ReviewState: reviewState,
+			Visibility: visibility, PasswordHash: passwordHash, Sticky: stickyVal, ReviewState: reviewState, CommentsEnabled: commentsEnabled,
 		}); err != nil {
 			return fmt.Errorf("create entry revision: %w", err)
 		}
@@ -684,8 +691,8 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	return nil
 }
 
-func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryRevision, input entryInput, documentJSON, fieldsJSON string, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID sql.NullString, robotsIndex, robotsFollow sql.NullInt64, schemaMode string, layoutTemplateID sql.NullString, termIDs []string, visibility string, passwordHash sql.NullString, sticky int64, reviewState string) (bool, error) {
-	if revision.Slug != input.slug || revision.Title != input.title || revision.DocumentJson != documentJSON || revision.FieldsJson != fieldsJSON || revision.Excerpt != excerpt || revision.SeoTitle != seoTitle || revision.SeoDescription != seoDescription || revision.CanonicalUrl != canonicalURL || revision.FeaturedMediaID != featuredMediaID || revision.SocialMediaID != socialMediaID || revision.SeoRobotsIndex != robotsIndex || revision.SeoRobotsFollow != robotsFollow || revision.SchemaMode != schemaMode || revision.LayoutTemplateID != layoutTemplateID || revision.ParentEntryID != nullableString(input.parentEntryID) || revision.MenuOrder != input.menuOrder || revision.Visibility != visibility || revision.ReviewState != reviewState || revision.Sticky != sticky {
+func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryRevision, input entryInput, documentJSON, fieldsJSON string, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID sql.NullString, robotsIndex, robotsFollow sql.NullInt64, schemaMode string, layoutTemplateID sql.NullString, termIDs []string, visibility string, passwordHash sql.NullString, sticky int64, reviewState string, commentsEnabled int64) (bool, error) {
+	if revision.Slug != input.slug || revision.Title != input.title || revision.DocumentJson != documentJSON || revision.FieldsJson != fieldsJSON || revision.Excerpt != excerpt || revision.SeoTitle != seoTitle || revision.SeoDescription != seoDescription || revision.CanonicalUrl != canonicalURL || revision.FeaturedMediaID != featuredMediaID || revision.SocialMediaID != socialMediaID || revision.SeoRobotsIndex != robotsIndex || revision.SeoRobotsFollow != robotsFollow || revision.SchemaMode != schemaMode || revision.LayoutTemplateID != layoutTemplateID || revision.ParentEntryID != nullableString(input.parentEntryID) || revision.MenuOrder != input.menuOrder || revision.Visibility != visibility || revision.ReviewState != reviewState || revision.Sticky != sticky || revision.CommentsEnabled != commentsEnabled {
 		return false, nil
 	}
 	if visibility == "password" {
@@ -746,7 +753,7 @@ func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID
 		ParentEntryID: revision.ParentEntryID, MenuOrder: revision.MenuOrder,
 		FieldsJson: revision.FieldsJson,
 		CreatedBy:  nullableString(authorID), CreatedAt: time.Now().Unix(),
-		Visibility: revision.Visibility, PasswordHash: revision.PasswordHash, Sticky: revision.Sticky, ReviewState: "draft",
+		Visibility: revision.Visibility, PasswordHash: revision.PasswordHash, Sticky: revision.Sticky, ReviewState: "draft", CommentsEnabled: revision.CommentsEnabled,
 	}); err != nil {
 		return err
 	}
@@ -1141,6 +1148,7 @@ func readEntryInput(r *http.Request, contentTypes ...string) (entryInput, error)
 		sticky:           r.FormValue("sticky") == "1" || r.FormValue("sticky") == "on" || r.FormValue("sticky") == "true",
 		reviewState:      strings.TrimSpace(r.FormValue("review_state")),
 		scheduledAt:      strings.TrimSpace(r.FormValue("scheduled_at")),
+		commentsEnabled:  r.FormValue("comments_enabled") == "1" || r.FormValue("comments_enabled") == "on" || r.FormValue("comments_enabled") == "true",
 	}
 	if input.visibility == "" {
 		input.visibility = "public"

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -16,27 +17,94 @@ import (
 var gutenbergOpen = regexp.MustCompile(`(?s)<!--\s*wp:[^>]*-->`)
 var gutenbergClose = regexp.MustCompile(`(?s)<!--\s*/wp:[^>]*-->`)
 
+// openShortcode matches an opening/self-closing tag: [name] or [name attrs].
+var openShortcode = regexp.MustCompile(`\[([a-zA-Z_][a-zA-Z0-9_-]{1,})([^\]\n]*)\]`)
+
+// strayCloser matches leftover closing tags whose opener was not recognized.
+var strayCloser = regexp.MustCompile(`\[/[a-zA-Z_][a-zA-Z0-9_]{1,}\]`)
+
+// knownShortcodes are common WordPress core/plugin shortcodes safe to drop even
+// without attributes. Unknown bare words in brackets stay untouched prose.
+var knownShortcodes = map[string]bool{
+	"gallery": true, "caption": true, "wp_caption": true, "audio": true,
+	"video": true, "playlist": true, "embed": true, "contact-form-7": true,
+	"elementor-template": true, "vc_row": true, "vc_column": true,
+	"products": true, "woocommerce_cart": true,
+}
+
+func isLikelyShortcodeBare(name string) bool {
+	return knownShortcodes[strings.ToLower(name)]
+}
+
+// stripGutenberg removes editor serialization comments.
 func stripGutenberg(s string) string {
 	s = gutenbergOpen.ReplaceAllString(s, "")
 	s = gutenbergClose.ReplaceAllString(s, "")
 	return s
 }
 
+// stripShortcodes removes likely WordPress shortcodes WITHOUT executing them:
+//   - paired   [foo]Hello[/foo]      -> Hello          (text preserved)
+//   - attribs  [contact-form-7 id="1"] -> removed
+//   - bare     [gallery]             -> removed (known list)
+//   - prose    Value [optional]… / Array index [0]  -> unchanged
+//
+// Every actual removal appends one warning.
 func stripShortcodes(s string, w *[]string) string {
-	if strings.Contains(s, "[") {
+	if !strings.Contains(s, "[") {
+		return s
+	}
+	var removed bool
+
+	// PASS 1: paired forms [name ...]inner[/name] -> inner (RE2 lacks backrefs,
+	// so pairs are resolved by scanning for the matching closer manually).
+	for {
+		loc := openShortcode.FindStringSubmatchIndex(s)
+		if loc == nil {
+			break
+		}
+		name := s[loc[2]:loc[3]]
+		closer := "[/" + name + "]"
+		ci := strings.Index(s[loc[1]:], closer)
+		if ci < 0 {
+			// Unpaired opener: fall through to bare/attribution rules below.
+			break
+		}
+		start, innerEnd := loc[0], loc[1]+ci
+		end := innerEnd + len(closer)
+		s = s[:start] + s[loc[1]:innerEnd] + s[end:]
+		removed = true
+	}
+
+	// PASS 2: self-closing tags WITH attributes, e.g. [contact-form-7 id="123"].
+	out := openShortcode.ReplaceAllStringFunc(s, func(m string) string {
+		parts := openShortcode.FindStringSubmatch(m)
+		if len(parts) < 3 {
+			return m
+		}
+		name, attrs := parts[1], strings.TrimSpace(parts[2])
+		switch {
+		case attrs != "":
+			removed = true // attribute-carrying tag: machine syntax, drop it
+			return ""
+		case isLikelyShortcodeBare(name):
+			removed = true // known bare shortcode, e.g. [gallery]
+			return ""
+		default:
+			return m // plain bracketed prose like [optional]; preserve
+		}
+	})
+
+	// PASS 3: stray closers whose opener was not recognized.
+	out = strayCloser.ReplaceAllStringFunc(out, func(m string) string {
+		removed = true
+		return ""
+	})
+
+	if removed && w != nil {
 		*w = append(*w, "WordPress shortcodes removed")
 	}
-	for {
-		a := strings.Index(s, "[")
-		if a < 0 {
-			return s
-		}
-		b := strings.Index(s[a:], "]")
-		if b < 0 {
-			return s[:a]
-		}
-		s = s[:a] + s[a+b+1:]
-	}
+	return out
 }
 
 func htmlDocument(source string, imageIDs map[string]string, warnings *[]string) (*document.Document, error) {
@@ -151,15 +219,25 @@ func htmlDocument(source string, imageIDs map[string]string, warnings *[]string)
 	return doc, nil
 }
 
+func newNodeID() (string, error) {
+	id := make([]byte, 12)
+	if _, err := rand.Read(id); err != nil {
+		return "", fmt.Errorf("generate node id: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(id), nil
+}
+
 func richNode(block string, props map[string]any) document.Node {
 	b, _ := json.Marshal(props)
-	id := make([]byte, 12)
-	_, _ = rand.Read(id)
+	nodeID, err := newNodeID()
+	if err != nil {
+		panic(err) // unreachable in practice; entropy failure is not recoverable
+	}
 	version := 2
 	if block == "core/image" || block == "core/list" || block == "core/quote" || block == "core/divider" {
 		version = 1
 	}
-	return document.Node{ID: base64.RawURLEncoding.EncodeToString(id), Block: block, Version: version, Props: b, Settings: json.RawMessage(`{}`)}
+	return document.Node{ID: nodeID, Block: block, Version: version, Props: b, Settings: json.RawMessage(`{}`)}
 }
 
 func listNode(items string, ordered bool) document.Node {
@@ -167,23 +245,29 @@ func listNode(items string, ordered bool) document.Node {
 	settings := map[string]any{"ordered": ordered}
 	pb, _ := json.Marshal(props)
 	sb, _ := json.Marshal(settings)
-	id := make([]byte, 12)
-	_, _ = rand.Read(id)
-	return document.Node{ID: base64.RawURLEncoding.EncodeToString(id), Block: "core/list", Version: 1, Props: pb, Settings: sb}
+	nodeID, err := newNodeID()
+	if err != nil {
+		panic(err)
+	}
+	return document.Node{ID: nodeID, Block: "core/list", Version: 1, Props: pb, Settings: sb}
 }
 
 func quoteNode(text, citation string) document.Node {
 	props := map[string]any{"text": text, "citation": citation}
 	b, _ := json.Marshal(props)
-	id := make([]byte, 12)
-	_, _ = rand.Read(id)
-	return document.Node{ID: base64.RawURLEncoding.EncodeToString(id), Block: "core/quote", Version: 1, Props: b, Settings: json.RawMessage(`{}`)}
+	nodeID, err := newNodeID()
+	if err != nil {
+		panic(err)
+	}
+	return document.Node{ID: nodeID, Block: "core/quote", Version: 1, Props: b, Settings: json.RawMessage(`{}`)}
 }
 
 func dividerNode() document.Node {
-	id := make([]byte, 12)
-	_, _ = rand.Read(id)
-	return document.Node{ID: base64.RawURLEncoding.EncodeToString(id), Block: "core/divider", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{}`)}
+	nodeID, err := newNodeID()
+	if err != nil {
+		panic(err)
+	}
+	return document.Node{ID: nodeID, Block: "core/divider", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{}`)}
 }
 
 func extractQuote(n *html.Node) (string, string) {

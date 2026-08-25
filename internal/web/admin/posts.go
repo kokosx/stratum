@@ -30,6 +30,8 @@ func (h *Handler) newPost(w http.ResponseWriter, r *http.Request) {
 		ContentTypeID:    ctID,
 		LayoutTemplateID: defaultTpl,
 		LayoutTemplates:  h.loadLayoutTemplateOptions(r.Context(), ctID),
+		CommentsEnabled:  true,
+		SupportsComments: content.DefinitionFor(ctID).Capabilities.SupportsComments,
 	}, "posts")
 }
 
@@ -40,7 +42,7 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := readEntryInput(r, postContentType)
 	if err != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Excerpt: r.FormValue("excerpt"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: postContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: err.Error(), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: r.FormValue("title"), Slug: r.FormValue("slug"), Excerpt: r.FormValue("excerpt"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: postContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: err.Error(), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true, CommentsEnabled: input.commentsEnabled, SupportsComments: content.DefinitionFor(postContentType).Capabilities.SupportsComments}, "posts")
 		return
 	}
 	user, err := h.currentUser(r)
@@ -54,7 +56,7 @@ func (h *Handler) createPost(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create post: %v", err)
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: input.title, Slug: input.slug, Excerpt: input.excerpt, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: postContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: entryWriteError(err), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true}, "posts")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Post", Action: "/admin/posts", PublishAction: "/admin/posts", BackURL: "/admin/posts", Title: input.title, Slug: input.slug, Excerpt: input.excerpt, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: postContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), postContentType), Error: entryWriteError(err), ShowExcerpt: true, ShowSEO: true, ShowFeatured: true, CommentsEnabled: input.commentsEnabled, SupportsComments: content.DefinitionFor(postContentType).Capabilities.SupportsComments}, "posts")
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
@@ -136,6 +138,8 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		ScheduledAtUnix:  scheduledUnix,
 		HasScheduled:     hasScheduled,
 		ReviewState:      revision.ReviewState,
+		CommentsEnabled:  revision.CommentsEnabled != 0,
+		SupportsComments: content.DefinitionFor(postContentType).Capabilities.SupportsComments,
 	}, "posts")
 }
 

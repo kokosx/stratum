@@ -596,6 +596,32 @@ func (q *Queries) SetFirstPublishedAtIfNull(ctx context.Context, arg SetFirstPub
 	return err
 }
 
+const setImportedPublishedDates = `-- name: SetImportedPublishedDates :exec
+;
+
+UPDATE entries SET created_at = ?, updated_at = ?, published_at = ?, first_published_at = ? WHERE id = ?
+`
+
+type SetImportedPublishedDatesParams struct {
+	CreatedAt        int64         `json:"created_at"`
+	UpdatedAt        int64         `json:"updated_at"`
+	PublishedAt      sql.NullInt64 `json:"published_at"`
+	FirstPublishedAt sql.NullInt64 `json:"first_published_at"`
+	ID               string        `json:"id"`
+}
+
+// Historical date preservation for imported published entries ONLY.
+func (q *Queries) SetImportedPublishedDates(ctx context.Context, arg SetImportedPublishedDatesParams) error {
+	_, err := q.db.ExecContext(ctx, setImportedPublishedDates,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+		arg.PublishedAt,
+		arg.FirstPublishedAt,
+		arg.ID,
+	)
+	return err
+}
+
 const setPublishedRevision = `-- name: SetPublishedRevision :exec
 UPDATE entries
 SET published_revision_id = ?, status = 'active', published_at = ?, updated_at = ?

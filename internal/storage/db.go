@@ -46,11 +46,12 @@ func sqliteDSN(path string, readOnly bool) string {
 	} else {
 		query["_pragma"] = append(query["_pragma"], "journal_mode(WAL)", "synchronous(NORMAL)")
 	}
-	return (&url.URL{
-		Scheme:   "file",
-		Path:     filepath.ToSlash(path),
-		RawQuery: query.Encode(),
-	}).String()
+	// Use "file:" prefix directly. Using url.URL with a relative path like
+	// "data/stratum.db" produces "file://data/stratum.db" (host="data") which
+	// modernc.org/sqlite interprets as a URI with authority and fails with
+	// "SQL logic error: out of memory (1)" on Ping. "file:data/..." and
+	// "file:/abs/..." are the forms modernc expects.
+	return "file:" + filepath.ToSlash(path) + "?" + query.Encode()
 }
 
 func open(dsn string) (*Database, error) {

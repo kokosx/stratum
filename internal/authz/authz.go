@@ -25,6 +25,9 @@ const (
 	PublishOwnEntry  Permission = "entries.publish_own"
 	DeleteAnyEntry   Permission = "entries.delete_any"
 	DeleteOwnEntry   Permission = "entries.delete_own"
+	ModerateComments Permission = "comments.moderate"
+	ReadComments     Permission = "comments.read"
+	DeleteComments   Permission = "comments.delete"
 )
 
 type EntryAction string
@@ -47,12 +50,12 @@ func Allows(role string, permission Permission) bool {
 		return true
 	case RoleEditor:
 		switch permission {
-		case ManageMedia, ManageTaxonomies, ManageNavigation, ReadEntries, CreateEntries, EditAnyEntry, EditOwnEntry, PublishAnyEntry, DeleteAnyEntry:
+		case ManageMedia, ManageTaxonomies, ManageNavigation, ReadEntries, CreateEntries, EditAnyEntry, EditOwnEntry, PublishAnyEntry, DeleteAnyEntry, ModerateComments, ReadComments, DeleteComments:
 			return true
 		}
 	case RoleAuthor:
 		switch permission {
-		case ManageMedia, ReadEntries, CreateEntries, EditOwnEntry, PublishOwnEntry, DeleteOwnEntry:
+		case ManageMedia, ReadEntries, CreateEntries, EditOwnEntry, PublishOwnEntry, DeleteOwnEntry, ReadComments:
 			return true
 		}
 	}

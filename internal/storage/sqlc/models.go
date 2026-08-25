@@ -25,6 +25,22 @@ type BlockDefinition struct {
 	UpdatedAt    int64          `json:"updated_at"`
 }
 
+type Comment struct {
+	ID                 string         `json:"id"`
+	EntryID            string         `json:"entry_id"`
+	ParentID           sql.NullString `json:"parent_id"`
+	Status             string         `json:"status"`
+	AuthorName         string         `json:"author_name"`
+	AuthorEmail        string         `json:"author_email"`
+	AuthorUrl          string         `json:"author_url"`
+	UserID             sql.NullString `json:"user_id"`
+	Body               string         `json:"body"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+	ImportedSource     sql.NullString `json:"imported_source"`
+	ImportedExternalID sql.NullString `json:"imported_external_id"`
+}
+
 type ContentType struct {
 	ID                      string         `json:"id"`
 	DisplayName             string         `json:"display_name"`
@@ -79,6 +95,7 @@ type EntryRevision struct {
 	PasswordHash     sql.NullString `json:"password_hash"`
 	Sticky           int64          `json:"sticky"`
 	ReviewState      string         `json:"review_state"`
+	CommentsEnabled  int64          `json:"comments_enabled"`
 }
 
 type EntryRevisionTerm struct {

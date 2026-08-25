@@ -43,7 +43,7 @@ INSERT INTO entry_revisions (
     id, entry_id, revision_number, slug, title, excerpt, document_json,
     seo_title, seo_description, canonical_url, featured_media_id, social_media_id,
     seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, fields_json, created_by, created_at,
-    visibility, password_hash, sticky, review_state
+    visibility, password_hash, sticky, review_state, comments_enabled
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(sqlc.arg(fields_json), ''), '{}'), sqlc.arg(created_by), sqlc.arg(created_at),
-    COALESCE(NULLIF(sqlc.arg(visibility), ''), 'public'), sqlc.narg(password_hash), sqlc.arg(sticky), COALESCE(NULLIF(sqlc.arg(review_state), ''), 'draft'));
+    COALESCE(NULLIF(sqlc.arg(visibility), ''), 'public'), sqlc.narg(password_hash), sqlc.arg(sticky), COALESCE(NULLIF(sqlc.arg(review_state), ''), 'draft'), sqlc.arg(comments_enabled));

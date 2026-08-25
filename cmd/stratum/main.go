@@ -15,6 +15,7 @@ import (
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/backup"
+	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/datalock"
 	wordpress "github.com/kokosx/stratum/internal/importer/wordpress"
 	"github.com/kokosx/stratum/internal/publishing"
@@ -131,7 +132,16 @@ func runImport(ctx context.Context, args []string) error {
 			return fmt.Errorf("open database for dry run: %w", err)
 		}
 		defer database.Close()
-		im := wordpress.New(database.DB, db.New(database.DB), nil, nil, dataDir)
+		queries := db.New(database.DB)
+		// Dry-run must validate with the SAME block registry/schema validation
+		// as a real import. The registry only READS block_definitions, so it is
+		// safe against the read-only handle; media provider stays nil (image
+		// blocks validate structurally without resolving assets).
+		registry, err := blocks.NewRegistry(ctx, queries)
+		if err != nil {
+			return fmt.Errorf("load block registry for dry run: %w", err)
+		}
+		im := wordpress.New(database.DB, queries, registry, nil, dataDir)
 		report, _, err := im.Import(ctx, filename, wordpress.Options{DryRun: true, DownloadMedia: *downloadMedia, Author: *author, OnConflict: *onConflict, DataDir: dataDir})
 		if err != nil {
 			return err

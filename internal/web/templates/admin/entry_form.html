@@ -115,6 +115,13 @@
       vis.addEventListener('change', toggle);
     })();
   </script>
+  {{ if .Content.SupportsComments }}
+  <section class="panel" style="margin:12px 0;padding:16px;">
+    <h3 style="margin:0 0 8px;">Discussion</h3>
+    <label class="check-row"><input type="checkbox" name="comments_enabled" value="1" {{ if .Content.CommentsEnabled }}checked{{ end }}> Allow comments</label>
+    <p class="field-desc">When enabled, visitors can post comments on the published version. Changes apply on next publish.</p>
+  </section>
+  {{ end }}
   {{ if .Content.Hierarchical }}
   <section class="panel" style="margin:12px 0;padding:16px;">
     <h3 style="margin:0 0 8px;">Page Attributes</h3>

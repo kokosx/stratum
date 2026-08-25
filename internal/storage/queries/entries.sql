@@ -244,3 +244,7 @@ LEFT JOIN publication_jobs AS active_job
 WHERE entries.content_type_id = sqlc.arg('content_type_id')
   AND (sqlc.narg('author_id') IS NULL OR entries.author_id = sqlc.narg('author_id'))
 ;
+
+-- name: SetImportedPublishedDates :exec
+-- Historical date preservation for imported published entries ONLY.
+UPDATE entries SET created_at = ?, updated_at = ?, published_at = ?, first_published_at = ? WHERE id = ?;

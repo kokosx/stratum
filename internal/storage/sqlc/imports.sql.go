@@ -24,6 +24,17 @@ func (q *Queries) CompleteImportRun(ctx context.Context, arg CompleteImportRunPa
 	return err
 }
 
+const countImportRunsForSource = `-- name: CountImportRunsForSource :one
+SELECT COUNT(*) FROM import_runs WHERE source = ?
+`
+
+func (q *Queries) CountImportRunsForSource(ctx context.Context, source string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countImportRunsForSource, source)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createImportMapping = `-- name: CreateImportMapping :exec
 INSERT INTO import_mappings (source, object_type, external_id, internal_id, run_id, created_at)
 VALUES (?, ?, ?, ?, ?, ?)

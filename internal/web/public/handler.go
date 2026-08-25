@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/comments"
 	"github.com/kokosx/stratum/internal/compress"
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
@@ -51,6 +52,7 @@ type Handler struct {
 	unlockStore   *publishing.UnlockStore
 	unlockLimiter *publishing.UnlockLimiter
 	search        *search.Service
+	comments      *comments.Service
 }
 
 func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
@@ -82,6 +84,10 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 	}
 	if database, ok := hub.Queries.DB().(*sql.DB); ok {
 		h.search = search.New(database, hub.Blocks)
+		h.comments = comments.NewService(database, hub.Queries)
+		h.comments.SetInvalidator(func(entryID string) {
+			hub.Pages.InvalidateTag("entry:" + entryID)
+		})
 	}
 	testRouteRegistry.Store(hub.Queries, h)
 	// Targeted warmup: homepage and main archive page 1 if available.
@@ -101,6 +107,10 @@ func (h *Handler) AssetURLs() (blocksCSS, themeCSS, themeJS string) {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Password-protected pages accept POST for unlock form.
 	if r.Method == http.MethodPost {
+		if r.URL.Path == "/comments" {
+			h.handleCommentSubmit(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/media/") {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

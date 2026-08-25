@@ -10,7 +10,19 @@ type item struct {
 	Terms                                                                       []termRef
 	Meta                                                                        map[string]string
 	AttachmentURL                                                               string
-	Comments                                                                    int
+	Comments                                                                    []importComment
+}
+
+type importComment struct {
+	ID        string
+	ParentID  string
+	Author    string
+	Email     string
+	URL       string
+	Content   string
+	CreatedAt time.Time
+	Approved  string
+	Type      string
 }
 
 type termRef struct {

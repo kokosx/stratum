@@ -9,11 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -22,6 +19,8 @@ import (
 
 	"github.com/kokosx/stratum/internal/backup"
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/comments"
+	"github.com/kokosx/stratum/internal/datalock"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/routing"
@@ -33,12 +32,7 @@ import (
 
 const source = "wordpress"
 
-const maxDownloadBytes = 10 << 20
-
 var entrySlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
-// AllowPrivateForTest disables SSRF private IP checks when true (used by httptest media servers).
-var AllowPrivateForTest bool
 
 type Options struct {
 	DryRun        bool
@@ -49,24 +43,31 @@ type Options struct {
 }
 
 type Report struct {
-	Posts         int
-	Pages         int
-	Drafts        int
-	Pending       int
-	Scheduled     int
-	Private       int
-	Categories    int
-	Tags          int
-	MediaImported int
-	MediaFailed   int
-	Skipped       int
-	Conflicts     int
-	Warnings      int
-	Comments      int
+	Posts            int
+	Pages            int
+	Drafts           int
+	Pending          int
+	Scheduled        int
+	Private          int
+	Password         int
+	Published        int
+	Categories       int
+	Tags             int
+	MediaImported    int
+	MediaFailed      int
+	Skipped          int
+	Conflicts        int
+	Warnings         int
+	Comments         int
+	CommentsImported int
+	CommentsSkipped  int
+	PingbacksSkipped int
 }
 
 func (r Report) String() string {
-	return fmt.Sprintf("WordPress import complete\nPosts imported:       %d\nPages imported:       %d\nDrafts:               %d\nPending:              %d\nScheduled:            %d\nPrivate:              %d\nCategories:           %d\nTags:                 %d\nMedia imported:       %d\nMedia failed:         %d\nItems skipped:        %d\nConflicts:            %d\nWarnings:             %d\nComments available for later import: %d", r.Posts, r.Pages, r.Drafts, r.Pending, r.Scheduled, r.Private, r.Categories, r.Tags, r.MediaImported, r.MediaFailed, r.Skipped, r.Conflicts, r.Warnings, r.Comments)
+	base := fmt.Sprintf("WordPress import complete\nPosts imported:       %d\nPages imported:       %d\nDrafts:               %d\nPending:              %d\nScheduled:            %d\nPrivate:              %d\nPassword:             %d\nPublished:            %d\nCategories:           %d\nTags:                 %d\nMedia imported:       %d\nMedia failed:         %d\nItems skipped:        %d\nConflicts:            %d\nWarnings:             %d", r.Posts, r.Pages, r.Drafts, r.Pending, r.Scheduled, r.Private, r.Password, r.Published, r.Categories, r.Tags, r.MediaImported, r.MediaFailed, r.Skipped, r.Conflicts, r.Warnings)
+	base += fmt.Sprintf("\nComments available for later import: %d\nComments imported:    %d\nComments skipped:     %d\nPingbacks skipped:    %d", r.Comments, r.CommentsImported, r.CommentsSkipped, r.PingbacksSkipped)
+	return base
 }
 
 type Importer struct {
@@ -77,12 +78,16 @@ type Importer struct {
 	publishing *publishing.Service
 	taxonomy   *taxonomy.Service
 	search     *search.Service
+	comments   *comments.Service
 	dataDir    string
+	// Downloader overrides the SSRF-hardened attachment fetcher when non-nil
+	// (test seam). Production always uses newDownloader(); there is no global bypass.
+	Downloader *Downloader
 }
 
 func New(database *sql.DB, q *db.Queries, registry *blocks.Registry, mediaService *media.Service, dataDir string) *Importer {
 	p := publishing.New(database, q)
-	return &Importer{db: database, q: q, blocks: registry, media: mediaService, publishing: p, taxonomy: taxonomy.New(database, q), search: search.New(database, registry), dataDir: dataDir}
+	return &Importer{db: database, q: q, blocks: registry, media: mediaService, publishing: p, taxonomy: taxonomy.New(database, q), search: search.New(database, registry), comments: comments.NewService(database, q), dataDir: dataDir}
 }
 
 func (im *Importer) Import(ctx context.Context, filename string, opt Options) (Report, string, error) {
@@ -97,7 +102,19 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 		err := im.dryRun(ctx, filename, &report)
 		return report, "", err
 	}
-	runID := newID()
+	// Non-dry-run import must hold exclusive dataDir lock (see internal/datalock).
+	// Ownership: the importer owns the lock for the whole mutation phase; the CLI
+	// never acquires it separately, so there is no double-acquire risk.
+	lock, err := datalock.Acquire(opt.DataDir)
+	if err != nil {
+		return Report{}, "", fmt.Errorf("cannot import while Stratum is serving this data directory: %w", err)
+	}
+	defer lock.Close()
+
+	runID, err := newID()
+	if err != nil {
+		return report, "", err
+	}
 	backupPath := filepath.Join(opt.DataDir, "backups", "pre-import-"+runID+".zip")
 	if err := os.MkdirAll(filepath.Join(opt.DataDir, "backups"), 0700); err != nil {
 		return report, "", fmt.Errorf("create backup dir: %w", err)
@@ -113,36 +130,48 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	if err := parse(filename, nil, nil, func(a author) error { authors[a.Login] = a; return nil }); err != nil {
 		return report, backupPath, err
 	}
-	termIDs := map[string]string{}
-	if err := parse(filename, nil, func(t term) error { return im.importTerm(ctx, runID, t, termIDs, &report) }, nil); err != nil {
+	// --author fail-fast validation before any mutation.
+	if opt.Author != "" && !opt.DryRun {
+		email := strings.ToLower(strings.TrimSpace(opt.Author))
+		if _, err := im.q.GetUserByEmail(ctx, email); err != nil {
+			return report, backupPath, fmt.Errorf("fallback author %q does not exist in Stratum; create the user first", email)
+		}
+	}
+
+	plan, err := im.planRoutes(ctx, filename)
+	if err != nil {
 		return report, backupPath, err
 	}
+	for wpID, perr := range plan.errors {
+		report.Warnings++
+		fmt.Printf("route plan rejected %s: %v\n", wpID, perr)
+	}
+
+	termIDs, termSlugIndex := map[string]string{}, map[string]string{}
+	if err := parse(filename, nil, func(t term) error { return im.importTerm(ctx, runID, t, termIDs, termSlugIndex, &report) }, nil); err != nil {
+		return report, backupPath, err
+	}
+	// Taxonomy PASS 2: resolve category parents now that every mapping exists.
+	if err := im.resolveTermParents(ctx, filename, &report); err != nil {
+		return report, backupPath, err
+	}
+
 	imageIDs := map[string]string{}
 	newEntries := map[string]bool{}
-	plannedPaths := map[string]bool{}
 	if err := parse(filename, func(it item) error {
-		report.Comments += it.Comments
 		if (it.Type == "post" || it.Type == "page") && it.Status != "trash" && it.Status != "inherit" && it.Status != "auto-draft" {
-			s := slug(it.Slug, it.Title)
-			if s == "" {
+			if perr, rejected := plan.errors[it.ID]; rejected {
+				report.Conflicts++
+				report.Skipped++
+				_ = perr
+				return nil
+			}
+			if s := slug(it.Slug, it.Title); s == "" {
 				report.Skipped++
 				report.Warnings++
 				return nil
 			}
-			p := routing.EntryPath(it.Type, s, "/blog")
-			if plannedPaths[p] {
-				report.Conflicts++
-				report.Skipped++
-				return nil
-			}
-			if _, err := im.q.GetRouteByPath(ctx, p); err == nil {
-				report.Conflicts++
-				report.Skipped++
-				return nil
-			}
-			plannedPaths[p] = true
 		}
-		// Track whether this item will be new
 		wasNew := false
 		if (it.Type == "post" || it.Type == "page") && it.ID != "" {
 			if _, err := im.mapping(ctx, it.Type, it.ID); err != nil {
@@ -161,28 +190,43 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	}, nil, nil); err != nil {
 		return report, backupPath, err
 	}
-	// Collect revisions and sort pages parent-first
 	var allItems []item
 	if err := parse(filename, func(it item) error {
-		if (it.Type == "post" || it.Type == "page") && newEntries[it.Type+":"+it.ID] {
+		if it.Type != "post" && it.Type != "page" {
+			return nil
+		}
+		if it.Status == "trash" || it.Status == "inherit" || it.Status == "auto-draft" {
+			return nil
+		}
+		if newEntries[it.Type+":"+it.ID] {
+			allItems = append(allItems, it)
+			return nil
+		}
+		// Resume semantics: a mapping from a previous PARTIAL run (entry shell
+		// exists but no revision was ever written) must not permanently skip
+		// the item. Completed items keep skipping untouched.
+		if entryID, err := im.mapping(ctx, it.Type, it.ID); err == nil && !im.entryHasRevision(ctx, entryID) {
 			allItems = append(allItems, it)
 		}
 		return nil
 	}, nil, nil); err != nil {
 		return report, backupPath, err
 	}
-	// Sort pages by depth (parents first) to satisfy hierarchy validation
 	sorted := sortItemsByHierarchy(allItems)
 	for _, it := range sorted {
-		if err := im.createRevision(ctx, runID, it, termIDs, imageIDs, authors, opt, &report); err != nil {
+		if err := im.createRevision(ctx, runID, it, termIDs, termSlugIndex, imageIDs, authors, opt, &report); err != nil {
 			return report, backupPath, err
 		}
 	}
-	// Also handle any remaining non-page items that were not sorted? For posts, sorted already includes them.
-	// For safety, process any items not in sorted? Already sorted includes all.
+	if im.comments != nil {
+		if err := im.importComments(ctx, filename, runID, &report); err != nil {
+			report.Warnings++
+			fmt.Printf("comment import failed: %v\n", err)
+		}
+	}
 	if _, err := im.search.Rebuild(ctx); err != nil {
 		report.Warnings++
-		fmt.Printf("search rebuild failed: %v\n", err)
+		fmt.Println("search rebuild failed; run: stratum search rebuild")
 	}
 	if err := im.q.CompleteImportRun(ctx, db.CompleteImportRunParams{CompletedAt: sql.NullInt64{Int64: time.Now().Unix(), Valid: true}, ID: runID}); err != nil {
 		return report, backupPath, err
@@ -193,13 +237,59 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	return report, backupPath, nil
 }
 
+// routePlan is the shared pre-mutation plan used by both dry-run and real import.
+type routePlan struct {
+	effective map[string]string // WP ID -> prospective public path
+	errors    map[string]error  // WP ID -> rejection reason (conflict/cycle/reserved)
+}
+
+// planRoutes builds the deterministic hierarchy-aware route plan from current
+// site settings (posts_base_path is read live, never hardcoded).
+func (im *Importer) planRoutes(ctx context.Context, filename string) (*routePlan, error) {
+	postsBase := currentPostsBase(ctx, im.q)
+	var items []item
+	if err := parse(filename, func(it item) error {
+		switch it.Type {
+		case "post", "page":
+			if it.Status != "trash" && it.Status != "inherit" && it.Status != "auto-draft" {
+				items = append(items, it)
+			}
+		}
+		return nil
+	}, nil, nil); err != nil {
+		return nil, err
+	}
+	mapped := map[string]string{}
+	for _, it := range items {
+		if internalID, err := im.mapping(ctx, it.Type, it.ID); err == nil {
+			mapped[it.ID] = internalID
+		}
+	}
+	effective, errorsMap, _ := buildRoutePlan(ctx, im.q, items, postsBase, mapped)
+	return &routePlan{effective: effective, errors: errorsMap}, nil
+}
+
 func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) error {
-	paths := map[string]bool{}
+	plan, err := im.planRoutes(ctx, filename)
+	if err != nil {
+		return err
+	}
+	for range plan.errors {
+		r.Conflicts++
+		r.Skipped++
+	}
 	return parse(filename, func(it item) error {
-		r.Comments += it.Comments
+		r.Comments += len(it.Comments)
 		switch it.Type {
 		case "post", "page":
 		case "attachment":
+			// Validate attachment URL syntax/scheme only; no network in dry-run.
+			if u := strings.TrimSpace(it.AttachmentURL); u != "" {
+				parsed, perr := url.Parse(u)
+				if perr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+					r.Warnings++
+				}
+			}
 			return nil
 		default:
 			if it.Type != "" {
@@ -208,13 +298,12 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 			}
 			return nil
 		}
-		if it.Status == "trash" {
+		if it.Status == "trash" || it.Status == "inherit" || it.Status == "auto-draft" {
 			r.Skipped++
 			return nil
 		}
-		if it.Status == "inherit" || it.Status == "auto-draft" {
-			r.Skipped++
-			return nil
+		if _, rejected := plan.errors[it.ID]; rejected {
+			return nil // already counted above
 		}
 		s := slug(it.Slug, it.Title)
 		if s == "" || !entrySlugPattern.MatchString(s) {
@@ -222,69 +311,20 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 			r.Warnings++
 			return nil
 		}
-		p := routing.EntryPath(it.Type, s, "/blog")
-		isConflict := false
-		if paths[p] {
-			r.Conflicts++
-			isConflict = true
-		} else {
-			paths[p] = true
-		}
-		if _, err := im.q.GetRouteByPath(ctx, p); err == nil {
-			r.Conflicts++
-			isConflict = true
-		}
-		if isConflict {
-			r.Skipped++
-			return nil
-		}
-		// Validate content conversion without writing
+		// Validate content conversion against the REAL block registry (no writes).
 		warnings := []string{}
-		imageIDs := map[string]string{}
-		doc, err := htmlDocument(it.Content, imageIDs, &warnings)
-		if err != nil {
+		doc, cerr := htmlDocument(it.Content, map[string]string{}, &warnings)
+		if cerr != nil {
 			r.Warnings++
 			return nil
 		}
 		if im.blocks != nil {
-			if err := im.blocks.ValidateDocument(doc); err != nil {
+			if verr := im.blocks.ValidateDocument(doc); verr != nil {
 				r.Warnings++
 			}
 		}
 		r.Warnings += len(warnings)
-		// Count would-be imports
-		switch it.Status {
-		case "draft":
-			r.Drafts++
-		case "pending":
-			r.Pending++
-		case "future":
-			r.Scheduled++
-		case "private":
-			if it.Type == "post" {
-				r.Posts++
-			} else {
-				r.Pages++
-			}
-			r.Private++
-		default:
-			// publish or unknown with password
-			if strings.TrimSpace(it.Password) != "" {
-				if it.Type == "post" {
-					r.Posts++
-				} else {
-					r.Pages++
-				}
-				// password counted as private? keep separate, but report as private for now
-				r.Private++
-			} else {
-				if it.Type == "post" {
-					r.Posts++
-				} else {
-					r.Pages++
-				}
-			}
-		}
+		countAccepted(r, it)
 		return nil
 	}, func(t term) error {
 		if t.Kind == "category" {
@@ -294,6 +334,34 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 		}
 		return nil
 	}, nil)
+}
+
+// countAccepted applies consistent report semantics: Posts/Pages count accepted
+// objects regardless of publish state; status counters are additive and disjoint
+// (Password counts as Password+Published-style acceptance, never as Private).
+func countAccepted(r *Report, it item) {
+	if it.Type == "post" {
+		r.Posts++
+	} else {
+		r.Pages++
+	}
+	hasPassword := strings.TrimSpace(it.Password) != ""
+	switch it.Status {
+	case "draft":
+		r.Drafts++
+	case "pending":
+		r.Pending++
+	case "future":
+		r.Scheduled++
+	case "private":
+		r.Private++
+	default:
+		if hasPassword {
+			r.Password++
+		} else {
+			r.Published++
+		}
+	}
 }
 
 func normalizeTermDomain(d string) string {
@@ -308,55 +376,108 @@ func normalizeTermDomain(d string) string {
 	}
 }
 
-func (im *Importer) importTerm(ctx context.Context, runID string, t term, ids map[string]string, r *Report) error {
+// termExternalID is the durable mapping key: taxonomy kind + numeric WP term ID.
+// Slugs may change between exports; WP IDs are stable.
+func termExternalID(kind, wpTermID string) string {
+	return kind + ":" + strings.TrimSpace(wpTermID)
+}
+
+// importTerm is TAXONOMY PASS 1: create/resolve every supported term WITHOUT its
+// parent relation, so WXR ordering can never affect hierarchy. Parents are
+// resolved in resolveTermParents (PASS 2) once the complete mapping exists.
+func (im *Importer) importTerm(ctx context.Context, runID string, t term, ids map[string]string, slugIndex map[string]string, r *Report) error {
 	if t.Kind != "category" && t.Kind != "tag" {
 		return nil
 	}
-	key := t.Kind + ":" + strings.ToLower(strings.TrimSpace(t.Slug))
-	if strings.TrimSpace(t.Slug) == "" {
+	if strings.TrimSpace(t.Slug) == "" || strings.TrimSpace(t.ID) == "" {
 		r.Warnings++
 		return nil
 	}
-	if existing, err := im.mapping(ctx, "term", key); err == nil {
-		ids[key] = existing
+	external := termExternalID(t.Kind, t.ID)
+	slugKey := t.Kind + ":" + strings.ToLower(strings.TrimSpace(t.Slug))
+	// Already mapped in a previous run → reuse.
+	if existing, err := im.mapping(ctx, "term", external); err == nil && existing != "" {
+		ids[external] = existing
+		slugIndex[slugKey] = existing
 		return nil
 	}
-	parent := ""
-	if t.Parent != "" {
-		parent = ids["category:"+strings.ToLower(strings.TrimSpace(t.Parent))]
-		// if parent not yet created, try to lookup via DB by slug
-		if parent == "" {
-			if termRow, err := im.q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: "category", Slug: strings.ToLower(strings.TrimSpace(t.Parent))}); err == nil {
-				parent = termRow.ID
-			}
-		}
-	}
-	created, err := im.taxonomy.CreateTerm(ctx, t.Kind, t.Name, t.Slug, t.Description, parent)
+	// PASS 1 creates with NO parent.
+	created, err := im.taxonomy.CreateTerm(ctx, t.Kind, t.Name, t.Slug, t.Description, "")
 	if err != nil {
-		// If duplicate due to race or previous import, try to fetch existing
+		// Existing Stratum term with same slug: reuse it and record WP mapping
+		// (never duplicate, never mutate the existing term).
 		if errors.Is(err, taxonomy.ErrDuplicateSlug) {
-			if existing, e2 := im.q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: t.Kind, Slug: t.Slug}); e2 == nil {
-				ids[key] = existing.ID
-				_ = im.mapObject(ctx, runID, "term", key, existing.ID)
-				if t.Kind == "category" {
-					r.Categories++
-				} else {
-					r.Tags++
+			if existing, e2 := im.q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: t.Kind, Slug: strings.ToLower(strings.TrimSpace(t.Slug))}); e2 == nil {
+				ids[external] = existing.ID
+				slugIndex[slugKey] = existing.ID
+				if mapErr := im.mapObject(ctx, runID, "term", external, existing.ID); mapErr != nil {
+					return mapErr
 				}
 				return nil
 			}
 		}
 		r.Warnings++
+		fmt.Printf("term %q (%s): %v\n", t.Name, t.Slug, err)
 		return nil
 	}
-	if err := im.mapObject(ctx, runID, "term", key, created.ID); err != nil {
+	if err := im.mapObject(ctx, runID, "term", external, created.ID); err != nil {
 		return err
 	}
-	ids[key] = created.ID
+	ids[external] = created.ID
+	slugIndex[slugKey] = created.ID
 	if t.Kind == "category" {
 		r.Categories++
 	} else {
 		r.Tags++
+	}
+	return nil
+}
+
+// resolveTermParents is TAXONOMY PASS 2: attach category parents using the now-
+// complete WP-term-ID mapping. Child-before-parent WXR order is irrelevant here.
+func (im *Importer) resolveTermParents(ctx context.Context, filename string, r *Report) error {
+	type rel struct{ childWP, parentSlug string }
+	var rels []rel
+	if err := parse(filename, nil, func(t term) error {
+		if t.Kind == "category" && strings.TrimSpace(t.Parent) != "" && strings.TrimSpace(t.ID) != "" {
+			rels = append(rels, rel{childWP: t.ID, parentSlug: strings.ToLower(strings.TrimSpace(t.Parent))})
+		}
+		return nil
+	}, nil); err != nil {
+		return err
+	}
+	for _, r2 := range rels {
+		child, err := im.mapping(ctx, "term", termExternalID("category", r2.childWP))
+		if err != nil || child == "" {
+			continue
+		}
+		parent := ""
+		// Resolve parent by WP ID first (any parent term recorded this run),
+		// then fall back to slug lookup for pre-existing terms.
+		if err := parse(filename, nil, func(t term) error {
+			if parent == "" && t.Kind == "category" && strings.EqualFold(strings.TrimSpace(t.Slug), r2.parentSlug) {
+				if id, e := im.mapping(ctx, "term", termExternalID("category", t.ID)); e == nil {
+					parent = id
+				}
+			}
+			return nil
+		}, nil); err != nil {
+			return err
+		}
+		if parent == "" {
+			if row, e := im.q.GetTermByTaxonomyAndSlug(ctx, db.GetTermByTaxonomyAndSlugParams{TaxonomyID: "category", Slug: r2.parentSlug}); e == nil {
+				parent = row.ID
+			}
+		}
+		if parent == "" || parent == child {
+			r.Warnings++
+			continue
+		}
+		if err := im.taxonomy.SetParent(ctx, child, parent); err != nil {
+			// Cycle/self/missing-parent rejections keep hierarchy valid; warn only.
+			r.Warnings++
+			fmt.Printf("category parent %s -> %s rejected: %v\n", child, parent, err)
+		}
 	}
 	return nil
 }
@@ -408,7 +529,10 @@ func (im *Importer) createEntryAndAttachment(ctx context.Context, runID string, 
 		return nil
 	}
 	// Check again for planned conflict (already done in outer loop, but double-check for idempotency)
-	entryID := newID()
+	entryID, idErr := newID()
+	if idErr != nil {
+		return idErr
+	}
 	created := it.PublishedAt
 	if created.IsZero() {
 		created = time.Now()
@@ -423,10 +547,25 @@ func (im *Importer) createEntryAndAttachment(ctx context.Context, runID string, 
 		}
 		return err
 	}
-	return im.mapObject(ctx, runID, it.Type, it.ID, entryID)
+	// Failure cleanup: a shell Entry without its durable mapping is useless and
+	// would be invisible to future reruns — remove it instead of leaving an
+	// orphan. Both errors surface via errors.Join.
+	if mapErr := im.mapObject(ctx, runID, it.Type, it.ID, entryID); mapErr != nil {
+		if delErr := im.q.DeleteEntry(ctx, entryID); delErr != nil {
+			return errors.Join(mapErr, delErr)
+		}
+		return mapErr
+	}
+	return nil
 }
 
-func (im *Importer) createRevision(ctx context.Context, runID string, it item, terms, images map[string]string, authors map[string]author, opt Options, r *Report) error {
+// entryHasRevision reports whether the mapped entry already carries any revision.
+func (im *Importer) entryHasRevision(ctx context.Context, entryID string) bool {
+	_, err := im.q.GetLatestEntryRevision(ctx, entryID)
+	return err == nil
+}
+
+func (im *Importer) createRevision(ctx context.Context, runID string, it item, terms, termSlugIndex, images map[string]string, authors map[string]author, opt Options, r *Report) error {
 	if it.Type != "post" && it.Type != "page" {
 		return nil
 	}
@@ -443,12 +582,16 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 		r.Warnings++
 		return nil
 	}
-	// Check route conflict again before creating revision (hierarchical aware)
-	expectedPath := routing.EntryPath(it.Type, s, "/blog")
+	// Re-check the EFFECTIVE path (real posts_base_path + hierarchy) before
+	// publishing; mirrors the shared plan so dry-run and import agree.
+	postsBase := currentPostsBase(ctx, im.q)
+	expectedPath := routing.EntryPath(it.Type, s, postsBase)
 	if it.Type == "page" && it.ParentID != "" && it.ParentID != "0" {
 		if parentEntryID, e := im.mapping(ctx, "page", it.ParentID); e == nil {
 			if parentRoute, e2 := im.q.GetEntryRoute(ctx, sql.NullString{String: parentEntryID, Valid: true}); e2 == nil {
 				expectedPath = routing.ChildEntryPath(parentRoute.Path, s)
+			} else if parentRev, e3 := im.q.GetLatestEntryRevision(ctx, parentEntryID); e3 == nil && parentRev.Slug != "" {
+				expectedPath = routing.ChildEntryPath("/"+parentRev.Slug, s)
 			}
 		}
 	}
@@ -510,14 +653,21 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 		visibility = "password"
 		hash = nullString(h)
 	}
-	revID := newID()
+	revID, revIDErr := newID()
+	if revIDErr != nil {
+		return revIDErr
+	}
 	now := time.Now()
 	createdAt := nonzeroUnix(it.ModifiedAt, now)
 	if !it.PublishedAt.IsZero() && it.Status == "publish" {
 		// Use published date for revision creation time to preserve history
 		createdAt = it.PublishedAt.Unix()
 	}
-	if err := im.q.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: entryID, RevisionNumber: 1, Slug: s, Title: it.Title, Excerpt: sql.NullString{String: it.Excerpt, Valid: true}, DocumentJson: string(raw), FeaturedMediaID: sql.NullString{}, ParentEntryID: nullString(parent), MenuOrder: it.MenuOrder, FieldsJson: "{}", CreatedBy: nullString(im.authorID(ctx, it, authors, opt)), CreatedAt: createdAt, Visibility: visibility, PasswordHash: hash, Sticky: 0, ReviewState: review}); err != nil {
+	commentsEnabled := int64(0)
+	if it.Type == "post" {
+		commentsEnabled = 1
+	}
+	if err := im.q.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{ID: revID, EntryID: entryID, RevisionNumber: 1, Slug: s, Title: it.Title, Excerpt: sql.NullString{String: it.Excerpt, Valid: true}, DocumentJson: string(raw), FeaturedMediaID: sql.NullString{}, ParentEntryID: nullString(parent), MenuOrder: it.MenuOrder, FieldsJson: "{}", CreatedBy: nullString(im.authorID(ctx, it, authors, opt)), CreatedAt: createdAt, Visibility: visibility, PasswordHash: hash, Sticky: 0, ReviewState: review, CommentsEnabled: commentsEnabled}); err != nil {
 		return err
 	}
 	for _, t := range it.Terms {
@@ -525,8 +675,8 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 		if domain == "" {
 			continue
 		}
-		key := domain + ":" + strings.ToLower(strings.TrimSpace(t.Slug))
-		if tid := terms[key]; tid != "" {
+		slugKey := domain + ":" + strings.ToLower(strings.TrimSpace(t.Slug))
+		if tid := termSlugIndex[slugKey]; tid != "" {
 			if err := im.q.SetTermsForRevision(ctx, db.SetTermsForRevisionParams{RevisionID: revID, TermID: tid}); err != nil {
 				return err
 			}
@@ -534,7 +684,7 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 	}
 	if thumbnail := it.Meta["_thumbnail_id"]; thumbnail != "" && thumbnail != "0" {
 		if mediaID, e := im.mapping(ctx, "attachment", thumbnail); e == nil {
-			if _, e := im.db.ExecContext(ctx, "UPDATE entry_revisions SET featured_media_id = ? WHERE id = ?", mediaID, revID); e != nil {
+			if e := im.q.SetCommentFeaturedMedia(ctx, db.SetCommentFeaturedMediaParams{FeaturedMediaID: nullString(mediaID), ID: revID}); e != nil {
 				return e
 			}
 		} else {
@@ -544,10 +694,10 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 	r.Warnings += len(warnings)
 	switch it.Status {
 	case "draft":
-		r.Drafts++
+		countAccepted(r, it)
 		return nil
 	case "pending":
-		r.Pending++
+		countAccepted(r, it)
 		return nil
 	case "future":
 		target := it.PublishedAt
@@ -556,7 +706,7 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 			r.Drafts++
 			return nil
 		}
-		r.Scheduled++
+		countAccepted(r, it)
 		return im.publishing.Schedule(ctx, entryID, revID, target.Unix(), im.authorID(ctx, it, authors, opt), now.Unix())
 	}
 	// Publish path
@@ -569,21 +719,15 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 		}
 		return err
 	}
+	// Historical date preservation applies ONLY to published items; draft,
+	// pending and scheduled entries keep import-time bookkeeping timestamps so
+	// the published_at/first_published_at invariants stay intact.
 	published := nonzeroUnix(it.PublishedAt, now)
 	modified := nonzeroUnix(it.ModifiedAt, now)
-	// Preserve historical dates
-	_, err = im.db.ExecContext(ctx, "UPDATE entries SET created_at=?, updated_at=?, published_at=?, first_published_at=? WHERE id=?", published, modified, published, published, entryID)
-	if err != nil {
+	if err := im.q.SetImportedPublishedDates(ctx, db.SetImportedPublishedDatesParams{CreatedAt: published, UpdatedAt: modified, PublishedAt: sql.NullInt64{Int64: published, Valid: true}, FirstPublishedAt: sql.NullInt64{Int64: published, Valid: true}, ID: entryID}); err != nil {
 		return err
 	}
-	if it.Type == "post" {
-		r.Posts++
-	} else {
-		r.Pages++
-	}
-	if visibility == "private" {
-		r.Private++
-	}
+	countAccepted(r, it)
 	return nil
 }
 
@@ -593,26 +737,32 @@ func (im *Importer) mapping(ctx context.Context, typ, id string) (string, error)
 func (im *Importer) mapObject(ctx context.Context, run, typ, external, internal string) error {
 	return im.q.CreateImportMapping(ctx, db.CreateImportMappingParams{Source: source, ObjectType: typ, ExternalID: external, InternalID: internal, RunID: run, CreatedAt: time.Now().Unix()})
 }
+
+// authorID resolves attribution: 1) WP author email → existing Stratum user,
+// 2) --author fallback → existing Stratum user, 3) NULL author. Never creates
+// accounts and never imports WordPress credentials.
 func (im *Importer) authorID(ctx context.Context, it item, authors map[string]author, opt Options) string {
-	email := authors[it.Author].Email
-	if email == "" {
-		email = opt.Author
+	if wpEmail := strings.ToLower(strings.TrimSpace(authors[it.Author].Email)); wpEmail != "" {
+		if u, err := im.q.GetUserByEmail(ctx, wpEmail); err == nil {
+			return u.ID
+		}
 	}
-	if email == "" {
-		return ""
+	if fb := strings.ToLower(strings.TrimSpace(opt.Author)); fb != "" {
+		if u, err := im.q.GetUserByEmail(ctx, fb); err == nil {
+			return u.ID
+		}
 	}
-	email = strings.ToLower(strings.TrimSpace(email))
-	if email == "" {
-		return ""
-	}
-	u, err := im.q.GetUserByEmail(ctx, email)
-	if err != nil {
-		return ""
-	}
-	return u.ID
+	return ""
 }
+func (im *Importer) downloader() *Downloader {
+	if im.Downloader != nil {
+		return im.Downloader
+	}
+	return newDownloader()
+}
+
 func (im *Importer) downloadMedia(ctx context.Context, raw, author string) (*media.Asset, error) {
-	body, name, err := download(ctx, raw)
+	body, name, err := im.downloader().Get(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -621,10 +771,15 @@ func (im *Importer) downloadMedia(ctx context.Context, raw, author string) (*med
 	limited := io.LimitReader(body, maxDownloadBytes+1)
 	return im.media.Upload(ctx, name, author, limited)
 }
-func newID() string {
+
+// newID generates a random ID and FAILS CLOSED on entropy errors — unique IDs
+// are correctness-critical for mappings, entries, and revisions.
+func newID() (string, error) {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate id: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 func nullString(v string) sql.NullString {
 	if strings.TrimSpace(v) == "" {
@@ -664,6 +819,188 @@ func slug(value, title string) string {
 		return ""
 	}
 	return res
+}
+
+func currentPostsBase(ctx context.Context, q *db.Queries) string {
+	row, err := q.GetSiteSettings(ctx)
+	if err != nil {
+		return "/blog"
+	}
+	base := strings.TrimSpace(row.PostsBasePath)
+	if base == "" {
+		return "/blog"
+	}
+	return base
+}
+
+func effectivePathForItem(it item, postsBase string, parentPath string) string {
+	s := slug(it.Slug, it.Title)
+	if s == "" {
+		return ""
+	}
+	if it.Type == "page" {
+		if parentPath != "" {
+			return routing.ChildEntryPath(parentPath, s)
+		}
+		return routing.EntryPath(it.Type, s, postsBase)
+	}
+	// post and others
+	return routing.EntryPath(it.Type, s, postsBase)
+}
+
+func buildRoutePlan(ctx context.Context, q *db.Queries, items []item, postsBase string, mapped map[string]string) (map[string]string, map[string]error, []string) {
+	// Returns map wpID -> effective path, map of errors, and list of duplicate paths
+	idToItem := map[string]item{}
+	for _, it := range items {
+		if it.Type == "post" || it.Type == "page" {
+			idToItem[it.ID] = it
+		}
+	}
+	// First, compute parent graph and detect cycles
+	parentOf := map[string]string{}
+	for _, it := range items {
+		if it.Type == "page" && it.ParentID != "" && it.ParentID != "0" {
+			parentOf[it.ID] = it.ParentID
+		}
+	}
+	// Detect cycles via DFS
+	visited := map[string]int{} // 0 unvisited, 1 visiting, 2 done
+	var hasCycle bool
+	var cycleErr = make(map[string]error)
+	var dfs func(id string)
+	dfs = func(id string) {
+		if visited[id] == 1 {
+			hasCycle = true
+			cycleErr[id] = errors.New("hierarchy cycle detected")
+			return
+		}
+		if visited[id] == 2 {
+			return
+		}
+		visited[id] = 1
+		if parent, ok := parentOf[id]; ok {
+			dfs(parent)
+		}
+		visited[id] = 2
+	}
+	for id := range idToItem {
+		if visited[id] == 0 {
+			dfs(id)
+		}
+	}
+	effective := map[string]string{}
+	errorsMap := map[string]error{}
+	// Also need to handle self-parent
+	for id, it := range idToItem {
+		if it.ParentID == id {
+			errorsMap[id] = errors.New("self-parent")
+			continue
+		}
+		if hasCycle {
+			if _, ok := cycleErr[id]; ok {
+				errorsMap[id] = cycleErr[id]
+				continue
+			}
+		}
+	}
+	// Compute effective paths via recursion with memo
+	memo := map[string]string{}
+	var computePath func(id string, seen map[string]bool) (string, error)
+	computePath = func(id string, seen map[string]bool) (string, error) {
+		if p, ok := memo[id]; ok {
+			return p, nil
+		}
+		if seen[id] {
+			return "", errors.New("cycle")
+		}
+		seen[id] = true
+		it, ok := idToItem[id]
+		if !ok {
+			return "", errors.New("missing item")
+		}
+		s := slug(it.Slug, it.Title)
+		if s == "" {
+			return "", errors.New("empty slug")
+		}
+		if it.Type != "page" {
+			p := routing.EntryPath(it.Type, s, postsBase)
+			memo[id] = p
+			return p, nil
+		}
+		// page
+		parentID := it.ParentID
+		if parentID == "" || parentID == "0" {
+			p := routing.EntryPath(it.Type, s, postsBase)
+			memo[id] = p
+			return p, nil
+		}
+		// Check if parent is in import plan or existing DB
+		if _, ok := idToItem[parentID]; ok {
+			parentPath, err := computePath(parentID, seen)
+			if err != nil {
+				return "", err
+			}
+			p := routing.ChildEntryPath(parentPath, s)
+			memo[id] = p
+			return p, nil
+		}
+		// Parent not in import, try existing DB mapping
+		// For plan, we need to resolve via DB if parent already imported
+		// For now, treat as root if parent not found
+		// The caller will handle missing parent as warning/skip
+		p := routing.EntryPath(it.Type, s, postsBase)
+		memo[id] = p
+		return p, nil
+	}
+	for id := range idToItem {
+		if _, ok := errorsMap[id]; ok {
+			continue
+		}
+		p, err := computePath(id, map[string]bool{})
+		if err != nil {
+			errorsMap[id] = err
+			continue
+		}
+		effective[id] = p
+	}
+	// Detect duplicate effective paths WITHIN the plan. Two candidates sharing
+	// one path are only benign when both WP IDs already map to the SAME entry
+	// (i.e. a rerun of the same object).
+	seenPaths := map[string]string{}
+	dupPaths := []string{}
+	for id, p := range effective {
+		if other, ok := seenPaths[p]; ok {
+			if mapped[id] != "" && mapped[id] == mapped[other] {
+				continue // same underlying entry: rerun, not a conflict
+			}
+			errorsMap[id] = fmt.Errorf("duplicate effective path %s conflicts with %s", p, other)
+			if _, exists := errorsMap[other]; !exists {
+				errorsMap[other] = fmt.Errorf("duplicate effective path %s conflicts with %s", p, id)
+			}
+			dupPaths = append(dupPaths, p)
+		} else {
+			seenPaths[p] = id
+		}
+	}
+	// Detect collision with existing routes. A route owned by this very WP
+	// item's already-imported entry is NOT a conflict (rerun safety); anything
+	// else occupying the prospective path is.
+	for id, p := range effective {
+		if _, ok := errorsMap[id]; ok {
+			continue
+		}
+		if existing, err := q.GetRouteByPath(ctx, p); err == nil {
+			ownerID := mapped[id]
+			if !(existing.EntryID.Valid && ownerID != "" && existing.EntryID.String == ownerID) {
+				errorsMap[id] = fmt.Errorf("route already exists %s", p)
+				continue
+			}
+		}
+		if p == "/admin" || strings.HasPrefix(p, "/admin/") || p == "/stratum" || strings.HasPrefix(p, "/stratum/") {
+			errorsMap[id] = fmt.Errorf("reserved path %s", p)
+		}
+	}
+	return effective, errorsMap, dupPaths
 }
 
 func sortItemsByHierarchy(items []item) []item {
@@ -714,117 +1051,196 @@ func sortItemsByHierarchy(items []item) []item {
 	return items
 }
 
-func download(ctx context.Context, raw string) (io.ReadCloser, string, error) {
-	check := func(u *url.URL) error {
-		if u.Scheme != "http" && u.Scheme != "https" {
-			return errors.New("attachment URL must use http or https")
+func (im *Importer) importComments(ctx context.Context, filename, runID string, report *Report) error {
+	// Collect all comments with their entry mapping
+	type pending struct {
+		wpID      string
+		entryID   string
+		comment   importComment
+		stratumID string
+	}
+	var pendings []pending
+	if err := parse(filename, func(it item) error {
+		if len(it.Comments) == 0 {
+			return nil
 		}
-		host := u.Hostname()
-		if host == "" {
-			return errors.New("attachment URL missing host")
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		entryID, err := im.mapping(ctx, it.Type, it.ID)
 		if err != nil {
-			return err
+			// Entry not imported, skip comments for this item
+			report.Warnings++
+			return nil
 		}
-		if len(ips) == 0 {
-			return errors.New("attachment host has no addresses")
-		}
-		for _, ip := range ips {
-			if forbiddenIP(ip.IP) {
-				return fmt.Errorf("attachment host resolves to forbidden address %s", ip.IP)
+		for _, c := range it.Comments {
+			// Skip pingbacks/trackbacks
+			if strings.EqualFold(c.Type, "pingback") || strings.EqualFold(c.Type, "trackback") {
+				report.PingbacksSkipped++
+				continue
+			}
+			// Map status
+			status := comments.StatusPending
+			switch strings.ToLower(strings.TrimSpace(c.Approved)) {
+			case "1", "approve", "approved":
+				status = comments.StatusApproved
+			case "0", "":
+				status = comments.StatusPending
+			case "spam":
+				status = comments.StatusSpam
+			case "trash":
+				status = comments.StatusTrash
+			default:
+				status = comments.StatusPending
+				report.Warnings++
+			}
+			// Check idempotency via imported source
+			if _, err := im.q.GetCommentByImportID(ctx, db.GetCommentByImportIDParams{ImportedSource: sql.NullString{String: source, Valid: true}, ImportedExternalID: sql.NullString{String: c.ID, Valid: true}}); err == nil {
+				report.CommentsSkipped++
+				continue
+			}
+			// Also check import_mappings
+			if _, err := im.mapping(ctx, "comment", c.ID); err == nil {
+				report.CommentsSkipped++
+				continue
+			}
+			body := comments.HTMLToText(c.Content)
+			if strings.TrimSpace(body) == "" {
+				body = "(empty)"
+			}
+			createdAt := c.CreatedAt
+			if createdAt.IsZero() {
+				createdAt = time.Now()
+			}
+			// Determine author
+			authorName := strings.TrimSpace(c.Author)
+			if authorName == "" {
+				authorName = "Anonymous"
+			}
+			email := strings.TrimSpace(c.Email)
+			if email == "" {
+				email = "unknown@example.invalid"
+			}
+			// Create comment with no parent first
+			stratumID, err := func() (string, error) {
+				// Use comments service to create, but we need to handle parent later
+				// Directly use queries for import to avoid moderation/rate limiting
+				id, idErr := newID()
+				if idErr != nil {
+					return "", idErr
+				}
+				err := im.q.CreateComment(ctx, db.CreateCommentParams{
+					ID: id, EntryID: entryID, ParentID: sql.NullString{}, Status: status,
+					AuthorName: authorName, AuthorEmail: email, AuthorUrl: strings.TrimSpace(c.URL),
+					UserID: sql.NullString{}, Body: body, CreatedAt: createdAt.Unix(), UpdatedAt: createdAt.Unix(),
+					ImportedSource: sql.NullString{String: source, Valid: true}, ImportedExternalID: sql.NullString{String: c.ID, Valid: true},
+				})
+				if err != nil {
+					return "", err
+				}
+				// Also create mapping for rerun
+				_ = im.mapObject(ctx, runID, "comment", c.ID, id)
+				return id, nil
+			}()
+			if err != nil {
+				report.Warnings++
+				continue
+			}
+			pendings = append(pendings, pending{wpID: c.ID, entryID: entryID, comment: c, stratumID: stratumID})
+			report.CommentsImported++
+			// Invalidate if approved
+			if status == comments.StatusApproved && im.comments != nil {
+				// Use service invalidator if available, else direct
+				if im.q != nil {
+					// Invalidate via search? For now, use comments service invalidator if set
+				}
 			}
 		}
 		return nil
+	}, nil, nil); err != nil {
+		return err
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return nil, "", err
+	// Second pass: resolve parent_id with depth handling
+	wpToStratum := map[string]string{}
+	for _, p := range pendings {
+		wpToStratum[p.wpID] = p.stratumID
 	}
-	if err = check(u); err != nil {
-		return nil, "", err
-	}
-	tr := &http.Transport{
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, _, e := net.SplitHostPort(address)
-			if e != nil {
-				return nil, e
+	for _, p := range pendings {
+		if strings.TrimSpace(p.comment.ParentID) == "" || strings.TrimSpace(p.comment.ParentID) == "0" {
+			continue
+		}
+		parentStratumID, ok := wpToStratum[p.comment.ParentID]
+		if !ok {
+			report.Warnings++
+			continue
+		}
+		// Check depth: walk parent chain
+		depth := 0
+		cur := parentStratumID
+		seen := map[string]bool{}
+		for cur != "" {
+			if seen[cur] {
+				break
 			}
-			ips, e := net.DefaultResolver.LookupIPAddr(ctx, host)
-			if e != nil {
-				return nil, e
+			seen[cur] = true
+			depth++
+			if depth >= comments.MaxDepth {
+				break
 			}
-			for _, ip := range ips {
-				if forbiddenIP(ip.IP) {
-					return nil, errors.New("forbidden attachment address")
+			// Find parent of cur
+			var parentOfCur string
+			for _, pp := range pendings {
+				if pp.stratumID == cur {
+					if pid := strings.TrimSpace(pp.comment.ParentID); pid != "" && pid != "0" {
+						if ps, ok := wpToStratum[pid]; ok {
+							parentOfCur = ps
+						}
+					}
+					break
 				}
 			}
-			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, address)
-		},
-		DisableKeepAlives: true,
-	}
-	client := &http.Client{Transport: tr, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 4 {
-			return errors.New("too many redirects")
+			if parentOfCur == "" {
+				// Try DB lookup for already existing parent's parent
+				if c, err := im.q.GetComment(ctx, cur); err == nil && c.ParentID.Valid {
+					parentOfCur = c.ParentID.String
+				} else {
+					break
+				}
+			}
+			cur = parentOfCur
+			if len(seen) > 10 {
+				break
+			}
 		}
-		return check(req.URL)
-	}}
-	resp, err := client.Get(raw)
-	if err != nil {
-		return nil, "", err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		resp.Body.Close()
-		return nil, "", fmt.Errorf("attachment returned HTTP %d", resp.StatusCode)
-	}
-	if resp.ContentLength > maxDownloadBytes {
-		resp.Body.Close()
-		return nil, "", media.ErrTooLarge
-	}
-	// Do not read body here; caller will stream with limit
-	return resp.Body, path.Base(u.Path), nil
-}
-
-func forbiddenIP(ip net.IP) bool {
-	if AllowPrivateForTest {
-		return false
-	}
-	if ip == nil {
-		return true
-	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	// Additional explicit blocks: CGNAT, documentation, etc.
-	if ip4 := ip.To4(); ip4 != nil {
-		// 100.64.0.0/10
-		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
-			return true
+		if depth >= comments.MaxDepth {
+			// Flatten: find ancestor at depth MaxDepth-1
+			ancestor := parentStratumID
+			for i := 0; i < depth-(comments.MaxDepth-1); i++ {
+				if c, err := im.q.GetComment(ctx, ancestor); err == nil && c.ParentID.Valid {
+					ancestor = c.ParentID.String
+				} else {
+					// Fallback to walk pendings
+					for _, pp := range pendings {
+						if pp.stratumID == ancestor {
+							if pid := strings.TrimSpace(pp.comment.ParentID); pid != "" {
+								if ps, ok := wpToStratum[pid]; ok {
+									ancestor = ps
+									break
+								}
+							}
+							ancestor = ""
+							break
+						}
+					}
+					break
+				}
+			}
+			// If still too deep, make top-level
+			if ancestor == "" {
+				continue
+			}
+			parentStratumID = ancestor
+			report.Warnings++
 		}
-		// 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 192.88.99.0/24
-		if (ip4[0] == 192 && ip4[1] == 0 && ip4[2] == 2) || (ip4[0] == 192 && ip4[1] == 88 && ip4[2] == 99) {
-			return true
-		}
-		if (ip4[0] == 198 && ip4[1] == 51 && ip4[2] == 100) || (ip4[0] == 203 && ip4[1] == 0 && ip4[2] == 113) {
-			return true
-		}
-		// 198.18.0.0/15
-		if ip4[0] == 198 && (ip4[1] == 18 || ip4[1] == 19) {
-			return true
-		}
-		// 0.0.0.0/8
-		if ip4[0] == 0 {
-			return true
-		}
+		// Update parent
+		_ = im.q.UpdateCommentParent(ctx, db.UpdateCommentParentParams{ParentID: sql.NullString{String: parentStratumID, Valid: true}, UpdatedAt: time.Now().Unix(), ID: p.stratumID})
 	}
-	// IPv6 documentation, etc: 2001:db8::/32, 64:ff9b::/96, 100::/64
-	if ip.To4() == nil {
-		if strings.HasPrefix(ip.String(), "2001:db8") {
-			return true
-		}
-		if strings.HasPrefix(ip.String(), "64:ff9b") {
-			return true
-		}
-	}
-	return false
+	return nil
 }

@@ -2,6 +2,7 @@ package wordpress
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,9 +11,41 @@ import (
 	"time"
 )
 
+// maxItemContentBytes bounds ALL textual payload accumulated for one <item>.
+// Enforcement happens during streaming accumulation, so an oversized item fails
+// WITHOUT ever materializing its full body in memory.
 const maxItemContentBytes = 16 << 20
 
+// XML namespaces used by WXR (trailing-slash tolerant on lookup).
+const (
+	contentNSPrefix = "http://purl.org/rss/1.0/modules/content"
+	excerptNSPrefix = "http://wordpress.org/export/1.2/excerpt"
+	wpNSSuffix      = "http://wordpress.org/export/1.2"
+	dcNSPrefix      = "http://purl.org/dc/elements/1.1"
+)
+
+func trimNS(space string) string { return strings.TrimSuffix(space, "/") }
+
+// type aliases keep the streaming parser decoupled from the domain model.
+type wxrTermRef = termRef
+
+type wxrComment struct {
+	ID       string
+	Author   string
+	Email    string
+	URL      string
+	Content  string
+	Date     string
+	Approved string
+	Parent   string
+	Type     string
+}
+
+var errItemTooLarge = errors.New("WXR item exceeds maximum supported size")
+
 // parse streams a WXR document. It never unmarshals the enclosing export.
+// encoding/xml rejects undefined entities by default, so malicious
+// DOCTYPE/user-entity input fails instead of expanding (no XXE surface).
 func parse(path string, onItem func(item) error, onTerm func(term) error, onAuthor func(author) error) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -21,8 +54,6 @@ func parse(path string, onItem func(item) error, onTerm func(term) error, onAuth
 	defer f.Close()
 	d := xml.NewDecoder(f)
 	d.Strict = true
-	// Prevent entity expansion attacks: do not expand external entities
-	d.Entity = xml.HTMLEntity
 	for {
 		tok, err := d.Token()
 		if err == io.EOF {
@@ -37,42 +68,32 @@ func parse(path string, onItem func(item) error, onTerm func(term) error, onAuth
 		}
 		switch start.Name.Local {
 		case "item":
-			var raw wxrItem
-			if err := d.DecodeElement(&raw, &start); err != nil {
-				return err
-			}
-			contentLen := len(raw.Content) + len(raw.ContentAlt) + len(raw.ExcerptContent) + len(raw.ExcerptContentAlt) + len(raw.Excerpt)
-			if contentLen > maxItemContentBytes {
-				return fmt.Errorf("WXR item %s content exceeds %d bytes", raw.ID, maxItemContentBytes)
-			}
-			// Prefer content:encoded, fallback to excerpt if content empty? Actually keep both.
-			// For WXR, Content holds content:encoded, ExcerptContent holds excerpt:encoded
-			if raw.Excerpt != "" && raw.ExcerptContent == "" {
-				raw.ExcerptContent = raw.Excerpt
+			raw, perr := decodeBoundedItem(d)
+			if perr != nil {
+				return perr
 			}
 			if onItem != nil {
-				it := raw.item()
-				if err := onItem(it); err != nil {
+				if err := onItem(raw.item()); err != nil {
 					return err
 				}
 			}
 		case "category", "tag":
-			var raw wxrTerm
-			if err := d.DecodeElement(&raw, &start); err != nil {
+			var t wxrTerm
+			if err := d.DecodeElement(&t, &start); err != nil {
 				return err
 			}
-			if raw.ID != "" && onTerm != nil {
-				if err := onTerm(raw.term(start.Name.Local)); err != nil {
+			if t.ID != "" && onTerm != nil {
+				if err := onTerm(t.term(start.Name.Local)); err != nil {
 					return err
 				}
 			}
 		case "author":
-			var raw wxrAuthor
-			if err := d.DecodeElement(&raw, &start); err != nil {
+			var a wxrAuthor
+			if err := d.DecodeElement(&a, &start); err != nil {
 				return err
 			}
-			if raw.Login != "" && onAuthor != nil {
-				if err := onAuthor(author{Login: raw.Login, Email: raw.Email}); err != nil {
+			if a.Login != "" && onAuthor != nil {
+				if err := onAuthor(author{Login: a.Login, Email: a.Email}); err != nil {
 					return err
 				}
 			}
@@ -80,61 +101,250 @@ func parse(path string, onItem func(item) error, onTerm func(term) error, onAuth
 	}
 }
 
+// nodeKey canonicalizes an element by namespace+local name to a field key.
+func nodeKey(sp, local string) string {
+	ns := trimNS(sp)
+	switch {
+	case ns == contentNSPrefix && local == "encoded":
+		return "content"
+	case ns == excerptNSPrefix && local == "encoded":
+		return "excerpt_encoded"
+	case ns == wpNSSuffix:
+		return local
+	case ns == dcNSPrefix && local == "creator":
+		return "creator"
+	default:
+		return local
+	}
+}
+
+type node struct {
+	key    string // canonical key
+	parent string // parent canonical key ("" at item root)
+}
+
+// decodeBoundedItem walks one <item> token-by-token with capped buffers, so peak
+// memory stays proportional to accepted content, never to input size.
+func decodeBoundedItem(d *xml.Decoder) (wxrItem, error) {
+	var raw wxrItem
+	var stack []node
+	var buf strings.Builder
+	total := 0
+
+	write := func(p []byte) error {
+		const margin = len("<wp:post_password></wp:post_password>")
+		if total+len(p)+margin > maxItemContentBytes {
+			return errItemTooLarge
+		}
+		total += len(p)
+		buf.Write(p)
+		return nil
+	}
+
+	for depth := 0; ; depth++ {
+		tok, err := d.Token()
+		if err != nil {
+			return raw, err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			key := nodeKey(t.Name.Space, t.Name.Local)
+			parent := ""
+			if len(stack) > 0 {
+				parent = stack[len(stack)-1].key
+			}
+			buf.Reset()
+			stack = append(stack, node{key: key, parent: parent})
+			if t.Name.Local == "category" {
+				var ref wxrTermRef
+				for _, a := range t.Attr {
+					switch strings.ToLower(a.Name.Local) {
+					case "domain":
+						ref.Domain = a.Value
+					case "nicename":
+						ref.Slug = a.Value
+					}
+				}
+				raw.pendingCat = &ref
+			}
+		case xml.CharData:
+			if len(stack) == 0 {
+				continue
+			}
+			if err := write(t); err != nil {
+				return raw, err
+			}
+		case xml.EndElement:
+			text := strings.TrimSpace(buf.String())
+			buf.Reset()
+			if len(stack) == 0 {
+				if t.Name.Local == "item" {
+					return raw, nil
+				}
+				continue
+			}
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			switch {
+			case cur.key == "category":
+				name := ""
+				if raw.pendingCat != nil {
+					raw.pendingCat.Name = text
+					raw.Categories = append(raw.Categories, *raw.pendingCat)
+					raw.pendingCat = nil
+				}
+				_ = name
+			case cur.parent == "postmeta":
+				assignPostmeta(&raw.pendingMeta, cur.key, text)
+			case cur.parent == "comment":
+				assignCommentField(&raw.pendingComment, cur.key, text)
+			case cur.key == "postmeta", cur.key == "comment":
+				flushContainer(&raw, cur.key)
+			default:
+				assignItemField(&raw, cur.key, text)
+			}
+		}
+	}
+}
+
+func assignPostmeta(m *wxrMeta, key, value string) {
+	switch key {
+	case "meta_key":
+		m.Key = value
+	case "meta_value":
+		m.Value = value
+	}
+}
+
+func assignCommentField(c *wxrComment, key, value string) {
+	switch key {
+	case "comment_id":
+		c.ID = value
+	case "comment_author":
+		c.Author = value
+	case "comment_author_email":
+		c.Email = value
+	case "comment_author_url":
+		c.URL = value
+	case "comment_content":
+		c.Content = value
+	case "comment_date_gmt":
+		c.Date = value
+	case "comment_approved":
+		c.Approved = value
+	case "comment_parent":
+		c.Parent = value
+	case "comment_type":
+		c.Type = value
+	}
+}
+
+func flushContainer(raw *wxrItem, which string) {
+	switch which {
+	case "postmeta":
+		raw.Meta = append(raw.Meta, raw.pendingMeta)
+		raw.pendingMeta = wxrMeta{}
+	case "comment":
+		if raw.pendingComment.ID != "" {
+			raw.Comments = append(raw.Comments, raw.pendingComment)
+		}
+		raw.pendingComment = wxrComment{}
+	}
+}
+
+func assignItemField(raw *wxrItem, key, value string) {
+	switch key {
+	case "title":
+		raw.Title = value
+	case "content":
+		raw.Content = value
+	case "excerpt":
+		raw.Excerpt = value
+	case "excerpt_encoded":
+		raw.ExcerptContent = value
+	case "post_id":
+		raw.ID = value
+	case "post_type":
+		raw.Type = value
+	case "status":
+		raw.Status = value
+	case "post_name":
+		raw.Slug = value
+	case "post_parent":
+		raw.ParentID = value
+	case "creator":
+		raw.Author = value
+	case "post_password":
+		raw.Password = value
+	case "post_date_gmt":
+		raw.Date = value
+	case "post_modified_gmt":
+		raw.Modified = value
+	case "menu_order":
+		raw.MenuOrder = value
+	case "attachment_url":
+		raw.AttachmentURL = value
+	}
+}
+
 type wxrItem struct {
-	Title             string       `xml:"title"`
-	Content           string       `xml:"http://purl.org/rss/1.0/modules/content encoded"`
-	ContentAlt        string       `xml:"http://purl.org/rss/1.0/modules/content/ encoded"`
-	Excerpt           string       `xml:"excerpt"` // fallback plain excerpt if present
-	ExcerptContent    string       `xml:"http://wordpress.org/export/1.2/excerpt encoded"`
-	ExcerptContentAlt string       `xml:"http://wordpress.org/export/1.2/excerpt/ encoded"`
-	ID                string       `xml:"post_id"`
-	Type              string       `xml:"post_type"`
-	Status            string       `xml:"status"`
-	Slug              string       `xml:"post_name"`
-	ParentID          string       `xml:"post_parent"`
-	Author            string       `xml:"creator"`
-	Password          string       `xml:"post_password"`
-	Date              string       `xml:"post_date_gmt"`
-	Modified          string       `xml:"post_modified_gmt"`
-	MenuOrder         string       `xml:"menu_order"`
-	AttachmentURL     string       `xml:"attachment_url"`
-	Categories        []wxrTermRef `xml:"category"`
-	Meta              []wxrMeta    `xml:"postmeta"`
-	Comments          []struct{}   `xml:"comment"`
+	Title          string
+	Content        string
+	Excerpt        string
+	ExcerptContent string
+	ID             string
+	Type           string
+	Status         string
+	Slug           string
+	ParentID       string
+	Author         string
+	Password       string
+	Date           string
+	Modified       string
+	MenuOrder      string
+	AttachmentURL  string
+	Categories     []wxrTermRef
+	Meta           []wxrMeta
+	Comments       []wxrComment
+	pendingMeta    wxrMeta
+	pendingComment wxrComment
+	pendingCat     *wxrTermRef
 }
 
 func (w wxrItem) item() item {
 	content := w.Content
-	if content == "" {
-		content = w.ContentAlt
-	}
 	excerpt := w.ExcerptContent
-	if excerpt == "" {
-		excerpt = w.ExcerptContentAlt
-	}
 	if excerpt == "" {
 		excerpt = w.Excerpt
 	}
-	i := item{ID: strings.TrimSpace(w.ID), Type: strings.TrimSpace(w.Type), Status: strings.TrimSpace(w.Status), Title: strings.TrimSpace(w.Title), Content: content, Excerpt: excerpt, Slug: strings.TrimSpace(w.Slug), ParentID: strings.TrimSpace(w.ParentID), Author: strings.TrimSpace(w.Author), Password: w.Password, AttachmentURL: strings.TrimSpace(w.AttachmentURL), Meta: map[string]string{}, Comments: len(w.Comments)}
+	i := item{
+		ID: strings.TrimSpace(w.ID), Type: strings.TrimSpace(w.Type), Status: strings.TrimSpace(w.Status),
+		Title: strings.TrimSpace(w.Title), Content: content, Excerpt: excerpt,
+		Slug: strings.TrimSpace(w.Slug), ParentID: strings.TrimSpace(w.ParentID),
+		Author: strings.TrimSpace(w.Author), Password: w.Password,
+		AttachmentURL: strings.TrimSpace(w.AttachmentURL), Meta: map[string]string{},
+	}
 	i.PublishedAt = parseDate(w.Date)
 	i.ModifiedAt = parseDate(w.Modified)
 	i.MenuOrder, _ = strconv.ParseInt(strings.TrimSpace(w.MenuOrder), 10, 64)
-	for _, t := range w.Categories {
-		i.Terms = append(i.Terms, termRef{Domain: t.Domain, Slug: t.Slug, Name: t.Name})
-	}
+	i.Terms = append(i.Terms, w.Categories...)
 	for _, m := range w.Meta {
-		if m.Key == "_thumbnail_id" {
+		if m.Key == "_thumbnail_id" && strings.TrimSpace(m.Value) != "" {
 			i.Meta[m.Key] = strings.TrimSpace(m.Value)
 		}
+	}
+	for _, c := range w.Comments {
+		i.Comments = append(i.Comments, importComment{
+			ID: strings.TrimSpace(c.ID), ParentID: strings.TrimSpace(c.Parent),
+			Author: strings.TrimSpace(c.Author), Email: strings.TrimSpace(c.Email),
+			URL: strings.TrimSpace(c.URL), Content: c.Content,
+			CreatedAt: parseDate(c.Date), Approved: strings.TrimSpace(c.Approved),
+			Type: strings.TrimSpace(c.Type),
+		})
 	}
 	return i
 }
 
-type wxrTermRef struct {
-	Domain string `xml:"domain,attr"`
-	Slug   string `xml:"nicename,attr"`
-	Name   string `xml:",chardata"`
-}
 type wxrMeta struct {
 	Key   string `xml:"meta_key"`
 	Value string `xml:"meta_value"`

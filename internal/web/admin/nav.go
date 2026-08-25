@@ -35,6 +35,7 @@ func AdminNav() []AdminNavItem {
 			{ID: "pages-all", Label: "All Pages", Href: "/admin/pages"},
 			{ID: "pages-new", Label: "Add New", Href: "/admin/pages/new"},
 		}},
+		{ID: "comments", Label: "Comments", Href: "/admin/comments", Icon: "comments"},
 		{ID: "media", Label: "Media", Href: "/admin/media", Icon: "media", Children: []AdminNavItem{
 			{ID: "media-library", Label: "Library", Href: "/admin/media"},
 		}},
@@ -83,6 +84,8 @@ func navPermission(path string) authz.Permission {
 		return authz.ManageSite
 	case strings.HasPrefix(path, "/admin/media"):
 		return authz.ManageMedia
+	case strings.HasPrefix(path, "/admin/comments"):
+		return authz.ModerateComments
 	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
 		return authz.ManageTaxonomies
 	case strings.HasPrefix(path, "/admin/pages"):
@@ -111,6 +114,8 @@ func ResolveNav(path string) NavState {
 	switch {
 	case path == "/admin":
 		return NavState{ActiveSection: "dashboard", ActiveItem: "dashboard"}
+	case strings.HasPrefix(path, "/admin/comments"):
+		return NavState{ActiveSection: "comments", ActiveItem: "comments"}
 	case strings.HasPrefix(path, "/admin/posts"):
 		if strings.HasPrefix(path, "/admin/posts/categories") {
 			return NavState{ActiveSection: "posts", ActiveItem: "posts-categories"}

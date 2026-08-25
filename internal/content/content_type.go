@@ -12,13 +12,14 @@ const (
 // Capabilities describes what a content type can do. Each flag replaces a
 // previous `if contentType == "post"` branch in generic code.
 type Capabilities struct {
-	Hierarchical   bool
-	HasExcerpt     bool
-	HasFeatured    bool
-	HasSEO         bool
-	Public         bool
-	HasArchive     bool
-	SupportsSticky bool
+	Hierarchical     bool
+	HasExcerpt       bool
+	HasFeatured      bool
+	HasSEO           bool
+	Public           bool
+	HasArchive       bool
+	SupportsSticky   bool
+	SupportsComments bool
 }
 
 // RoutingPolicy describes how entries of this type are addressed on the public
@@ -67,14 +68,14 @@ func KnownDefinitions() map[ContentTypeID]ContentTypeDefinition {
 	return map[ContentTypeID]ContentTypeDefinition{
 		ContentTypePage: {
 			ID: ContentTypePage, Name: "Page", PluralName: "Pages",
-			Capabilities: Capabilities{Hierarchical: true, HasExcerpt: false, HasFeatured: true, HasSEO: true, Public: true, HasArchive: false, SupportsSticky: false},
+			Capabilities: Capabilities{Hierarchical: true, HasExcerpt: false, HasFeatured: true, HasSEO: true, Public: true, HasArchive: false, SupportsSticky: false, SupportsComments: false},
 			Routing:      RoutingPolicy{Archive: false},
 			SEO:          SEOProfile{SchemaType: "WebPage", OpenGraphType: "website"},
 			Templates:    TemplatePolicy{SinglePatterns: []string{"single-page", "single"}, ArchivePatterns: nil},
 		},
 		ContentTypePost: {
 			ID: ContentTypePost, Name: "Post", PluralName: "Posts",
-			Capabilities: Capabilities{Hierarchical: false, HasExcerpt: true, HasFeatured: true, HasSEO: true, Public: true, HasArchive: true, SupportsSticky: true},
+			Capabilities: Capabilities{Hierarchical: false, HasExcerpt: true, HasFeatured: true, HasSEO: true, Public: true, HasArchive: true, SupportsSticky: true, SupportsComments: true},
 			Routing:      RoutingPolicy{Archive: true, ArchiveContentType: ContentTypePost},
 			SEO:          SEOProfile{SchemaType: "BlogPosting", OpenGraphType: "article"},
 			Templates:    TemplatePolicy{SinglePatterns: []string{"single-post", "single"}, ArchivePatterns: []string{"archive-post", "archive"}},

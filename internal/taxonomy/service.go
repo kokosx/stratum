@@ -372,6 +372,55 @@ func (s *Service) DeleteTerm(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+// SetParent attaches (or clears, with empty parentID) a term's parent within the
+// same taxonomy. It validates hierarchy support, parent existence/same-taxonomy,
+// and rejects cycles. Used by importers that resolve parents in a second pass.
+func (s *Service) SetParent(ctx context.Context, termID, parentID string) error {
+	existing, err := s.queries.GetTerm(ctx, termID)
+	if err != nil {
+		return ErrParentNotFound
+	}
+	taxRow, err := s.queries.GetTaxonomy(ctx, existing.TaxonomyID)
+	if err != nil {
+		return err
+	}
+	tax := taxonomyFromRow(taxRow)
+	var parent sql.NullString
+	if strings.TrimSpace(parentID) != "" {
+		if !tax.Hierarchical {
+			return ErrParentNotAllowed
+		}
+		if parentID == termID {
+			return ErrSelfParent
+		}
+		parent = sql.NullString{String: parentID, Valid: true}
+		pr, err := s.queries.GetTerm(ctx, parentID)
+		if err != nil {
+			return ErrParentNotFound
+		}
+		if pr.TaxonomyID != existing.TaxonomyID {
+			return ErrParentSameTax
+		}
+		visited := map[string]bool{termID: true}
+		cur := parentID
+		for cur != "" {
+			if visited[cur] {
+				return ErrCycle
+			}
+			visited[cur] = true
+			p, err := s.queries.GetTerm(ctx, cur)
+			if err != nil || !p.ParentID.Valid {
+				break
+			}
+			cur = p.ParentID.String
+		}
+	} else {
+		parent = sql.NullString{Valid: false}
+	}
+	now := time.Now().Unix()
+	return s.queries.UpdateTerm(ctx, db.UpdateTermParams{ParentID: parent, Name: existing.Name, Slug: existing.Slug, Description: existing.Description, UpdatedAt: now, ID: termID})
+}
+
 // TermsForRevision returns terms assigned to a revision.
 func (s *Service) TermsForRevision(ctx context.Context, revisionID string) ([]Term, error) {
 	rows, err := s.queries.ListTermsForRevision(ctx, revisionID)

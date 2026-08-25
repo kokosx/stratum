@@ -16,15 +16,21 @@ type Querier interface {
 	ClearPublishedRevision(ctx context.Context, arg ClearPublishedRevisionParams) error
 	CompleteImportRun(ctx context.Context, arg CompleteImportRunParams) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
+	CountAllComments(ctx context.Context) (int64, error)
+	CountApprovedCommentsByEntry(ctx context.Context, entryID string) (int64, error)
+	CountCommentsByStatus(ctx context.Context) ([]CountCommentsByStatusRow, error)
+	CountCommentsFiltered(ctx context.Context, arg CountCommentsFilteredParams) (int64, error)
 	CountEntries(ctx context.Context) (int64, error)
 	CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminParams) (int64, error)
 	CountEntriesByAdminStatus(ctx context.Context, arg CountEntriesByAdminStatusParams) (CountEntriesByAdminStatusRow, error)
+	CountImportRunsForSource(ctx context.Context, source string) (int64, error)
 	CountMedia(ctx context.Context) (int64, error)
 	CountMediaUsage(ctx context.Context, id sql.NullString) (int64, error)
 	CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error)
 	CountPublishedEntriesByTerm(ctx context.Context, termID string) (int64, error)
 	CountTermsByTaxonomy(ctx context.Context, taxonomyID string) (int64, error)
 	CreateBlockDefinition(ctx context.Context, arg CreateBlockDefinitionParams) error
+	CreateComment(ctx context.Context, arg CreateCommentParams) error
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
 	CreateEntryRevision(ctx context.Context, arg CreateEntryRevisionParams) error
@@ -42,6 +48,7 @@ type Querier interface {
 	CreateTaxonomy(ctx context.Context, arg CreateTaxonomyParams) error
 	CreateTerm(ctx context.Context, arg CreateTermParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
+	DeleteComment(ctx context.Context, id string) error
 	DeleteEntry(ctx context.Context, id string) error
 	DeleteMedia(ctx context.Context, id string) error
 	DeleteMediaVariant(ctx context.Context, id string) error
@@ -60,6 +67,8 @@ type Querier interface {
 	GetActivePublicationJobByEntry(ctx context.Context, entryID string) (PublicationJob, error)
 	GetArchiveRouteByContentType(ctx context.Context, contentTypeID sql.NullString) (Route, error)
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
+	GetComment(ctx context.Context, id string) (Comment, error)
+	GetCommentByImportID(ctx context.Context, arg GetCommentByImportIDParams) (Comment, error)
 	GetContentType(ctx context.Context, id string) (ContentType, error)
 	GetContentTypeWithDefault(ctx context.Context, id string) (ContentType, error)
 	GetEntriesByIDs(ctx context.Context, arg GetEntriesByIDsParams) ([]Entry, error)
@@ -102,9 +111,12 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id string) (GetUserByIDRow, error)
 	HasAdmin(ctx context.Context) (bool, error)
+	ListApprovedCommentsByEntry(ctx context.Context, arg ListApprovedCommentsByEntryParams) ([]Comment, error)
 	ListArchiveRoutes(ctx context.Context) ([]Route, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListChildTerms(ctx context.Context, parentID sql.NullString) ([]Term, error)
+	ListCommentsByEntry(ctx context.Context, entryID string) ([]Comment, error)
+	ListCommentsFiltered(ctx context.Context, arg ListCommentsFilteredParams) ([]Comment, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
 	ListDuePublicationJobs(ctx context.Context, scheduledAt int64) ([]PublicationJob, error)
 	ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error)
@@ -168,13 +180,18 @@ type Querier interface {
 	SeedPublishedRevision(ctx context.Context, arg SeedPublishedRevisionParams) error
 	SeedRoute(ctx context.Context, arg SeedRouteParams) error
 	SeedSiteSettings(ctx context.Context, arg SeedSiteSettingsParams) error
+	SetCommentFeaturedMedia(ctx context.Context, arg SetCommentFeaturedMediaParams) error
 	SetContentTypeDefaultLayoutTemplate(ctx context.Context, arg SetContentTypeDefaultLayoutTemplateParams) error
 	// Records the FIRST publication of an Entry. Later re-publishes must never
 	// move it: structured data uses it as the stable datePublished.
 	SetFirstPublishedAtIfNull(ctx context.Context, arg SetFirstPublishedAtIfNullParams) error
+	// Historical date preservation for imported published entries ONLY.
+	SetImportedPublishedDates(ctx context.Context, arg SetImportedPublishedDatesParams) error
 	SetLayoutTemplatePublishedRevision(ctx context.Context, arg SetLayoutTemplatePublishedRevisionParams) error
 	SetPublishedRevision(ctx context.Context, arg SetPublishedRevisionParams) error
 	SetTermsForRevision(ctx context.Context, arg SetTermsForRevisionParams) error
+	UpdateCommentParent(ctx context.Context, arg UpdateCommentParentParams) error
+	UpdateCommentStatus(ctx context.Context, arg UpdateCommentStatusParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntryProjection(ctx context.Context, arg UpdateEntryProjectionParams) error
 	UpdateGeneralSettings(ctx context.Context, arg UpdateGeneralSettingsParams) error
