@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <wp:author><wp:author_login>author</wp:author_login><wp:author_email>author@example.test</wp:author_email></wp:author>
+    <wp:category><wp:term_id>10</wp:term_id><wp:cat_name>News</wp:cat_name><wp:category_nicename>news</wp:category_nicename></wp:category>
+    <item>
+      <title>Hello</title><content:encoded><![CDATA[<!-- wp:paragraph --><p>Hello <strong>world</strong></p><!-- /wp:paragraph -->]]></content:encoded>
+      <wp:post_id>1</wp:post_id><wp:post_type>post</wp:post_type><wp:status>publish</wp:status><wp:post_name>hello</wp:post_name><wp:post_date_gmt>2020-01-02 03:04:05</wp:post_date_gmt>
+      <category domain="category" nicename="news">News</category><wp:comment><wp:comment_id>1</wp:comment_id></wp:comment>
+    </item>
+  </channel>
+</rss>

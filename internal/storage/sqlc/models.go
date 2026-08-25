@@ -86,6 +86,22 @@ type EntryRevisionTerm struct {
 	TermID     string `json:"term_id"`
 }
 
+type ImportMapping struct {
+	Source     string `json:"source"`
+	ObjectType string `json:"object_type"`
+	ExternalID string `json:"external_id"`
+	InternalID string `json:"internal_id"`
+	RunID      string `json:"run_id"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+type ImportRun struct {
+	ID          string        `json:"id"`
+	Source      string        `json:"source"`
+	CreatedAt   int64         `json:"created_at"`
+	CompletedAt sql.NullInt64 `json:"completed_at"`
+}
+
 type LayoutTemplate struct {
 	ID                  string         `json:"id"`
 	Name                string         `json:"name"`
@@ -185,6 +201,25 @@ type Route struct {
 	ContentTypeID  sql.NullString `json:"content_type_id"`
 	TaxonomyID     sql.NullString `json:"taxonomy_id"`
 	TermID         sql.NullString `json:"term_id"`
+}
+
+type SearchDocument struct {
+	EntryID          string        `json:"entry_id"`
+	ContentTypeID    string        `json:"content_type_id"`
+	Title            string        `json:"title"`
+	Excerpt          string        `json:"excerpt"`
+	Body             string        `json:"body"`
+	Fields           string        `json:"fields"`
+	Path             string        `json:"path"`
+	FirstPublishedAt sql.NullInt64 `json:"first_published_at"`
+}
+
+type SearchDocumentsFt struct {
+	EntryID string `json:"entry_id"`
+	Title   string `json:"title"`
+	Excerpt string `json:"excerpt"`
+	Body    string `json:"body"`
+	Fields  string `json:"fields"`
 }
 
 type Session struct {

@@ -8,6 +8,7 @@ require (
 	github.com/tdewolff/minify/v2 v2.24.17
 	golang.org/x/crypto v0.55.0
 	golang.org/x/image v0.45.0
+	golang.org/x/net v0.57.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.47.0
 )

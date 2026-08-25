@@ -14,6 +14,7 @@ type Querier interface {
 	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
 	ClearLayoutTemplatePublishedRevision(ctx context.Context, arg ClearLayoutTemplatePublishedRevisionParams) error
 	ClearPublishedRevision(ctx context.Context, arg ClearPublishedRevisionParams) error
+	CompleteImportRun(ctx context.Context, arg CompleteImportRunParams) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountEntries(ctx context.Context) (int64, error)
 	CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminParams) (int64, error)
@@ -27,6 +28,8 @@ type Querier interface {
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
 	CreateEntryRevision(ctx context.Context, arg CreateEntryRevisionParams) error
+	CreateImportMapping(ctx context.Context, arg CreateImportMappingParams) error
+	CreateImportRun(ctx context.Context, arg CreateImportRunParams) error
 	CreateLayoutTemplate(ctx context.Context, arg CreateLayoutTemplateParams) error
 	CreateLayoutTemplateRevision(ctx context.Context, arg CreateLayoutTemplateRevisionParams) error
 	CreateMedia(ctx context.Context, arg CreateMediaParams) (Medium, error)
@@ -67,6 +70,7 @@ type Querier interface {
 	// Public Page lookup must use routes (Route path -> Entry). This helper exists only
 	// for flat content-type tests and non-hierarchical lookups; prefer route-based lookup in production.
 	GetFlatEntryBySlug(ctx context.Context, arg GetFlatEntryBySlugParams) (Entry, error)
+	GetImportMapping(ctx context.Context, arg GetImportMappingParams) (string, error)
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetLatestLayoutTemplateRevision(ctx context.Context, templateID string) (LayoutTemplateRevision, error)
 	GetLayoutTemplate(ctx context.Context, id string) (LayoutTemplate, error)

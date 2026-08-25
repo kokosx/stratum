@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/backup"
 	"github.com/kokosx/stratum/internal/datalock"
+	wordpress "github.com/kokosx/stratum/internal/importer/wordpress"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/search"
@@ -42,12 +44,18 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: stratum search rebuild")
 		os.Exit(2)
 	}
+	if len(os.Args) > 1 && os.Args[1] == "import" {
+		if err := runImport(ctx, os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	command := "serve"
 	if len(os.Args) > 1 {
 		command = os.Args[1]
 	}
 	if command != "serve" && command != "migrate" && command != "seed" {
-		fmt.Fprintln(os.Stderr, "usage: stratum [serve|migrate|seed|backup|search]")
+		fmt.Fprintln(os.Stderr, "usage: stratum [serve|migrate|seed|backup|search|import]")
 		fmt.Fprintln(os.Stderr, "  backup create [--output path]")
 		fmt.Fprintln(os.Stderr, "  backup verify <archive>")
 		fmt.Fprintln(os.Stderr, "  backup restore <archive>")
@@ -91,6 +99,61 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+}
+
+func runImport(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "wordpress" {
+		return fmt.Errorf("usage: stratum import wordpress <file.xml> [--dry-run] [--download-media=true|false] [--author=email] [--on-conflict=skip]")
+	}
+	fs := flag.NewFlagSet("wordpress", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	dryRun := fs.Bool("dry-run", false, "validate without writing")
+	downloadMedia := fs.Bool("download-media", true, "download WordPress attachments")
+	author := fs.String("author", "", "fallback Stratum author email")
+	onConflict := fs.String("on-conflict", "skip", "conflict strategy")
+	if len(args) < 2 {
+		return fmt.Errorf("usage: stratum import wordpress <file.xml> [flags]")
+	}
+	filename := args[1]
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("usage: stratum import wordpress <file.xml> [flags]")
+	}
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	if *dryRun {
+		database, err := storage.OpenReadOnly(filepath.Join(dataDir, "stratum.db"))
+		if err != nil {
+			return fmt.Errorf("open database for dry run: %w", err)
+		}
+		defer database.Close()
+		im := wordpress.New(database.DB, db.New(database.DB), nil, nil, dataDir)
+		report, _, err := im.Import(ctx, filename, wordpress.Options{DryRun: true, DownloadMedia: *downloadMedia, Author: *author, OnConflict: *onConflict, DataDir: dataDir})
+		if err != nil {
+			return err
+		}
+		fmt.Println(report.String())
+		return nil
+	}
+	application, err := app.New(ctx)
+	if err != nil {
+		return err
+	}
+	defer application.Close()
+	im := wordpress.New(application.Database.DB, application.Queries, application.Blocks, application.Media, dataDir)
+	report, backupPath, err := im.Import(ctx, filename, wordpress.Options{DryRun: *dryRun, DownloadMedia: *downloadMedia, Author: *author, OnConflict: *onConflict, DataDir: dataDir})
+	if backupPath != "" {
+		fmt.Printf("Pre-import backup created: %s\n", backupPath)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Println(report.String())
+	return nil
 }
 
 func serve(application *app.App) error {
