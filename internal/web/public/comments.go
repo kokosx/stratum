@@ -143,7 +143,13 @@ func (h *Handler) writeDatastarCommentApproved(w http.ResponseWriter, r *http.Re
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	h.writeCommentSSE(w, "#comment-list", "outer", renderCommentFragment("list", h.buildCommentViews(r.Context(), entryID)))
+	views := h.buildCommentViews(r.Context(), entryID)
+	h.writeCommentSSE(w, "#comment-list", "outer", renderCommentFragment("list", views))
+	count := len(views)
+	if n, err := h.comments.CountApproved(r.Context(), entryID); err == nil {
+		count = int(n)
+	}
+	h.writeCommentSSE(w, ".stratum-comments-title", "inner", fmt.Sprintf("Comments (%d)", count))
 	h.writeCommentSSE(w, "#comment-submit-status", "inner", renderCommentFragment("status", map[string]string{"Message": "Comment posted."}))
 	h.writeCommentSSE(w, "#comment-form", "outer", renderCommentFragment("form", map[string]string{"EntryID": entryID}))
 	if f, ok := w.(http.Flusher); ok {

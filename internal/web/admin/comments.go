@@ -10,6 +10,12 @@ import (
 	"github.com/kokosx/stratum/internal/comments"
 )
 
+type adminCommentView struct {
+	ID, AuthorName, AuthorEmail, AuthorURL, Body, Status string
+	CreatedAt                                            int64
+	EntryID, EntryTitle, EntryURL                        string
+}
+
 func (h *Handler) listComments(w http.ResponseWriter, r *http.Request) {
 	user, _ := h.currentUser(r)
 	if !authz.Allows(user.Role, authz.ReadComments) && !authz.Allows(user.Role, authz.ModerateComments) {
@@ -50,8 +56,25 @@ func (h *Handler) listComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token, _ := h.csrfToken(w, r)
+	commentViews := make([]adminCommentView, 0, len(rows))
+	for _, c := range rows {
+		view := adminCommentView{ID: c.ID, AuthorName: c.AuthorName, AuthorEmail: c.AuthorEmail, AuthorURL: c.AuthorUrl, Body: c.Body, Status: c.Status, CreatedAt: c.CreatedAt, EntryID: c.EntryID, EntryTitle: c.EntryID}
+		if entry, err := h.queries.GetEntry(r.Context(), c.EntryID); err == nil {
+			view.EntryTitle = entry.Slug
+			if rev, err := h.queries.GetLatestEntryRevision(r.Context(), entry.ID); err == nil && rev.Title != "" {
+				view.EntryTitle = rev.Title
+			}
+			switch entry.ContentTypeID {
+			case "post":
+				view.EntryURL = "/admin/posts/" + entry.ID + "/edit"
+			case "page":
+				view.EntryURL = "/admin/pages/" + entry.ID + "/edit"
+			}
+		}
+		commentViews = append(commentViews, view)
+	}
 	data := map[string]any{
-		"Comments":  rows,
+		"Comments":  commentViews,
 		"Counts":    totalByStatus,
 		"Status":    status,
 		"Search":    search,

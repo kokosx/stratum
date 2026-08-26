@@ -14,7 +14,10 @@ type bucket struct {
 	count        int
 	windowStart  int64
 	blockedUntil int64
+	lastSeen     int64
 }
+
+const maxBuckets = 1000
 
 func newRateLimiter() *rateLimiter {
 	return &rateLimiter{buckets: make(map[string]*bucket)}
@@ -23,11 +26,17 @@ func newRateLimiter() *rateLimiter {
 func (r *rateLimiter) Allow(key string, now int64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.evictInactive(now)
 	b, ok := r.buckets[key]
 	if !ok {
-		b = &bucket{windowStart: now}
+		if len(r.buckets) >= maxBuckets {
+			// A rejected/invalid request must not be able to grow this map.
+			return false
+		}
+		b = &bucket{windowStart: now, lastSeen: now}
 		r.buckets[key] = b
 	}
+	b.lastSeen = now
 	if b.blockedUntil > now {
 		return false
 	}
@@ -47,9 +56,14 @@ func (r *rateLimiter) Record(key string, now int64) {
 	defer r.mu.Unlock()
 	b, ok := r.buckets[key]
 	if !ok {
-		b = &bucket{windowStart: now}
+		r.evictInactive(now)
+		if len(r.buckets) >= maxBuckets {
+			return
+		}
+		b = &bucket{windowStart: now, lastSeen: now}
 		r.buckets[key] = b
 	}
+	b.lastSeen = now
 	if now-b.windowStart > 60 {
 		b.windowStart = now
 		b.count = 1
@@ -63,11 +77,11 @@ func (r *rateLimiter) Record(key string, now int64) {
 }
 
 func (r *rateLimiter) evictInactive(now int64) {
-	if len(r.buckets) < 1000 {
+	if len(r.buckets) < maxBuckets {
 		return
 	}
 	for key, b := range r.buckets {
-		if now-b.windowStart > 600 && b.blockedUntil <= now {
+		if now-b.lastSeen > 600 && b.blockedUntil <= now {
 			delete(r.buckets, key)
 		}
 	}
