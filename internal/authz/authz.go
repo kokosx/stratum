@@ -55,7 +55,7 @@ func Allows(role string, permission Permission) bool {
 		}
 	case RoleAuthor:
 		switch permission {
-		case ManageMedia, ReadEntries, CreateEntries, EditOwnEntry, PublishOwnEntry, DeleteOwnEntry, ReadComments:
+		case ManageMedia, ReadEntries, CreateEntries, EditOwnEntry, PublishOwnEntry, DeleteOwnEntry:
 			return true
 		}
 	}

@@ -78,19 +78,19 @@
         <td colspan="6">
           <div class="row-actions">
             {{ if eq .Status "pending" }}
-              <form method="post" action="/admin/comments/{{ .ID }}/approve" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Approve</button></form> |
-              <form method="post" action="/admin/comments/{{ .ID }}/spam" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Spam</button></form> |
-              <form method="post" action="/admin/comments/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Trash</button></form>
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/approve" formmethod="post" class="row-action-link">Approve</button> |
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/spam" formmethod="post" class="row-action-link">Spam</button> |
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/trash" formmethod="post" class="row-action-link">Trash</button>
             {{ else if eq .Status "approved" }}
-              <form method="post" action="/admin/comments/{{ .ID }}/pending" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Unapprove</button></form> |
-              <form method="post" action="/admin/comments/{{ .ID }}/spam" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Spam</button></form> |
-              <form method="post" action="/admin/comments/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Trash</button></form>
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/pending" formmethod="post" class="row-action-link">Unapprove</button> |
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/spam" formmethod="post" class="row-action-link">Spam</button> |
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/trash" formmethod="post" class="row-action-link">Trash</button>
             {{ else if eq .Status "spam" }}
-              <form method="post" action="/admin/comments/{{ .ID }}/approve" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Approve</button></form> |
-              <form method="post" action="/admin/comments/{{ .ID }}/trash" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Trash</button></form>
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/approve" formmethod="post" class="row-action-link">Approve</button> |
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/trash" formmethod="post" class="row-action-link">Trash</button>
             {{ else if eq .Status "trash" }}
-              <form method="post" action="/admin/comments/{{ .ID }}/restore" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link">Restore</button></form> |
-              <form method="post" action="/admin/comments/{{ .ID }}/delete" style="display:inline" onsubmit="return confirm('Delete permanently?')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link row-action-delete">Delete Permanently</button></form>
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/restore" formmethod="post" class="row-action-link">Restore</button> |
+              <button type="submit" formaction="/admin/comments/{{ .ID }}/delete" formmethod="post" class="row-action-link row-action-delete">Delete Permanently</button>
             {{ end }}
           </div>
         </td>

@@ -1,8 +1,7 @@
 package admin
 
 import (
-	"database/sql"
-	"html"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -92,6 +91,10 @@ func (h *Handler) moderateComment(w http.ResponseWriter, r *http.Request, action
 	case "restore":
 		err = h.comments.Restore(r.Context(), id, now)
 	case "delete":
+		if !authz.Allows(user.Role, authz.DeleteComments) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		err = h.comments.Delete(r.Context(), id)
 	default:
 		http.NotFound(w, r)
@@ -133,15 +136,46 @@ func (h *Handler) bulkComments(w http.ResponseWriter, r *http.Request) {
 	now := currentUnix()
 	switch action {
 	case "approve", "pending", "spam", "trash":
-		_ = h.comments.BulkUpdateStatus(r.Context(), ids, action, now)
+		status := action
+		if action == "approve" {
+			status = comments.StatusApproved
+		}
+		if err := h.comments.BulkUpdateStatus(r.Context(), ids, status, now); err != nil {
+			h.setFlash(w, "Bulk action completed with errors: "+err.Error())
+			http.Redirect(w, r, "/admin/comments", http.StatusSeeOther)
+			return
+		}
 	case "restore":
+		var errs []error
 		for _, id := range ids {
-			_ = h.comments.Restore(r.Context(), id, now)
+			if err := h.comments.Restore(r.Context(), id, now); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
+			h.setFlash(w, "Bulk action completed with errors: "+err.Error())
+			http.Redirect(w, r, "/admin/comments", http.StatusSeeOther)
+			return
 		}
 	case "delete":
-		for _, id := range ids {
-			_ = h.comments.Delete(r.Context(), id)
+		if !authz.Allows(user.Role, authz.DeleteComments) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
 		}
+		var errs []error
+		for _, id := range ids {
+			if err := h.comments.Delete(r.Context(), id); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if err := errors.Join(errs...); err != nil {
+			h.setFlash(w, "Bulk action completed with errors: "+err.Error())
+			http.Redirect(w, r, "/admin/comments", http.StatusSeeOther)
+			return
+		}
+	default:
+		http.Error(w, "Invalid bulk action", http.StatusBadRequest)
+		return
 	}
 	h.setFlash(w, "Bulk action completed.")
 	http.Redirect(w, r, "/admin/comments", http.StatusSeeOther)
@@ -158,9 +192,3 @@ func timeNowUnix() int64 {
 }
 
 var timeNow = func() time.Time { return time.Now() }
-
-func init() {
-	_ = html.EscapeString
-	_ = sql.ErrNoRows
-	_ = authz.ModerateComments
-}

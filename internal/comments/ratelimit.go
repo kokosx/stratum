@@ -1,8 +1,8 @@
 package comments
 
 import (
+	"net"
 	"sync"
-	"time"
 )
 
 type rateLimiter struct {
@@ -59,14 +59,16 @@ func (r *rateLimiter) Record(key string, now int64) {
 	if b.count >= 5 {
 		b.blockedUntil = now + 300
 	}
-	if len(r.buckets) > 1000 {
-		n := 0
-		for k := range r.buckets {
-			delete(r.buckets, k)
-			n++
-			if n >= 100 {
-				break
-			}
+	r.evictInactive(now)
+}
+
+func (r *rateLimiter) evictInactive(now int64) {
+	if len(r.buckets) < 1000 {
+		return
+	}
+	for key, b := range r.buckets {
+		if now-b.windowStart > 600 && b.blockedUntil <= now {
+			delete(r.buckets, key)
 		}
 	}
 }
@@ -75,37 +77,9 @@ func clientIPKey(ip, entryID string) string {
 	if ip == "" {
 		ip = "unknown"
 	}
-	// Use RemoteAddr directly, not X-Forwarded-For, unless trusted proxy mechanism exists (we don't)
-	// Strip port if present
-	if idx := lastColon(ip); idx != -1 {
-		// naive strip port, but keep IPv6 bracket handling simple
-		if ip[0] == '[' {
-			if end := lastBracket(ip); end != -1 {
-				ip = ip[:end+1]
-			}
-		} else {
-			ip = ip[:idx]
-		}
+	// RemoteAddr is authoritative until explicit trusted-proxy support exists.
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
 	}
 	return entryID + "|" + ip
 }
-
-func lastColon(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ':' {
-			return i
-		}
-	}
-	return -1
-}
-
-func lastBracket(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == ']' {
-			return i
-		}
-	}
-	return -1
-}
-
-var _ = time.Now

@@ -196,6 +196,9 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	scheduler := publishing.NewScheduler(database, queries)
 	scheduler.SetSearchRefresh(searchService.RefreshEntry)
 	commentsService := comments.NewService(database, queries)
+	commentsService.SetInvalidator(func(entryID string) {
+		runtime.Pages.InvalidateTag("entry:" + entryID)
+	})
 	return &Handler{
 		database:                     database,
 		queries:                      queries,

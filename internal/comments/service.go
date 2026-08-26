@@ -99,7 +99,9 @@ func (s *Service) Submit(ctx context.Context, entryID, parentID, authorName, aut
 		if err != nil {
 			return db.Comment{}, err
 		}
-		if depth+1 >= MaxDepth {
+		// MaxDepth counts visible levels: top-level is 1, so a parent at
+		// depth 2 may still receive the final (third-level) reply.
+		if depth+1 > MaxDepth {
 			return db.Comment{}, ErrDepthExceeded
 		}
 		// cycle check: parent cannot be descendant of new comment (not possible since new comment not yet exists) but check that parent chain doesn't contain cycle
@@ -112,26 +114,15 @@ func (s *Service) Submit(ctx context.Context, entryID, parentID, authorName, aut
 	// Validate fields
 	isLoggedIn := strings.TrimSpace(userID) != ""
 	if isLoggedIn {
-		// For logged-in, name/email come from user record if not provided? For now, if provided, validate, else fetch from DB
-		if strings.TrimSpace(authorName) == "" {
-			if u, err := s.queries.GetUserByID(ctx, userID); err == nil {
-				authorName = u.Email // fallback to email prefix? Use email as name
-				if authorName == "" {
-					authorName = "User"
-				}
-			}
+		u, err := s.queries.GetUserByID(ctx, userID)
+		if err != nil || strings.TrimSpace(u.Email) == "" {
+			return db.Comment{}, ErrNotCommentable
 		}
-		if strings.TrimSpace(authorEmail) == "" {
-			if u, err := s.queries.GetUserByID(ctx, userID); err == nil {
-				authorEmail = u.Email
-			}
-		}
-		// If still empty, require? For logged-in we can allow empty but we will fill from user
-		if strings.TrimSpace(authorName) == "" {
+		// Form fields are never an identity authority for authenticated users.
+		authorEmail = u.Email
+		authorName = strings.TrimSpace(strings.Split(u.Email, "@")[0])
+		if authorName == "" {
 			authorName = "User"
-		}
-		if strings.TrimSpace(authorEmail) == "" {
-			authorEmail = "user@example.invalid"
 		}
 	} else {
 		if err := validateName(authorName); err != nil {
@@ -349,19 +340,26 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 // Bulk operations
 
 func (s *Service) BulkUpdateStatus(ctx context.Context, ids []string, status string, now int64) error {
+	var errs []error
 	for _, id := range ids {
+		var err error
 		switch status {
 		case StatusApproved:
-			_ = s.Approve(ctx, id, now)
+			err = s.Approve(ctx, id, now)
 		case StatusPending:
-			_ = s.SetPending(ctx, id, now)
+			err = s.SetPending(ctx, id, now)
 		case StatusSpam:
-			_ = s.Spam(ctx, id, now)
+			err = s.Spam(ctx, id, now)
 		case StatusTrash:
-			_ = s.Trash(ctx, id, now)
+			err = s.Trash(ctx, id, now)
+		default:
+			return ErrInvalidStatus
+		}
+		if err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func randomID() (string, error) {
@@ -430,7 +428,10 @@ func (s *Service) CreateImported(ctx context.Context, entryID, parentID, authorN
 	if strings.TrimSpace(parentID) != "" {
 		parentNull = sql.NullString{String: strings.TrimSpace(parentID), Valid: true}
 	}
-	id, _ := randomID()
+	id, err := randomID()
+	if err != nil {
+		return db.Comment{}, err
+	}
 	params := db.CreateCommentParams{
 		ID:                 id,
 		EntryID:            entryID,

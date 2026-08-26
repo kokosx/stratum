@@ -2,7 +2,6 @@ package comments
 
 import (
 	"errors"
-	"html"
 	"strings"
 )
 
@@ -43,19 +42,11 @@ type CommentView struct {
 	EntryID         string
 	ParentID        string
 	AuthorName      string
-	Body            string // escaped plain text with line breaks
+	Body            string
 	CreatedAt       int64
 	CreatedISO      string
 	CreatedAtString string
 	Depth           int
-}
-
-// HTML helpers
-func escapeBody(body string) string {
-	escaped := html.EscapeString(body)
-	// preserve line breaks as <br> is handled in template via white-space:pre-wrap, but we also replace \n with <br> for safety
-	// Keep as plain text, template will escape again? We pre-escape and then render as HTML with line breaks preserved via CSS.
-	return escaped
 }
 
 func normalizeBody(body string) string {

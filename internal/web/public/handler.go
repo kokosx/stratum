@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/comments"
 	"github.com/kokosx/stratum/internal/compress"
@@ -53,6 +54,7 @@ type Handler struct {
 	unlockLimiter *publishing.UnlockLimiter
 	search        *search.Service
 	comments      *comments.Service
+	auth          *auth.Service
 }
 
 func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
@@ -88,6 +90,9 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		h.comments.SetInvalidator(func(entryID string) {
 			hub.Pages.InvalidateTag("entry:" + entryID)
 		})
+		// Public comment submission accepts the same signed-in session as admin.
+		// Failure to initialize auth only leaves public comments anonymous.
+		h.auth, _ = auth.NewService(database, hub.Queries, !h.dev)
 	}
 	testRouteRegistry.Store(hub.Queries, h)
 	// Targeted warmup: homepage and main archive page 1 if available.
@@ -749,6 +754,9 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 	rc.EntryID = entry.ID
 	rc.LCP = &rendering.LCPState{}
+	// renderEntry runs only after the entry visibility gate; it is the normal
+	// public rendering path and must provide comments before blocks render.
+	h.populateCommentsContext(ctx, &rc, entry.ID, true)
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("render document: %w", err)
@@ -1664,6 +1672,9 @@ func (h *Handler) renderPath(ctx context.Context, path, origin string, temporary
 	siteSnap := h.hub.Site.Current()
 	resolved := h.resolvePublishedSEO(ctx, siteSnap, &entry, path, origin)
 	rc := h.entryRenderContext(siteSnap, &entry, path, resolved, fields)
+	// RenderPath has no request-bound password unlock proof. Public callers use
+	// renderEntry above; previews intentionally receive no comments by default.
+	h.populateCommentsContext(ctx, &rc, entry.ID, false)
 	page, robots, err := h.renderThemedDocument(ctx, siteSnap, doc, rc, resolved, path, temporary, customCSS)
 	return page, robots, err
 }
