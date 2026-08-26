@@ -75,6 +75,37 @@ func TestRendererExposesImmutableEntryFieldsInContext(t *testing.T) {
 	}
 }
 
+func TestEntryFieldRuntimeEscapesAndResolvesSnapshot(t *testing.T) {
+	doc, _ := document.Decode([]byte(`{"version":1,"nodes":[{"id":"f","block":"core/entry-field","version":1,"props":{"source":"fields.price"},"settings":{"tag":"p","prefix":"$<","suffix":"!"}}]}`))
+	renderer, err := NewRenderer([]Definition{{Namespace: "core", Name: "entry-field", Version: 1, RendererType: "runtime", Template: `<span></span>`}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := renderer.RenderDocumentContext(doc, RenderContext{Entry: EntryContext{Fields: map[string]any{"price": 99.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(out), `<p class="stratum-entry-field">$&lt;99!</p>`; got != want {
+		t.Fatalf("output=%q want=%q", got, want)
+	}
+}
+
+func TestEntryMediaRuntimeDoesNotExposeMissingID(t *testing.T) {
+	doc, _ := document.Decode([]byte(`{"version":1,"nodes":[{"id":"m","block":"core/entry-media","version":1,"props":{"source":"fields.image"},"settings":{}}]}`))
+	renderer, err := NewRenderer([]Definition{{Namespace: "core", Name: "entry-media", Version: 1, RendererType: "runtime", Template: `<span></span>`}}, fakeMediaProvider{view: MediaView{Src: "/media/m1/original", Width: 640, Height: 480, Alt: "Product"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := renderer.RenderDocumentContext(doc, RenderContext{Entry: EntryContext{Fields: map[string]any{"image": "m1"}}})
+	if err != nil || !strings.Contains(string(out), `src="/media/m1/original"`) {
+		t.Fatalf("output=%q err=%v", out, err)
+	}
+	missing, _ := renderer.RenderDocumentContext(doc, RenderContext{Entry: EntryContext{Fields: map[string]any{"image": "missing"}}})
+	if strings.Contains(string(missing), "missing") {
+		t.Fatalf("raw media id leaked: %q", missing)
+	}
+}
+
 type fakeMediaProvider struct{ view MediaView }
 
 func (f fakeMediaProvider) MediaView(_ context.Context, id string) (MediaView, bool) {

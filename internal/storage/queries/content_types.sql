@@ -19,3 +19,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 UPDATE content_types
 SET display_name = ?, plural_name = ?, hierarchical = ?, public = ?, config_json = ?, updated_at = ?
 WHERE id = ?;
+
+-- name: DeleteContentType :exec
+DELETE FROM content_types
+WHERE id = ?;

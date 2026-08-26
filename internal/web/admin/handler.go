@@ -18,6 +18,7 @@ import (
 	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/comments"
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
@@ -51,6 +52,7 @@ type Handler struct {
 	taxonomyTemplate             *template.Template
 	usersTemplate                *template.Template
 	commentsTemplate             *template.Template
+	contentTypesTemplate         *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -189,6 +191,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		// Fallback to simple template if not yet created
 		commentsTemplate = template.New("comments")
 	}
+	contentTypesTemplate, err := template.New("content_types").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "content_types.html")
+	if err != nil {
+		return nil, err
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
@@ -217,6 +223,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		taxonomyTemplate:             taxonomyTemplate,
 		usersTemplate:                usersTemplate,
 		commentsTemplate:             commentsTemplate,
+		contentTypesTemplate:         contentTypesTemplate,
 		layoutTemplatesTemplate:      layoutTemplatesTemplate,
 		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
 		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
@@ -275,6 +282,21 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/pages/{id}/delete", h.requireAuth(h.deletePagePermanently))
 	mux.HandleFunc("POST /admin/pages/bulk", h.requireAuth(h.bulkPages))
 	mux.HandleFunc("POST /admin/editor/preview", h.requireAuth(h.previewDocument))
+	mux.HandleFunc("GET /admin/content/{type}", h.requireAuth(h.listCustomEntries))
+	mux.HandleFunc("GET /admin/content/{type}/new", h.requireAuth(h.newCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}", h.requireAuth(h.createCustomEntry))
+	mux.HandleFunc("GET /admin/content/{type}/{id}/edit", h.requireAuth(h.editCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}", h.requireAuth(h.saveCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/publish", h.requireAuth(h.publishCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/unpublish", h.requireAuth(h.unpublishCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/schedule", h.requireAuth(h.scheduleCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/cancel-schedule", h.requireAuth(h.cancelScheduleCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/submit-review", h.requireAuth(h.submitReviewCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restoreCustomEntryRevision))
+	mux.HandleFunc("GET /admin/content/{type}/{id}/revisions/{revisionID}/preview", h.requireAuth(h.previewCustomEntryRevision))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/trash", h.requireAuth(h.trashCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/restore", h.requireAuth(h.restoreCustomEntry))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/delete", h.requireAuth(h.deleteCustomEntry))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
 	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
 	mux.HandleFunc("POST /admin/posts", h.requireAuth(h.createPost))
@@ -324,6 +346,12 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/settings/seo", h.requireAuth(h.saveSettingsSEO))
 	mux.HandleFunc("GET /admin/settings/performance", h.requireAuth(h.settingsPerformance))
 	mux.HandleFunc("POST /admin/settings/performance", h.requireAuth(h.saveSettingsPerformance))
+	mux.HandleFunc("GET /admin/settings/content-types", h.requireAuth(h.listContentTypes))
+	mux.HandleFunc("GET /admin/settings/content-types/new", h.requireAuth(h.newContentType))
+	mux.HandleFunc("POST /admin/settings/content-types", h.requireAuth(h.createContentType))
+	mux.HandleFunc("GET /admin/settings/content-types/{id}", h.requireAuth(h.editContentType))
+	mux.HandleFunc("POST /admin/settings/content-types/{id}", h.requireAuth(h.saveContentType))
+	mux.HandleFunc("POST /admin/settings/content-types/{id}/delete", h.requireAuth(h.deleteContentType))
 	mux.HandleFunc("POST /admin/settings/robots-preview", h.requireAuth(h.robotsPreview))
 	mux.HandleFunc("POST /admin/settings/seo/robots-preview", h.requireAuth(h.robotsPreview))
 	mux.HandleFunc("GET /admin/media", h.requireAuth(h.mediaLibrary))
@@ -563,6 +591,8 @@ func (h *Handler) authorized(r *http.Request, user auth.User) bool {
 		return h.authorizeEntryRequest(r, user, pageContentType)
 	case strings.HasPrefix(path, "/admin/posts"):
 		return h.authorizeEntryRequest(r, user, postContentType)
+	case strings.HasPrefix(path, "/admin/content/"):
+		return h.authorizeEntryRequest(r, user, r.PathValue("type"))
 	case path == "/admin/editor/preview":
 		return authz.Allows(user.Role, authz.CreateEntries)
 	default:
@@ -611,7 +641,29 @@ func (h *Handler) navForUser(r *http.Request) []AdminNavItem {
 	if err != nil {
 		return nil
 	}
-	return FilterAdminNav(AdminNav(), user.Role)
+	nav := AdminNav()
+	customNav := make([]AdminNavItem, 0)
+	if definitions, err := content.NewCatalog(h.queries).ListDefinitions(r.Context()); err == nil {
+		for _, definition := range definitions {
+			if definition.ID == content.ContentTypePage || definition.ID == content.ContentTypePost {
+				continue
+			}
+			path := "/admin/content/" + string(definition.ID)
+			customNav = append(customNav, AdminNavItem{ID: "content-" + string(definition.ID), Label: definition.PluralName, Href: path, Icon: "pages", Children: []AdminNavItem{{ID: "content-" + string(definition.ID) + "-all", Label: "All " + definition.PluralName, Href: path}, {ID: "content-" + string(definition.ID) + "-new", Label: "Add New", Href: path + "/new"}}})
+		}
+	}
+	if len(customNav) > 0 {
+		insert := 3
+		if insert > len(nav) {
+			insert = len(nav)
+		}
+		ordered := make([]AdminNavItem, 0, len(nav)+len(customNav))
+		ordered = append(ordered, nav[:insert]...)
+		ordered = append(ordered, customNav...)
+		ordered = append(ordered, nav[insert:]...)
+		nav = ordered
+	}
+	return FilterAdminNav(nav, user.Role)
 }
 
 func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {

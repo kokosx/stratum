@@ -55,10 +55,13 @@ type EditorSchema struct {
 }
 
 type EditorField struct {
-	Label   string `json:"label,omitempty"`
-	Control string `json:"control,omitempty"`
-	Group   string `json:"group,omitempty"`
+	Label         string `json:"label,omitempty"`
+	Control       string `json:"control,omitempty"`
+	Group         string `json:"group,omitempty"`
+	OptionsSource string `json:"optionsSource,omitempty"`
 }
+
+var supportedOptionsSources = map[string]bool{"content-types": true, "entry-fields": true, "taxonomies": true}
 
 var supportedControls = map[string]bool{
 	"text": true, "textarea": true, "number": true, "checkbox": true,
@@ -222,8 +225,14 @@ func (s *Schema) validateContract() error {
 		}
 		switch field.Control {
 		case "select", "segmented", "radio":
-			if len(value.Enum) == 0 {
+			if field.OptionsSource != "" && !supportedOptionsSources[field.OptionsSource] {
+				return fmt.Errorf("editor.fields.%s: unsupported optionsSource %q", path, field.OptionsSource)
+			}
+			if len(value.Enum) == 0 && field.OptionsSource == "" {
 				return fmt.Errorf("editor.fields.%s: control %s requires enum", path, field.Control)
+			}
+			if len(value.Enum) > 0 && field.OptionsSource != "" {
+				return fmt.Errorf("editor.fields.%s: enum and optionsSource are mutually exclusive", path)
 			}
 		case "checkbox":
 			if value.Type != "boolean" {

@@ -21,7 +21,18 @@ func ResolveEffectiveDocument(ctx context.Context, queries *db.Queries, entryDoc
 // The fingerprint is the published revision ID of the layout template.
 func ResolveEffectiveDocumentWithID(ctx context.Context, queries *db.Queries, entryDoc *document.Document, contentTypeID string, layoutTemplateID sql.NullString) (*document.Document, string, error) {
 	if !layoutTemplateID.Valid || layoutTemplateID.String == "" {
-		return entryDoc, "", nil
+		if contentTypeID != "" {
+			if ct, err := queries.GetContentType(ctx, contentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String != "" {
+				layoutTemplateID = ct.DefaultLayoutTemplateID
+			} else {
+				return entryDoc, "", nil
+			}
+		} else {
+			return entryDoc, "", nil
+		}
+		if !layoutTemplateID.Valid || layoutTemplateID.String == "" {
+			return entryDoc, "", nil
+		}
 	}
 	row, err := queries.GetLayoutTemplateWithPublishedRevision(ctx, layoutTemplateID.String)
 	if err != nil {

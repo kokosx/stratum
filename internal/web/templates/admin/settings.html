@@ -6,6 +6,7 @@
 
   <nav class="settings-nav" aria-label="Settings sections">
     <a href="/admin/settings/general" class="settings-nav__link {{ if eq .Content.Section "general" }}is-active{{ end }}" {{ if eq .Content.Section "general" }}aria-current="page"{{ end }}>General</a>
+	<a href="/admin/settings/content-types" class="settings-nav__link">Content Types</a>
     <a href="/admin/settings/reading" class="settings-nav__link {{ if eq .Content.Section "reading" }}is-active{{ end }}" {{ if eq .Content.Section "reading" }}aria-current="page"{{ end }}>Reading</a>
     <a href="/admin/settings/seo" class="settings-nav__link {{ if eq .Content.Section "seo" }}is-active{{ end }}" {{ if eq .Content.Section "seo" }}aria-current="page"{{ end }}>SEO &amp; Crawling</a>
     <a href="/admin/settings/performance" class="settings-nav__link {{ if eq .Content.Section "performance" }}is-active{{ end }}" {{ if eq .Content.Section "performance" }}aria-current="page"{{ end }}>Performance</a>

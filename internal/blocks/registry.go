@@ -103,6 +103,9 @@ func (r *Registry) Reload(ctx context.Context) error {
 		if meta, ok := legacyMetadata[blockName]; ok && meta.Hidden {
 			hidden = true
 		}
+		if blockName == "core/collection" && stored.Version == 1 {
+			hidden = true
+		}
 		definition.Hidden = hidden
 		definition.LCPCandidate, definition.RequiresFeatured = parseLCPCapabilityFromSchema(blockName, schema)
 		definition.SummaryFields = schema.Editor.SummaryFields

@@ -44,11 +44,20 @@ func PostsArchivePath(postsBasePath string) string {
 // on concrete type names (INVARIANT 2). Page → "/{slug}", Post (and any
 // future archived type) → "{postsBase}/{slug}" (default /blog).
 func EntryPath(contentTypeID, slug, postsBasePath string) string {
+	return EntryPathForDefinition(content.DefinitionFor(contentTypeID), slug, postsBasePath)
+}
+
+// EntryPathForDefinition lets database-backed custom types supply their own
+// prefix while preserving Page hierarchy and the posts_base_path compatibility
+// adapter. Callers that already resolved the definition must use this form.
+func EntryPathForDefinition(def content.ContentTypeDefinition, slug, postsBasePath string) string {
 	s := strings.Trim(slug, "/")
 	if s == "" {
 		return "/"
 	}
-	def := content.DefinitionFor(contentTypeID)
+	if def.Routing.BasePath != "" {
+		return NormalizePath(def.Routing.BasePath + "/" + s)
+	}
 	if def.IsArchived() {
 		base := PostsArchivePath(postsBasePath)
 		if base == "/" {
@@ -147,6 +156,9 @@ func ValidatePostsBasePath(p string) error {
 	}
 	return nil
 }
+
+// ValidateRouteBase is the generic custom-content compatibility entrypoint.
+func ValidateRouteBase(path string) error { return content.ValidateRouteBase(path) }
 
 // ArchivePathFor returns the public path for an archive of the given content type.
 // It is driven by ContentTypeDefinition.RoutingPolicy, so adding a new archived

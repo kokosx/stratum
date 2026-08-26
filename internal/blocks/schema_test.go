@@ -44,6 +44,20 @@ func TestParseSchemaDefaultsAndRejectsUnsupportedKeywords(t *testing.T) {
 	}
 }
 
+func TestDynamicEditorOptionsAreWhitelisted(t *testing.T) {
+	base := `{"schemaVersion":1,"props":{"type":"object","properties":{"source":{"type":"string"}}},"settings":{"type":"object","properties":{}},"children":{"mode":"none"},"editor":{"fields":{"props.source":{"control":"select","optionsSource":"entry-fields"}}}}`
+	if _, err := ParseSchema(base); err != nil {
+		t.Fatalf("dynamic options rejected: %v", err)
+	}
+	if _, err := ParseSchema(strings.Replace(base, "entry-fields", "https://example.com/options", 1)); err == nil {
+		t.Fatal("arbitrary options source accepted")
+	}
+	withEnum := strings.Replace(base, `"source":{"type":"string"}`, `"source":{"type":"string","enum":["x"]}`, 1)
+	if _, err := ParseSchema(withEnum); err == nil {
+		t.Fatal("enum plus optionsSource accepted")
+	}
+}
+
 func TestSchemaV1SupportedTypesAndArrayRepeaterValues(t *testing.T) {
 	input := `{"schemaVersion":1,"props":{"type":"object","required":["title","count","ratio","active","tags","items"],"properties":{"title":{"type":"string","minLength":2,"maxLength":8,"pattern":"^[A-Z]"},"count":{"type":"integer","minimum":1,"maximum":3},"ratio":{"type":"number","minimum":0,"maximum":1},"active":{"type":"boolean","default":false},"tags":{"type":"array","items":{"type":"string"}},"items":{"type":"array","items":{"type":"object","required":["label"],"properties":{"label":{"type":"string"},"enabled":{"type":"boolean","default":true}}}}}},"settings":{"type":"object","properties":{}},"children":{"mode":"none"},"editor":{"fields":{"props.title":{"control":"text"},"props.count":{"control":"range"},"props.active":{"control":"checkbox"}}}}`
 	schema, err := ParseSchema(input)

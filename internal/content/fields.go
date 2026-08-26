@@ -38,25 +38,25 @@ const (
 // FieldDefinition is the stable, semantic schema for one content-type field.
 // Version is reserved for a compatible decoder when field migrations arrive.
 type FieldDefinition struct {
-	Key        string
-	Label      string
-	Type       FieldType
-	Required   bool
-	Default    any
-	HelpText   string
-	Validation FieldValidation
-	UI         FieldUI
-	Version    int
+	Key        string          `json:"key"`
+	Label      string          `json:"label"`
+	Type       FieldType       `json:"type"`
+	Required   bool            `json:"required,omitempty"`
+	Default    any             `json:"default,omitempty"`
+	HelpText   string          `json:"helpText,omitempty"`
+	Validation FieldValidation `json:"validation,omitempty"`
+	UI         FieldUI         `json:"ui,omitempty"`
+	Version    int             `json:"version,omitempty"`
 }
 
 type FieldValidation struct {
-	Min     *float64
-	Max     *float64
-	Options []string
+	Min     *float64 `json:"min,omitempty"`
+	Max     *float64 `json:"max,omitempty"`
+	Options []string `json:"options,omitempty"`
 }
 
 type FieldUI struct {
-	Placeholder string
+	Placeholder string `json:"placeholder,omitempty"`
 }
 
 type FieldValidationOptions struct {
@@ -151,8 +151,26 @@ func validateDefinition(field FieldDefinition) error {
 	if field.Type == FieldSelect && len(field.Validation.Options) == 0 {
 		return fmt.Errorf("select field %q has no options", field.Key)
 	}
+	if field.Validation.Min != nil || field.Validation.Max != nil {
+		if field.Type != FieldNumber {
+			return fmt.Errorf("field %q: min/max require number type", field.Key)
+		}
+		if field.Validation.Min != nil && field.Validation.Max != nil && *field.Validation.Min > *field.Validation.Max {
+			return fmt.Errorf("field %q: min cannot exceed max", field.Key)
+		}
+	}
+	if field.Default != nil {
+		if field.Type == FieldMedia {
+			return fmt.Errorf("field %q: media defaults are not supported", field.Key)
+		}
+		if _, err := normalizeFieldValue(field, field.Default, FieldValidationOptions{}); err != nil {
+			return fmt.Errorf("field %q has invalid default: %w", field.Key, err)
+		}
+	}
 	return nil
 }
+
+func ValidateFieldDefinition(field FieldDefinition) error { return validateDefinition(field) }
 
 func normalizeFieldValue(field FieldDefinition, value any, options FieldValidationOptions) (any, error) {
 	raw, isString := value.(string)

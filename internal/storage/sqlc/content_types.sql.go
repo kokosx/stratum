@@ -41,6 +41,16 @@ func (q *Queries) CreateContentType(ctx context.Context, arg CreateContentTypePa
 	return err
 }
 
+const deleteContentType = `-- name: DeleteContentType :exec
+DELETE FROM content_types
+WHERE id = ?
+`
+
+func (q *Queries) DeleteContentType(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteContentType, id)
+	return err
+}
+
 const getContentType = `-- name: GetContentType :one
 SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id
 FROM content_types

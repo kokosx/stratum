@@ -3,6 +3,9 @@ package content
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"sort"
+	"strings"
 
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
@@ -37,6 +40,9 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 	q = q.Normalized()
 	if err := q.Validate(); err != nil {
 		return nil, err
+	}
+	if len(q.Filters) > 0 || q.OrderBy != "" {
+		return r.queryPublishedAdvanced(ctx, q)
 	}
 	if q.TermID != "" {
 		if q.Order == "published_asc" {
@@ -142,6 +148,185 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 		}
 	}
 	return out, nil
+}
+
+func (r *Repository) queryPublishedAdvanced(ctx context.Context, q EntryQuery) ([]PublishedEntry, error) {
+	// SQLite JSON snapshots are acceptable for the current CMS scale. Fetch a
+	// bounded published projection and evaluate only host-validated refs/operators.
+	// The join remains pinned to entries.published_revision_id, so drafts cannot leak.
+	entries := make([]PublishedEntry, 0)
+	if q.TermID != "" {
+		rows, err := r.queries.ListPublishedEntriesByTerm(ctx, db.ListPublishedEntriesByTermParams{TermID: q.TermID, ContentTypeID: string(q.ContentType), Limit: 1000, Offset: 0})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if contains(q.ExcludeIDs, row.ID) {
+				continue
+			}
+			entries = append(entries, PublishedEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: q.ContentType, Title: row.Title, Excerpt: sqlNullToString(row.Excerpt), FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath, PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson})
+		}
+	} else {
+		rows, err := r.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: string(q.ContentType), Limit: 1000, Offset: 0})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if contains(q.ExcludeIDs, row.ID) {
+				continue
+			}
+			entries = append(entries, PublishedEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: q.ContentType, Title: row.Title, Excerpt: sqlNullToString(row.Excerpt), FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath, PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson})
+		}
+	}
+	filtered := entries[:0]
+	for _, entry := range entries {
+		ok, err := matchesFilters(entry, q.Filters)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			filtered = append(filtered, entry)
+		}
+	}
+	entries = filtered
+	if q.OrderBy != "" {
+		sort.SliceStable(entries, func(i, j int) bool { return lessPublished(entries[i], entries[j], q.OrderBy, q.Direction) })
+	}
+	start := q.Offset
+	if start > len(entries) {
+		start = len(entries)
+	}
+	end := start + q.Limit
+	if end > len(entries) {
+		end = len(entries)
+	}
+	return entries[start:end], nil
+}
+
+func publishedValue(entry PublishedEntry, field string) (any, bool, error) {
+	ref, err := ParseFieldRef(field)
+	if err != nil {
+		return nil, false, err
+	}
+	fields, err := DecodeFieldSnapshot(entry.FieldsJSON)
+	if err != nil {
+		return nil, false, err
+	}
+	published := ""
+	if entry.FirstPublishedAt.Valid {
+		published = fmt.Sprint(entry.FirstPublishedAt.Int64)
+	} else if entry.PublishedAt.Valid {
+		published = fmt.Sprint(entry.PublishedAt.Int64)
+	}
+	value, ok := ResolveEntryField(ref, entry.Title, entry.Excerpt, entry.RoutePath, published, entry.FeaturedMediaID.String, fields)
+	return value, ok, nil
+}
+func matchesFilters(entry PublishedEntry, filters []EntryFilter) (bool, error) {
+	for _, filter := range filters {
+		value, exists, err := publishedValue(entry, filter.Field)
+		if err != nil {
+			return false, err
+		}
+		switch filter.Operator {
+		case OpExists:
+			if !exists || emptyQueryValue(value) {
+				return false, nil
+			}
+			continue
+		case OpNotExists:
+			if exists && !emptyQueryValue(value) {
+				return false, nil
+			}
+			continue
+		case OpIsTrue:
+			b, ok := value.(bool)
+			if !exists || !ok || !b {
+				return false, nil
+			}
+			continue
+		case OpIsFalse:
+			b, ok := value.(bool)
+			if !exists || !ok || b {
+				return false, nil
+			}
+			continue
+		}
+		if !exists {
+			return false, nil
+		}
+		cmp := compareQueryValues(value, filter.Value)
+		switch filter.Operator {
+		case OpEquals:
+			if cmp != 0 {
+				return false, nil
+			}
+		case OpNotEquals:
+			if cmp == 0 {
+				return false, nil
+			}
+		case OpContains:
+			if !strings.Contains(strings.ToLower(fmt.Sprint(value)), strings.ToLower(fmt.Sprint(filter.Value))) {
+				return false, nil
+			}
+		case OpGreater, OpAfter:
+			if cmp <= 0 {
+				return false, nil
+			}
+		case OpGreaterEqual:
+			if cmp < 0 {
+				return false, nil
+			}
+		case OpLess, OpBefore:
+			if cmp >= 0 {
+				return false, nil
+			}
+		case OpLessEqual:
+			if cmp > 0 {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+func emptyQueryValue(v any) bool {
+	s, ok := v.(string)
+	return v == nil || (ok && strings.TrimSpace(s) == "")
+}
+func compareQueryValues(a, b any) int {
+	an, ae := numberValue(a)
+	bn, be := numberValue(b)
+	if ae == nil && be == nil {
+		if an < bn {
+			return -1
+		}
+		if an > bn {
+			return 1
+		}
+		return 0
+	}
+	as, bs := fmt.Sprint(a), fmt.Sprint(b)
+	if as < bs {
+		return -1
+	}
+	if as > bs {
+		return 1
+	}
+	return 0
+}
+func lessPublished(a, b PublishedEntry, field, direction string) bool {
+	av, aok, _ := publishedValue(a, field)
+	bv, bok, _ := publishedValue(b, field)
+	if aok != bok {
+		return aok
+	}
+	cmp := compareQueryValues(av, bv)
+	if cmp == 0 {
+		return a.ID < b.ID
+	}
+	if direction == "asc" {
+		return cmp < 0
+	}
+	return cmp > 0
 }
 
 // CountPublished returns the count of published entries for a type.

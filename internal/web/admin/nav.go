@@ -46,6 +46,7 @@ func AdminNav() []AdminNavItem {
 		}},
 		{ID: "settings", Label: "Settings", Href: "/admin/settings/general", Icon: "settings", Children: []AdminNavItem{
 			{ID: "settings-general", Label: "General", Href: "/admin/settings/general"},
+			{ID: "settings-content-types", Label: "Content Types", Href: "/admin/settings/content-types"},
 			{ID: "settings-reading", Label: "Reading", Href: "/admin/settings/reading"},
 			{ID: "settings-seo", Label: "SEO & Crawling", Href: "/admin/settings/seo"},
 			{ID: "settings-performance", Label: "Performance", Href: "/admin/settings/performance"},
@@ -139,6 +140,17 @@ func ResolveNav(path string) NavState {
 			return NavState{ActiveSection: "pages", ActiveItem: "pages-all"}
 		}
 		return NavState{ActiveSection: "pages", ActiveItem: "pages-all"}
+	case strings.HasPrefix(path, "/admin/content/"):
+		rest := strings.TrimPrefix(path, "/admin/content/")
+		parts := strings.Split(rest, "/")
+		if len(parts) > 0 && parts[0] != "" {
+			id := "content-" + parts[0]
+			item := id + "-all"
+			if len(parts) > 1 && parts[1] == "new" {
+				item = id + "-new"
+			}
+			return NavState{ActiveSection: id, ActiveItem: item}
+		}
 	case strings.HasPrefix(path, "/admin/media"):
 		return NavState{ActiveSection: "media", ActiveItem: "media-library"}
 	case strings.HasPrefix(path, "/admin/appearance"):
@@ -149,6 +161,9 @@ func ResolveNav(path string) NavState {
 	case strings.HasPrefix(path, "/admin/menus"):
 		return NavState{ActiveSection: "appearance", ActiveItem: "appearance-menus"}
 	case strings.HasPrefix(path, "/admin/settings"):
+		if strings.HasPrefix(path, "/admin/settings/content-types") {
+			return NavState{ActiveSection: "settings", ActiveItem: "settings-content-types"}
+		}
 		if strings.HasPrefix(path, "/admin/settings/general") {
 			return NavState{ActiveSection: "settings", ActiveItem: "settings-general"}
 		}

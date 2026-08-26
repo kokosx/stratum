@@ -105,6 +105,81 @@ func UpsertRedirectRoute(ctx context.Context, queries *db.Queries, source, targe
 	})
 }
 
+// SyncContentTypeRouting atomically moves a custom type's archive and every
+// published single route. The caller owns the transaction; all collisions are
+// checked before the first mutation so failure cannot leave a partial move.
+func SyncContentTypeRouting(ctx context.Context, q *db.Queries, contentType, oldBase, newBase string, archive bool, now int64) error {
+	if err := ValidateRouteBase(newBase); err != nil {
+		return err
+	}
+	oldBase = NormalizePath(oldBase)
+	newBase = NormalizePath(newBase)
+	rows, err := q.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: contentType, Limit: 1000, Offset: 0})
+	if err != nil {
+		return fmt.Errorf("list published entries: %w", err)
+	}
+	type move struct{ entryID, oldPath, newPath string }
+	moves := make([]move, 0, len(rows))
+	for _, row := range rows {
+		newPath := NormalizePath(newBase + "/" + strings.Trim(row.Slug, "/"))
+		moves = append(moves, move{entryID: row.ID, oldPath: row.RoutePath, newPath: newPath})
+	}
+	for _, m := range moves {
+		existing, err := q.GetRouteByPath(ctx, m.newPath)
+		if err == nil && (!existing.EntryID.Valid || existing.EntryID.String != m.entryID) {
+			return fmt.Errorf("route %s already exists", m.newPath)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+	archiveRoute, archiveErr := q.GetArchiveRouteByContentType(ctx, sql.NullString{String: contentType, Valid: true})
+	if archiveErr != nil && !errors.Is(archiveErr, sql.ErrNoRows) {
+		return archiveErr
+	}
+	if archive {
+		existing, err := q.GetRouteByPath(ctx, newBase)
+		if err == nil && (archiveErr != nil || existing.ID != archiveRoute.ID) {
+			return fmt.Errorf("route %s already exists", newBase)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+	for _, m := range moves {
+		if m.oldPath != m.newPath {
+			if err := UpsertEntryRoute(ctx, q, m.entryID, m.newPath, now); err != nil {
+				return err
+			}
+		}
+	}
+	if archive {
+		if errors.Is(archiveErr, sql.ErrNoRows) {
+			id, err := randomID()
+			if err != nil {
+				return err
+			}
+			if err := q.CreateRoute(ctx, db.CreateRouteParams{ID: id, Path: newBase, RouteType: RouteTypeArchive, ContentTypeID: sql.NullString{String: contentType, Valid: true}, CreatedAt: now, UpdatedAt: now}); err != nil {
+				return err
+			}
+		}
+		if archiveErr == nil && archiveRoute.Path != newBase {
+			old := archiveRoute.Path
+			if err := q.UpdateRoute(ctx, db.UpdateRouteParams{ID: archiveRoute.ID, Path: newBase, RouteType: RouteTypeArchive, ContentTypeID: sql.NullString{String: contentType, Valid: true}, UpdatedAt: now}); err != nil {
+				return err
+			}
+			if err := UpsertRedirectRoute(ctx, q, old, newBase, now); err != nil {
+				return err
+			}
+		}
+	} else if archiveErr == nil {
+		if err := q.DeleteRoute(ctx, archiveRoute.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SyncPostsPageSlugChanged moves the posts archive and post singles when the Posts Page slug changes.
 func SyncPostsPageSlugChanged(ctx context.Context, q *db.Queries, entryID, newSlug, oldBase, newBase, homepageMode string, now int64) error {
 	if newSlug == "" {

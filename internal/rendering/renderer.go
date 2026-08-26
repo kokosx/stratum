@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"strings"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/richtext"
 )
@@ -138,7 +139,7 @@ const (
 // ContentReader is the host capability for Collection blocks. It is the only
 // way a block may read published entries; arbitrary SQL is never exposed.
 type ContentReader interface {
-	Query(ctx context.Context, contentType string, limit, offset int, order string, excludeIDs []string) ([]ArchiveEntry, error)
+	Query(ctx context.Context, query content.EntryQuery) ([]ArchiveEntry, error)
 }
 
 // WithEntry returns a shallow copy of rc with Entry scoped to the given archive entry.
@@ -146,6 +147,9 @@ type ContentReader interface {
 func (rc RenderContext) WithEntry(ae ArchiveEntry) RenderContext {
 	// Derive EntryContext from ArchiveEntry so EntryTitle etc work in any scope.
 	rc.Entry = EntryContext{
+		ID:            ae.ID,
+		Slug:          ae.Slug,
+		ContentTypeID: ae.ContentTypeID,
 		Title:         ae.Title,
 		Excerpt:       ae.Excerpt,
 		Permalink:     ae.URL,
@@ -179,6 +183,8 @@ type ArchiveContext struct {
 // ArchiveEntry is one post card, already resolved via routes.
 type ArchiveEntry struct {
 	ID            string
+	Slug          string
+	ContentTypeID string
 	Title         string
 	Excerpt       string
 	URL           string
@@ -219,6 +225,9 @@ type SiteContext struct {
 }
 
 type EntryContext struct {
+	ID            string
+	Slug          string
+	ContentTypeID string
 	Title         string
 	Excerpt       string
 	Permalink     string
@@ -293,10 +302,14 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 	// generic rendering does not branch on concrete block names per-node.
 	renderer.runtimes = make(map[blockKey]RuntimeRenderer)
 	for key := range renderer.blocks {
-		if key.name == "core/collection" {
+		switch key.name {
+		case "core/collection":
 			renderer.runtimes[key] = &collectionRenderer{}
+		case "core/entry-field":
+			renderer.runtimes[key] = &entryFieldRenderer{}
+		case "core/entry-media":
+			renderer.runtimes[key] = &entryMediaRenderer{}
 		}
-		// Future: if key.name == "core/other-dynamic" { renderer.runtimes[key]=... }
 	}
 
 	return renderer, nil
@@ -582,6 +595,98 @@ func (r *Renderer) renderPreparedNodes(ctx context.Context, nodes []PreparedNode
 
 type collectionRenderer struct{}
 
+type entryFieldRenderer struct{}
+
+func (e *entryFieldRenderer) Render(_ context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
+	source, _ := node.Props["source"].(string)
+	ref, err := content.ParseFieldRef(source)
+	if err != nil {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Invalid entry field</span>`), nil
+		}
+		return "", nil
+	}
+	value, ok := content.ResolveEntryField(ref, rc.Entry.Title, rc.Entry.Excerpt, rc.Entry.Permalink, rc.Entry.PublishISO, rc.Entry.FeaturedImage, rc.Entry.Fields)
+	if !ok || value == nil {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Entry field</span>`), nil
+		}
+		return "", nil
+	}
+	// Media IDs are never emitted as text. core/entry-media is the only block
+	// allowed to turn a media reference into markup.
+	if ref.System == "entry.featured_media" {
+		return "", nil
+	}
+	text := ""
+	switch v := value.(type) {
+	case bool:
+		if v {
+			text = "Yes"
+		} else {
+			text = "No"
+		}
+	case string:
+		text = v
+	default:
+		text = fmt.Sprint(v)
+	}
+	tag, _ := node.Settings["tag"].(string)
+	allowed := map[string]bool{"span": true, "p": true, "h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "strong": true}
+	if !allowed[tag] {
+		tag = "span"
+	}
+	prefix, _ := node.Settings["prefix"].(string)
+	suffix, _ := node.Settings["suffix"].(string)
+	escaped := template.HTMLEscapeString(prefix + text + suffix)
+	return template.HTML("<" + tag + ` class="stratum-entry-field">` + escaped + "</" + tag + ">"), nil
+}
+
+type entryMediaRenderer struct{}
+
+func (e *entryMediaRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {
+	source, _ := node.Props["source"].(string)
+	ref, err := content.ParseFieldRef(source)
+	if err != nil {
+		return "", nil
+	}
+	value, ok := content.ResolveEntryField(ref, rc.Entry.Title, rc.Entry.Excerpt, rc.Entry.Permalink, rc.Entry.PublishISO, rc.Entry.FeaturedImage, rc.Entry.Fields)
+	id, stringOK := value.(string)
+	if !ok || !stringOK || id == "" || r.mediaProvider == nil {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Entry media</span>`), nil
+		}
+		return "", nil
+	}
+	view, ok := r.mediaProvider.MediaView(ctx, id)
+	if !ok || view.Src == "" {
+		return "", nil
+	}
+	alt := view.Alt
+	if custom, _ := node.Settings["alt"].(string); custom != "" {
+		alt = custom
+	}
+	sizes, _ := node.Settings["sizes"].(string)
+	if sizes == "" {
+		sizes = "100vw"
+	}
+	attrs := ` src="` + template.HTMLEscapeString(view.Src) + `" alt="` + template.HTMLEscapeString(alt) + `" loading="lazy" decoding="async"`
+	if view.Width > 0 {
+		attrs += fmt.Sprintf(` width="%d"`, view.Width)
+	}
+	if view.Height > 0 {
+		attrs += fmt.Sprintf(` height="%d"`, view.Height)
+	}
+	if view.SrcSet != "" {
+		attrs += ` srcset="` + template.HTMLEscapeString(view.SrcSet) + `" sizes="` + template.HTMLEscapeString(sizes) + `"`
+	}
+	img := "<img" + attrs + ">"
+	if view.WebPSrcSet != "" {
+		img = `<picture><source type="image/webp" srcset="` + template.HTMLEscapeString(view.WebPSrcSet) + `" sizes="` + template.HTMLEscapeString(sizes) + `">` + img + `</picture>`
+	}
+	return template.HTML(`<figure class="stratum-entry-media">` + img + `</figure>`), nil
+}
+
 func (c *collectionRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {
 	tmpl := r.blocks[blockKey{name: node.Block, version: int64(node.Version)}]
 	return r.renderCollectionNode(ctx, node, rc, tmpl)
@@ -627,13 +732,31 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 		if excludeCurrent && rc.EntryID != "" {
 			excludeIDs = append(excludeIDs, rc.EntryID)
 		}
-		// Request memo: canonical key is contentType|limit|offset|order|exclude
-		cacheKey := collectionCacheKey(contentType, limit, offset, order, excludeIDs)
+		query := content.EntryQuery{ContentType: content.ContentTypeID(contentType), Limit: limit, Offset: offset, Order: order, ExcludeIDs: excludeIDs}
+		query.OrderBy, _ = node.Settings["orderBy"].(string)
+		query.Direction, _ = node.Settings["direction"].(string)
+		query.TermID, _ = node.Settings["termId"].(string)
+		if rawFilters, ok := node.Settings["filters"].([]any); ok {
+			for _, raw := range rawFilters {
+				item, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				field, _ := item["field"].(string)
+				operator, _ := item["operator"].(string)
+				query.Filters = append(query.Filters, content.EntryFilter{Field: field, Operator: content.QueryOperator(operator), Value: item["value"]})
+			}
+		}
+		query = query.Normalized()
+		if err := query.Validate(); err != nil {
+			return "", fmt.Errorf("collection %s: %w", node.ID, err)
+		}
+		cacheKey := query.CacheKey()
 		if rc.QueryCache != nil {
 			if cached, ok := rc.QueryCache[cacheKey]; ok {
 				entries = cached
 			} else if rc.ContentReader != nil {
-				fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+				fetched, err := rc.ContentReader.Query(ctx, query)
 				if err != nil {
 					return "", fmt.Errorf("collection %s: %w", node.ID, err)
 				}
@@ -649,7 +772,7 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 				}
 			}
 		} else if rc.ContentReader != nil {
-			fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+			fetched, err := rc.ContentReader.Query(ctx, query)
 			if err != nil {
 				return "", fmt.Errorf("collection %s: %w", node.ID, err)
 			}
@@ -1016,12 +1139,31 @@ func (r *Renderer) collectionEntriesForWinner(ctx context.Context, colNode Prepa
 		if excludeCurrent && rc.EntryID != "" {
 			excludeIDs = append(excludeIDs, rc.EntryID)
 		}
-		cacheKey := collectionCacheKey(contentType, limit, offset, order, excludeIDs)
+		query := content.EntryQuery{ContentType: content.ContentTypeID(contentType), Limit: limit, Offset: offset, Order: order, ExcludeIDs: excludeIDs}
+		query.OrderBy, _ = colNode.Settings["orderBy"].(string)
+		query.Direction, _ = colNode.Settings["direction"].(string)
+		query.TermID, _ = colNode.Settings["termId"].(string)
+		if rawFilters, ok := colNode.Settings["filters"].([]any); ok {
+			for _, raw := range rawFilters {
+				item, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				field, _ := item["field"].(string)
+				operator, _ := item["operator"].(string)
+				query.Filters = append(query.Filters, content.EntryFilter{Field: field, Operator: content.QueryOperator(operator), Value: item["value"]})
+			}
+		}
+		query = query.Normalized()
+		if err := query.Validate(); err != nil {
+			return nil, err
+		}
+		cacheKey := query.CacheKey()
 		if rc.QueryCache != nil {
 			if cached, ok := rc.QueryCache[cacheKey]; ok {
 				entries = cached
 			} else if rc.ContentReader != nil {
-				fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+				fetched, err := rc.ContentReader.Query(ctx, query)
 				if err != nil {
 					return nil, err
 				}
@@ -1034,7 +1176,7 @@ func (r *Renderer) collectionEntriesForWinner(ctx context.Context, colNode Prepa
 				}
 			}
 		} else if rc.ContentReader != nil {
-			fetched, err := rc.ContentReader.Query(ctx, contentType, limit, offset, order, excludeIDs)
+			fetched, err := rc.ContentReader.Query(ctx, query)
 			if err != nil {
 				return nil, err
 			}

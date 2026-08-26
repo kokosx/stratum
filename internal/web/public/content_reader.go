@@ -19,18 +19,12 @@ type handlerContentReader struct {
 	}
 }
 
-func (r *handlerContentReader) Query(ctx context.Context, contentType string, limit, offset int, order string, excludeIDs []string) ([]rendering.ArchiveEntry, error) {
+func (r *handlerContentReader) Query(ctx context.Context, query content.EntryQuery) ([]rendering.ArchiveEntry, error) {
 	// Delegate to the generic content.Repository so query semantics (limit clamp,
 	// order, exclude handling, overfetch) are defined in one place. Rendering
 	// never touches sqlc directly – it uses this host capability.
 	repo := content.NewRepository(r.queries)
-	entries, err := repo.QueryPublished(ctx, content.EntryQuery{
-		ContentType: content.ContentTypeID(contentType),
-		Limit:       limit,
-		Offset:      offset,
-		Order:       order,
-		ExcludeIDs:  excludeIDs,
-	})
+	entries, err := repo.QueryPublished(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -58,20 +52,22 @@ func (r *handlerContentReader) Query(ctx context.Context, contentType string, li
 			}
 		}
 	}
-	out := make([]rendering.ArchiveEntry, 0, limit)
+	out := make([]rendering.ArchiveEntry, 0, query.Limit)
 	for _, e := range entries {
 		fields, err := content.DecodeFieldSnapshot(e.FieldsJSON)
 		if err != nil {
 			return nil, err
 		}
 		ae := rendering.ArchiveEntry{
-			ID:           e.ID,
-			Title:        e.Title,
-			Excerpt:      e.Excerpt,
-			URL:          e.RoutePath,
-			PublishedAt:  formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, false),
-			PublishedISO: formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, true),
-			Fields:       fields,
+			ID:            e.ID,
+			Slug:          e.Slug,
+			ContentTypeID: string(e.ContentTypeID),
+			Title:         e.Title,
+			Excerpt:       e.Excerpt,
+			URL:           e.RoutePath,
+			PublishedAt:   formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, false),
+			PublishedISO:  formatEntryDate(e.FirstPublishedAt, r.siteSnap.TimezoneName, true),
+			Fields:        fields,
 		}
 		if e.FeaturedMediaID.Valid {
 			if mv, ok := mediaCache[e.FeaturedMediaID.String]; ok {

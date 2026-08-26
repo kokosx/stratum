@@ -233,9 +233,6 @@ func (s *Service) SetDefault(ctx context.Context, templateID string) error {
 }
 
 func (s *Service) ResolveEffectiveDocument(ctx context.Context, entryDoc *document.Document, contentTypeID string, layoutTemplateID sql.NullString) (*document.Document, string, error) {
-	if !layoutTemplateID.Valid || layoutTemplateID.String == "" {
-		return entryDoc, "", nil
-	}
 	doc, revID, err := ResolveEffectiveDocumentWithID(ctx, s.queries, entryDoc, contentTypeID, layoutTemplateID)
 	if err != nil {
 		return nil, "", err

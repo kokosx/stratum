@@ -683,6 +683,15 @@
       wrapper.append(buildMediaControl(node, object, name, updateFromObject(object, name)));
       return wrapper;
     }
+	if (control === "select" && metadata.optionsSource) {
+	  wrapper.append(dynamicOptionControl(metadata.optionsSource, node, object[name], (value) => {
+	    object[name] = value;
+	    maybePushHistory();
+	    changed({ tree: false, inspector: false });
+	    renderTree();
+	  }));
+	  return wrapper;
+	}
     const factory = controlFactories[control] || controlFactories.text;
     wrapper.append(factory(schema, object[name], (value) => {
       object[name] = value;
@@ -715,6 +724,39 @@
     segmented: (schema, value, update) => optionControl("segmented", schema, value, update),
     radio: (schema, value, update) => optionControl("radio", schema, value, update),
   };
+
+  function scopedContentType(node) {
+    let current = node;
+    while (current) {
+      if (current.block === "core/collection" && current.settings?.contentType) return current.settings.contentType;
+      current = findNode(current.id)?.parent || null;
+    }
+    return bootstrap.contentTypeId || "page";
+  }
+
+  function dynamicOptions(source, node) {
+    if (source === "content-types") return bootstrap.contentTypes || [];
+    if (source === "entry-fields") {
+      const options = bootstrap.fieldCatalogs?.[scopedContentType(node)] || [];
+      return node.block === "core/entry-media" ? options.filter((option) => option.type === "media") : options.filter((option) => option.type !== "media");
+    }
+    return [];
+  }
+
+  function dynamicOptionControl(source, node, value, update) {
+    const select = document.createElement("select");
+    const options = dynamicOptions(source, node);
+    if (value && !options.some((option) => option.value === value)) {
+      const missing = element("option", "", `${value} (unavailable)`);
+      missing.value = value; missing.selected = true; select.append(missing);
+    }
+    options.forEach((option) => {
+      const item = element("option", "", option.label);
+      item.value = option.value; item.selected = option.value === value; select.append(item);
+    });
+    select.addEventListener("change", () => { update(select.value); if (node.block === "core/collection") renderInspector(); });
+    return select;
+  }
 
   function buildRichTextControl(value, update) {
     const container = element("div", "richtext-control");
@@ -1105,7 +1147,8 @@
       if (schema.items.type === "object") {
         const fields = element("div");
         Object.entries(schema.items.properties || {}).forEach(([childName, childSchema]) => {
-          fields.append(buildField(node, value, childName, childSchema, {}, `${path}[${index}].${childName}`));
+		  const metadata = node.block === "core/collection" && path === "settings.filters" && childName === "field" ? { label: "Field", control: "select", optionsSource: "entry-fields" } : {};
+		  fields.append(buildField(node, value, childName, childSchema, metadata, `${path}[${index}].${childName}`));
         });
         row.append(fields);
       } else {
@@ -1198,6 +1241,7 @@
     const entryIdEl = document.getElementById("entry-id");
     const layoutEl = document.getElementById("entry-layout-template");
     const ctEl = document.getElementById("entry-content-type");
+	const featuredEl = document.getElementById("entry-featured-media-id");
 
     const params = {
       csrf_token: form.elements.csrf_token.value,
@@ -1210,6 +1254,7 @@
       entry_id: entryIdEl?.value || "",
       layout_template_id: layoutEl?.value || "",
       content_type_id: ctEl?.value || "",
+	  featured_media_id: featuredEl?.value || "",
     };
     try {
       const previewParams = new URLSearchParams(params);

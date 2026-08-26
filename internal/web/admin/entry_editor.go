@@ -197,7 +197,10 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	if data.DocumentJSON == "" {
 		data.DocumentJSON = `{"version":1,"nodes":[]}`
 	}
-	definition := content.DefinitionFor(data.ContentTypeID)
+	definition, err := content.NewCatalog(h.queries).GetDefinition(r.Context(), data.ContentTypeID)
+	if err != nil {
+		definition = content.DefinitionFor(data.ContentTypeID)
+	}
 	if data.Error != "" {
 		data.FieldValues = rawFieldValues(r, definition)
 	}
@@ -212,7 +215,7 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 			data.LayoutTemplateID = ct.DefaultLayoutTemplateID.String
 		}
 	}
-	if content.DefinitionFor(data.ContentTypeID).Capabilities.Hierarchical {
+	if definition.Capabilities.Hierarchical {
 		data.Hierarchical = true
 		data.HierarchyParents, data.HierarchyWarning = h.hierarchyParentOptions(r.Context(), data.ContentTypeID, data.EntryID, data.ParentEntryID)
 	}
@@ -374,8 +377,9 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 		migratedJSON = []byte(data.DocumentJSON)
 		migratedDoc = doc
 	}
+	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview",
+		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -462,6 +466,14 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if err := layouts.ValidateEntryDocument(h.blocks, doc); err != nil {
 		return fmt.Errorf("invalid document: %w", err)
 	}
+	definition, definitionErr := content.NewCatalog(h.queries).GetDefinition(ctx, contentType)
+	if definitionErr != nil {
+		if contentType == pageContentType || contentType == postContentType {
+			definition = content.DefinitionFor(contentType)
+		} else {
+			return fmt.Errorf("load content type: %w", definitionErr)
+		}
+	}
 	documentJSON, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("encode document: %w", err)
@@ -523,7 +535,7 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if err != nil {
 		return err
 	}
-	fields, err := content.ValidateFields(content.DefinitionFor(contentType), input.fields, content.FieldValidationOptions{
+	fields, err := content.ValidateFields(definition, input.fields, content.FieldValidationOptions{
 		MediaExists: func(id string) bool {
 			_, err := qtx.GetMedia(ctx, id)
 			return err == nil
@@ -1031,7 +1043,7 @@ func (h *Handler) previewRevision(w http.ResponseWriter, r *http.Request, conten
 		}
 		path = routing.ChildEntryPath(parentRoute.Path, revision.Slug)
 	}
-	page, err := h.documentPreview(r.Context(), rendering.RenderInput{Document: doc, Title: revision.Title, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), Path: path, EntryID: r.PathValue("id"), LayoutTemplateID: stringValue(revision.LayoutTemplateID), ContentTypeID: contentType, Fields: fieldValues(revision.FieldsJson)})
+	page, err := h.documentPreview(r.Context(), rendering.RenderInput{Document: doc, Title: revision.Title, Slug: revision.Slug, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), Path: path, EntryID: r.PathValue("id"), LayoutTemplateID: stringValue(revision.LayoutTemplateID), ContentTypeID: contentType, Fields: fieldValues(revision.FieldsJson), FeaturedMediaID: stringValue(revision.FeaturedMediaID)})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return

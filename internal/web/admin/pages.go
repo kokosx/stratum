@@ -308,6 +308,9 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	entryID := r.PathValue("id")
 	input, err := readEntryInput(r, contentType)
+	if definition, definitionErr := content.NewCatalog(h.queries).GetDefinition(r.Context(), contentType); definitionErr == nil {
+		input.fields = rawFieldValues(r, definition)
+	}
 	if err != nil {
 		if isDatastarRequest(r) {
 			h.editorSaveFragment(w, r, contentType, activeMenu, entryID, publish, input, err)
@@ -361,6 +364,10 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 // renderEntryError re-renders the full editor form with the posted values and
 // an inline error message. Used by the no-JS fallback path.
 func (h *Handler) renderEntryError(w http.ResponseWriter, r *http.Request, contentType, activeMenu, entryID string, input entryInput, saveErr error) {
+	definition, definitionErr := content.NewCatalog(h.queries).GetDefinition(r.Context(), contentType)
+	if definitionErr != nil {
+		definition = content.DefinitionFor(contentType)
+	}
 	data := entryFormData{
 		Heading:          "Edit " + contentTypeTitle(contentType),
 		Action:           "/admin/" + activeMenu + "/" + entryID,
@@ -386,11 +393,9 @@ func (h *Handler) renderEntryError(w http.ResponseWriter, r *http.Request, conte
 		Error:            entryWriteError(saveErr),
 		Dirty:            "Unsaved",
 		Status:           "Draft",
-		ShowSEO:          true,
-		ShowFeatured:     true,
-	}
-	if contentType == postContentType {
-		data.ShowExcerpt = true
+		ShowSEO:          definition.Capabilities.HasSEO,
+		ShowFeatured:     definition.Capabilities.HasFeatured,
+		ShowExcerpt:      definition.Capabilities.HasExcerpt,
 	}
 	h.renderEntryForm(w, r, data, activeMenu)
 }

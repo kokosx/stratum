@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -224,8 +225,9 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Invalid stored document", http.StatusInternalServerError)
 		return
 	}
+	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("layout-template"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/templates/" + tmpl.ID + "/preview",
+		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("layout-template"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/templates/" + tmpl.ID + "/preview", ContentTypeID: tmpl.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -361,6 +363,10 @@ func (h *Handler) publishLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 	}
 	if h.runtime != nil {
 		h.runtime.InvalidateLayoutTemplate(id)
+		// If this template is the default for its content type, all entries using the default must also be invalidated.
+		if ct, err := h.queries.GetContentType(r.Context(), tmpl.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String == id {
+			h.runtime.InvalidateContent()
+		}
 	}
 	if isDatastarRequest(r) {
 		writeSSE(w, toastEvent("success", "Template published."))
@@ -422,12 +428,31 @@ func (h *Handler) previewLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		path = "/example-page"
 		sampleTitle = "Example Page Title"
 	}
+	fieldValuesForPreview := map[string]any{}
+	if rows, queryErr := content.NewRepository(h.queries).QueryPublished(r.Context(), content.EntryQuery{ContentType: content.ContentTypeID(tmpl.ContentTypeID), Limit: 1}); queryErr == nil && len(rows) > 0 {
+		if published, publishedErr := h.queries.GetPublishedEntryByID(r.Context(), rows[0].ID); publishedErr == nil {
+			if actualDoc, decodeErr := document.Decode([]byte(published.DocumentJson)); decodeErr == nil {
+				sampleEntryDoc = actualDoc
+			}
+			sampleTitle = published.Title
+			sampleExcerpt = stringValue(published.Excerpt)
+			path = rows[0].RoutePath
+			fieldValuesForPreview = fieldValues(published.FieldsJson)
+		}
+	}
+	composed, err = layouts.Compose(doc, sampleEntryDoc)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	input := RenderInput{
-		Document: composed,
-		Title:    sampleTitle,
-		Excerpt:  sampleExcerpt,
-		Path:     path,
-		EntryID:  "preview-layout-" + id,
+		Document:      composed,
+		Title:         sampleTitle,
+		Excerpt:       sampleExcerpt,
+		Path:          path,
+		EntryID:       "preview-layout-" + id,
+		ContentTypeID: tmpl.ContentTypeID,
+		Fields:        fieldValuesForPreview,
 	}
 	if h.documentPreview == nil {
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)
@@ -454,6 +479,10 @@ func (h *Handler) setDefaultLayoutTemplate(w http.ResponseWriter, r *http.Reques
 	if err := h.layoutsService.SetDefault(r.Context(), id); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateContent()
+		_ = h.runtime.ReloadRoutes(r.Context())
 	}
 	if isDatastarRequest(r) {
 		writeSSE(w, toastEvent("success", "Default template updated."))

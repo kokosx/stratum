@@ -49,6 +49,7 @@ type Querier interface {
 	CreateTerm(ctx context.Context, arg CreateTermParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
 	DeleteComment(ctx context.Context, id string) error
+	DeleteContentType(ctx context.Context, id string) error
 	DeleteEntry(ctx context.Context, id string) error
 	DeleteMedia(ctx context.Context, id string) error
 	DeleteMediaVariant(ctx context.Context, id string) error

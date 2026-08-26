@@ -708,6 +708,7 @@ func (h *Handler) renderEntryByRoute(ctx context.Context, origin, path string, r
 		Title:            row.Title,
 		Excerpt:          row.Excerpt,
 		DocumentJson:     row.DocumentJson,
+		FieldsJson:       row.FieldsJson,
 		SeoTitle:         row.SeoTitle,
 		SeoDescription:   row.SeoDescription,
 		CanonicalUrl:     row.CanonicalUrl,
@@ -717,6 +718,10 @@ func (h *Handler) renderEntryByRoute(ctx context.Context, origin, path string, r
 		SeoRobotsFollow:  row.SeoRobotsFollow,
 		SchemaMode:       row.SchemaMode,
 		LayoutTemplateID: row.LayoutTemplateID,
+		Visibility:       row.Visibility,
+		PasswordHash:     row.PasswordHash,
+		Sticky:           row.Sticky,
+		ReviewState:      row.ReviewState,
 	}
 	return h.renderEntry(ctx, origin, path, entry, siteSnap)
 }
@@ -907,22 +912,25 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		archiveEntries = make([]rendering.ArchiveEntry, 0, len(termRows))
 		for _, r := range termRows {
 			ae := rendering.ArchiveEntry{
-				ID:           r.ID,
-				Title:        r.Title,
-				Excerpt:      stringValue(r.Excerpt),
-				URL:          r.RoutePath,
-				PublishedAt:  formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, false),
-				PublishedISO: formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, true),
+				ID:            r.ID,
+				Slug:          r.Slug,
+				ContentTypeID: archiveContentType,
+				Title:         r.Title,
+				Excerpt:       stringValue(r.Excerpt),
+				URL:           r.RoutePath,
+				PublishedAt:   formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, false),
+				PublishedISO:  formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, true),
 			}
 			if r.FeaturedMediaID.Valid {
 				if mv, ok := mediaCache[r.FeaturedMediaID.String]; ok {
 					ae.FeaturedImage = mv
 				}
+				ae.Fields, _ = content.DecodeFieldSnapshot(r.FieldsJson)
 			}
 			archiveEntries = append(archiveEntries, ae)
 		}
 	} else {
-		archiveEntries = h.buildArchiveEntries(ctx, rows, siteSnap)
+		archiveEntries = h.buildArchiveEntries(ctx, rows, siteSnap, archiveContentType)
 	}
 	// Also build legacy theme ArchiveView for shell-less fallback rendering
 	themeEntries := make([]themes.ArchiveEntryView, 0, len(archiveEntries))
@@ -985,6 +993,9 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			shellTitle = siteSnap.SiteTitle
 		} else {
 			shellTitle = "Blog"
+			if definition, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil && definition.PluralName != "" {
+				shellTitle = definition.PluralName
+			}
 		}
 	}
 
@@ -1524,7 +1535,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	}
 	rc := rendering.RenderContext{
 		Site:      rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
-		Entry:     rendering.EntryContext{Title: input.Title, Excerpt: input.Excerpt, Permalink: path, Fields: input.Fields},
+		Entry:     rendering.EntryContext{ID: input.EntryID, Slug: input.Slug, ContentTypeID: input.ContentTypeID, Title: input.Title, Excerpt: input.Excerpt, Permalink: path, FeaturedImage: input.FeaturedMediaID, Fields: input.Fields},
 		IsPreview: true,
 		EntryID:   input.EntryID,
 	}
@@ -1548,7 +1559,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 			perPage = 10
 		}
 		rows, _ := h.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "post", Limit: int64(perPage), Offset: 0})
-		archiveEntries := h.buildArchiveEntries(ctx, rows, siteSnap)
+		archiveEntries := h.buildArchiveEntries(ctx, rows, siteSnap, "post")
 		total, _ := h.queries.CountPublishedEntriesByContentType(ctx, "post")
 		totalPages := int((total + int64(perPage) - 1) / int64(perPage))
 		if totalPages == 0 {
@@ -1683,6 +1694,9 @@ func (h *Handler) entryRenderContext(siteSnap *site.Snapshot, entry *db.GetPubli
 	rc := rendering.RenderContext{
 		Site: rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
 		Entry: rendering.EntryContext{
+			ID:            entry.ID,
+			Slug:          entry.Slug,
+			ContentTypeID: entry.ContentTypeID,
 			Title:         entry.Title,
 			Excerpt:       stringValue(entry.Excerpt),
 			Permalink:     path,
@@ -1745,7 +1759,7 @@ func (h *Handler) archiveRenderContext(siteSnap *site.Snapshot, shell *db.GetPub
 	return rc
 }
 
-func (h *Handler) buildArchiveEntries(ctx context.Context, rows []db.ListPublishedEntriesByContentTypeRow, siteSnap *site.Snapshot) []rendering.ArchiveEntry {
+func (h *Handler) buildArchiveEntries(ctx context.Context, rows []db.ListPublishedEntriesByContentTypeRow, siteSnap *site.Snapshot, contentTypeID string) []rendering.ArchiveEntry {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1765,13 +1779,16 @@ func (h *Handler) buildArchiveEntries(ctx context.Context, rows []db.ListPublish
 	out := make([]rendering.ArchiveEntry, 0, len(rows))
 	for _, r := range rows {
 		ae := rendering.ArchiveEntry{
-			ID:           r.ID,
-			Title:        r.Title,
-			Excerpt:      stringValue(r.Excerpt),
-			URL:          r.RoutePath,
-			PublishedAt:  formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, false),
-			PublishedISO: formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, true),
+			ID:            r.ID,
+			Slug:          r.Slug,
+			ContentTypeID: contentTypeID,
+			Title:         r.Title,
+			Excerpt:       stringValue(r.Excerpt),
+			URL:           r.RoutePath,
+			PublishedAt:   formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, false),
+			PublishedISO:  formatEntryDate(r.FirstPublishedAt, siteSnap.TimezoneName, true),
 		}
+		ae.Fields, _ = content.DecodeFieldSnapshot(r.FieldsJson)
 		if r.FeaturedMediaID.Valid {
 			if mv, ok := mediaCache[r.FeaturedMediaID.String]; ok {
 				ae.FeaturedImage = mv

@@ -1,5 +1,13 @@
 package content
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"strings"
+)
+
 // ContentTypeID is a typed identifier for content types to avoid stringly-typed bugs.
 // It is intentionally a string underneath for storage compatibility.
 type ContentTypeID string
@@ -29,6 +37,129 @@ type RoutingPolicy struct {
 	Archive bool
 	// ArchiveContentType is the type for archive routes (e.g. post for /blog)
 	ArchiveContentType ContentTypeID
+	// BasePath is the effective prefix for custom public entries and archives.
+	// Pages deliberately leave it empty; posts retain their settings-backed adapter.
+	BasePath string
+}
+
+// ContentTypeConfig is the persisted, typed portion of content_types.config_json.
+// It intentionally contains only user-editable configuration; core policies for
+// Page and Post remain code-owned and are merged by a Catalog on read.
+type ContentTypeConfig struct {
+	SchemaVersion int                 `json:"schemaVersion"`
+	Fields        []FieldDefinition   `json:"fields,omitempty"`
+	Features      ContentTypeFeatures `json:"features,omitempty"`
+	Routing       ContentTypeRouting  `json:"routing,omitempty"`
+}
+
+type ContentTypeFeatures struct {
+	Excerpt       bool `json:"excerpt,omitempty"`
+	FeaturedMedia bool `json:"featuredMedia,omitempty"`
+	SEO           bool `json:"seo,omitempty"`
+}
+
+type ContentTypeRouting struct {
+	BasePath string `json:"basePath,omitempty"`
+	Archive  bool   `json:"archive,omitempty"`
+}
+
+const maxContentTypeConfigBytes = 64 << 10
+
+var contentTypeKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+// DecodeContentTypeConfig parses a bounded, backwards-compatible config JSON.
+// Empty and historical {} values mean the default version-one configuration.
+func DecodeContentTypeConfig(raw string) (ContentTypeConfig, error) {
+	if len(raw) > maxContentTypeConfigBytes {
+		return ContentTypeConfig{}, fmt.Errorf("content type config exceeds %d bytes", maxContentTypeConfigBytes)
+	}
+	config := ContentTypeConfig{SchemaVersion: 1}
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "{}" {
+		return config, nil
+	}
+	decoder := json.NewDecoder(bytes.NewBufferString(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
+		return ContentTypeConfig{}, fmt.Errorf("invalid content type config: %w", err)
+	}
+	if config.SchemaVersion == 0 {
+		config.SchemaVersion = 1
+	}
+	if err := ValidateContentTypeConfig(config); err != nil {
+		return ContentTypeConfig{}, err
+	}
+	return config, nil
+}
+
+// EncodeContentTypeConfig produces the canonical persisted representation.
+func EncodeContentTypeConfig(config ContentTypeConfig) (string, error) {
+	if config.SchemaVersion == 0 {
+		config.SchemaVersion = 1
+	}
+	if err := ValidateContentTypeConfig(config); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return "", err
+	}
+	if len(encoded) > maxContentTypeConfigBytes {
+		return "", fmt.Errorf("content type config exceeds %d bytes", maxContentTypeConfigBytes)
+	}
+	return string(encoded), nil
+}
+
+func ValidateContentTypeConfig(config ContentTypeConfig) error {
+	if config.SchemaVersion < 1 {
+		return fmt.Errorf("content type config schemaVersion must be positive")
+	}
+	if len(config.Fields) > 64 {
+		return fmt.Errorf("content type has too many fields")
+	}
+	seen := make(map[string]struct{}, len(config.Fields))
+	for _, field := range config.Fields {
+		if err := validateDefinition(field); err != nil {
+			return err
+		}
+		if _, exists := seen[field.Key]; exists {
+			return fmt.Errorf("duplicate field key %q", field.Key)
+		}
+		seen[field.Key] = struct{}{}
+	}
+	if config.Routing.BasePath != "" {
+		if err := ValidateRouteBase(config.Routing.BasePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidateRouteBase is deliberately storage-neutral so Catalog can validate
+// persisted configs without depending on routing (which already depends on content).
+func ValidateRouteBase(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" || !strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") {
+		return fmt.Errorf("URL base must be an absolute non-root path without a trailing slash")
+	}
+	if strings.ContainsAny(path, "?# ") || strings.Contains(path, "//") || strings.Contains(strings.ToLower(path), "%2f") {
+		return fmt.Errorf("URL base contains invalid characters")
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+		if segment == "" || strings.HasPrefix(segment, "-") || strings.HasSuffix(segment, "-") {
+			return fmt.Errorf("URL base contains an invalid segment")
+		}
+		for _, ch := range segment {
+			if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '-' {
+				return fmt.Errorf("URL base may contain only lowercase letters, numbers and hyphens")
+			}
+		}
+	}
+	for _, reserved := range []string{"/admin", "/stratum", "/media", "/sitemap.xml", "/robots.txt", "/feed.xml", "/favicon.ico"} {
+		if path == reserved || strings.HasPrefix(path, reserved+"/") {
+			return fmt.Errorf("URL base conflicts with reserved path %s", reserved)
+		}
+	}
+	return nil
 }
 
 // SEOProfile describes the semantic SEO kind for a type.

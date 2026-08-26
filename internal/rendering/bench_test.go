@@ -3,6 +3,8 @@ package rendering
 import (
 	"context"
 	"testing"
+
+	"github.com/kokosx/stratum/internal/content"
 )
 
 func BenchmarkRenderDocumentContext(b *testing.B) {
@@ -77,9 +79,9 @@ func BenchmarkCollection10(b *testing.B) {
 
 type mockContentReader struct{ entries []ArchiveEntry }
 
-func (m *mockContentReader) Query(ctx context.Context, contentType string, limit, offset int, order string, excludeIDs []string) ([]ArchiveEntry, error) {
-	if limit > len(m.entries) {
-		limit = len(m.entries)
+func (m *mockContentReader) Query(ctx context.Context, query content.EntryQuery) ([]ArchiveEntry, error) {
+	if query.Limit > len(m.entries) {
+		query.Limit = len(m.entries)
 	}
-	return m.entries[:limit], nil
+	return m.entries[:query.Limit], nil
 }

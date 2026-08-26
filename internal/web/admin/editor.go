@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -14,10 +15,32 @@ import (
 type RenderInput = rendering.RenderInput
 
 type editorBootstrap struct {
-	Document    json.RawMessage `json:"document"`
-	Catalog     any             `json:"catalog"`
-	Definitions any             `json:"definitions"`
-	PreviewURL  string          `json:"previewUrl"`
+	Document      json.RawMessage                         `json:"document"`
+	Catalog       any                                     `json:"catalog"`
+	Definitions   any                                     `json:"definitions"`
+	PreviewURL    string                                  `json:"previewUrl"`
+	ContentTypeID string                                  `json:"contentTypeId,omitempty"`
+	ContentTypes  []editorOption                          `json:"contentTypes,omitempty"`
+	FieldCatalogs map[string][]content.FieldCatalogOption `json:"fieldCatalogs,omitempty"`
+}
+
+type editorOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+func (h *Handler) editorOptions(ctx context.Context) ([]editorOption, map[string][]content.FieldCatalogOption) {
+	definitions, err := content.NewCatalog(h.queries).ListDefinitions(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	types := make([]editorOption, 0, len(definitions))
+	catalogs := make(map[string][]content.FieldCatalogOption, len(definitions))
+	for _, definition := range definitions {
+		types = append(types, editorOption{Value: string(definition.ID), Label: definition.PluralName})
+		catalogs[string(definition.ID)] = content.FieldCatalog(definition)
+	}
+	return types, catalogs
 }
 
 func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +57,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		LayoutTemplateID string          `json:"layout_template_id"`
 		ContentTypeID    string          `json:"content_type_id"`
 		Fields           map[string]any  `json:"fields"`
+		FeaturedMediaID  string          `json:"featured_media_id"`
 		SEO              struct {
 			Title       string `json:"title"`
 			Description string `json:"description"`
@@ -56,6 +80,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		payload.EntryID = r.FormValue("entry_id")
 		payload.LayoutTemplateID = r.FormValue("layout_template_id")
 		payload.ContentTypeID = r.FormValue("content_type_id")
+		payload.FeaturedMediaID = r.FormValue("featured_media_id")
 		payload.SEO.Title = r.FormValue("seo_title")
 		payload.SEO.Description = r.FormValue("seo_description")
 	}
@@ -82,7 +107,20 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 			ct = e.ContentTypeID
 		}
 	}
-	definition := content.DefinitionFor(ct)
+	// Preview must validate against the effective DB-backed definition: custom
+	// fields are revision data, and the fallback DefinitionFor intentionally has
+	// no schema for arbitrary custom types.
+	definition, definitionErr := content.NewCatalog(h.queries).GetDefinition(r.Context(), ct)
+	if definitionErr != nil {
+		// Older preview callers did not send a type. Keep their harmless
+		// no-schema behavior while refusing an unknown explicit custom type.
+		if ct == "" || ct == string(content.ContentTypePage) || ct == string(content.ContentTypePost) {
+			definition = content.DefinitionFor(ct)
+		} else {
+			http.Error(w, "Unknown content type", http.StatusUnprocessableEntity)
+			return
+		}
+	}
 	if r.Header.Get("Content-Type") != "application/json" {
 		payload.Fields = rawFieldValues(r, definition)
 	}
@@ -99,6 +137,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 	page, err := h.documentPreview(r.Context(), rendering.RenderInput{
 		Document:         doc,
 		Title:            payload.Title,
+		Slug:             payload.Slug,
 		Excerpt:          payload.Excerpt,
 		SEOTitle:         payload.SEO.Title,
 		SEODescription:   payload.SEO.Description,
@@ -107,6 +146,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		LayoutTemplateID: payload.LayoutTemplateID,
 		ContentTypeID:    ct,
 		Fields:           fields,
+		FeaturedMediaID:  payload.FeaturedMediaID,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)

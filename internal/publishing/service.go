@@ -165,7 +165,16 @@ func PublishWithQueries(ctx context.Context, qtx *db.Queries, entry db.Entry, re
 	if err != nil {
 		return fmt.Errorf("load site settings: %w", err)
 	}
-	def := content.DefinitionFor(entry.ContentTypeID)
+	// DB-backed definitions are required for custom routing and capabilities;
+	// the builtin fallback retains compatibility with pre-catalog installations.
+	def, defErr := content.NewCatalog(qtx).GetDefinition(ctx, entry.ContentTypeID)
+	if defErr != nil {
+		if entry.ContentTypeID == string(content.ContentTypePage) || entry.ContentTypeID == string(content.ContentTypePost) {
+			def = content.DefinitionFor(entry.ContentTypeID)
+		} else {
+			return fmt.Errorf("load content type %s: %w", entry.ContentTypeID, defErr)
+		}
+	}
 	isPostsPage := settings.PostsPageEntryID.Valid && settings.PostsPageEntryID.String == entry.ID
 	isHomepage := settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == entry.ID
 	// Homepage and Posts Page must remain publicly routable; they cannot be private or password-protected.
@@ -226,7 +235,7 @@ func PublishWithQueries(ctx context.Context, qtx *db.Queries, entry db.Entry, re
 				return err
 			}
 		} else {
-			computedPath := routing.EntryPath(entry.ContentTypeID, rev.Slug, settings.PostsBasePath)
+			computedPath := routing.EntryPathForDefinition(def, rev.Slug, settings.PostsBasePath)
 			if err := routing.UpsertEntryRoute(ctx, qtx, entry.ID, computedPath, now); err != nil {
 				return err
 			}

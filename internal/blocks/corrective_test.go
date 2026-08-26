@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/rendering"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -80,7 +81,7 @@ type fakeContentReader struct {
 	calls   int
 }
 
-func (f *fakeContentReader) Query(ctx context.Context, contentType string, limit, offset int, order string, excludeIDs []string) ([]rendering.ArchiveEntry, error) {
+func (f *fakeContentReader) Query(ctx context.Context, query content.EntryQuery) ([]rendering.ArchiveEntry, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err
@@ -88,25 +89,25 @@ func (f *fakeContentReader) Query(ctx context.Context, contentType string, limit
 	// Simple order handling: if order == published_asc, reverse
 	out := make([]rendering.ArchiveEntry, len(f.entries))
 	copy(out, f.entries)
-	if order == "published_asc" {
+	if query.Order == "published_asc" {
 		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 			out[i], out[j] = out[j], out[i]
 		}
 	}
 	// Apply offset/limit
-	if offset >= len(out) {
+	if query.Offset >= len(out) {
 		return nil, nil
 	}
-	out = out[offset:]
-	if limit < len(out) {
-		out = out[:limit]
+	out = out[query.Offset:]
+	if query.Limit < len(out) {
+		out = out[:query.Limit]
 	}
 	// Exclude
-	if len(excludeIDs) > 0 {
+	if len(query.ExcludeIDs) > 0 {
 		filtered := out[:0]
 		for _, e := range out {
 			skip := false
-			for _, id := range excludeIDs {
+			for _, id := range query.ExcludeIDs {
 				if e.ID == id {
 					skip = true
 					break

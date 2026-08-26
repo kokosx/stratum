@@ -9,6 +9,7 @@ import "github.com/kokosx/stratum/internal/document"
 type RenderInput struct {
 	Document         *document.Document
 	Title            string
+	Slug             string
 	Excerpt          string
 	SEOTitle         string
 	SEODescription   string
@@ -19,4 +20,5 @@ type RenderInput struct {
 	LayoutTemplateID string // optional: selected layout template for preview
 	ContentTypeID    string
 	Fields           map[string]any
+	FeaturedMediaID  string
 }
