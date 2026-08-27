@@ -21,11 +21,11 @@ import (
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
-	"github.com/kokosx/stratum/internal/siteparts"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/search"
+	"github.com/kokosx/stratum/internal/siteparts"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
@@ -367,6 +367,7 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/revisions/{revisionID}/restore", h.requireAuth(h.restoreLayoutTemplateRevision))
 	mux.HandleFunc("GET /admin/appearance/site-parts", h.requireAuth(h.listSiteParts))
 	mux.HandleFunc("GET /admin/appearance/site-parts/new", h.requireAuth(h.newSitePart))
+	mux.HandleFunc("POST /admin/appearance/site-parts/new", h.requireAuth(h.createSitePart))
 	mux.HandleFunc("POST /admin/appearance/site-parts", h.requireAuth(h.createSitePart))
 	mux.HandleFunc("GET /admin/appearance/site-parts/{id}/edit", h.requireAuth(h.editSitePart))
 	mux.HandleFunc("POST /admin/appearance/site-parts/{id}", h.requireAuth(h.saveSitePart))

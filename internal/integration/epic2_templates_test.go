@@ -67,3 +67,20 @@ func TestEpic2ArchiveTemplatePreviewAndPublicContext(t *testing.T) {
 		t.Fatalf("archive public output incorrect (%d): %s", resp.StatusCode, publicBody)
 	}
 }
+
+func TestCreateSitePartPOSTFromNewRouteIsAccepted(t *testing.T) {
+	server, _, _, authService, cleanup := newIntegrationServer(t)
+	defer cleanup()
+	client := setupAndLogin(t, server.URL, authService)
+	for index, endpoint := range []string{"/admin/appearance/site-parts/new", "/admin/appearance/site-parts"} {
+		resp := postForm(t, client, server.URL, endpoint, url.Values{
+			"name":       {"Header " + string(rune('A'+index))},
+			"location":   {"header"},
+			"csrf_token": {csrfToken(t, client, server.URL, "/admin/appearance/site-parts/new?location=header")},
+		})
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("POST %s returned %d, want 303; body: %s", endpoint, resp.StatusCode, bodyString(t, resp))
+		}
+		resp.Body.Close()
+	}
+}

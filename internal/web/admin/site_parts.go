@@ -122,7 +122,7 @@ func (h *Handler) newSitePart(w http.ResponseWriter, r *http.Request) {
 	}
 	data := sitePartFormData{
 		Heading:   heading,
-		Action:    "/admin/appearance/site-parts",
+		Action:    "/admin/appearance/site-parts/new",
 		BackURL:   "/admin/appearance/site-parts",
 		CSRFToken: token,
 		Location:  loc,
@@ -160,7 +160,7 @@ func (h *Handler) renderSitePartCreateError(w http.ResponseWriter, r *http.Reque
 	token, _ := h.csrfToken(w, r)
 	data := sitePartFormData{
 		Heading:   "Create Site Part",
-		Action:    "/admin/appearance/site-parts",
+		Action:    "/admin/appearance/site-parts/new",
 		BackURL:   "/admin/appearance/site-parts",
 		Name:      name,
 		Location:  loc,
