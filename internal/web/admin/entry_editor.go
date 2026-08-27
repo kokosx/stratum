@@ -1651,6 +1651,20 @@ func entryWriteError(err error) string {
 
 func slugify(title string) string {
 	s := strings.ToLower(strings.TrimSpace(title))
+	// Transliterate Polish and common Latin diacritics so JS and Go stay in
+	// sync. JS does NFD + strip combining marks + ł→l; Go mirrors that with
+	// an explicit map to avoid pulling golang.org/x/text for a tiny helper.
+	s = strings.NewReplacer(
+		"ą", "a", "ć", "c", "ę", "e", "ł", "l", "ń", "n", "ó", "o", "ś", "s", "ź", "z", "ż", "z",
+		"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a", "æ", "ae",
+		"è", "e", "é", "e", "ê", "e", "ë", "e",
+		"ì", "i", "í", "i", "î", "i", "ï", "i",
+		"ò", "o", "ô", "o", "õ", "o", "ö", "o", "ø", "o",
+		"ù", "u", "ú", "u", "û", "u", "ü", "u",
+		"ý", "y", "ÿ", "y",
+		"ñ", "n", "ç", "c",
+		"ß", "ss",
+	).Replace(s)
 	s = strings.ReplaceAll(s, " ", "-")
 	s = strings.ReplaceAll(s, "_", "-")
 	var b strings.Builder

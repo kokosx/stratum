@@ -1534,11 +1534,26 @@
     const title = document.getElementById("entry-title");
     const slug = document.getElementById("entry-slug");
     if (!title || !slug) return;
-    const normalizeSlug = (v) => v.toLowerCase().normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "").replace(/ł/g, "l")
-      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const normalizeSlug = (v) => v.toLowerCase()
+      .replace(/ą/g, "a").replace(/ć/g, "c").replace(/ę/g, "e").replace(/ł/g, "l").replace(/ń/g, "n").replace(/ó/g, "o").replace(/ś/g, "s").replace(/ź/g, "z").replace(/ż/g, "z")
+      .replace(/æ/g, "ae").replace(/ø/g, "o").replace(/ß/g, "ss")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100).replace(/-+$/g, "");
     let lastAuto = normalizeSlug(title.value);
     let manualEdit = slug.value !== "" && slug.value !== lastAuto;
+    // If the entry was loaded with an empty slug (legacy / failed auto), fill it immediately
+    // so the required field never blocks submit and the user sees the generated value.
+    if (slug.value.trim() === "" && lastAuto !== "") {
+      slug.value = lastAuto;
+      manualEdit = false;
+    }
+    const ensureSlug = () => {
+      if (slug.value.trim() === "" && title.value.trim() !== "") {
+        slug.value = normalizeSlug(title.value) || "item";
+        lastAuto = slug.value;
+        manualEdit = false;
+      }
+    };
     title.addEventListener("input", () => {
       if (!manualEdit || slug.value === lastAuto) {
         slug.value = normalizeSlug(title.value);
@@ -1547,6 +1562,13 @@
       }
     });
     slug.addEventListener("input", () => { manualEdit = slug.value !== normalizeSlug(title.value); });
+    // Native submit (progressive enhancement fallback) and any programmatic submit
+    form.addEventListener("submit", () => ensureSlug());
+    // Datastar uses data-on:click__prevent="@post(...)" which bypasses native
+    // submit validation/sequence — ensure slug before that serialization too.
+    document.querySelectorAll('button[data-on*="@post"]').forEach((btn) => {
+      btn.addEventListener("click", () => ensureSlug(), true);
+    });
   }
 
   // --- Keyboard shortcuts (P1.44) ------------------------------------------
