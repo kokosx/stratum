@@ -166,9 +166,34 @@ func (h *Runtime) InvalidateLayoutTemplates() {
 func (h *Runtime) InvalidateLayoutTemplate(templateID string) {
 	if templateID != "" {
 		h.Pages.InvalidateTag("layout:" + templateID)
+		h.Pages.InvalidateTag("template:" + templateID)
 	} else {
 		h.Pages.InvalidateAll()
 	}
+}
+
+// InvalidateTemplate selectively invalidates pages using the given template (generic).
+func (h *Runtime) InvalidateTemplate(templateID string) {
+	if templateID != "" {
+		h.Pages.InvalidateTag("template:" + templateID)
+		h.Pages.InvalidateTag("layout:" + templateID)
+	} else {
+		h.Pages.InvalidateAll()
+	}
+}
+
+// InvalidateSitePart selectively invalidates pages using the given site part.
+func (h *Runtime) InvalidateSitePart(sitePartID string) {
+	if sitePartID != "" {
+		h.Pages.InvalidateTag("site-part:" + sitePartID)
+	} else {
+		h.Pages.InvalidateAll()
+	}
+}
+
+// InvalidateAll clears the full page cache.
+func (h *Runtime) InvalidateAll() {
+	h.Pages.InvalidateAll()
 }
 
 // ReloadRoutes reloads the immutable route snapshot and invalidates the page

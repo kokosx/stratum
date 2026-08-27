@@ -330,7 +330,11 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	saveErr := h.writeEntry(r.Context(), contentType, user.ID, entryID, input, false, publish)
 	if saveErr == nil && publish && h.runtime != nil {
-		if content.DefinitionFor(contentType).Capabilities.Hierarchical {
+		isHier := content.DefinitionFor(contentType).Capabilities.Hierarchical
+		if def, err := content.NewCatalog(h.queries).GetDefinition(r.Context(), contentType); err == nil {
+			isHier = def.Capabilities.Hierarchical
+		}
+		if isHier {
 			// A parent publish can move every descendant path. Drop old path cache
 			// entries before the single route-runtime reload exposes redirects.
 			h.runtime.InvalidateContent()

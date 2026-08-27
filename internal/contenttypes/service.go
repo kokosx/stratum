@@ -48,9 +48,10 @@ func (s *Service) Update(ctx context.Context, id string, input content.ContentTy
 		input.Config.SchemaVersion = 2
 	}
 	if !isBuiltin(input.ID) {
+		// LEGACY STORAGE COMPATIBILITY ONLY: public = single
 		input.Public = input.Config.Routing.Single
 	}
-	if err := validateInput(input, true); err != nil {
+	if err := content.ValidateContentTypeInput(input, true); err != nil {
 		return err
 	}
 	if isBuiltin(input.ID) {
@@ -60,18 +61,21 @@ func (s *Service) Update(ctx context.Context, id string, input content.ContentTy
 		input.Config.Routing.Archive = previous.Routing.Archive
 		input.Config.Routing.BasePath = previous.Routing.BasePath
 	}
-	// Field evolution check via catalog internal – replicate validation
-	if err := validateFieldEvolution(previous.Fields, input.Config.Fields); err != nil {
+	if err := content.ValidateFieldEvolution(previous.Fields, input.Config.Fields); err != nil {
 		return err
 	}
 	if input.Config.Routing.BasePath != "" && input.Config.Routing.BasePath != previous.Routing.BasePath {
-		// Ensure unique base path
-		if err := ensureBasePathUnique(ctx, qtx, string(input.ID), input.Config.Routing.BasePath); err != nil {
+		if err := cat.EnsureBasePathUnique(ctx, string(input.ID), input.Config.Routing.BasePath); err != nil {
 			return err
 		}
 	}
-	if input.Config.SchemaVersion <= previous.SchemaVersion {
-		input.Config.SchemaVersion = previous.SchemaVersion + 1
+	// SchemaVersion semantics: only bump when field schema meaningfully changes
+	if content.SchemaChanged(previous.Fields, input.Config.Fields) {
+		if input.Config.SchemaVersion <= previous.SchemaVersion {
+			input.Config.SchemaVersion = previous.SchemaVersion + 1
+		}
+	} else {
+		input.Config.SchemaVersion = previous.SchemaVersion
 	}
 	encoded, err := content.EncodeContentTypeConfig(input.Config)
 	if err != nil {
@@ -376,87 +380,12 @@ func randomID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func isBuiltin(id content.ContentTypeID) bool { return id == content.ContentTypePage || id == content.ContentTypePost }
+func isBuiltin(id content.ContentTypeID) bool {
+	return id == content.ContentTypePage || id == content.ContentTypePost
+}
 func boolInt(v bool) int64 {
 	if v {
 		return 1
 	}
 	return 0
-}
-func validateInput(input content.ContentTypeInput, updating bool) error {
-	// Reuse catalog validation – copy logic to avoid import cycle
-	input.Name = strings.TrimSpace(input.Name)
-	input.PluralName = strings.TrimSpace(input.PluralName)
-	if input.PluralName == "" || len(input.PluralName) > 100 || len(input.Name) > 100 {
-		return fmt.Errorf("content type label is required and must be at most 100 characters")
-	}
-	if len(input.Name) > 0 && strings.TrimSpace(input.Name) == "" {
-		return fmt.Errorf("content type item label must not be empty if provided")
-	}
-	// key pattern check
-	if !contentTypeKeyPatternMatch(string(input.ID)) {
-		return fmt.Errorf("invalid content type key %q", input.ID)
-	}
-	if !updating && isBuiltin(input.ID) {
-		return fmt.Errorf("content type key %q is reserved", input.ID)
-	}
-	if !updating {
-		if reservedKeys[input.ID] {
-			return fmt.Errorf("content type key %q is reserved", input.ID)
-		}
-	}
-	if !isBuiltin(input.ID) {
-		if (input.Config.Routing.Single || input.Config.Routing.Archive) && input.Config.Routing.BasePath == "" {
-			return fmt.Errorf("URL base is required when single or archive routing is enabled")
-		}
-	}
-	return content.ValidateContentTypeConfig(input.Config)
-}
-func contentTypeKeyPatternMatch(s string) bool {
-	// duplicate pattern from content package: ^[a-z][a-z0-9_]{0,62}$
-	if len(s) == 0 || len(s) > 63 {
-		return false
-	}
-	if s[0] < 'a' || s[0] > 'z' {
-		return false
-	}
-	for _, ch := range s {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-var reservedKeys = map[content.ContentTypeID]bool{"core": true, "admin": true, "system": true, "media": true, "search": true, "taxonomy": true, "layout": true}
-func validateFieldEvolution(prev, next []content.FieldDefinition) error {
-	old := make(map[string]content.FieldDefinition, len(prev))
-	for _, f := range prev {
-		old[f.Key] = f
-	}
-	for _, f := range next {
-		if prior, ok := old[f.Key]; ok && prior.Type != f.Type {
-			return fmt.Errorf("field %q type is immutable", f.Key)
-		}
-	}
-	return nil
-}
-func ensureBasePathUnique(ctx context.Context, q *db.Queries, selfID, basePath string) error {
-	basePath = strings.TrimSpace(basePath)
-	if basePath == "" {
-		return nil
-	}
-	defs, err := content.NewCatalog(q).ListDefinitions(ctx)
-	if err != nil {
-		return err
-	}
-	for _, d := range defs {
-		if string(d.ID) == selfID {
-			continue
-		}
-		if d.Routing.BasePath == basePath {
-			return fmt.Errorf("URL base %q is already used by content type %q", basePath, d.ID)
-		}
-	}
-	return nil
 }

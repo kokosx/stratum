@@ -163,11 +163,11 @@ func (h *Handler) createCustomEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := h.currentUser(r)
+	var createdID string
 	if err == nil {
-		var id string
-		id, err = randomID()
+		createdID, err = randomID()
 		if err == nil {
-			err = h.writeEntry(r.Context(), string(definition.ID), user.ID, id, input, true, r.FormValue("publish") != "")
+			err = h.writeEntry(r.Context(), string(definition.ID), user.ID, createdID, input, true, r.FormValue("publish") != "")
 		}
 	}
 	if err != nil {
@@ -176,6 +176,9 @@ func (h *Handler) createCustomEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
+		// Publishing route-less structured data must invalidate dependent Collections via content-type tag,
+		// not via route existence.
+		h.runtime.InvalidateEntry(createdID, string(definition.ID))
 		h.runtime.InvalidateContent()
 		_ = h.runtime.ReloadRoutes(r.Context())
 	}

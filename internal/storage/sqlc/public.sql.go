@@ -19,7 +19,6 @@ WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
   AND r.visibility = 'public'
-  AND rt.route_type = 'entry'
 `
 
 func (q *Queries) CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error) {
@@ -226,6 +225,8 @@ func (q *Queries) GetPublishedEntryByPath(ctx context.Context, path string) (Get
 }
 
 const listPublishedEntriesByContentType = `-- name: ListPublishedEntriesByContentType :many
+;
+
 SELECT
     e.id,
     r.slug,
@@ -240,7 +241,7 @@ SELECT
     r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
-LEFT LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry' AND rt.route_type = 'entry'
+LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
@@ -323,7 +324,7 @@ SELECT
     r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
-LEFT LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry' AND rt.route_type = 'entry'
+LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL

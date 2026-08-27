@@ -65,8 +65,14 @@ func TestValidateLayoutTemplate_Valid(t *testing.T) {
 func TestValidateLayoutTemplate_Zero(t *testing.T) {
 	reg := mustRegistryWithSlot(t)
 	d := docFrom(t, `{"version":1,"nodes":[{"id":"sec","block":"core/section","version":1,"props":{},"settings":{"width":"content"},"children":[{"id":"h","block":"core/heading","version":1,"props":{"text":"hi","level":1},"settings":{}}]}]}`)
-	if err := ValidateLayoutTemplateDocument(reg, d); err == nil {
-		t.Fatal("expected error")
+	// EPIC 2: zero slot is allowed for Single (fields-only)
+	if err := ValidateLayoutTemplateDocument(reg, d); err != nil {
+		t.Fatalf("unexpected error for zero slot: %v", err)
+	}
+	// Archive must have zero, single with slot also valid
+	d2 := docFrom(t, `{"version":1,"nodes":[{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`)
+	if err := ValidateTemplateDocument(reg, d2, "archive", nil); err == nil {
+		t.Fatal("expected error for archive with slot")
 	}
 }
 

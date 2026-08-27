@@ -22,7 +22,7 @@ type ContentTypeInput struct {
 	Name         string // ItemLabel (optional singular)
 	PluralName   string // Label (required plural/neutral)
 	Hierarchical bool
-	Public       bool // deprecated; derived from Config.Routing.Single for custom types
+	Public       bool // LEGACY STORAGE COMPATIBILITY ONLY. DO NOT USE FOR CONTENT TYPE ROUTING DECISIONS. For custom types, derived from Config.Routing.Single (persistence adapter: public = single)
 	Config       ContentTypeConfig
 }
 
@@ -55,10 +55,11 @@ func (c *Catalog) CreateContentType(ctx context.Context, input ContentTypeInput)
 		input.Config.SchemaVersion = 2
 	}
 	// Derive Public column from Single for backward compat (sitemap, old queries)
+	// LEGACY STORAGE COMPATIBILITY ONLY. DO NOT USE FOR ROUTING DECISIONS.
 	if !isBuiltin(input.ID) {
 		input.Public = input.Config.Routing.Single
 	}
-	if err := validateContentTypeInput(input, false); err != nil {
+	if err := ValidateContentTypeInput(input, false); err != nil {
 		return err
 	}
 	if _, err := c.queries.GetContentType(ctx, string(input.ID)); err == nil {
@@ -67,7 +68,7 @@ func (c *Catalog) CreateContentType(ctx context.Context, input ContentTypeInput)
 		return err
 	}
 	if input.Config.Routing.BasePath != "" {
-		if err := c.ensureBasePathUnique(ctx, "", input.Config.Routing.BasePath); err != nil {
+		if err := c.EnsureBasePathUnique(ctx, "", input.Config.Routing.BasePath); err != nil {
 			return err
 		}
 	}
@@ -86,9 +87,10 @@ func (c *Catalog) UpdateContentType(ctx context.Context, input ContentTypeInput)
 		input.Config.SchemaVersion = 2
 	}
 	if !isBuiltin(input.ID) {
+		// LEGACY STORAGE COMPATIBILITY ONLY
 		input.Public = input.Config.Routing.Single
 	}
-	if err := validateContentTypeInput(input, true); err != nil {
+	if err := ValidateContentTypeInput(input, true); err != nil {
 		return err
 	}
 	previous, err := c.GetDefinition(ctx, string(input.ID))
@@ -103,16 +105,22 @@ func (c *Catalog) UpdateContentType(ctx context.Context, input ContentTypeInput)
 		input.Config.Routing.Archive = previous.Routing.Archive
 		input.Config.Routing.BasePath = previous.Routing.BasePath
 	}
-	if err := validateFieldEvolution(previous.Fields, input.Config.Fields); err != nil {
+	if err := ValidateFieldEvolution(previous.Fields, input.Config.Fields); err != nil {
 		return err
 	}
 	if input.Config.Routing.BasePath != "" && input.Config.Routing.BasePath != previous.Routing.BasePath {
-		if err := c.ensureBasePathUnique(ctx, string(input.ID), input.Config.Routing.BasePath); err != nil {
+		if err := c.EnsureBasePathUnique(ctx, string(input.ID), input.Config.Routing.BasePath); err != nil {
 			return err
 		}
 	}
-	if input.Config.SchemaVersion <= previous.SchemaVersion {
-		input.Config.SchemaVersion = previous.SchemaVersion + 1
+	// SchemaVersion semantics: only bump when content schema meaningfully changes (field add/remove).
+	// Changing label, routing, or admin presentation must not bump.
+	if SchemaChanged(previous.Fields, input.Config.Fields) {
+		if input.Config.SchemaVersion <= previous.SchemaVersion {
+			input.Config.SchemaVersion = previous.SchemaVersion + 1
+		}
+	} else {
+		input.Config.SchemaVersion = previous.SchemaVersion
 	}
 	encoded, err := EncodeContentTypeConfig(input.Config)
 	if err != nil {
@@ -121,7 +129,7 @@ func (c *Catalog) UpdateContentType(ctx context.Context, input ContentTypeInput)
 	return c.queries.UpdateContentType(ctx, db.UpdateContentTypeParams{ID: string(input.ID), DisplayName: input.Name, PluralName: input.PluralName, Hierarchical: boolInt(input.Hierarchical), Public: boolInt(input.Public), ConfigJson: encoded, UpdatedAt: time.Now().Unix()})
 }
 
-func (c *Catalog) ensureBasePathUnique(ctx context.Context, selfID, basePath string) error {
+func (c *Catalog) EnsureBasePathUnique(ctx context.Context, selfID, basePath string) error {
 	basePath = strings.TrimSpace(basePath)
 	if basePath == "" {
 		return nil
@@ -139,6 +147,10 @@ func (c *Catalog) ensureBasePathUnique(ctx context.Context, selfID, basePath str
 		}
 	}
 	return nil
+}
+
+func (c *Catalog) ensureBasePathUnique(ctx context.Context, selfID, basePath string) error {
+	return c.EnsureBasePathUnique(ctx, selfID, basePath)
 }
 
 // DeleteContentType removes a custom content type only when it has no
@@ -164,82 +176,79 @@ func (c *Catalog) DeleteContentType(ctx context.Context, id string) error {
 	return c.queries.DeleteContentType(ctx, id)
 }
 
+// definitionFromRow is the single pipeline: raw config → decode → normalize legacy defaults → build effective definition.
+// No DB write is required just to read old config. Normalization is deterministic.
 func definitionFromRow(row db.ContentType) (ContentTypeDefinition, error) {
 	config, err := DecodeContentTypeConfig(row.ConfigJson)
 	if err != nil {
 		return ContentTypeDefinition{}, err
 	}
+	// Normalize legacy semantics to current effective semantics
+	config = normalizeContentTypeConfig(row, config)
+
 	definition := DefinitionFor(row.ID)
 	definition.ID, definition.Name, definition.PluralName = ContentTypeID(row.ID), row.DisplayName, row.PluralName
 	definition.Fields, definition.SchemaVersion = config.Fields, config.SchemaVersion
-	definition.Capabilities.Hierarchical, definition.Capabilities.Public = row.Hierarchical == 1, row.Public == 1
-	// Backward compat: SchemaVersion 1 had no Single/HasContent; infer from old state
+
 	isCustom := !isBuiltin(ContentTypeID(row.ID))
 	if isCustom {
-		// Normalize config defaults for v1 -> v2 migration
-		if config.SchemaVersion == 1 {
-			// v1 had Public column as source of truth for routing
-			// Map: Single = Public (unless config already has Single explicit weirdly)
-			// HasContent defaults to true for backward compat (preserve editor)
-			if !config.Routing.Single && row.Public == 1 && config.Routing.BasePath != "" {
-				// Historical public type without explicit Single: infer Single true
-				config.Routing.Single = true
-			} else if config.Routing.Single && row.Public == 0 {
-				// Config says Single but DB says private – honor config? Use config
-			}
-			// Archive already in config.Routing.Archive
-			// HasContent: old types implicitly had rich content
-			if !config.Features.Content {
-				// Distinguish: if SchemaVersion 1 and Features.Content false, it was default
-				// We preserve true as effective default unless explicitly stored false in v2
-				// Since v1 never stored Content, treat as true
-				definition.Capabilities.HasContent = true
-			} else {
-				definition.Capabilities.HasContent = config.Features.Content
-			}
-		} else {
-			definition.Capabilities.HasContent = config.Features.Content
-		}
+		definition.Capabilities.Hierarchical = row.Hierarchical == 1
+		definition.Capabilities.HasContent = config.Features.Content
 		definition.Capabilities.HasExcerpt = config.Features.Excerpt
 		definition.Capabilities.HasFeatured = config.Features.FeaturedMedia
 		definition.Capabilities.HasSEO = config.Features.SEO
-		definition.Capabilities.HasArchive = config.Routing.Archive
-		definition.Capabilities.Single = config.Routing.Single
-		// Normalize routing Single from config, but fallback to row.Public for truly old empty configs
-		if config.SchemaVersion == 1 && config.Routing.BasePath == "" && !config.Routing.Archive && !config.Routing.Single {
-			// Empty/legacy config: if row.Public ==1 but no base/archive, it was likely a public type that lost base? Keep Single = public
-			if row.Public == 1 {
-				// But without base, Single true would be invalid per new validation; so only infer true if we can
-				// Keep Single false to allow BasePath empty; effective Single will be false
-				// For compatibility, treat as Single = public && basePath != "" or archive? Actually historical private types remain Single false
-				definition.Capabilities.Single = false
-			}
-		}
-		// If config explicitly has Single true, honor it even if row.Public mismatched (config is source of truth post-migration)
-		if config.SchemaVersion >= 2 {
-			definition.Capabilities.Single = config.Routing.Single
-		} else if row.Public == 1 && config.Routing.Single {
-			definition.Capabilities.Single = true
-		} else if row.Public == 1 && !config.Routing.Single && config.Routing.BasePath != "" {
-			// Legacy v1 public with base but Single false due to zero value – fix
-			definition.Capabilities.Single = true
+		// LEGACY STORAGE COMPATIBILITY ONLY: Public mirrors Single for custom types
+		definition.Capabilities.Public = config.Routing.Single
+		definition.Routing.Single = config.Routing.Single
+		definition.Routing.Archive = config.Routing.Archive
+		definition.Routing.BasePath = config.Routing.BasePath
+		if definition.Routing.Archive {
+			definition.Routing.ArchiveContentType = definition.ID
 		}
 	} else {
-		// Built-ins: already set via KnownDefinitions but ensure sync
-		definition.Capabilities.Single = definition.Routing.Single
+		// Built-ins: core-owned policies remain from KnownDefinitions; only fields/schema/version and labels are DB-driven.
+		// Preserve code-owned routing and capabilities; do not let DB config override Single/Archive/Base.
+		definition.Fields = config.Fields
+		definition.SchemaVersion = config.SchemaVersion
+		// Hierarchical and Public remain as per KnownDefinitions; row values are ignored for builtins to keep single source.
+		// However keep DB display names already set above.
+		definition.Capabilities.Public = DefinitionFor(row.ID).Capabilities.Public
+		// HasContent always true for builtins
 		definition.Capabilities.HasContent = true
+		// Routing already correct from DefinitionFor
+		if definition.Routing.Archive {
+			definition.Routing.ArchiveContentType = definition.ID
+		}
 	}
-	definition.Routing.BasePath = config.Routing.BasePath
-	definition.Routing.Single = definition.Capabilities.Single
-	definition.Routing.Archive = definition.Capabilities.HasArchive
-	if definition.Routing.Archive {
-		definition.Routing.ArchiveContentType = definition.ID
-	}
-	// Ensure Public mirrors Single for custom types (sitemap backward compat)
+	// Ensure Public mirrors Single for custom types (sitemap backward compat persistence adapter)
 	if isCustom {
-		definition.Capabilities.Public = definition.Capabilities.Single
+		definition.Capabilities.Public = definition.Routing.Single
 	}
 	return definition, nil
+}
+
+// normalizeContentTypeConfig decodes raw persisted config and normalizes legacy semantics to current effective semantics.
+// Desired pipeline: raw config → decode → normalize legacy defaults → build effective definition
+func normalizeContentTypeConfig(row db.ContentType, config ContentTypeConfig) ContentTypeConfig {
+	isCustom := !isBuiltin(ContentTypeID(row.ID))
+	if isCustom && config.SchemaVersion == 1 {
+		// SchemaVersion 1 had no explicit Single/HasContent; infer from old state.
+		// v1 had Public column as source of truth for routing; HasContent defaulted to true.
+		// Normalize: Single = Public (row.Public == 1), HasContent = true
+		// v1 public + base → Single=true, HasContent=true
+		// v1 private → Single=false, preserve historical intended route-less semantics
+		config.Routing.Single = row.Public == 1
+		config.Features.Content = true
+		// Archive and BasePath remain as decoded (v1 may have stored archive via config.Routing.Archive)
+		// Keep SchemaVersion as 1 for storage; effective definition uses normalized values without mutating DB.
+	}
+	return config
+}
+
+// ValidateContentTypeInput is the single implementation of content type input validation.
+// Exposed for reuse by contenttypes.Service to avoid duplication.
+func ValidateContentTypeInput(input ContentTypeInput, updating bool) error {
+	return validateContentTypeInput(input, updating)
 }
 
 func validateContentTypeInput(input ContentTypeInput, updating bool) error {
@@ -272,6 +281,11 @@ func validateContentTypeInput(input ContentTypeInput, updating bool) error {
 }
 
 var reservedContentTypeKeys = map[ContentTypeID]bool{"core": true, "admin": true, "system": true, "media": true, "search": true, "taxonomy": true, "layout": true}
+
+// ValidateFieldEvolution is the single implementation of field evolution validation.
+func ValidateFieldEvolution(previous, next []FieldDefinition) error {
+	return validateFieldEvolution(previous, next)
+}
 
 func validateFieldEvolution(previous, next []FieldDefinition) error {
 	old := make(map[string]FieldDefinition, len(previous))

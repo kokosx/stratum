@@ -41,8 +41,9 @@ func AdminNav() []AdminNavItem {
 		}},
 		{ID: "appearance", Label: "Appearance", Href: "/admin/appearance", Icon: "appearance", Children: []AdminNavItem{
 			{ID: "appearance-styles", Label: "Styles", Href: "/admin/appearance"},
+			{ID: "appearance-templates", Label: "Templates", Href: "/admin/appearance/templates"},
+			{ID: "appearance-site-parts", Label: "Site Parts", Href: "/admin/appearance/site-parts"},
 			{ID: "appearance-menus", Label: "Menus", Href: "/admin/menus"},
-			{ID: "appearance-templates", Label: "Layout Templates", Href: "/admin/appearance/templates"},
 		}},
 		{ID: "settings", Label: "Settings", Href: "/admin/settings/general", Icon: "settings", Children: []AdminNavItem{
 			{ID: "settings-general", Label: "General", Href: "/admin/settings/general"},
@@ -154,6 +155,9 @@ func ResolveNav(path string) NavState {
 	case strings.HasPrefix(path, "/admin/media"):
 		return NavState{ActiveSection: "media", ActiveItem: "media-library"}
 	case strings.HasPrefix(path, "/admin/appearance"):
+		if strings.HasPrefix(path, "/admin/appearance/site-parts") {
+			return NavState{ActiveSection: "appearance", ActiveItem: "appearance-site-parts"}
+		}
 		if strings.HasPrefix(path, "/admin/appearance/templates") {
 			return NavState{ActiveSection: "appearance", ActiveItem: "appearance-templates"}
 		}

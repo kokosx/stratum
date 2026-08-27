@@ -2,8 +2,12 @@ package public
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 
+	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/content"
+	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/site"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
@@ -21,6 +25,34 @@ type handlerContentReader struct {
 
 func (r *handlerContentReader) Definition(ctx context.Context, contentType string) (content.ContentTypeDefinition, error) {
 	return content.NewCatalog(r.queries).GetDefinition(ctx, contentType)
+}
+
+// handlerSitePartReader implements rendering.SitePartReader via published site part revisions.
+type handlerSitePartReader struct {
+	queries *db.Queries
+	blocks  *blocks.Registry
+}
+
+func (r *handlerSitePartReader) GetSitePart(ctx context.Context, id string) (*rendering.PreparedDocument, string, error) {
+	row, err := r.queries.GetSitePartWithPublishedRevision(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, "", errors.New("site part not found or unpublished")
+		}
+		return nil, "", err
+	}
+	doc, err := document.Decode([]byte(row.DocumentJson))
+	if err != nil {
+		return nil, "", err
+	}
+	pd, err := r.blocks.PreparedCache(row.RevisionID, doc)
+	if err != nil {
+		pd, err = r.blocks.Prepare(doc)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return pd, row.RevisionID, nil
 }
 
 func (r *handlerContentReader) Query(ctx context.Context, query content.EntryQuery) ([]rendering.ArchiveEntry, error) {

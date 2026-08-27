@@ -546,10 +546,10 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		input.featuredMediaID = ""
 	}
 	if !definition.Capabilities.HasContent {
-		// Keep document as empty valid SDT; allow historic nodes but don't require blocks
-		if len(doc.Nodes) == 0 {
-			// ensure empty document is valid
-		}
+		// HasContent=false means live effective freeform entry document must be empty SDT.
+		// Ignore any posted freeform document nodes and persist an empty document server-side.
+		// Historical revisions remain immutable; only new revisions are emptied.
+		doc = &document.Document{Version: 1, Nodes: []document.Node{}}
 	}
 	documentJSON, err := json.Marshal(doc)
 	if err != nil {
@@ -626,11 +626,50 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		return fmt.Errorf("encode custom fields: %w", err)
 	}
 
+	// For route-less content types, slug is hidden and must be auto-allocated deterministically.
+	// User must not get stuck on slug collision they cannot edit. Allocate unique slug with numeric suffix.
+	if !definition.Routing.Single {
+		base := slugify(input.title)
+		allocated, allocErr := h.allocateUniqueSlug(ctx, qtx, contentType, base, entryID)
+		if allocErr != nil {
+			return allocErr
+		}
+		input.slug = allocated
+	}
+
 	revisionNumber := int64(1)
 	var latest db.EntryRevision
 	reuseLatest := false
 	if create {
-		err = qtx.CreateEntry(ctx, db.CreateEntryParams{ID: entryID, ContentTypeID: contentType, Slug: input.slug, Status: "active", AuthorID: sql.NullString{String: authorID, Valid: true}, CreatedAt: now, UpdatedAt: now})
+		// Bounded retry for concurrent create race (DB constraint is final authority)
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			err = qtx.CreateEntry(ctx, db.CreateEntryParams{ID: entryID, ContentTypeID: contentType, Slug: input.slug, Status: "active", AuthorID: sql.NullString{String: authorID, Valid: true}, CreatedAt: now, UpdatedAt: now})
+			if err == nil {
+				break
+			}
+			if !definition.Routing.Single && isUniqueConstraintError(err) {
+				// Allocate next suffix and retry
+				nextBase := slugify(input.title)
+				// Force next candidate by appending attempt offset via allocateUniqueSlug with exclusion of current attempt?
+				// Simple: try next numeric suffix
+				candidate := fmt.Sprintf("%s-%d", nextBase, attempt+3) // homepage-3, homepage-4...
+				// Check if candidate is free; if not, re-allocate
+				if allocated, allocErr := h.allocateUniqueSlug(ctx, qtx, contentType, nextBase, entryID); allocErr == nil {
+					candidate = allocated
+				}
+				input.slug = candidate
+				lastErr = err
+				continue
+			}
+			break
+		}
+		if err != nil {
+			if lastErr != nil && isUniqueConstraintError(err) {
+				return fmt.Errorf("this slug is already in use")
+			}
+			return fmt.Errorf("save entry: %w", err)
+		}
 	} else {
 		entry, getErr := qtx.GetEntry(ctx, entryID)
 		if getErr != nil || entry.ContentTypeID != contentType {
@@ -641,7 +680,16 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 			return fmt.Errorf("get latest revision: %w", getErr)
 		}
 		revisionNumber = latest.RevisionNumber + 1
+		// For route-less updates, slug may need re-allocation if title changed; already allocated above.
+		// For Single types, keep posted slug; uniqueness will be enforced by DB and surfaced as error.
 		err = qtx.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{Slug: input.slug, Status: entry.Status, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
+		if err != nil && !definition.Routing.Single && isUniqueConstraintError(err) {
+			// Retry once with next unique slug
+			if allocated, allocErr := h.allocateUniqueSlug(ctx, qtx, contentType, slugify(input.title), entryID); allocErr == nil {
+				input.slug = allocated
+				err = qtx.UpdateEntryProjection(ctx, db.UpdateEntryProjectionParams{Slug: input.slug, Status: entry.Status, UpdatedAt: now, PublishedAt: entry.PublishedAt, ID: entryID})
+			}
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("save entry: %w", err)
@@ -813,6 +861,8 @@ func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryR
 
 // restoreEntryRevision makes a historical revision the latest draft. Revisions
 // are immutable, so restoring never changes the selected historical record.
+// Restoration creates a NEW draft revision that respects the CURRENT ContentTypeDefinition.
+// If current HasContent=false, the restored revision's document becomes empty SDT (historical remains untouched).
 func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID, revisionID, authorID string) error {
 	entry, revision, err := h.entryAndRevision(ctx, contentType, entryID, revisionID)
 	if err != nil {
@@ -832,9 +882,18 @@ func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID
 	}
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
+	documentJSON := revision.DocumentJson
+	if def, err := content.NewCatalog(qtx).GetDefinition(ctx, contentType); err == nil {
+		if !def.Capabilities.HasContent {
+			// Respect current capability: empty SDT even when restoring a historical revision with blocks
+			documentJSON = `{"version":1,"nodes":[]}`
+		}
+	} else if !content.DefinitionFor(contentType).Capabilities.HasContent {
+		documentJSON = `{"version":1,"nodes":[]}`
+	}
 	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
 		ID: newID, EntryID: entry.ID, RevisionNumber: latest.RevisionNumber + 1, Slug: revision.Slug,
-		Title: revision.Title, Excerpt: revision.Excerpt, DocumentJson: revision.DocumentJson,
+		Title: revision.Title, Excerpt: revision.Excerpt, DocumentJson: documentJSON,
 		SeoTitle: revision.SeoTitle, SeoDescription: revision.SeoDescription, CanonicalUrl: revision.CanonicalUrl,
 		FeaturedMediaID: revision.FeaturedMediaID, SocialMediaID: revision.SocialMediaID,
 		SeoRobotsIndex: revision.SeoRobotsIndex, SeoRobotsFollow: revision.SeoRobotsFollow,
@@ -1137,6 +1196,9 @@ func (h *Handler) upsertEntryRoute(ctx context.Context, queries *db.Queries, ent
 
 func validateHierarchyInput(ctx context.Context, q *db.Queries, contentType, entryID, parentEntryID string, menuOrder int64, isPostsPage bool, postsPageID sql.NullString) error {
 	def := content.DefinitionFor(contentType)
+	if catalogDef, err := content.NewCatalog(q).GetDefinition(ctx, contentType); err == nil {
+		def = catalogDef
+	}
 	if !def.Capabilities.Hierarchical {
 		if parentEntryID != "" {
 			return errors.New("this content type does not support a parent")
@@ -1584,7 +1646,6 @@ func entryWriteError(err error) string {
 	return "Could not save the entry."
 }
 
-
 func slugify(title string) string {
 	s := strings.ToLower(strings.TrimSpace(title))
 	s = strings.ReplaceAll(s, " ", "-")
@@ -1615,4 +1676,52 @@ func slugify(title string) string {
 		res = res[:100]
 	}
 	return res
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "UNIQUE constraint failed") || strings.Contains(msg, "unique constraint") || strings.Contains(msg, "UNIQUE")
+}
+
+// allocateUniqueSlug implements deterministic unique internal slug allocation for route-less content.
+// It slugifies the title, checks conflicts per content type (UNIQUE(content_type_id, slug)), and finds
+// an available slug with human-readable numeric suffixes: homepage, homepage-2, homepage-3...
+// Has a hard bounded loop (100 attempts) and behaves safely under concurrent create attempts
+// (DB constraint remains final authority; caller should retry on constraint error).
+func (h *Handler) allocateUniqueSlug(ctx context.Context, qtx *db.Queries, contentType, baseSlug, entryID string) (string, error) {
+	baseSlug = strings.TrimSpace(baseSlug)
+	if baseSlug == "" {
+		baseSlug = "item"
+	}
+	if len(baseSlug) > 100 {
+		baseSlug = baseSlug[:100]
+	}
+	// Bounded loop
+	for i := 0; i < 100; i++ {
+		candidate := baseSlug
+		if i > 0 {
+			suffix := fmt.Sprintf("-%d", i+1)
+			// Ensure total length <=100
+			if len(baseSlug)+len(suffix) > 100 {
+				candidate = baseSlug[:100-len(suffix)] + suffix
+			} else {
+				candidate = baseSlug + suffix
+			}
+		}
+		existing, err := qtx.GetFlatEntryBySlug(ctx, db.GetFlatEntryBySlugParams{ContentTypeID: contentType, Slug: candidate})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return candidate, nil
+			}
+			return "", err
+		}
+		if existing.ID == entryID {
+			return candidate, nil
+		}
+		// Conflict, try next suffix
+	}
+	return "", fmt.Errorf("could not allocate unique slug for %q", baseSlug)
 }

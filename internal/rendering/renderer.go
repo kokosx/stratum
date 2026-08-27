@@ -10,6 +10,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/richtext"
 )
 
@@ -118,6 +119,19 @@ type RenderContext struct {
 	CommentsCount   int
 	CommentsEnabled bool
 	CommentsEntryID string
+
+	// SitePartReader is the host capability for core/site-part blocks.
+	SitePartReader SitePartReader
+	// SitePartStack tracks visited site part IDs to prevent cycles.
+	SitePartStack map[string]struct{}
+	// SitePartDepth tracks nesting depth.
+	SitePartDepth int
+	// CollectedSiteParts accumulates site part dependencies for cache tags and used blocks.
+	// Map from site part ID to published revision ID.
+	CollectedSiteParts map[string]string
+
+	// Navigation carries the site navigation menus for blocks like core/navigation.
+	Navigation map[string]navigation.Menu
 }
 
 // RouteContext is the generic route scope for the current request.
@@ -150,6 +164,11 @@ type ContentReader interface {
 // DefinitionProvider is an optional host capability for typed field resolution.
 type DefinitionProvider interface {
 	Definition(ctx context.Context, contentType string) (content.ContentTypeDefinition, error)
+}
+
+// SitePartReader is the host capability for site-part blocks.
+type SitePartReader interface {
+	GetSitePart(ctx context.Context, id string) (*PreparedDocument, string, error)
 }
 
 // WithEntry returns a shallow copy of rc with Entry scoped to the given archive entry.
@@ -333,6 +352,8 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 			renderer.runtimes[key] = &entryFieldRenderer{}
 		case "core/entry-media":
 			renderer.runtimes[key] = &entryMediaRenderer{}
+		case "core/site-part":
+			renderer.runtimes[key] = &sitePartRenderer{}
 		}
 	}
 
@@ -740,6 +761,81 @@ func (e *entryMediaRenderer) Render(ctx context.Context, node PreparedNode, rc R
 func (c *collectionRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {
 	tmpl := r.blocks[blockKey{name: node.Block, version: int64(node.Version)}]
 	return r.renderCollectionNode(ctx, node, rc, tmpl)
+}
+
+type sitePartRenderer struct{}
+
+func (s *sitePartRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {
+	sitePartID, _ := node.Settings["sitePartId"].(string)
+	if sitePartID == "" {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Site part</span>`), nil
+		}
+		return "", nil
+	}
+	if rc.SitePartStack != nil {
+		if _, exists := rc.SitePartStack[sitePartID]; exists {
+			return template.HTML(`<!-- site-part cycle detected -->`), nil
+		}
+	}
+	if rc.SitePartDepth > 16 {
+		return template.HTML(`<!-- site-part max depth -->`), nil
+	}
+	if rc.SitePartReader == nil {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Site part</span>`), nil
+		}
+		return "", nil
+	}
+	pd, revID, err := rc.SitePartReader.GetSitePart(ctx, sitePartID)
+	if err != nil || pd == nil {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Site part unavailable</span>`), nil
+		}
+		return "", nil
+	}
+	if rc.CollectedSiteParts == nil {
+		rc.CollectedSiteParts = make(map[string]string)
+	}
+	rc.CollectedSiteParts[sitePartID] = revID
+	nested := rc
+	if nested.SitePartStack == nil {
+		nested.SitePartStack = make(map[string]struct{})
+	} else {
+		copied := make(map[string]struct{}, len(rc.SitePartStack)+1)
+		for k, v := range rc.SitePartStack {
+			copied[k] = v
+		}
+		nested.SitePartStack = copied
+	}
+	nested.SitePartStack[sitePartID] = struct{}{}
+	nested.SitePartDepth = rc.SitePartDepth + 1
+	nested.Entry = EntryContext{}
+	nested.EntryID = ""
+	nested.ContentReader = rc.ContentReader
+	nested.QueryCache = rc.QueryCache
+	nested.Route = rc.Route
+	nested.LCP = rc.LCP
+	inner, err := r.renderPreparedNodes(ctx, pd.Nodes, nested)
+	if err != nil {
+		return "", err
+	}
+	if nested.CollectedSiteParts != nil && rc.CollectedSiteParts != nil {
+		for k, v := range nested.CollectedSiteParts {
+			rc.CollectedSiteParts[k] = v
+		}
+	} else if nested.CollectedSiteParts != nil {
+		rc.CollectedSiteParts = nested.CollectedSiteParts
+	}
+	tmpl := r.blocks[blockKey{name: node.Block, version: int64(node.Version)}]
+	if tmpl != nil {
+		var out bytes.Buffer
+		if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: inner, Context: rc}); err != nil {
+			return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
+		}
+		return template.HTML(out.String()), nil
+	}
+	return inner, nil
 }
 
 func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, rc RenderContext, tmpl *template.Template) (template.HTML, error) {

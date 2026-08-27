@@ -1,0 +1,15 @@
+{{ define "content" }}
+<h1>{{ .Content.Heading }}</h1>
+{{ if .Content.Error }}<p class="form-error" role="alert">{{ .Content.Error }}</p>{{ end }}
+<form method="post" action="{{ .Content.Action }}">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <div class="form-field">
+    <label>Name<input name="name" value="{{ .Content.Name }}" required></label>
+    {{ if .Content.Location }}<input type="hidden" name="location" value="{{ .Content.Location }}">{{ end }}
+  </div>
+  <div class="form-actions">
+    <a class="button" href="{{ .Content.BackURL }}">Back</a>
+    <button class="button button-primary" type="submit">Create</button>
+  </div>
+</form>
+{{ end }}

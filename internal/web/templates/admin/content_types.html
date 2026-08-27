@@ -147,7 +147,7 @@
     <div class="card">
       <div class="card-header"><h2>Content</h2></div>
       <div class="card-body" style="display:grid;gap:12px;">
-        {{ if and (eq .Content.Form.ID "page") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+        {{ if .Content.Form.IsBuiltin }}
           <p class="form-help">Features for core types are managed by Stratum and cannot be disabled here. Custom fields can still be added below.</p>
           <div class="toggle-row" style="opacity:.6;pointer-events:none;">
             <span>Rich content editor</span><input type="checkbox" checked disabled>
@@ -173,7 +173,7 @@
     <div class="card">
       <div class="card-header"><h2>Routing</h2><span class="form-help">Individual pages and archive are independent. Publish is live data, not necessarily a URL.</span></div>
       <div class="card-body" style="display:grid;gap:16px;">
-        {{ if and (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+        {{ if .Content.Form.IsBuiltin }}
           <div class="notice notice-info">Routing for <strong>{{ .Content.Form.ID }}</strong> is core-owned. URL base is managed in <a href="/admin/settings/reading">Reading → Posts URL base</a> for Posts, and Page URLs are always <code>/slug</code>.</div>
         {{ else }}
           <label class="toggle-row">
@@ -215,7 +215,7 @@
     <div class="card">
       <div class="card-header"><h2>Structure</h2></div>
       <div class="card-body" style="display:grid;gap:12px;">
-        {{ if and (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+        {{ if .Content.Form.IsBuiltin }}
           <p class="form-help">Hierarchical is core-owned for Pages/Posts.</p>
         {{ else }}
           <label class="toggle-row">

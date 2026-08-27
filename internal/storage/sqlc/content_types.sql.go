@@ -52,7 +52,7 @@ func (q *Queries) DeleteContentType(ctx context.Context, id string) error {
 }
 
 const getContentType = `-- name: GetContentType :one
-SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id
+SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id, default_archive_template_id
 FROM content_types
 WHERE id = ?
 LIMIT 1
@@ -71,12 +71,13 @@ func (q *Queries) GetContentType(ctx context.Context, id string) (ContentType, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DefaultLayoutTemplateID,
+		&i.DefaultArchiveTemplateID,
 	)
 	return i, err
 }
 
 const listContentTypes = `-- name: ListContentTypes :many
-SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id
+SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id, default_archive_template_id
 FROM content_types
 ORDER BY display_name
 `
@@ -100,6 +101,7 @@ func (q *Queries) ListContentTypes(ctx context.Context) ([]ContentType, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DefaultLayoutTemplateID,
+			&i.DefaultArchiveTemplateID,
 		); err != nil {
 			return nil, err
 		}

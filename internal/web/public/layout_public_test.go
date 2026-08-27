@@ -61,7 +61,7 @@ func TestPublicRender_WithLayoutTemplate(t *testing.T) {
 	now := time.Now().Unix()
 	layoutID := "test-layout-page"
 	revID := "test-layout-page-r1"
-	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Test Layout", ContentTypeID: "page", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Test Layout", ContentTypeID: "page", Kind: "single", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	layoutDoc := `{"version":1,"nodes":[{"id":"hLayout","block":"core/heading","version":1,"props":{"text":"LayoutHeader","level":1},"settings":{}},{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`
@@ -149,7 +149,7 @@ func TestPublicRender_BrokenLayoutReturns500(t *testing.T) {
 	now := time.Now().Unix()
 	// Create an unpublished layout (no published revision)
 	layoutID := "broken-layout"
-	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Broken", ContentTypeID: "page", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Broken", ContentTypeID: "page", Kind: "single", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := queries.CreateLayoutTemplateRevision(ctx, db.CreateLayoutTemplateRevisionParams{ID: layoutID + "-r1", TemplateID: layoutID, RevisionNumber: 1, DocumentJson: `{"version":1,"nodes":[{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`, CreatedAt: now}); err != nil {
@@ -201,7 +201,7 @@ func TestCacheInvalidationOnLayoutPublish(t *testing.T) {
 	now := time.Now().Unix()
 	layoutID := "cache-layout"
 	revID := "cache-layout-r1"
-	_ = queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Cache", ContentTypeID: "page", CreatedAt: now, UpdatedAt: now})
+	_ = queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Cache", ContentTypeID: "page", Kind: "single", CreatedAt: now, UpdatedAt: now})
 	_ = queries.CreateLayoutTemplateRevision(ctx, db.CreateLayoutTemplateRevisionParams{ID: revID, TemplateID: layoutID, RevisionNumber: 1, DocumentJson: `{"version":1,"nodes":[{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`, CreatedAt: now})
 	_ = queries.SetLayoutTemplatePublishedRevision(ctx, db.SetLayoutTemplatePublishedRevisionParams{PublishedRevisionID: sql.NullString{String: revID, Valid: true}, UpdatedAt: now, ID: layoutID})
 
@@ -251,7 +251,7 @@ func TestLayoutTagInvalidationSelective(t *testing.T) {
 	rev1 := "selective-layout-r1"
 	layoutDocA := `{"version":1,"nodes":[{"id":"hA","block":"core/heading","version":1,"props":{"text":"LayoutA","level":1},"settings":{}},{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`
 	layoutDocB := `{"version":1,"nodes":[{"id":"hB","block":"core/heading","version":1,"props":{"text":"LayoutB","level":1},"settings":{}},{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}`
-	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Selective", ContentTypeID: "page", CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: layoutID, Name: "Selective", ContentTypeID: "page", Kind: "single", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := queries.CreateLayoutTemplateRevision(ctx, db.CreateLayoutTemplateRevisionParams{ID: rev1, TemplateID: layoutID, RevisionNumber: 1, DocumentJson: layoutDocA, CreatedAt: now}); err != nil {

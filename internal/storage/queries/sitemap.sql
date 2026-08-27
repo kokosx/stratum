@@ -21,6 +21,8 @@ WHERE rt.route_type = 'entry'
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
   AND r.visibility = 'public'
+  -- LEGACY STORAGE COMPATIBILITY ONLY: ct.public mirrors Routing.Single for custom types (public = single).
+  -- Routes are source of truth for public URLs; this filter is kept for backward compat and to exclude legacy private types.
   AND ct.public = 1
   AND (r.seo_robots_index IS NULL OR r.seo_robots_index != 0)
 ORDER BY rt.path;

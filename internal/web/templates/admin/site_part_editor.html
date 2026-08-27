@@ -1,0 +1,65 @@
+{{ define "content" }}
+<form id="stratum-editor-form" class="block-editor" method="post" action="{{ .Content.Action }}">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <input id="document-json" type="hidden" name="document_json" value="">
+  <input type="hidden" name="site_part_id" id="site-part-id" value="{{ .Content.SitePartID }}">
+  <header class="editor-topbar">
+    <div class="editor-metadata">
+      <label>Site Part Name<input id="site-part-name" name="name" value="{{ .Content.Name }}" required></label>
+    </div>
+    <div class="form-actions">
+      <a class="button" href="{{ .Content.BackURL }}">Back</a>
+      <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
+      <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+    </div>
+  </header>
+  <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
+  {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  <div class="editor-workspace">
+    <aside class="editor-panel block-library" aria-label="Block library">
+      <h2>Block Library</h2>
+      <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
+      <div id="block-catalog"></div>
+    </aside>
+    <section class="editor-panel document-canvas" aria-label="Document">
+      <div class="editor-panel-heading"><h2>Document</h2></div>
+      <div id="document-tree"></div>
+      <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
+    </section>
+    <aside class="editor-panel block-inspector" aria-label="Inspector">
+      <h2>Inspector</h2>
+      <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
+    </aside>
+  </div>
+  <section class="editor-preview-panel">
+    <div class="editor-preview-toolbar">
+      <div class="editor-mode-group">
+        <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
+        <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
+      </div>
+      <div class="editor-device-group">
+        <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
+        <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>
+        <button class="editor-device-btn" type="button" data-width="375px">Mobile</button>
+      </div>
+    </div>
+    <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
+  </section>
+  <div class="form-field" style="margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:6px;display:grid;gap:10px;">
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span><strong>Status:</strong> {{ .Content.Status }}</span>
+      {{ if .Content.IsPublished }}<span style="padding:2px 6px;background:#dcfce7;border-radius:4px;font-size:12px;">Published</span>{{ end }}
+      {{ if .Content.Location }}<span style="padding:2px 6px;background:#e0e7ff;border-radius:4px;font-size:12px;">Location: {{ .Content.Location }}</span>{{ end }}
+      {{ if .Content.Location }}<button class="button" type="submit" formaction="{{ .Content.LocationAction }}" data-on:click__prevent="@post('{{ .Content.LocationAction }}', {contentType: 'form'})">Assign to {{ .Content.Location }}</button>{{ end }}
+    </div>
+    <p class="field-desc">Draft changes are private until Publish. Publishing updates all pages using this part.</p>
+  </div>
+</form>
+<script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
+<script type="module" src="/admin/static/editor/editor.js"></script>
+{{ end }}
+
+{{ define "editor-status-region" }}
+<span id="editor-dirty" class="editor-status {{ if eq .Dirty "Saved" }}is-saved{{ else if eq .Dirty "Published" }}is-published{{ else }}is-dirty{{ end }}">{{ .Dirty }}</span>
+<span id="editor-publish-state" class="editor-status editor-publish-state">{{ .Status }}</span>
+{{ end }}

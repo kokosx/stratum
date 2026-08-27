@@ -38,7 +38,7 @@ func createLayoutTemplate(t *testing.T, queries *db.Queries, id, name, ctID, doc
 	t.Helper()
 	ctx := context.Background()
 	now := time.Now().Unix()
-	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: id, Name: name, ContentTypeID: ctID, CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := queries.CreateLayoutTemplate(ctx, db.CreateLayoutTemplateParams{ID: id, Name: name, ContentTypeID: ctID, Kind: "single", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("create layout %s: %v", id, err)
 	}
 	revID := id + "-r1"

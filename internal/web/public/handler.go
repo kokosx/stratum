@@ -764,6 +764,12 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	} else {
 		rc.Definition = content.DefinitionFor(entry.ContentTypeID)
 	}
+	rc.SitePartReader = &handlerSitePartReader{queries: h.queries, blocks: h.blocks}
+	rc.CollectedSiteParts = make(map[string]string)
+	rc.SitePartStack = make(map[string]struct{})
+	rc.SitePartDepth = 0
+	menus := h.hub.Navigation.LocationsForPath(path)
+	rc.Navigation = menus
 	// renderEntry runs only after the entry visibility gate; it is the normal
 	// public rendering path and must provide comments before blocks render.
 	h.populateCommentsContext(ctx, &rc, entry.ID, true)
@@ -771,15 +777,40 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("render document: %w", err)
 	}
-	menus := h.hub.Navigation.LocationsForPath(path)
+	// Header/Footer site parts (theme regions)
+	headerHTML, footerHTML, hfUsed := h.renderHeaderFooter(ctx, siteSnap, path, rc)
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, resolved, siteIcon)
 	head.Preloads = h.lcpPreloads(ctx, prepared, rc)
 
 	_, themeCSS, themeJS := h.hub.Assets.URLs()
-	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
+	usedBlocks := append([]rendering.BlockKey(nil), prepared.UsedBlocks...)
+	usedBlocks = append(usedBlocks, hfUsed...)
+	// Add used blocks from all referenced site parts (including nested)
+	for sid := range rc.CollectedSiteParts {
+		if pd, _, err := rc.SitePartReader.GetSitePart(ctx, sid); err == nil && pd != nil {
+			usedBlocks = append(usedBlocks, pd.UsedBlocks...)
+		}
+	}
+	// Deduplicate used blocks
+	seenBlocks := make(map[rendering.BlockKey]struct{}, len(usedBlocks))
+	deduped := make([]rendering.BlockKey, 0, len(usedBlocks))
+	for _, k := range usedBlocks {
+		if _, ok := seenBlocks[k]; !ok {
+			seenBlocks[k] = struct{}{}
+			deduped = append(deduped, k)
+		}
+	}
+	blocksCSS := h.hub.Assets.BlocksCSSFor(deduped)
 	kind := themes.PageKindSingle
 	isFront := path == "/"
+	regions := make(map[string]template.HTML)
+	if len(headerHTML) > 0 {
+		regions["header"] = headerHTML
+	}
+	if len(footerHTML) > 0 {
+		regions["footer"] = footerHTML
+	}
 	view := themes.PageView{
 		Site:        themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
 		Entry:       themes.EntryView{Title: entry.Title, SEOTitle: stringValue(entry.SeoTitle), SEODescription: resolved.Description, CanonicalURL: resolved.Canonical},
@@ -789,6 +820,9 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 		ContentType: entry.ContentTypeID,
 		Kind:        kind,
 		IsFrontPage: isFront,
+		Header:      headerHTML,
+		Footer:      footerHTML,
+		Regions:     regions,
 		Assets:      themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
 	}
 	html, err := h.themes.Render(view, nil)
@@ -807,8 +841,32 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if entry.LayoutTemplateID.Valid && entry.LayoutTemplateID.String != "" {
 		tags = append(tags, "layout:"+entry.LayoutTemplateID.String)
 	}
+	// Template tag for composed layout revision already via layout ID; for cache invalidation also include template:ID
+	if layoutRevID != "" {
+		tID := ""
+		if entry.LayoutTemplateID.Valid && entry.LayoutTemplateID.String != "" {
+			tID = entry.LayoutTemplateID.String
+		} else if ct, err := h.queries.GetContentType(ctx, entry.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid {
+			tID = ct.DefaultLayoutTemplateID.String
+		}
+		if tID != "" {
+			tags = append(tags, "template:"+tID)
+		}
+	}
 	for _, ct := range collectionContentTypes(prepared) {
 		tags = append(tags, "content-type:"+ct)
+	}
+	for sid := range rc.CollectedSiteParts {
+		tags = append(tags, "site-part:"+sid)
+	}
+	// Deduplicate tags
+	seenTags := make(map[string]struct{}, len(tags))
+	uniqTags := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if _, ok := seenTags[t]; !ok {
+			seenTags[t] = struct{}{}
+			uniqTags = append(uniqTags, t)
+		}
 	}
 	return pagecache.Entry{
 		HTML:        html,
@@ -817,8 +875,77 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 		ETag:        pagecache.ComputeETag(html),
 		Robots:      resolved.Robots,
 		ContentType: "text/html; charset=utf-8",
-		Tags:        tags,
+		Tags:        uniqTags,
 	}, nil
+}
+
+func (h *Handler) renderHeaderFooter(ctx context.Context, siteSnap *site.Snapshot, path string, baseRC rendering.RenderContext) (template.HTML, template.HTML, []rendering.BlockKey) {
+	var headerHTML, footerHTML template.HTML
+	var used []rendering.BlockKey
+	if baseRC.CollectedSiteParts == nil {
+		baseRC.CollectedSiteParts = make(map[string]string)
+	}
+	renderLoc := func(loc string) (template.HTML, *rendering.PreparedDocument, string) {
+		row, err := h.queries.GetSitePartLocation(ctx, loc)
+		if err != nil || !row.SitePartID.Valid || row.SitePartID.String == "" {
+			return "", nil, ""
+		}
+		pd, revID, err := baseRC.SitePartReader.GetSitePart(ctx, row.SitePartID.String)
+		if err != nil || pd == nil {
+			return "", nil, ""
+		}
+		baseRC.CollectedSiteParts[row.SitePartID.String] = revID
+		menus := h.hub.Navigation.LocationsForPath(path)
+		siteCtx := rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL}
+		if siteSnap.LogoMediaID != "" && h.media != nil {
+			if view, ok := h.media.MediaView(ctx, siteSnap.LogoMediaID); ok {
+				siteCtx.LogoURL = view.Src
+				siteCtx.LogoWidth = view.Width
+				siteCtx.LogoHeight = view.Height
+			}
+		}
+		if len(siteSnap.SocialLinks) > 0 {
+			siteCtx.SocialLinks = siteSnap.SocialLinks
+		}
+		rc := rendering.RenderContext{
+			Site:               siteCtx,
+			Route:              baseRC.Route,
+			Mode:               rendering.ModePublic,
+			ContentReader:      baseRC.ContentReader,
+			QueryCache:         baseRC.QueryCache,
+			SitePartReader:     baseRC.SitePartReader,
+			CollectedSiteParts: baseRC.CollectedSiteParts,
+			SitePartStack:      map[string]struct{}{row.SitePartID.String: {}},
+			SitePartDepth:      0,
+			LCP:                &rendering.LCPState{},
+			Navigation:         menus,
+		}
+		if baseRC.Route.IsArchive && baseRC.Route.Archive != nil {
+			rc.Archive = baseRC.Route.Archive
+			rc.Route = baseRC.Route
+		}
+		html, err := h.blocks.RenderPrepared(ctx, pd, rc)
+		if err != nil {
+			log.Printf("render site-part %s: %v", row.SitePartID.String, err)
+			return "", pd, revID
+		}
+		return html, pd, revID
+	}
+	hdr, hdrPD, _ := renderLoc("header")
+	if hdr != "" {
+		headerHTML = hdr
+		if hdrPD != nil {
+			used = append(used, hdrPD.UsedBlocks...)
+		}
+	}
+	ftr, ftrPD, _ := renderLoc("footer")
+	if ftr != "" {
+		footerHTML = ftr
+		if ftrPD != nil {
+			used = append(used, ftrPD.UsedBlocks...)
+		}
+	}
+	return headerHTML, footerHTML, used
 }
 
 func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath string, pageNum int, siteSnap *site.Snapshot) (pagecache.Entry, error) {
@@ -951,6 +1078,15 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		})
 	}
 
+	// EPIC 2: Check for archive template (takes precedence over shell for applicable content types)
+	var archiveTemplateDoc *document.Document
+	var archiveTemplateID, archiveTemplateRevID string
+	if tmpl, err := layouts.ResolveArchive(ctx, h.queries, archiveContentType); err == nil && tmpl != nil {
+		archiveTemplateDoc = tmpl.Document
+		archiveTemplateID = tmpl.TemplateID
+		archiveTemplateRevID = tmpl.RevisionID
+	}
+
 	// Load shell page (Posts Page) directly by entry ID via archive route (snapshot, zero DB for route).
 	var shellRow *db.GetPublishedEntryByIDRow
 	var prepared *rendering.PreparedDocument
@@ -958,7 +1094,9 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	var shellRobotsIndex, shellRobotsFollow *bool
 	var shellCanonical string
 	shellFound := false
-	if rt, ok := h.hub.Routes.Lookup(archivePath); ok && rt.RouteType == "archive" && rt.EntryID.Valid {
+	// For post archives, shell is fallback only if no archive template. For other types, shell is not used for product-style archives (no EntryID).
+	if archiveTemplateDoc == nil {
+		if rt, ok := h.hub.Routes.Lookup(archivePath); ok && rt.RouteType == "archive" && rt.EntryID.Valid {
 		if s, serr := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); serr == nil {
 			tmp := s
 			shellRow = &tmp
@@ -992,17 +1130,37 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			}
 		}
 	}
-	if !shellFound {
-		// No shell: default title/desc
-		if archivePath == "/" {
-			shellTitle = siteSnap.SiteTitle
-		} else {
-			shellTitle = "Blog"
-			if definition, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil && definition.PluralName != "" {
-				shellTitle = definition.PluralName
+		if !shellFound {
+			// No shell: default title/desc
+			if archivePath == "/" {
+				shellTitle = siteSnap.SiteTitle
+			} else {
+				shellTitle = "Blog"
+				if definition, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil {
+					// This is only a legacy/theme fallback. Admin Content Type labels are not canonical public content
+					// and must not be used by future multilingual/template systems.
+					shellTitle = content.FallbackArchiveTitle(definition)
+				}
 			}
 		}
-	}
+		} else {
+			// Archive template active: set SEO title from term or content type for fallback
+			if termArchive {
+				shellTitle = termName
+				shellDesc = termDesc
+			} else if definition, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil && definition.PluralName != "" {
+				shellTitle = definition.PluralName
+			} else {
+				shellTitle = archiveContentType
+			}
+			// Prepare archive template for later rendering
+			if pd, err := h.blocks.PreparedCache(archiveTemplateRevID, archiveTemplateDoc); err == nil {
+				prepared = pd
+			} else if pd2, err2 := h.blocks.Prepare(archiveTemplateDoc); err2 == nil {
+				prepared = pd2
+			}
+			shellFound = false
+		}
 
 	// Build archive context for Collection(source=context) – single source for both shell and fallback
 	pagination := rendering.PaginationContext{
@@ -1030,6 +1188,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	var shellContent template.HTML
 	var usedBlocks []rendering.BlockKey
 	var archiveRC rendering.RenderContext
+	menusForArchive := h.hub.Navigation.LocationsForPath(archivePath)
 	if prepared != nil {
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
 		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
@@ -1051,6 +1210,10 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		} else {
 			rc.Definition = content.DefinitionFor(archiveContentType)
 		}
+		rc.SitePartReader = &handlerSitePartReader{queries: h.queries, blocks: h.blocks}
+		rc.CollectedSiteParts = make(map[string]string)
+		rc.SitePartStack = make(map[string]struct{})
+		rc.Navigation = menusForArchive
 		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
 		if cerr != nil {
 			return pagecache.Entry{}, fmt.Errorf("render archive shell: %w", cerr)
@@ -1093,6 +1256,76 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			}
 		}
 	}
+
+	// Header/Footer for archive (EPIC 2)
+	var headerHTML, footerHTML template.HTML
+	var hfUsed []rendering.BlockKey
+	var baseRCForHF rendering.RenderContext
+	if prepared != nil {
+		baseRCForHF = archiveRC
+		if baseRCForHF.CollectedSiteParts == nil {
+			baseRCForHF.CollectedSiteParts = make(map[string]string)
+		}
+		if baseRCForHF.SitePartReader == nil {
+			baseRCForHF.SitePartReader = &handlerSitePartReader{queries: h.queries, blocks: h.blocks}
+		}
+		if baseRCForHF.Navigation == nil {
+			baseRCForHF.Navigation = menusForArchive
+		}
+	} else {
+		siteCtxHF := rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL}
+		if siteSnap.LogoMediaID != "" && h.media != nil {
+			if view, ok := h.media.MediaView(context.Background(), siteSnap.LogoMediaID); ok {
+				siteCtxHF.LogoURL = view.Src
+				siteCtxHF.LogoWidth = view.Width
+				siteCtxHF.LogoHeight = view.Height
+			}
+		}
+		routeCtxHF := rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
+		if termArchive {
+			routeCtxHF.TaxonomyID = taxonomyID
+			routeCtxHF.TermID = termID
+			routeCtxHF.ArchiveTitle = termName
+			routeCtxHF.ArchiveDescription = termDesc
+		}
+		baseRCForHF = rendering.RenderContext{
+			Site:               siteCtxHF,
+			Route:              routeCtxHF,
+			Mode:               rendering.ModePublic,
+			ContentReader:      &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media},
+			QueryCache:         make(map[string][]rendering.ArchiveEntry),
+			SitePartReader:     &handlerSitePartReader{queries: h.queries, blocks: h.blocks},
+			CollectedSiteParts: make(map[string]string),
+			SitePartStack:      make(map[string]struct{}),
+			Navigation:         menusForArchive,
+		}
+	}
+	headerHTML, footerHTML, hfUsed = h.renderHeaderFooter(ctx, siteSnap, archivePath, baseRCForHF)
+	usedBlocks = append(usedBlocks, hfUsed...)
+	for sid := range baseRCForHF.CollectedSiteParts {
+		if pd, _, err := baseRCForHF.SitePartReader.GetSitePart(ctx, sid); err == nil && pd != nil {
+			usedBlocks = append(usedBlocks, pd.UsedBlocks...)
+		}
+	}
+	if prepared != nil {
+		for sid := range archiveRC.CollectedSiteParts {
+			if _, exists := baseRCForHF.CollectedSiteParts[sid]; !exists {
+				if pd, _, err := baseRCForHF.SitePartReader.GetSitePart(ctx, sid); err == nil && pd != nil {
+					usedBlocks = append(usedBlocks, pd.UsedBlocks...)
+				}
+				baseRCForHF.CollectedSiteParts[sid] = archiveRC.CollectedSiteParts[sid]
+			}
+		}
+	}
+	dedupMap := make(map[rendering.BlockKey]struct{}, len(usedBlocks))
+	dedupedBlocks := make([]rendering.BlockKey, 0, len(usedBlocks))
+	for _, k := range usedBlocks {
+		if _, ok := dedupMap[k]; !ok {
+			dedupMap[k] = struct{}{}
+			dedupedBlocks = append(dedupedBlocks, k)
+		}
+	}
+	usedBlocks = dedupedBlocks
 
 	// Pagination URLs for theme fallback
 	prev, next := "", ""
@@ -1139,6 +1372,13 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	if len(usedBlocks) > 0 {
 		blocksCSS = h.hub.Assets.BlocksCSSFor(usedBlocks)
 	}
+	regionsArchive := make(map[string]template.HTML)
+	if len(headerHTML) > 0 {
+		regionsArchive["header"] = headerHTML
+	}
+	if len(footerHTML) > 0 {
+		regionsArchive["footer"] = footerHTML
+	}
 	view := themes.PageView{
 		Site:        themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: siteIconURL(siteSnap, h.media), LogoWidth: 0, LogoHeight: 0},
 		Head:        head,
@@ -1148,6 +1388,9 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		Kind:        themes.PageKindArchive,
 		IsFrontPage: archivePath == "/",
 		Archive:     archView,
+		Header:      headerHTML,
+		Footer:      footerHTML,
+		Regions:     regionsArchive,
 		Assets:      themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
 	}
 	// Populate Site logo for header (from site snapshot)
@@ -1181,11 +1424,17 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			tags = append(tags, "layout:"+shellRow.LayoutTemplateID.String)
 		}
 	}
+	if archiveTemplateID != "" {
+		tags = append(tags, "template:"+archiveTemplateID)
+	}
 	if prepared != nil {
 		for _, ct := range collectionContentTypes(prepared) {
 			// Archive shell may also have query collections needing same tag; dedup handled by cache
 			tags = append(tags, "content-type:"+ct)
 		}
+	}
+	for sid := range baseRCForHF.CollectedSiteParts {
+		tags = append(tags, "site-part:"+sid)
 	}
 	// Deduplicate tags
 	seen := make(map[string]struct{}, len(tags))

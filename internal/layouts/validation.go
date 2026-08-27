@@ -9,8 +9,19 @@ import (
 )
 
 // ValidateLayoutTemplateDocument validates that doc is a valid block document
-// with exactly one Content Slot.
+// with exactly one Content Slot. Kept for backward compat – new code should use ValidateTemplateDocument.
 func ValidateLayoutTemplateDocument(registry *blocks.Registry, doc *document.Document) error {
+	return ValidateTemplateDocument(registry, doc, "single", nil)
+}
+
+// ValidateLayoutTemplateDocumentForKind is historic alias.
+func ValidateLayoutTemplateDocumentForKind(registry *blocks.Registry, doc *document.Document, kind string, hasContent *bool) error {
+	return ValidateTemplateDocument(registry, doc, kind, hasContent)
+}
+
+// ValidateTemplateDocument validates a template document by kind.
+// hasContent is optional content type HasContent flag; nil means unknown (allow 0 or 1).
+func ValidateTemplateDocument(registry *blocks.Registry, doc *document.Document, kind string, hasContent *bool) error {
 	if doc == nil {
 		return errors.New("document is nil")
 	}
@@ -21,11 +32,23 @@ func ValidateLayoutTemplateDocument(registry *blocks.Registry, doc *document.Doc
 		return err
 	}
 	count := countSlot(doc.Nodes)
-	if count != 1 {
-		return fmt.Errorf("Layout template must contain exactly one Content block, found %d", count)
+	switch kind {
+	case "single":
+		if count > 1 {
+			return fmt.Errorf("Single template must contain at most one Content block, found %d", count)
+		}
+		// zero allowed – editor will warn if HasContent true
+		_ = hasContent
+	case "archive":
+		if count != 0 {
+			return errors.New("Archive template must not contain a Content Slot")
+		}
+	default:
+		if count != 0 {
+			return fmt.Errorf("template kind %q must not contain a Content Slot", kind)
+		}
 	}
-	// Validate slot nodes have no children and no unexpected props/settings? The schema already ensures empty.
-	// Additional check: ensure slot block version is 1
+	// Validate slot invariants
 	var check func([]document.Node) error
 	check = func(nodes []document.Node) error {
 		for _, n := range nodes {
@@ -36,7 +59,15 @@ func ValidateLayoutTemplateDocument(registry *blocks.Registry, doc *document.Doc
 				if len(n.Children) != 0 {
 					return errors.New("Content Slot must not have children")
 				}
+				if kind == "archive" {
+					return errors.New("Content Slot is not allowed in Archive Templates")
+				}
 			}
+			// Archive-only blocks
+			if (n.Block == "core/archive-title" || n.Block == "core/archive-description") && kind != "archive" {
+				return fmt.Errorf("block %s is only allowed in Archive Templates", n.Block)
+			}
+			// Content-slot check already
 			if err := check(n.Children); err != nil {
 				return err
 			}
@@ -61,5 +92,18 @@ func ValidateEntryDocument(registry *blocks.Registry, doc *document.Document) er
 	if count != 0 {
 		return errors.New("Content Slot is only allowed inside Layout Templates")
 	}
-	return nil
+	// Entry must not contain archive-only blocks
+	var check func([]document.Node) error
+	check = func(nodes []document.Node) error {
+		for _, n := range nodes {
+			if n.Block == "core/archive-title" || n.Block == "core/archive-description" {
+				return fmt.Errorf("block %s is only allowed in Archive Templates", n.Block)
+			}
+			if err := check(n.Children); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return check(doc.Nodes)
 }

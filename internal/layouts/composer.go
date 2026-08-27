@@ -75,8 +75,20 @@ func Compose(layoutDoc *document.Document, entryDoc *document.Document) (*docume
 	if err != nil {
 		return nil, err
 	}
-	if slots != 1 {
-		return nil, fmt.Errorf("layout template must contain exactly one Content block, found %d", slots)
+	if slots > 1 {
+		return nil, fmt.Errorf("layout template must contain at most one Content block, found %d", slots)
+	}
+	if slots == 0 {
+		// No Content Slot: template intentionally ignores entry content. Return template doc directly.
+		// Still validate the composed result (which is just the template without slot)
+		result := &document.Document{
+			Version: layoutCopy.Version,
+			Nodes:   composedNodes,
+		}
+		if err := document.Validate(result); err != nil {
+			return nil, fmt.Errorf("composed document invalid: %w", err)
+		}
+		return result, nil
 	}
 
 	result := &document.Document{

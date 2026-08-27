@@ -36,6 +36,9 @@ type contentTypeForm struct {
 	Preset string // structured | pages (only on create)
 }
 
+// IsBuiltin reports whether this form is for a core type (page/post).
+func (f contentTypeForm) IsBuiltin() bool { return f.ID == "page" || f.ID == "post" }
+
 func (h *Handler) requireManageSite(w http.ResponseWriter, r *http.Request) bool {
 	user, err := h.currentUser(r)
 	if err != nil || !authz.Allows(user.Role, authz.ManageSite) {

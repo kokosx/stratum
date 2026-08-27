@@ -20,16 +20,19 @@ const (
 // Capabilities describes what a content type can do. Each flag replaces a
 // previous `if contentType == "post"` branch in generic code.
 type Capabilities struct {
-	Hierarchical     bool
-	HasContent       bool
-	HasExcerpt       bool
-	HasFeatured      bool
-	HasSEO           bool
-	Public           bool // deprecated: use Routing.Single; kept for backward compat
-	HasArchive       bool
+	Hierarchical bool
+	HasContent   bool
+	HasExcerpt   bool
+	HasFeatured  bool
+	HasSEO       bool
+	// Public is LEGACY STORAGE COMPATIBILITY ONLY.
+	// DO NOT USE FOR CONTENT TYPE ROUTING DECISIONS.
+	// For custom types, Routing.Single is the source of truth.
+	// This field is kept for backward compatibility with old queries/sitemap
+	// and written as public = single for custom types (persistence adapter).
+	Public           bool
 	SupportsSticky   bool
 	SupportsComments bool
-	Single           bool // whether each published entry may have its own canonical public URL
 }
 
 // RoutingPolicy describes how entries of this type are addressed on the public
@@ -229,10 +232,17 @@ func (d ContentTypeDefinition) ItemLabel() string {
 func (d ContentTypeDefinition) EffectiveLabel() string { return d.Label() }
 
 // HasSingle reports whether this type owns per-entry canonical routes.
-func (d ContentTypeDefinition) HasSingle() bool { return d.Capabilities.Single || d.Routing.Single }
+// Domain source of truth is Routing.Single ONLY. Capabilities.Single was
+// previously a duplicate and has been removed.
+func (d ContentTypeDefinition) HasSingle() bool { return d.Routing.Single }
 
 // HasContent reports whether this type uses the rich SDT block editor.
 func (d ContentTypeDefinition) HasContentCapability() bool { return d.Capabilities.HasContent }
+
+// IsBuiltin reports whether this is a core type (page or post).
+func (d ContentTypeDefinition) IsBuiltin() bool {
+	return d.ID == ContentTypePage || d.ID == ContentTypePost
+}
 
 // KnownDefinitions returns built-in definitions. Custom types will be loaded
 // from the DB and merged with these defaults.
@@ -240,14 +250,14 @@ func KnownDefinitions() map[ContentTypeID]ContentTypeDefinition {
 	return map[ContentTypeID]ContentTypeDefinition{
 		ContentTypePage: {
 			ID: ContentTypePage, Name: "Page", PluralName: "Pages",
-			Capabilities: Capabilities{Hierarchical: true, HasContent: true, HasExcerpt: false, HasFeatured: true, HasSEO: true, Public: true, Single: true, HasArchive: false, SupportsSticky: false, SupportsComments: false},
+			Capabilities: Capabilities{Hierarchical: true, HasContent: true, HasExcerpt: false, HasFeatured: true, HasSEO: true, Public: true, SupportsSticky: false, SupportsComments: false},
 			Routing:      RoutingPolicy{Single: true, Archive: false},
 			SEO:          SEOProfile{SchemaType: "WebPage", OpenGraphType: "website"},
 			Templates:    TemplatePolicy{SinglePatterns: []string{"single-page", "single"}, ArchivePatterns: nil},
 		},
 		ContentTypePost: {
 			ID: ContentTypePost, Name: "Post", PluralName: "Posts",
-			Capabilities: Capabilities{Hierarchical: false, HasContent: true, HasExcerpt: true, HasFeatured: true, HasSEO: true, Public: true, Single: true, HasArchive: true, SupportsSticky: true, SupportsComments: true},
+			Capabilities: Capabilities{Hierarchical: false, HasContent: true, HasExcerpt: true, HasFeatured: true, HasSEO: true, Public: true, SupportsSticky: true, SupportsComments: true},
 			Routing:      RoutingPolicy{Single: true, Archive: true, ArchiveContentType: ContentTypePost},
 			SEO:          SEOProfile{SchemaType: "BlogPosting", OpenGraphType: "article"},
 			Templates:    TemplatePolicy{SinglePatterns: []string{"single-post", "single"}, ArchivePatterns: []string{"archive-post", "archive"}},
@@ -263,7 +273,7 @@ func DefinitionFor(id string) ContentTypeDefinition {
 	}
 	return ContentTypeDefinition{
 		ID: ContentTypeID(id), Name: id, PluralName: id,
-		Capabilities: Capabilities{HasContent: true, HasSEO: true, Public: true, Single: false},
+		Capabilities: Capabilities{HasContent: true, HasSEO: true, Public: true},
 		Routing:      RoutingPolicy{Single: false},
 		SEO:          SEOProfile{SchemaType: "WebPage", OpenGraphType: "website"},
 		Templates:    TemplatePolicy{SinglePatterns: []string{"single-" + id, "single"}, ArchivePatterns: []string{"archive-" + id, "archive"}},
@@ -271,6 +281,36 @@ func DefinitionFor(id string) ContentTypeDefinition {
 }
 
 // IsArchived reports whether this type has an archive.
+// Domain source of truth is Routing.Archive ONLY.
 func (d ContentTypeDefinition) IsArchived() bool {
-	return d.Capabilities.HasArchive || d.Routing.Archive
+	return d.Routing.Archive
+}
+
+// FallbackArchiveTitle returns a legacy fallback heading for archives with no shell/template.
+// This is only a legacy/theme fallback. Admin Content Type labels are not canonical public content
+// and must not be used by future multilingual/template systems.
+func FallbackArchiveTitle(d ContentTypeDefinition) string {
+	return d.Label()
+}
+
+// SchemaChanged reports whether the content schema has meaningfully changed.
+// Stable comparison ignores labels outside fields, routing, and admin-only presentation metadata.
+// At minimum, field added or removed must bump. Validation/default changes are ignored for now
+// to keep version semantics stable; label changes never bump.
+func SchemaChanged(previous, next []FieldDefinition) bool {
+	if len(previous) != len(next) {
+		return true
+	}
+	prevKeys := make(map[string]struct{}, len(previous))
+	for _, f := range previous {
+		prevKeys[f.Key] = struct{}{}
+	}
+	for _, f := range next {
+		if _, ok := prevKeys[f.Key]; !ok {
+			return true
+		}
+	}
+	// No add/remove detected: even if order changed, that's not a schema version bump.
+	// Type immutability is enforced elsewhere; label/help changes don't bump.
+	return false
 }

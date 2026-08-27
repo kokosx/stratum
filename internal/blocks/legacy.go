@@ -11,7 +11,7 @@ var legacyMetadata = map[string]struct {
 	Hidden           bool
 }{
 	"core/content-slot": {
-		Contexts: []string{"layout-template"},
+		Contexts: []string{"single-template"},
 	},
 	"core/image": {
 		Contexts:     []string{"entry", "layout-template"},

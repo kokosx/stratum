@@ -10,6 +10,22 @@ import (
 	"database/sql"
 )
 
+const clearContentTypeDefaultArchiveTemplate = `-- name: ClearContentTypeDefaultArchiveTemplate :exec
+UPDATE content_types
+SET default_archive_template_id = NULL, updated_at = ?
+WHERE id = ?
+`
+
+type ClearContentTypeDefaultArchiveTemplateParams struct {
+	UpdatedAt int64  `json:"updated_at"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) ClearContentTypeDefaultArchiveTemplate(ctx context.Context, arg ClearContentTypeDefaultArchiveTemplateParams) error {
+	_, err := q.db.ExecContext(ctx, clearContentTypeDefaultArchiveTemplate, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const clearContentTypeDefaultLayoutTemplate = `-- name: ClearContentTypeDefaultLayoutTemplate :exec
 UPDATE content_types
 SET default_layout_template_id = NULL, updated_at = ?
@@ -42,12 +58,53 @@ func (q *Queries) ClearLayoutTemplatePublishedRevision(ctx context.Context, arg 
 	return err
 }
 
+const countLayoutTemplatesByKind = `-- name: CountLayoutTemplatesByKind :one
+SELECT COUNT(*)
+FROM layout_templates
+WHERE kind = ?
+`
+
+func (q *Queries) CountLayoutTemplatesByKind(ctx context.Context, kind string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLayoutTemplatesByKind, kind)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createLayoutTemplate = `-- name: CreateLayoutTemplate :exec
+INSERT INTO layout_templates (id, name, content_type_id, kind, published_revision_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`
+
+type CreateLayoutTemplateParams struct {
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	ContentTypeID       string         `json:"content_type_id"`
+	Kind                string         `json:"kind"`
+	PublishedRevisionID sql.NullString `json:"published_revision_id"`
+	CreatedAt           int64          `json:"created_at"`
+	UpdatedAt           int64          `json:"updated_at"`
+}
+
+func (q *Queries) CreateLayoutTemplate(ctx context.Context, arg CreateLayoutTemplateParams) error {
+	_, err := q.db.ExecContext(ctx, createLayoutTemplate,
+		arg.ID,
+		arg.Name,
+		arg.ContentTypeID,
+		arg.Kind,
+		arg.PublishedRevisionID,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const createLayoutTemplateLegacy = `-- name: CreateLayoutTemplateLegacy :exec
 INSERT INTO layout_templates (id, name, content_type_id, published_revision_id, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
 `
 
-type CreateLayoutTemplateParams struct {
+type CreateLayoutTemplateLegacyParams struct {
 	ID                  string         `json:"id"`
 	Name                string         `json:"name"`
 	ContentTypeID       string         `json:"content_type_id"`
@@ -56,8 +113,8 @@ type CreateLayoutTemplateParams struct {
 	UpdatedAt           int64          `json:"updated_at"`
 }
 
-func (q *Queries) CreateLayoutTemplate(ctx context.Context, arg CreateLayoutTemplateParams) error {
-	_, err := q.db.ExecContext(ctx, createLayoutTemplate,
+func (q *Queries) CreateLayoutTemplateLegacy(ctx context.Context, arg CreateLayoutTemplateLegacyParams) error {
+	_, err := q.db.ExecContext(ctx, createLayoutTemplateLegacy,
 		arg.ID,
 		arg.Name,
 		arg.ContentTypeID,
@@ -95,7 +152,7 @@ func (q *Queries) CreateLayoutTemplateRevision(ctx context.Context, arg CreateLa
 }
 
 const getContentTypeWithDefault = `-- name: GetContentTypeWithDefault :one
-SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id
+SELECT id, display_name, plural_name, hierarchical, public, config_json, created_at, updated_at, default_layout_template_id, default_archive_template_id
 FROM content_types
 WHERE id = ?
 LIMIT 1
@@ -114,6 +171,7 @@ func (q *Queries) GetContentTypeWithDefault(ctx context.Context, id string) (Con
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DefaultLayoutTemplateID,
+		&i.DefaultArchiveTemplateID,
 	)
 	return i, err
 }
@@ -141,7 +199,7 @@ func (q *Queries) GetLatestLayoutTemplateRevision(ctx context.Context, templateI
 }
 
 const getLayoutTemplate = `-- name: GetLayoutTemplate :one
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
 FROM layout_templates
 WHERE id = ?
 LIMIT 1
@@ -157,6 +215,7 @@ func (q *Queries) GetLayoutTemplate(ctx context.Context, id string) (LayoutTempl
 		&i.PublishedRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -187,6 +246,7 @@ SELECT
     t.id,
     t.name,
     t.content_type_id,
+    t.kind,
     t.published_revision_id,
     t.created_at,
     t.updated_at,
@@ -202,6 +262,7 @@ type GetLayoutTemplateWithPublishedRevisionRow struct {
 	ID                  string         `json:"id"`
 	Name                string         `json:"name"`
 	ContentTypeID       string         `json:"content_type_id"`
+	Kind                string         `json:"kind"`
 	PublishedRevisionID sql.NullString `json:"published_revision_id"`
 	CreatedAt           int64          `json:"created_at"`
 	UpdatedAt           int64          `json:"updated_at"`
@@ -216,6 +277,7 @@ func (q *Queries) GetLayoutTemplateWithPublishedRevision(ctx context.Context, id
 		&i.ID,
 		&i.Name,
 		&i.ContentTypeID,
+		&i.Kind,
 		&i.PublishedRevisionID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -326,7 +388,7 @@ func (q *Queries) ListLayoutTemplateRevisions(ctx context.Context, templateID st
 }
 
 const listLayoutTemplates = `-- name: ListLayoutTemplates :many
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
 FROM layout_templates
 ORDER BY
     CASE WHEN published_revision_id IS NULL THEN 1 ELSE 0 END,
@@ -350,6 +412,7 @@ func (q *Queries) ListLayoutTemplates(ctx context.Context) ([]LayoutTemplate, er
 			&i.PublishedRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -365,7 +428,7 @@ func (q *Queries) ListLayoutTemplates(ctx context.Context) ([]LayoutTemplate, er
 }
 
 const listLayoutTemplatesByContentType = `-- name: ListLayoutTemplatesByContentType :many
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
 FROM layout_templates
 WHERE content_type_id = ?
 ORDER BY name, id
@@ -387,6 +450,88 @@ func (q *Queries) ListLayoutTemplatesByContentType(ctx context.Context, contentT
 			&i.PublishedRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLayoutTemplatesByContentTypeAndKind = `-- name: ListLayoutTemplatesByContentTypeAndKind :many
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
+FROM layout_templates
+WHERE content_type_id = ? AND kind = ?
+ORDER BY name, id
+`
+
+type ListLayoutTemplatesByContentTypeAndKindParams struct {
+	ContentTypeID string `json:"content_type_id"`
+	Kind          string `json:"kind"`
+}
+
+func (q *Queries) ListLayoutTemplatesByContentTypeAndKind(ctx context.Context, arg ListLayoutTemplatesByContentTypeAndKindParams) ([]LayoutTemplate, error) {
+	rows, err := q.db.QueryContext(ctx, listLayoutTemplatesByContentTypeAndKind, arg.ContentTypeID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LayoutTemplate{}
+	for rows.Next() {
+		var i LayoutTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ContentTypeID,
+			&i.PublishedRevisionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLayoutTemplatesByKind = `-- name: ListLayoutTemplatesByKind :many
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
+FROM layout_templates
+WHERE kind = ?
+ORDER BY name, id
+`
+
+func (q *Queries) ListLayoutTemplatesByKind(ctx context.Context, kind string) ([]LayoutTemplate, error) {
+	rows, err := q.db.QueryContext(ctx, listLayoutTemplatesByKind, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LayoutTemplate{}
+	for rows.Next() {
+		var i LayoutTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ContentTypeID,
+			&i.PublishedRevisionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -402,7 +547,7 @@ func (q *Queries) ListLayoutTemplatesByContentType(ctx context.Context, contentT
 }
 
 const listPublishedLayoutTemplatesByContentType = `-- name: ListPublishedLayoutTemplatesByContentType :many
-SELECT id, name, content_type_id, published_revision_id, created_at, updated_at
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
 FROM layout_templates
 WHERE content_type_id = ?
   AND published_revision_id IS NOT NULL
@@ -425,6 +570,7 @@ func (q *Queries) ListPublishedLayoutTemplatesByContentType(ctx context.Context,
 			&i.PublishedRevisionID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -437,6 +583,66 @@ func (q *Queries) ListPublishedLayoutTemplatesByContentType(ctx context.Context,
 		return nil, err
 	}
 	return items, nil
+}
+
+const listPublishedLayoutTemplatesByContentTypeAndKind = `-- name: ListPublishedLayoutTemplatesByContentTypeAndKind :many
+SELECT id, name, content_type_id, published_revision_id, created_at, updated_at, kind
+FROM layout_templates
+WHERE content_type_id = ? AND kind = ? AND published_revision_id IS NOT NULL
+ORDER BY name, id
+`
+
+type ListPublishedLayoutTemplatesByContentTypeAndKindParams struct {
+	ContentTypeID string `json:"content_type_id"`
+	Kind          string `json:"kind"`
+}
+
+func (q *Queries) ListPublishedLayoutTemplatesByContentTypeAndKind(ctx context.Context, arg ListPublishedLayoutTemplatesByContentTypeAndKindParams) ([]LayoutTemplate, error) {
+	rows, err := q.db.QueryContext(ctx, listPublishedLayoutTemplatesByContentTypeAndKind, arg.ContentTypeID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LayoutTemplate{}
+	for rows.Next() {
+		var i LayoutTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ContentTypeID,
+			&i.PublishedRevisionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setContentTypeDefaultArchiveTemplate = `-- name: SetContentTypeDefaultArchiveTemplate :exec
+UPDATE content_types
+SET default_archive_template_id = ?, updated_at = ?
+WHERE id = ?
+`
+
+type SetContentTypeDefaultArchiveTemplateParams struct {
+	DefaultArchiveTemplateID sql.NullString `json:"default_archive_template_id"`
+	UpdatedAt                int64          `json:"updated_at"`
+	ID                       string         `json:"id"`
+}
+
+func (q *Queries) SetContentTypeDefaultArchiveTemplate(ctx context.Context, arg SetContentTypeDefaultArchiveTemplateParams) error {
+	_, err := q.db.ExecContext(ctx, setContentTypeDefaultArchiveTemplate, arg.DefaultArchiveTemplateID, arg.UpdatedAt, arg.ID)
+	return err
 }
 
 const setContentTypeDefaultLayoutTemplate = `-- name: SetContentTypeDefaultLayoutTemplate :exec

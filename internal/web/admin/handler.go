@@ -21,6 +21,7 @@ import (
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/siteparts"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
@@ -49,6 +50,9 @@ type Handler struct {
 	layoutTemplatesTemplate      *template.Template
 	layoutTemplateFormTemplate   *template.Template
 	layoutTemplateEditorTemplate *template.Template
+	sitePartsTemplate            *template.Template
+	sitePartFormTemplate         *template.Template
+	sitePartEditorTemplate       *template.Template
 	taxonomyTemplate             *template.Template
 	usersTemplate                *template.Template
 	commentsTemplate             *template.Template
@@ -58,6 +62,7 @@ type Handler struct {
 	themes                       *themes.Runtime
 	runtime                      *runtimehub.Runtime
 	layoutsService               *layouts.Service
+	sitePartsService             *siteparts.Service
 	previewRenderer              func(context.Context, string, string, map[string]any, string) ([]byte, error)
 	documentPreview              func(context.Context, RenderInput) ([]byte, error)
 	publishing                   *publishing.Service
@@ -178,6 +183,19 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
+	sitePartsTemplate, err := template.ParseFS(templateFS, "layout.html", "site_parts.html")
+	if err != nil {
+		sitePartsTemplate = template.New("site_parts")
+	}
+	sitePartFormTemplate, err := template.ParseFS(templateFS, "layout.html", "site_part_form.html")
+	if err != nil {
+		sitePartFormTemplate = template.New("site_part_form")
+	}
+	sitePartEditorTemplate, err := template.ParseFS(templateFS, "layout.html", "site_part_editor.html")
+	if err != nil {
+		sitePartEditorTemplate = template.New("site_part_editor")
+	}
+
 	taxonomyTemplate, err := template.New("taxonomy").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "taxonomy.html")
 	if err != nil {
 		return nil, err
@@ -227,11 +245,15 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		layoutTemplatesTemplate:      layoutTemplatesTemplate,
 		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
 		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
+		sitePartsTemplate:            sitePartsTemplate,
+		sitePartFormTemplate:         sitePartFormTemplate,
+		sitePartEditorTemplate:       sitePartEditorTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,
 		runtime:                      runtime,
 		layoutsService:               layouts.NewService(database, queries, blockRegistry),
+		sitePartsService:             siteparts.NewService(database, queries, blockRegistry),
 		publishing:                   publisher,
 		scheduler:                    scheduler,
 		comments:                     commentsService,
@@ -336,6 +358,17 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/publish", h.requireAuth(h.publishLayoutTemplate))
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/preview", h.requireAuth(h.previewLayoutTemplate))
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/default", h.requireAuth(h.setDefaultLayoutTemplate))
+	mux.HandleFunc("POST /admin/appearance/templates/{id}/default-archive", h.requireAuth(h.setDefaultArchiveTemplate))
+	mux.HandleFunc("GET /admin/appearance/site-parts", h.requireAuth(h.listSiteParts))
+	mux.HandleFunc("GET /admin/appearance/site-parts/new", h.requireAuth(h.newSitePart))
+	mux.HandleFunc("POST /admin/appearance/site-parts", h.requireAuth(h.createSitePart))
+	mux.HandleFunc("GET /admin/appearance/site-parts/{id}/edit", h.requireAuth(h.editSitePart))
+	mux.HandleFunc("POST /admin/appearance/site-parts/{id}", h.requireAuth(h.saveSitePart))
+	mux.HandleFunc("POST /admin/appearance/site-parts/{id}/publish", h.requireAuth(h.publishSitePart))
+	mux.HandleFunc("POST /admin/appearance/site-parts/{id}/preview", h.requireAuth(h.previewSitePart))
+	mux.HandleFunc("POST /admin/appearance/site-parts/location", h.requireAuth(h.setSitePartLocation))
+	mux.HandleFunc("POST /admin/appearance/site-parts/location/clear", h.requireAuth(h.clearSitePartLocation))
+	mux.HandleFunc("POST /admin/appearance/site-parts/{id}/delete", h.requireAuth(h.deleteSitePart))
 	mux.HandleFunc("GET /admin/settings", h.requireAuth(h.settingsRedirect))
 	mux.HandleFunc("POST /admin/settings", h.requireAuth(h.saveSettings))
 	mux.HandleFunc("GET /admin/settings/general", h.requireAuth(h.settingsGeneral))

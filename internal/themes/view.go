@@ -162,6 +162,12 @@ type PageView struct {
 	PreviewCSS template.CSS
 	// Assets holds the fingerprinted stylesheet and script URLs.
 	Assets AssetsView
+	// Header and Footer are the rendered site part regions. When nil/empty the
+	// theme falls back to its legacy header/footer partials.
+	Header template.HTML
+	Footer template.HTML
+	// Regions is the generic region map for future extensibility (header, footer, etc.)
+	Regions map[string]template.HTML
 }
 
 // PageKind is a small, closed set used for template resolution and view logic.

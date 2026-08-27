@@ -26,8 +26,10 @@ type layoutTemplateRow struct {
 	Name            string
 	ContentTypeID   string
 	ContentTypeName string
+	Kind            string
 	Status          string
 	IsDefault       bool
+	IsDefaultArchive bool
 }
 
 type layoutTemplateFormData struct {
@@ -35,11 +37,13 @@ type layoutTemplateFormData struct {
 	Action          string
 	PublishAction   string
 	DefaultAction   string
+	ArchiveDefaultAction string
 	BackURL         string
 	TemplateID      string
 	Name            string
 	ContentTypeID   string
 	ContentTypeName string
+	Kind            string
 	ReadOnlyCT      bool
 	DocumentJSON    string
 	EditorJSON      template.JS
@@ -49,6 +53,7 @@ type layoutTemplateFormData struct {
 	Status          string
 	PublicNote      string
 	IsDefault       bool
+	IsDefaultArchive bool
 	ContentTypes    []ctOption
 }
 
@@ -86,14 +91,18 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 	for _, t := range templates {
 		ctName := t.ContentTypeID
 		isDefault := false
+		isDefaultArchive := false
 		if ct, ok := ctMap[t.ContentTypeID]; ok {
 			ctName = ct.DisplayName
 			if ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String == t.ID {
 				isDefault = true
 			}
+			if ct.DefaultArchiveTemplateID.Valid && ct.DefaultArchiveTemplateID.String == t.ID {
+				isDefaultArchive = true
+			}
 		}
 		status := layoutTemplateStatusFromMaps(t, latestMap)
-		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Status: status, IsDefault: isDefault})
+		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Kind: t.Kind, Status: status, IsDefault: isDefault, IsDefaultArchive: isDefaultArchive})
 	}
 	data := layoutTemplatesData{Templates: rows, CSRFToken: token, Flash: h.consumeFlash(w, r)}
 	if err := h.layoutTemplatesTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Templates", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Flash: data.Flash, Content: data}); err != nil {
@@ -136,12 +145,17 @@ func (h *Handler) newLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	for _, ct := range cts {
 		opts = append(opts, ctOption{ID: ct.ID, DisplayName: ct.DisplayName})
 	}
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	if kind != "archive" {
+		kind = "single"
+	}
 	data := layoutTemplateFormData{
 		Heading:      "Create Template",
 		Action:       "/admin/appearance/templates",
 		BackURL:      "/admin/appearance/templates",
 		CSRFToken:    token,
 		ContentTypes: opts,
+		Kind:         kind,
 	}
 	if err := h.layoutTemplateFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Template", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render new template form: %v", err)
@@ -155,6 +169,13 @@ func (h *Handler) createLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
 	ctID := strings.TrimSpace(r.FormValue("content_type_id"))
+	kind := strings.TrimSpace(r.FormValue("kind"))
+	if kind == "" {
+		kind = "single"
+	}
+	if kind != "single" && kind != "archive" {
+		kind = "single"
+	}
 	if name == "" {
 		h.renderLayoutCreateError(w, r, "Name is required", name, ctID)
 		return
@@ -163,7 +184,7 @@ func (h *Handler) createLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 		h.renderLayoutCreateError(w, r, "Content type is required", name, ctID)
 		return
 	}
-	id, err := h.layoutsService.Create(r.Context(), name, ctID)
+	id, err := h.layoutsService.CreateWithKind(r.Context(), name, ctID, kind)
 	if err != nil {
 		log.Printf("create layout template: %v", err)
 		h.renderLayoutCreateError(w, r, entryWriteError(err), name, ctID)
@@ -227,31 +248,51 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 	}
 	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
 	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
-	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("layout-template"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/templates/" + tmpl.ID + "/preview", ContentTypeID: tmpl.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs,
+	catalogMode := "layout-template"
+	if tmpl.Kind == "archive" {
+		catalogMode = "archive-template"
+	} else if tmpl.Kind == "single" {
+		catalogMode = "single-template"
+	}
+	previewURL := "/admin/appearance/templates/" + tmpl.ID + "/preview"
+	sitePartsCatalog := []map[string]string{}
+	if parts, err := h.queries.ListSiteParts(r.Context()); err == nil {
+		for _, p := range parts {
+			sitePartsCatalog = append(sitePartsCatalog, map[string]string{"id": p.ID, "name": p.Name})
+		}
+	}
+	bootstrap, err := json.Marshal(map[string]any{
+		"document": json.RawMessage(rev.DocumentJson), "catalog": h.blocks.EditorCatalogFor(catalogMode), "definitions": h.blocks.EditorDefinitions(doc), "previewURL": previewURL, "contentTypeID": tmpl.ContentTypeID, "contentTypes": contentTypes, "fieldCatalogs": fieldCatalogs, "taxonomyCatalogs": taxonomyCatalogs, "siteParts": sitePartsCatalog, "contextKind": catalogMode, "templateKind": tmpl.Kind,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	isDefaultArchive := false
+	if ct, err := h.queries.GetContentType(r.Context(), tmpl.ContentTypeID); err == nil && ct.DefaultArchiveTemplateID.Valid && ct.DefaultArchiveTemplateID.String == tmpl.ID {
+		isDefaultArchive = true
+	}
 	data := layoutTemplateFormData{
-		Heading:         "Edit Template",
-		Action:          "/admin/appearance/templates/" + tmpl.ID,
-		PublishAction:   "/admin/appearance/templates/" + tmpl.ID + "/publish",
-		DefaultAction:   "/admin/appearance/templates/" + tmpl.ID + "/default",
-		BackURL:         "/admin/appearance/templates",
-		TemplateID:      tmpl.ID,
-		Name:            tmpl.Name,
-		ContentTypeID:   tmpl.ContentTypeID,
-		ContentTypeName: ctName,
-		ReadOnlyCT:      true,
-		DocumentJSON:    rev.DocumentJson,
-		EditorJSON:      template.JS(bootstrap),
-		CSRFToken:       token,
-		Error:           errMsg,
-		Dirty:           "Saved",
-		Status:          status,
-		IsDefault:       isDefault,
+		Heading:              "Edit Template",
+		Action:               "/admin/appearance/templates/" + tmpl.ID,
+		PublishAction:        "/admin/appearance/templates/" + tmpl.ID + "/publish",
+		DefaultAction:        "/admin/appearance/templates/" + tmpl.ID + "/default",
+		ArchiveDefaultAction: "/admin/appearance/templates/" + tmpl.ID + "/default-archive",
+		BackURL:              "/admin/appearance/templates",
+		TemplateID:           tmpl.ID,
+		Name:                 tmpl.Name,
+		ContentTypeID:        tmpl.ContentTypeID,
+		ContentTypeName:      ctName,
+		Kind:                 tmpl.Kind,
+		ReadOnlyCT:           true,
+		DocumentJSON:         rev.DocumentJson,
+		EditorJSON:           template.JS(bootstrap),
+		CSRFToken:            token,
+		Error:                errMsg,
+		Dirty:                "Saved",
+		Status:               status,
+		IsDefault:            isDefault,
+		IsDefaultArchive:     isDefaultArchive,
 	}
 	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Template - " + tmpl.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render layout editor: %v", err)
@@ -363,10 +404,12 @@ func (h *Handler) publishLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if h.runtime != nil {
-		h.runtime.InvalidateLayoutTemplate(id)
+		h.runtime.InvalidateTemplate(id)
 		// If this template is the default for its content type, all entries using the default must also be invalidated.
-		if ct, err := h.queries.GetContentType(r.Context(), tmpl.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String == id {
-			h.runtime.InvalidateContent()
+		if ct, err := h.queries.GetContentType(r.Context(), tmpl.ContentTypeID); err == nil {
+			if (ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String == id) || (ct.DefaultArchiveTemplateID.Valid && ct.DefaultArchiveTemplateID.String == id) {
+				h.runtime.InvalidateContent()
+			}
 		}
 	}
 	if isDatastarRequest(r) {
@@ -490,5 +533,27 @@ func (h *Handler) setDefaultLayoutTemplate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.setFlash(w, "Default template updated.")
+	http.Redirect(w, r, "/admin/appearance/templates/"+id+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) setDefaultArchiveTemplate(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.layoutsService.SetDefaultArchive(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateContent()
+		_ = h.runtime.ReloadRoutes(r.Context())
+	}
+	if isDatastarRequest(r) {
+		writeSSE(w, toastEvent("success", "Default archive template updated."))
+		return
+	}
+	h.setFlash(w, "Default archive template updated.")
 	http.Redirect(w, r, "/admin/appearance/templates/"+id+"/edit", http.StatusSeeOther)
 }

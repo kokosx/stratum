@@ -326,8 +326,11 @@ func (r *Registry) RenderDocumentContext(doc *document.Document, rc rendering.Re
 
 // EditorMode controls which blocks are visible in the inserter.
 const (
-	EditorModeEntry          = "entry"
-	EditorModeLayoutTemplate = "layout-template"
+	EditorModeEntry           = "entry"
+	EditorModeLayoutTemplate  = "layout-template"
+	EditorModeSingleTemplate  = "single-template"
+	EditorModeArchiveTemplate = "archive-template"
+	EditorModeSitePart        = "site-part"
 )
 
 // EditorCatalog returns a detached copy of the enabled definitions. Disabled
@@ -364,11 +367,18 @@ func (r *Registry) EditorCatalogFor(mode string) []EditorDefinition {
 
 func isEditorContextAllowed(contexts []string, mode string) bool {
 	if len(contexts) == 0 {
-		// Legacy blocks without explicit contexts: available in both entry and layout-template.
+		// Legacy blocks without explicit contexts: available in all entry and template modes.
 		return true
 	}
 	for _, c := range contexts {
 		if c == mode {
+			return true
+		}
+		// Alias: "layout-template" historically covered both single and archive templates.
+		if c == EditorModeLayoutTemplate && (mode == EditorModeSingleTemplate || mode == EditorModeArchiveTemplate) {
+			return true
+		}
+		if c == EditorModeSingleTemplate && mode == EditorModeLayoutTemplate {
 			return true
 		}
 	}
@@ -456,9 +466,9 @@ func parseEditorContextsFromSchema(blockName string, schema Schema) []string {
 	}
 	// Final fallback for very old rows without any metadata.
 	if blockName == "core/content-slot" {
-		return []string{EditorModeLayoutTemplate}
+		return []string{EditorModeSingleTemplate}
 	}
-	return []string{EditorModeEntry, EditorModeLayoutTemplate}
+	return []string{EditorModeEntry, EditorModeLayoutTemplate, EditorModeSingleTemplate, EditorModeArchiveTemplate, EditorModeSitePart}
 }
 
 func parseLCPCapabilityFromSchema(blockName string, schema Schema) (candidate bool, requiresFeatured bool) {

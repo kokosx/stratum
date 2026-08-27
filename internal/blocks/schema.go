@@ -61,7 +61,7 @@ type EditorField struct {
 	OptionsSource string `json:"optionsSource,omitempty"`
 }
 
-var supportedOptionsSources = map[string]bool{"content-types": true, "entry-fields": true, "taxonomies": true, "taxonomy-terms": true}
+var supportedOptionsSources = map[string]bool{"content-types": true, "entry-fields": true, "taxonomies": true, "taxonomy-terms": true, "site-parts": true}
 
 var supportedControls = map[string]bool{
 	"text": true, "textarea": true, "number": true, "checkbox": true,

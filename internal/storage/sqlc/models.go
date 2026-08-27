@@ -42,15 +42,16 @@ type Comment struct {
 }
 
 type ContentType struct {
-	ID                      string         `json:"id"`
-	DisplayName             string         `json:"display_name"`
-	PluralName              string         `json:"plural_name"`
-	Hierarchical            int64          `json:"hierarchical"`
-	Public                  int64          `json:"public"`
-	ConfigJson              string         `json:"config_json"`
-	CreatedAt               int64          `json:"created_at"`
-	UpdatedAt               int64          `json:"updated_at"`
-	DefaultLayoutTemplateID sql.NullString `json:"default_layout_template_id"`
+	ID                       string         `json:"id"`
+	DisplayName              string         `json:"display_name"`
+	PluralName               string         `json:"plural_name"`
+	Hierarchical             int64          `json:"hierarchical"`
+	Public                   int64          `json:"public"`
+	ConfigJson               string         `json:"config_json"`
+	CreatedAt                int64          `json:"created_at"`
+	UpdatedAt                int64          `json:"updated_at"`
+	DefaultLayoutTemplateID  sql.NullString `json:"default_layout_template_id"`
+	DefaultArchiveTemplateID sql.NullString `json:"default_archive_template_id"`
 }
 
 type Entry struct {
@@ -126,6 +127,7 @@ type LayoutTemplate struct {
 	PublishedRevisionID sql.NullString `json:"published_revision_id"`
 	CreatedAt           int64          `json:"created_at"`
 	UpdatedAt           int64          `json:"updated_at"`
+	Kind                string         `json:"kind"`
 }
 
 type LayoutTemplateRevision struct {
@@ -244,6 +246,29 @@ type Session struct {
 	UserID    string `json:"user_id"`
 	CreatedAt int64  `json:"created_at"`
 	ExpiresAt int64  `json:"expires_at"`
+}
+
+type SitePart struct {
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	PublishedRevisionID sql.NullString `json:"published_revision_id"`
+	CreatedAt           int64          `json:"created_at"`
+	UpdatedAt           int64          `json:"updated_at"`
+}
+
+type SitePartLocation struct {
+	Location   string         `json:"location"`
+	SitePartID sql.NullString `json:"site_part_id"`
+	UpdatedAt  int64          `json:"updated_at"`
+}
+
+type SitePartRevision struct {
+	ID             string         `json:"id"`
+	SitePartID     string         `json:"site_part_id"`
+	RevisionNumber int64          `json:"revision_number"`
+	DocumentJson   string         `json:"document_json"`
+	CreatedBy      sql.NullString `json:"created_by"`
+	CreatedAt      int64          `json:"created_at"`
 }
 
 type SiteSetting struct {

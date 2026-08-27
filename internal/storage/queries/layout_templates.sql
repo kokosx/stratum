@@ -1,4 +1,8 @@
 -- name: CreateLayoutTemplate :exec
+INSERT INTO layout_templates (id, name, content_type_id, kind, published_revision_id, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+-- name: CreateLayoutTemplateLegacy :exec
 INSERT INTO layout_templates (id, name, content_type_id, published_revision_id, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?);
 
@@ -80,6 +84,39 @@ FROM content_types
 WHERE id = ?
 LIMIT 1;
 
+-- name: SetContentTypeDefaultArchiveTemplate :exec
+UPDATE content_types
+SET default_archive_template_id = ?, updated_at = ?
+WHERE id = ?;
+
+-- name: ClearContentTypeDefaultArchiveTemplate :exec
+UPDATE content_types
+SET default_archive_template_id = NULL, updated_at = ?
+WHERE id = ?;
+
+-- name: ListLayoutTemplatesByKind :many
+SELECT *
+FROM layout_templates
+WHERE kind = ?
+ORDER BY name, id;
+
+-- name: ListLayoutTemplatesByContentTypeAndKind :many
+SELECT *
+FROM layout_templates
+WHERE content_type_id = ? AND kind = ?
+ORDER BY name, id;
+
+-- name: ListPublishedLayoutTemplatesByContentTypeAndKind :many
+SELECT *
+FROM layout_templates
+WHERE content_type_id = ? AND kind = ? AND published_revision_id IS NOT NULL
+ORDER BY name, id;
+
+-- name: CountLayoutTemplatesByKind :one
+SELECT COUNT(*)
+FROM layout_templates
+WHERE kind = ?;
+
 -- name: SetContentTypeDefaultLayoutTemplate :exec
 UPDATE content_types
 SET default_layout_template_id = ?, updated_at = ?
@@ -95,6 +132,7 @@ SELECT
     t.id,
     t.name,
     t.content_type_id,
+    t.kind,
     t.published_revision_id,
     t.created_at,
     t.updated_at,

@@ -116,11 +116,15 @@ func TestCompose_PreserveIDsProps(t *testing.T) {
 }
 
 func TestCompose_ZeroSlotRejected(t *testing.T) {
+	// EPIC 2: Single templates may have zero Content Slot (fields-only). Compose should succeed and return layout doc.
 	layout := mustDoc(t, `{"version":1,"nodes":[{"id":"sec","block":"core/section","version":1,"props":{},"settings":{},"children":[{"id":"h","block":"core/heading","version":1,"props":{"text":"hi","level":1},"settings":{}}]}]}`)
 	entry := mustDoc(t, `{"version":1,"nodes":[]}`)
-	_, err := Compose(layout, entry)
-	if err == nil {
-		t.Fatal("expected error for zero slot")
+	composed, err := Compose(layout, entry)
+	if err != nil {
+		t.Fatalf("unexpected error for zero slot: %v", err)
+	}
+	if len(composed.Nodes) != 1 || composed.Nodes[0].ID != "sec" {
+		t.Fatalf("expected layout doc returned for zero slot, got %+v", composed)
 	}
 }
 
