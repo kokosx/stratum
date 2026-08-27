@@ -26,6 +26,7 @@ import (
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/richtext"
 	"github.com/kokosx/stratum/internal/routing"
+	"github.com/kokosx/stratum/internal/slug"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/taxonomy"
 )
@@ -36,10 +37,12 @@ var entrySlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 // Entry public paths are "/<slug>", so reserving these slugs keeps /admin,
 // /stratum, /sitemap.xml and /robots.txt owned exclusively by the application.
 var reservedSlugs = map[string]bool{
-	"admin":       true,
-	"stratum":     true,
-	"sitemap.xml": true,
-	"robots.txt":  true,
+	"admin":        true,
+	"stratum":      true,
+	"sitemap.xml":  true,
+	"robots.txt":   true,
+	"sitemap-xml":  true,
+	"robots-txt":   true,
 }
 
 // entryFormData is the presentation model shared by every Entry editor
@@ -1333,8 +1336,15 @@ func readEntryInput(r *http.Request, contentTypes ...string) (entryInput, error)
 	if input.title == "" {
 		return input, errors.New("title is required")
 	}
-	// For route-less content types slug is generated automatically from title
-	if input.slug == "" {
+	// Server is canonical: always normalize submitted slug through Slugify.
+	// JS preview is advisory only; empty input still derives from title.
+	if input.slug != "" {
+		canonical := slug.Slugify(input.slug)
+		if canonical == "" {
+			return input, errors.New("slug may contain lowercase letters, numbers, and hyphens only")
+		}
+		input.slug = canonical
+	} else {
 		input.slug = slugify(input.title)
 	}
 	if !entrySlugPattern.MatchString(input.slug) {
@@ -1453,32 +1463,11 @@ func (h *Handler) taxonomyTermIDsForInput(ctx context.Context, q *db.Queries, co
 }
 
 func taxonomySlugify(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.ReplaceAll(s, " ", "-")
-	s = strings.ReplaceAll(s, "_", "-")
-	var b strings.Builder
-	prevDash := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevDash = false
-		} else if r == '-' {
-			if !prevDash {
-				b.WriteRune('-')
-				prevDash = true
-			}
-		} else {
-			if !prevDash {
-				b.WriteRune('-')
-				prevDash = true
-			}
-		}
+	canonical := slug.Slugify(s)
+	if canonical == "" {
+		return "tag"
 	}
-	res := strings.Trim(b.String(), "-")
-	if res == "" {
-		res = "tag"
-	}
-	return res
+	return canonical
 }
 
 // validCanonicalURL accepts an empty value, an absolute http(s) URL, or a
@@ -1650,49 +1639,11 @@ func entryWriteError(err error) string {
 }
 
 func slugify(title string) string {
-	s := strings.ToLower(strings.TrimSpace(title))
-	// Transliterate Polish and common Latin diacritics so JS and Go stay in
-	// sync. JS does NFD + strip combining marks + ł→l; Go mirrors that with
-	// an explicit map to avoid pulling golang.org/x/text for a tiny helper.
-	s = strings.NewReplacer(
-		"ą", "a", "ć", "c", "ę", "e", "ł", "l", "ń", "n", "ó", "o", "ś", "s", "ź", "z", "ż", "z",
-		"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a", "æ", "ae",
-		"è", "e", "é", "e", "ê", "e", "ë", "e",
-		"ì", "i", "í", "i", "î", "i", "ï", "i",
-		"ò", "o", "ô", "o", "õ", "o", "ö", "o", "ø", "o",
-		"ù", "u", "ú", "u", "û", "u", "ü", "u",
-		"ý", "y", "ÿ", "y",
-		"ñ", "n", "ç", "c",
-		"ß", "ss",
-	).Replace(s)
-	s = strings.ReplaceAll(s, " ", "-")
-	s = strings.ReplaceAll(s, "_", "-")
-	var b strings.Builder
-	prevDash := false
-	for _, r := range s {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			prevDash = false
-		} else if r == '-' {
-			if !prevDash {
-				b.WriteRune('-')
-				prevDash = true
-			}
-		} else {
-			if !prevDash {
-				b.WriteRune('-')
-				prevDash = true
-			}
-		}
+	canonical := slug.Slugify(title)
+	if canonical == "" {
+		return "item"
 	}
-	res := strings.Trim(b.String(), "-")
-	if res == "" {
-		res = "item"
-	}
-	if len(res) > 100 {
-		res = res[:100]
-	}
-	return res
+	return canonical
 }
 
 func isUniqueConstraintError(err error) bool {

@@ -356,6 +356,11 @@ func (s *Service) Delete(ctx context.Context, templateID string) error {
 	if usage.InUse() {
 		return errors.New("this template cannot be deleted because it is currently in use")
 	}
+	// Clear historical references that would otherwise block FK cascades.
+	// Usage counts only latest/published, but entry_revisions has RESTRICT FK.
+	if _, err := s.db.ExecContext(ctx, `UPDATE entry_revisions SET layout_template_id = NULL WHERE layout_template_id = ?`, templateID); err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM layout_templates WHERE id = ?`, templateID)
 	return err
 }

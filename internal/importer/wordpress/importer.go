@@ -25,6 +25,7 @@ import (
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/routing"
 	"github.com/kokosx/stratum/internal/search"
+	"github.com/kokosx/stratum/internal/slug"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/taxonomy"
@@ -166,7 +167,7 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 				_ = perr
 				return nil
 			}
-			if s := slug(it.Slug, it.Title); s == "" {
+			if s := wpSlug(it.Slug, it.Title); s == "" {
 				report.Skipped++
 				report.Warnings++
 				return nil
@@ -305,7 +306,7 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 		if _, rejected := plan.errors[it.ID]; rejected {
 			return nil // already counted above
 		}
-		s := slug(it.Slug, it.Title)
+		s := wpSlug(it.Slug, it.Title)
 		if s == "" || !entrySlugPattern.MatchString(s) {
 			r.Skipped++
 			r.Warnings++
@@ -522,7 +523,7 @@ func (im *Importer) createEntryAndAttachment(ctx context.Context, runID string, 
 		r.Skipped++
 		return nil
 	}
-	s := slug(it.Slug, it.Title)
+	s := wpSlug(it.Slug, it.Title)
 	if s == "" || !entrySlugPattern.MatchString(s) {
 		r.Skipped++
 		r.Warnings++
@@ -576,7 +577,7 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 	if err != nil {
 		return nil
 	}
-	s := slug(it.Slug, it.Title)
+	s := wpSlug(it.Slug, it.Title)
 	if s == "" || !entrySlugPattern.MatchString(s) {
 		r.Skipped++
 		r.Warnings++
@@ -793,43 +794,20 @@ func nonzeroUnix(t time.Time, f time.Time) int64 {
 	}
 	return t.Unix()
 }
-func slug(value, title string) string {
-	s := strings.ToLower(strings.TrimSpace(value))
-	if s == "" {
-		s = strings.ToLower(strings.TrimSpace(title))
-	}
-	s = strings.NewReplacer(
-		"ą", "a", "ć", "c", "ę", "e", "ł", "l", "ń", "n", "ó", "o", "ś", "s", "ź", "z", "ż", "z",
-		"à", "a", "á", "a", "â", "a", "ã", "a", "ä", "a", "å", "a", "æ", "ae",
-		"è", "e", "é", "e", "ê", "e", "ë", "e",
-		"ì", "i", "í", "i", "î", "i", "ï", "i",
-		"ò", "o", "ô", "o", "õ", "o", "ö", "o", "ø", "o",
-		"ù", "u", "ú", "u", "û", "u", "ü", "u",
-		"ý", "y", "ÿ", "y",
-		"ñ", "n", "ç", "c",
-		"ß", "ss",
-	).Replace(s)
-	// Replace any sequence of non-alphanum with dash
-	var b strings.Builder
-	dash := false
-	for _, r := range s {
-		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
-			b.WriteRune(r)
-			dash = false
-		} else if !dash {
-			b.WriteByte('-')
-			dash = true
+func wpSlug(value, title string) string {
+	// Preserve valid existing WP slug, but canonicalize it; only generate from title when empty.
+	raw := strings.TrimSpace(value)
+	if raw != "" {
+		canonical := slug.Slugify(raw)
+		if canonical != "" && entrySlugPattern.MatchString(canonical) {
+			return canonical
 		}
 	}
-	res := strings.Trim(b.String(), "-")
-	// Collapse multiple dashes already handled, validate pattern
-	if res == "" {
-		return ""
+	titleSlug := slug.Slugify(title)
+	if titleSlug != "" && entrySlugPattern.MatchString(titleSlug) {
+		return titleSlug
 	}
-	if !entrySlugPattern.MatchString(res) {
-		return ""
-	}
-	return res
+	return ""
 }
 
 func currentPostsBase(ctx context.Context, q *db.Queries) string {
@@ -845,7 +823,7 @@ func currentPostsBase(ctx context.Context, q *db.Queries) string {
 }
 
 func effectivePathForItem(it item, postsBase string, parentPath string) string {
-	s := slug(it.Slug, it.Title)
+	s := wpSlug(it.Slug, it.Title)
 	if s == "" {
 		return ""
 	}
@@ -929,7 +907,7 @@ func buildRoutePlan(ctx context.Context, q *db.Queries, items []item, postsBase 
 		if !ok {
 			return "", errors.New("missing item")
 		}
-		s := slug(it.Slug, it.Title)
+		s := wpSlug(it.Slug, it.Title)
 		if s == "" {
 			return "", errors.New("empty slug")
 		}

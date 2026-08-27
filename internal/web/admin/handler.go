@@ -53,6 +53,7 @@ type Handler struct {
 	sitePartsTemplate            *template.Template
 	sitePartFormTemplate         *template.Template
 	sitePartEditorTemplate       *template.Template
+	revisionsTemplate            *template.Template
 	taxonomyTemplate             *template.Template
 	usersTemplate                *template.Template
 	commentsTemplate             *template.Template
@@ -196,6 +197,11 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		sitePartEditorTemplate = template.New("site_part_editor")
 	}
 
+	revisionsTemplate, err := template.ParseFS(templateFS, "layout.html", "revisions.html")
+	if err != nil {
+		revisionsTemplate = template.New("revisions")
+	}
+
 	taxonomyTemplate, err := template.New("taxonomy").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "taxonomy.html")
 	if err != nil {
 		return nil, err
@@ -248,6 +254,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		sitePartsTemplate:            sitePartsTemplate,
 		sitePartFormTemplate:         sitePartFormTemplate,
 		sitePartEditorTemplate:       sitePartEditorTemplate,
+		revisionsTemplate:            revisionsTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,

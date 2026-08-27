@@ -7,17 +7,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/kokosx/stratum/internal/slug"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
 var (
-	ErrInvalidMenu  = errors.New("invalid navigation menu")
-	slugPartPattern = regexp.MustCompile(`[^a-z0-9]+`)
+	ErrInvalidMenu = errors.New("invalid navigation menu")
 )
 
 type ItemInput struct {
@@ -230,11 +229,11 @@ func cleanLocations(locations []string) ([]string, error) {
 }
 
 func menuSlug(name string) string {
-	slug := strings.Trim(slugPartPattern.ReplaceAllString(strings.ToLower(name), "-"), "-")
-	if slug == "" {
+	canonical := slug.Slugify(name)
+	if canonical == "" {
 		return "menu"
 	}
-	return slug
+	return canonical
 }
 
 func newID() (string, error) {

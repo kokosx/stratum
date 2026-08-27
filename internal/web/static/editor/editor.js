@@ -1529,7 +1529,10 @@
   }
 
   // --- Auto-slug from title ------------------------------------------------
-
+  // Client-side slugging is preview only. Server-side slug.Slugify is canonical
+  // and will re-canonicalize whatever the client submits (manual edits, paste,
+  // emoji, etc.). JS should match server for normal Latin/Polish input but does
+  // not need exhaustive transliteration tables.
   function setupSlug() {
     const title = document.getElementById("entry-title");
     const slug = document.getElementById("entry-slug");

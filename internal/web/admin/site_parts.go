@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/siteparts"
@@ -542,31 +541,42 @@ func (h *Handler) listSitePartRevisions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	token, _ := h.csrfToken(w, r)
-	var out strings.Builder
-	out.WriteString(`<!doctype html><meta name="robots" content="noindex,nofollow"><title>Site Part revisions</title><main><h1>Revision history: ` + template.HTMLEscapeString(part.Name) + `</h1><p><a href="/admin/appearance/site-parts/` + template.URLQueryEscaper(id) + `/edit">Back to editor</a></p><ol>`)
 	latestID := ""
 	if len(revisions) > 0 {
 		latestID = revisions[0].ID
 	}
+	rows := make([]revisionHistoryRow, 0, len(revisions))
 	for _, revision := range revisions {
-		status := "Revision " + fmt.Sprint(revision.RevisionNumber)
+		status := ""
 		if part.PublishedRevisionID.Valid && part.PublishedRevisionID.String == revision.ID {
-			status += " · Published"
+			status = "Published"
 		} else if revision.ID == latestID {
-			status += " · Current draft"
+			status = "Current draft"
 		}
 		author := ""
 		if revision.CreatedBy.Valid {
-			author = " · Author " + template.HTMLEscapeString(revision.CreatedBy.String)
+			author = revision.CreatedBy.String
 		}
-		createdAt := time.Unix(revision.CreatedAt, 0).Format("2006-01-02 15:04")
-		out.WriteString(`<li><strong>` + template.HTMLEscapeString(status) + `</strong> · <time>` + createdAt + `</time>` + author + ` <a href="/admin/appearance/site-parts/` + template.URLQueryEscaper(id) + `/revisions/` + template.URLQueryEscaper(revision.ID) + `/preview">Preview</a> <form method="post" action="/admin/appearance/site-parts/` + template.URLQueryEscaper(id) + `/revisions/` + template.URLQueryEscaper(revision.ID) + `/restore" style="display:inline"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(token) + `"><button type="submit">Restore</button></form></li>`)
+		rows = append(rows, revisionHistoryRow{
+			ID:         revision.ID,
+			Number:     revision.RevisionNumber,
+			CreatedAt:  formatRevisionTime(revision.CreatedAt),
+			Author:     author,
+			Status:     status,
+			PreviewURL: "/admin/appearance/site-parts/" + template.URLQueryEscaper(id) + "/revisions/" + template.URLQueryEscaper(revision.ID) + "/preview",
+			RestoreURL: "/admin/appearance/site-parts/" + template.URLQueryEscaper(id) + "/revisions/" + template.URLQueryEscaper(revision.ID) + "/restore",
+			CanRestore: true,
+		})
 	}
-	out.WriteString(`</ol></main>`)
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(out.String()))
+	h.renderRevisions(w, r, revisionHistoryData{
+		Heading:    "Revision history",
+		BackURL:    "/admin/appearance/site-parts/" + template.URLQueryEscaper(id) + "/edit",
+		EntityName: part.Name,
+		EntityKind: "Site Part",
+		Revisions:  rows,
+		CSRFToken:  token,
+		Flash:      h.consumeFlash(w, r),
+	})
 }
 
 func (h *Handler) previewSitePartRevision(w http.ResponseWriter, r *http.Request) {
