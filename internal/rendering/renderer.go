@@ -129,9 +129,26 @@ type RenderContext struct {
 	// CollectedSiteParts accumulates site part dependencies for cache tags and used blocks.
 	// Map from site part ID to published revision ID.
 	CollectedSiteParts map[string]string
+	// Dependencies is request-scoped mutable dependency state shared by every
+	// shallow RenderContext copy. CollectedSiteParts remains as a compatibility
+	// view for older callers.
+	Dependencies *DependencyState
 
 	// Navigation carries the site navigation menus for blocks like core/navigation.
 	Navigation map[string]navigation.Menu
+}
+
+// DependencyState is the small request-local state shared while rendering a
+// document and any nested Site Parts.
+type DependencyState struct {
+	SiteParts map[string]ResolvedSitePart
+}
+
+// ResolvedSitePart carries cache and asset information discovered during the
+// render, avoiding a second read of every nested Site Part afterwards.
+type ResolvedSitePart struct {
+	RevisionID string
+	UsedBlocks []BlockKey
 }
 
 // RouteContext is the generic route scope for the current request.
@@ -354,6 +371,12 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 			renderer.runtimes[key] = &entryMediaRenderer{}
 		case "core/site-part":
 			renderer.runtimes[key] = &sitePartRenderer{}
+		case "core/archive-title":
+			renderer.runtimes[key] = &archiveTitleRenderer{}
+		case "core/archive-description":
+			renderer.runtimes[key] = &archiveDescriptionRenderer{}
+		case "core/navigation":
+			renderer.runtimes[key] = &navigationRenderer{}
 		}
 	}
 
@@ -555,6 +578,14 @@ func (r *Renderer) renderNode(ctx context.Context, node document.Node, rc Render
 // decoding or defaults processing. It is the fast path used for published pages
 // after the document has been prepared once and cached.
 func (r *Renderer) RenderPreparedDocumentContext(ctx context.Context, pd *PreparedDocument, rc RenderContext) (template.HTML, error) {
+	if rc.Dependencies == nil {
+		rc.Dependencies = &DependencyState{SiteParts: make(map[string]ResolvedSitePart)}
+	} else if rc.Dependencies.SiteParts == nil {
+		rc.Dependencies.SiteParts = make(map[string]ResolvedSitePart)
+	}
+	if rc.CollectedSiteParts == nil {
+		rc.CollectedSiteParts = make(map[string]string)
+	}
 	// Initialise shared LCP state if caller did not.
 	if rc.LCP == nil {
 		rc.LCP = &LCPState{}
@@ -765,6 +796,139 @@ func (c *collectionRenderer) Render(ctx context.Context, node PreparedNode, rc R
 
 type sitePartRenderer struct{}
 
+type archiveTitleRenderer struct{}
+
+func (a *archiveTitleRenderer) Render(_ context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
+	title := rc.Route.ArchiveTitle
+	if title == "" && rc.Route.Archive != nil {
+		title = rc.Route.Archive.Title
+	}
+	if title == "" && rc.Archive != nil {
+		title = rc.Archive.Title
+	}
+	if title == "" {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<h1 class="stratum-archive-title stratum-align-left"><span class="stratum-placeholder">Archive title</span></h1>`), nil
+		}
+		return "", nil
+	}
+	level := 1
+	switch value := node.Settings["level"].(type) {
+	case int:
+		level = value
+	case int64:
+		level = int(value)
+	case float64:
+		level = int(value)
+	case json.Number:
+		if parsed, err := value.Int64(); err == nil {
+			level = int(parsed)
+		}
+	}
+	if level < 1 || level > 6 {
+		level = 1
+	}
+	align, _ := node.Settings["align"].(string)
+	if align != "center" && align != "right" {
+		align = "left"
+	}
+	tag := fmt.Sprintf("h%d", level)
+	return template.HTML("<" + tag + ` class="stratum-archive-title stratum-align-` + align + `">` + template.HTMLEscapeString(title) + "</" + tag + ">"), nil
+}
+
+type archiveDescriptionRenderer struct{}
+
+func (a *archiveDescriptionRenderer) Render(_ context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
+	description := rc.Route.ArchiveDescription
+	if description == "" && rc.Route.Archive != nil {
+		description = rc.Route.Archive.Description
+	}
+	if description == "" && rc.Archive != nil {
+		description = rc.Archive.Description
+	}
+	if description == "" {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<p class="stratum-archive-description stratum-align-left stratum-placeholder">Archive description</p>`), nil
+		}
+		return "", nil
+	}
+	align, _ := node.Settings["align"].(string)
+	if align != "center" && align != "right" {
+		align = "left"
+	}
+	return template.HTML(`<p class="stratum-archive-description stratum-align-` + align + `">` + template.HTMLEscapeString(description) + `</p>`), nil
+}
+
+type navigationRenderer struct{}
+
+func (n *navigationRenderer) Render(_ context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
+	location, _ := node.Settings["location"].(string)
+	if location == "" {
+		location = "primary"
+	}
+	menu, ok := rc.Navigation[location]
+	if !ok || len(menu.Items) == 0 {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<span class="stratum-placeholder">Navigation</span>`), nil
+		}
+		return "", nil
+	}
+	style, _ := node.Settings["style"].(string)
+	if style != "vertical" {
+		style = "horizontal"
+	}
+	label := "Navigation"
+	switch location {
+	case "primary":
+		label = "Primary navigation"
+	case "footer":
+		label = "Footer navigation"
+	}
+	var out strings.Builder
+	out.WriteString(`<nav class="stratum-navigation stratum-navigation--`)
+	out.WriteString(style)
+	out.WriteString(`" aria-label="`)
+	out.WriteString(template.HTMLEscapeString(label))
+	out.WriteString(`"><ul>`)
+	renderNavigationItems(&out, menu.Items)
+	out.WriteString(`</ul></nav>`)
+	return template.HTML(out.String()), nil
+}
+
+func renderNavigationItems(out *strings.Builder, items []navigation.MenuItem) {
+	for _, item := range items {
+		out.WriteString(`<li`)
+		if item.Current {
+			out.WriteString(` class="is-current"`)
+		} else if item.Ancestor {
+			out.WriteString(` class="is-ancestor"`)
+		}
+		out.WriteString(`>`)
+		label := template.HTMLEscapeString(item.Label)
+		if item.URL != "" {
+			out.WriteString(`<a href="`)
+			out.WriteString(template.HTMLEscapeString(item.URL))
+			out.WriteString(`"`)
+			if item.Current {
+				out.WriteString(` aria-current="page"`)
+			}
+			out.WriteString(`>`)
+			out.WriteString(label)
+			out.WriteString(`</a>`)
+		} else {
+			out.WriteString(`<span>`)
+			out.WriteString(label)
+			out.WriteString(`</span>`)
+		}
+		if len(item.Children) > 0 {
+			out.WriteString(`<ul>`)
+			renderNavigationItems(out, item.Children)
+			out.WriteString(`</ul>`)
+		}
+		out.WriteString(`</li>`)
+	}
+}
+
 func (s *sitePartRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {
 	sitePartID, _ := node.Settings["sitePartId"].(string)
 	if sitePartID == "" {
@@ -794,10 +958,16 @@ func (s *sitePartRenderer) Render(ctx context.Context, node PreparedNode, rc Ren
 		}
 		return "", nil
 	}
+	if rc.Dependencies == nil {
+		rc.Dependencies = &DependencyState{SiteParts: make(map[string]ResolvedSitePart)}
+	} else if rc.Dependencies.SiteParts == nil {
+		rc.Dependencies.SiteParts = make(map[string]ResolvedSitePart)
+	}
 	if rc.CollectedSiteParts == nil {
 		rc.CollectedSiteParts = make(map[string]string)
 	}
 	rc.CollectedSiteParts[sitePartID] = revID
+	rc.Dependencies.SiteParts[sitePartID] = ResolvedSitePart{RevisionID: revID, UsedBlocks: pd.UsedBlocks}
 	nested := rc
 	if nested.SitePartStack == nil {
 		nested.SitePartStack = make(map[string]struct{})
@@ -816,6 +986,7 @@ func (s *sitePartRenderer) Render(ctx context.Context, node PreparedNode, rc Ren
 	nested.QueryCache = rc.QueryCache
 	nested.Route = rc.Route
 	nested.LCP = rc.LCP
+	nested.Dependencies = rc.Dependencies
 	inner, err := r.renderPreparedNodes(ctx, pd.Nodes, nested)
 	if err != nil {
 		return "", err

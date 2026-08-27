@@ -11,12 +11,14 @@
     </div>
     <div class="form-actions">
       <a class="button" href="{{ .Content.BackURL }}">Back</a>
+      <a class="button" href="{{ .Content.RevisionsURL }}">Revision history</a>
       <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
       <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
     </div>
   </header>
   <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
   {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  {{ if .Content.Warning }}<p class="notice notice-warning" role="status">{{ .Content.Warning }}</p>{{ end }}
   <div class="editor-workspace">
     <aside class="editor-panel block-library" aria-label="Block library">
       <h2>Block Library</h2>
@@ -50,8 +52,12 @@
   <div class="form-field" style="margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:6px;display:grid;gap:10px;">
     <div style="display:flex;gap:8px;align-items:center;">
       <span><strong>Status:</strong> {{ .Content.Status }}</span>
-      {{ if .Content.IsDefault }}<span style="padding:2px 6px;background:#dcfce7;border-radius:4px;font-size:12px;">Default for {{ .Content.ContentTypeName }}</span>{{ else }}<span class="muted">Not default</span>{{ end }}
-      {{ if not .Content.IsDefault }}<button class="button" type="submit" formaction="{{ .Content.DefaultAction }}" data-on:click__prevent="@post('{{ .Content.DefaultAction }}', {contentType: 'form'})">Set as Default</button>{{ end }}
+      {{ if eq .Content.Kind "archive" }}
+        {{ if .Content.IsDefaultArchive }}<span>Default Archive for {{ .Content.ContentTypeName }}</span><button class="button" type="submit" formaction="{{ .Content.ClearArchiveAction }}">Clear default Archive</button>{{ else }}<span class="muted">Not default Archive</span>{{ if .Content.CanSetArchiveDefault }}<button class="button" type="submit" formaction="{{ .Content.ArchiveDefaultAction }}">Set as Default Archive</button>{{ end }}{{ end }}
+      {{ else }}
+        {{ if .Content.IsDefault }}<span>Default for {{ .Content.ContentTypeName }}</span><button class="button" type="submit" formaction="{{ .Content.ClearDefaultAction }}">Clear default Single</button>{{ else }}<span class="muted">Not default</span>{{ if .Content.CanSetDefault }}<button class="button" type="submit" formaction="{{ .Content.DefaultAction }}">Set as Default</button>{{ end }}{{ end }}
+      {{ end }}
+      <button class="button" type="submit" formaction="{{ .Content.DeleteAction }}">Delete</button>
     </div>
     <p class="field-desc">Published/Draft status and Default status are shown here.</p>
   </div>

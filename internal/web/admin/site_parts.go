@@ -3,10 +3,12 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/siteparts"
@@ -39,21 +41,23 @@ type sitePartFormData struct {
 }
 
 type sitePartEditorData struct {
-	Heading         string
-	Action          string
-	PublishAction   string
-	LocationAction  string
-	BackURL         string
-	SitePartID      string
-	Name            string
-	DocumentJSON    string
-	EditorJSON      template.JS
-	CSRFToken       string
-	Error           string
-	Dirty           string
-	Status          string
-	IsPublished     bool
-	Location        string
+	Heading        string
+	Action         string
+	PublishAction  string
+	LocationAction string
+	BackURL        string
+	SitePartID     string
+	Name           string
+	DocumentJSON   string
+	EditorJSON     template.JS
+	CSRFToken      string
+	Error          string
+	Dirty          string
+	Status         string
+	IsPublished    bool
+	Location       string
+	DeleteAction   string
+	RevisionsURL   string
 }
 
 func (h *Handler) listSiteParts(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +96,7 @@ func (h *Handler) listSiteParts(w http.ResponseWriter, r *http.Request) {
 
 func sitePartStatus(p db.SitePart, latestMap map[string]db.SitePartRevision) string {
 	if !p.PublishedRevisionID.Valid {
-		return "Unpublished"
+		return "Draft"
 	}
 	latest, ok := latestMap[p.ID]
 	if !ok {
@@ -101,7 +105,7 @@ func sitePartStatus(p db.SitePart, latestMap map[string]db.SitePartRevision) str
 	if latest.ID == p.PublishedRevisionID.String {
 		return "Published"
 	}
-	return "Draft changes"
+	return "Published · Unpublished changes"
 }
 
 func (h *Handler) newSitePart(w http.ResponseWriter, r *http.Request) {
@@ -139,14 +143,17 @@ func (h *Handler) createSitePart(w http.ResponseWriter, r *http.Request) {
 		h.renderSitePartCreateError(w, r, "Name is required", name, loc)
 		return
 	}
-	id, err := h.sitePartsService.Create(r.Context(), name)
+	id, err := h.sitePartsService.CreateForLocation(r.Context(), name, loc)
 	if err != nil {
 		log.Printf("create site part: %v", err)
 		h.renderSitePartCreateError(w, r, entryWriteError(err), name, loc)
 		return
 	}
-	_ = loc
-	http.Redirect(w, r, "/admin/appearance/site-parts/"+id+"/edit", http.StatusSeeOther)
+	redirect := "/admin/appearance/site-parts/" + id + "/edit"
+	if loc == "header" || loc == "footer" {
+		redirect += "?intendedLocation=" + loc
+	}
+	http.Redirect(w, r, redirect, http.StatusSeeOther)
 }
 
 func (h *Handler) renderSitePartCreateError(w http.ResponseWriter, r *http.Request, msg, name, loc string) {
@@ -184,6 +191,12 @@ func (h *Handler) editSitePart(w http.ResponseWriter, r *http.Request) {
 		loc = "header"
 	} else if row, err := h.queries.GetSitePartLocation(r.Context(), "footer"); err == nil && row.SitePartID.Valid && row.SitePartID.String == id {
 		loc = "footer"
+	}
+	if loc == "" {
+		intent := strings.TrimSpace(r.URL.Query().Get("intendedLocation"))
+		if intent == "header" || intent == "footer" {
+			loc = intent
+		}
 	}
 	h.renderSitePartEditor(w, r, part, latest, token, status, loc, "")
 }
@@ -233,6 +246,8 @@ func (h *Handler) renderSitePartEditor(w http.ResponseWriter, r *http.Request, p
 		Status:         status,
 		IsPublished:    isPublished,
 		Location:       loc,
+		DeleteAction:   "/admin/appearance/site-parts/" + part.ID + "/delete",
+		RevisionsURL:   "/admin/appearance/site-parts/" + part.ID + "/revisions",
 	}
 	if err := h.sitePartEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Site Part - " + part.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render site part editor: %v", err)
@@ -386,12 +401,7 @@ func (h *Handler) previewSitePart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	input := RenderInput{
-		Document: doc,
-		Title:    "Site Part Preview",
-		Path:     "/",
-		EntryID:  "preview-site-part-" + id,
-	}
+	input := h.sitePartPreviewInput(r, id, doc)
 	if h.documentPreview == nil {
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)
 		return
@@ -405,6 +415,27 @@ func (h *Handler) previewSitePart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(page)
+}
+
+func (h *Handler) sitePartPreviewInput(r *http.Request, partID string, candidate *document.Document) RenderInput {
+	input := RenderInput{Document: candidate, Title: "Site Part Preview", Path: "/", EntryID: "preview-site-part-" + partID}
+	location := ""
+	for _, name := range []string{"header", "footer"} {
+		if row, err := h.queries.GetSitePartLocation(r.Context(), name); err == nil && row.SitePartID.Valid && row.SitePartID.String == partID {
+			location = name
+			break
+		}
+	}
+	if location == "" {
+		return input
+	}
+	input.Document = &document.Document{Version: 1, Nodes: []document.Node{{ID: "site-part-preview-main", Block: "core/text", Version: 1, Props: json.RawMessage(`{"text":"Representative page content"}`), Settings: json.RawMessage(`{}`)}}}
+	if location == "header" {
+		input.HeaderDocument = candidate
+	} else {
+		input.FooterDocument = candidate
+	}
+	return input
 }
 
 func (h *Handler) setSitePartLocation(w http.ResponseWriter, r *http.Request) {
@@ -430,7 +461,10 @@ func (h *Handler) setSitePartLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.runtime != nil {
-		h.runtime.InvalidateSitePart(sitePartID)
+		// A location reassignment changes a global region on every page. Cached
+		// pages may still be tagged with the previously assigned Site Part, so
+		// selectively invalidating only the new part is insufficient.
+		h.runtime.InvalidateAll()
 	}
 	if isDatastarRequest(r) {
 		writeSSE(w, toastEvent("success", "Location updated."))
@@ -475,8 +509,13 @@ func (h *Handler) deleteSitePart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Cannot delete site part assigned as "+loc, http.StatusBadRequest)
 		return
 	}
-	if referenced, _ := h.sitePartsService.IsReferenced(r.Context(), id); referenced {
-		http.Error(w, "Cannot delete site part referenced by documents", http.StatusBadRequest)
+	referenced, count, referenceErr := h.sitePartsService.IsReferenced(r.Context(), id)
+	if referenceErr != nil {
+		http.Error(w, "Could not verify Site Part usage", http.StatusInternalServerError)
+		return
+	}
+	if referenced {
+		http.Error(w, "Cannot delete Site Part: used by "+fmt.Sprint(count)+" documents.", http.StatusBadRequest)
 		return
 	}
 	if err := h.queries.DeleteSitePart(r.Context(), id); err != nil {
@@ -488,4 +527,85 @@ func (h *Handler) deleteSitePart(w http.ResponseWriter, r *http.Request) {
 	}
 	h.setFlash(w, "Site part deleted.")
 	http.Redirect(w, r, "/admin/appearance/site-parts", http.StatusSeeOther)
+}
+
+func (h *Handler) listSitePartRevisions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	part, err := h.queries.GetSitePart(r.Context(), id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	revisions, err := h.queries.ListSitePartRevisions(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Revision history is unavailable", http.StatusInternalServerError)
+		return
+	}
+	token, _ := h.csrfToken(w, r)
+	var out strings.Builder
+	out.WriteString(`<!doctype html><meta name="robots" content="noindex,nofollow"><title>Site Part revisions</title><main><h1>Revision history: ` + template.HTMLEscapeString(part.Name) + `</h1><p><a href="/admin/appearance/site-parts/` + template.URLQueryEscaper(id) + `/edit">Back to editor</a></p><ol>`)
+	latestID := ""
+	if len(revisions) > 0 {
+		latestID = revisions[0].ID
+	}
+	for _, revision := range revisions {
+		status := "Revision " + fmt.Sprint(revision.RevisionNumber)
+		if part.PublishedRevisionID.Valid && part.PublishedRevisionID.String == revision.ID {
+			status += " · Published"
+		} else if revision.ID == latestID {
+			status += " · Current draft"
+		}
+		author := ""
+		if revision.CreatedBy.Valid {
+			author = " · Author " + template.HTMLEscapeString(revision.CreatedBy.String)
+		}
+		createdAt := time.Unix(revision.CreatedAt, 0).Format("2006-01-02 15:04")
+		out.WriteString(`<li><strong>` + template.HTMLEscapeString(status) + `</strong> · <time>` + createdAt + `</time>` + author + ` <a href="/admin/appearance/site-parts/` + template.URLQueryEscaper(id) + `/revisions/` + template.URLQueryEscaper(revision.ID) + `/preview">Preview</a> <form method="post" action="/admin/appearance/site-parts/` + template.URLQueryEscaper(id) + `/revisions/` + template.URLQueryEscaper(revision.ID) + `/restore" style="display:inline"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(token) + `"><button type="submit">Restore</button></form></li>`)
+	}
+	out.WriteString(`</ol></main>`)
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(out.String()))
+}
+
+func (h *Handler) previewSitePartRevision(w http.ResponseWriter, r *http.Request) {
+	id, revisionID := r.PathValue("id"), r.PathValue("revisionID")
+	if _, err := h.queries.GetSitePart(r.Context(), id); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	revision, err := h.queries.GetSitePartRevision(r.Context(), revisionID)
+	if err != nil || revision.SitePartID != id {
+		http.NotFound(w, r)
+		return
+	}
+	doc, err := document.Decode([]byte(revision.DocumentJson))
+	if err != nil || siteparts.ValidateSitePartDocument(h.blocks, doc) != nil || h.documentPreview == nil {
+		http.Error(w, "Invalid Site Part revision", http.StatusUnprocessableEntity)
+		return
+	}
+	page, err := h.documentPreview(r.Context(), h.sitePartPreviewInput(r, id, doc))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(page)
+}
+
+func (h *Handler) restoreSitePartRevision(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	user, _ := h.currentUser(r)
+	if _, err := h.sitePartsService.RestoreRevision(r.Context(), r.PathValue("id"), r.PathValue("revisionID"), user.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	h.setFlash(w, "Revision restored as a new draft.")
+	http.Redirect(w, r, "/admin/appearance/site-parts/"+r.PathValue("id")+"/edit", http.StatusSeeOther)
 }

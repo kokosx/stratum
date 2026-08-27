@@ -21,4 +21,11 @@ type RenderInput struct {
 	ContentTypeID    string
 	Fields           map[string]any
 	FeaturedMediaID  string
+	// Archive supplies the already-resolved page slice for Archive Template
+	// previews. When set, Document is rendered directly without composition.
+	Archive *ArchiveContext
+	// HeaderDocument/FooterDocument optionally replace the corresponding
+	// published theme region for a no-store editor preview.
+	HeaderDocument *document.Document
+	FooterDocument *document.Document
 }

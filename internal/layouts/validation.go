@@ -28,7 +28,11 @@ func ValidateTemplateDocument(registry *blocks.Registry, doc *document.Document,
 	if registry == nil {
 		return errors.New("block registry is not configured")
 	}
-	if err := registry.ValidateDocument(doc); err != nil {
+	mode := blocks.EditorModeSingleTemplate
+	if kind == "archive" {
+		mode = blocks.EditorModeArchiveTemplate
+	}
+	if err := registry.ValidateDocumentForContext(doc, mode); err != nil {
 		return err
 	}
 	count := countSlot(doc.Nodes)
@@ -37,8 +41,10 @@ func ValidateTemplateDocument(registry *blocks.Registry, doc *document.Document,
 		if count > 1 {
 			return fmt.Errorf("Single template must contain at most one Content block, found %d", count)
 		}
+		if hasContent != nil && !*hasContent && count > 0 {
+			return errors.New("This content type does not use freeform content, so Content Slot cannot be used.")
+		}
 		// zero allowed – editor will warn if HasContent true
-		_ = hasContent
 	case "archive":
 		if count != 0 {
 			return errors.New("Archive template must not contain a Content Slot")
@@ -85,7 +91,7 @@ func ValidateEntryDocument(registry *blocks.Registry, doc *document.Document) er
 	if registry == nil {
 		return errors.New("block registry is not configured")
 	}
-	if err := registry.ValidateDocument(doc); err != nil {
+	if err := registry.ValidateDocumentForContext(doc, blocks.EditorModeEntry); err != nil {
 		return err
 	}
 	count := countSlot(doc.Nodes)

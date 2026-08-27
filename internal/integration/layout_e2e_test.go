@@ -71,8 +71,8 @@ func TestLayoutTemplateEndToEnd(t *testing.T) {
 		t.Fatalf("list missing Blog Post: %s", listBody)
 	}
 	// Initially unpublished
-	if !strings.Contains(listBody, "Unpublished") {
-		t.Fatalf("expected Unpublished status")
+	if !strings.Contains(listBody, "Draft") {
+		t.Fatalf("expected Draft status")
 	}
 
 	// 2. Edit layout to add heading + content slot (already has slot, add breadcrumb-like heading)
@@ -100,7 +100,7 @@ func TestLayoutTemplateEndToEnd(t *testing.T) {
 	// Verify still unpublished (draft changes not published)
 	listResp2 := getPath(t, client, server.URL, "/admin/appearance/templates")
 	body2 := bodyString(t, listResp2)
-	if !strings.Contains(body2, "Unpublished") {
+	if !strings.Contains(body2, "Draft") {
 		// After save draft, still unpublished until publish
 		// Actually after first save, still unpublished because we never published
 	}

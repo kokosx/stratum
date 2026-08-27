@@ -31,26 +31,52 @@ func (r *handlerContentReader) Definition(ctx context.Context, contentType strin
 type handlerSitePartReader struct {
 	queries *db.Queries
 	blocks  *blocks.Registry
+	cache   map[string]resolvedSitePart
+}
+
+type resolvedSitePart struct {
+	prepared *rendering.PreparedDocument
+	revision string
+	err      error
+}
+
+func newHandlerSitePartReader(queries *db.Queries, registry *blocks.Registry) *handlerSitePartReader {
+	return &handlerSitePartReader{queries: queries, blocks: registry, cache: make(map[string]resolvedSitePart)}
 }
 
 func (r *handlerSitePartReader) GetSitePart(ctx context.Context, id string) (*rendering.PreparedDocument, string, error) {
+	if cached, ok := r.cache[id]; ok {
+		return cached.prepared, cached.revision, cached.err
+	}
 	row, err := r.queries.GetSitePartWithPublishedRevision(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", errors.New("site part not found or unpublished")
+			err = errors.New("site part not found or unpublished")
+		}
+		if r.cache != nil {
+			r.cache[id] = resolvedSitePart{err: err}
 		}
 		return nil, "", err
 	}
 	doc, err := document.Decode([]byte(row.DocumentJson))
 	if err != nil {
+		if r.cache != nil {
+			r.cache[id] = resolvedSitePart{err: err}
+		}
 		return nil, "", err
 	}
 	pd, err := r.blocks.PreparedCache(row.RevisionID, doc)
 	if err != nil {
 		pd, err = r.blocks.Prepare(doc)
 		if err != nil {
+			if r.cache != nil {
+				r.cache[id] = resolvedSitePart{err: err}
+			}
 			return nil, "", err
 		}
+	}
+	if r.cache != nil {
+		r.cache[id] = resolvedSitePart{prepared: pd, revision: row.RevisionID}
 	}
 	return pd, row.RevisionID, nil
 }

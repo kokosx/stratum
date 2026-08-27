@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
@@ -19,6 +21,16 @@ type Service struct {
 	db      *sql.DB
 	queries *db.Queries
 	blocks  *blocks.Registry
+}
+
+type Usage struct {
+	DefaultSingleFor  string
+	DefaultArchiveFor string
+	ExplicitEntries   int64
+}
+
+func (u Usage) InUse() bool {
+	return u.DefaultSingleFor != "" || u.DefaultArchiveFor != "" || u.ExplicitEntries > 0
 }
 
 func NewService(db *sql.DB, queries *db.Queries, blocks *blocks.Registry) *Service {
@@ -42,7 +54,8 @@ func (s *Service) Create(ctx context.Context, name, contentTypeID string) (strin
 }
 
 func (s *Service) CreateWithKind(ctx context.Context, name, contentTypeID, kind string) (string, error) {
-	if stringsTrim(name) == "" {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return "", errors.New("name is required")
 	}
 	if contentTypeID == "" {
@@ -54,7 +67,8 @@ func (s *Service) CreateWithKind(ctx context.Context, name, contentTypeID, kind 
 	if kind != "single" && kind != "archive" {
 		return "", errors.New("invalid template kind")
 	}
-	if _, err := s.queries.GetContentType(ctx, contentTypeID); err != nil {
+	definition, err := content.NewCatalog(s.queries).GetDefinition(ctx, contentTypeID)
+	if err != nil {
 		return "", errors.New("invalid content type")
 	}
 	id, err := randomID()
@@ -67,7 +81,7 @@ func (s *Service) CreateWithKind(ctx context.Context, name, contentTypeID, kind 
 	}
 	now := time.Now().Unix()
 	var docJSON string
-	if kind == "single" {
+	if kind == "single" && definition.Capabilities.HasContent {
 		slotID, err := randomID()
 		if err != nil {
 			return "", err
@@ -79,7 +93,9 @@ func (s *Service) CreateWithKind(ctx context.Context, name, contentTypeID, kind 
 				return "", err
 			}
 		}
-	} else {
+	} else if kind == "single" {
+		docJSON = `{"version":1,"nodes":[]}`
+	} else if kind == "archive" {
 		// archive starter: archive title + collection(context)
 		titleID, _ := randomID()
 		collID, _ := randomID()
@@ -131,9 +147,6 @@ func (s *Service) SaveDraft(ctx context.Context, templateID, name, docJSON, auth
 	if err := ValidateTemplateDocument(s.blocks, doc, tmpl.Kind, nil); err != nil {
 		return err
 	}
-	if err != nil {
-		return err
-	}
 	if s.db == nil {
 		return errors.New("database is not configured")
 	}
@@ -149,14 +162,8 @@ func (s *Service) SaveDraft(ctx context.Context, templateID, name, docJSON, auth
 		return err
 	}
 	nextRev := latest.RevisionNumber + 1
-	if tmpl.Name != name {
-		if err := qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID}); err != nil {
-			return err
-		}
-	} else {
-		if err := qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID}); err != nil {
-			return err
-		}
+	if err := qtx.UpdateLayoutTemplate(ctx, db.UpdateLayoutTemplateParams{Name: name, UpdatedAt: now, ID: templateID}); err != nil {
+		return err
 	}
 	revID, err := randomID()
 	if err != nil {
@@ -184,13 +191,18 @@ func (s *Service) Publish(ctx context.Context, templateID, name, docJSON, author
 	if name == "" {
 		name = tmpl.Name
 	}
+	definition, err := content.NewCatalog(s.queries).GetDefinition(ctx, tmpl.ContentTypeID)
+	if err != nil {
+		return fmt.Errorf("load content type: %w", err)
+	}
+	hasContent := definition.Capabilities.HasContent
 	var docString string
 	if docJSON != "" {
 		d, err := document.Decode([]byte(docJSON))
 		if err != nil {
 			return fmt.Errorf("invalid document: %w", err)
 		}
-		if err := ValidateTemplateDocument(s.blocks, d, tmpl.Kind, nil); err != nil {
+		if err := ValidateTemplateDocument(s.blocks, d, tmpl.Kind, &hasContent); err != nil {
 			return err
 		}
 		enc, err := json.Marshal(d)
@@ -205,7 +217,7 @@ func (s *Service) Publish(ctx context.Context, templateID, name, docJSON, author
 		}
 		docString = latest.DocumentJson
 		if d, err := document.Decode([]byte(docString)); err == nil {
-			if err := ValidateTemplateDocument(s.blocks, d, tmpl.Kind, nil); err != nil {
+			if err := ValidateTemplateDocument(s.blocks, d, tmpl.Kind, &hasContent); err != nil {
 				return err
 			}
 		}
@@ -280,6 +292,13 @@ func (s *Service) SetDefaultArchive(ctx context.Context, templateID string) erro
 	if !tmpl.PublishedRevisionID.Valid {
 		return errors.New("template must be published to be default")
 	}
+	definition, err := content.NewCatalog(s.queries).GetDefinition(ctx, tmpl.ContentTypeID)
+	if err != nil {
+		return err
+	}
+	if !definition.Routing.Archive {
+		return errors.New("this content type does not have archive routing enabled")
+	}
 	now := time.Now().Unix()
 	return s.queries.SetContentTypeDefaultArchiveTemplate(ctx, db.SetContentTypeDefaultArchiveTemplateParams{DefaultArchiveTemplateID: sql.NullString{String: templateID, Valid: true}, UpdatedAt: now, ID: tmpl.ContentTypeID})
 }
@@ -287,6 +306,82 @@ func (s *Service) SetDefaultArchive(ctx context.Context, templateID string) erro
 func (s *Service) ClearDefaultArchive(ctx context.Context, contentTypeID string) error {
 	now := time.Now().Unix()
 	return s.queries.ClearContentTypeDefaultArchiveTemplate(ctx, db.ClearContentTypeDefaultArchiveTemplateParams{UpdatedAt: now, ID: contentTypeID})
+}
+
+func (s *Service) ClearDefault(ctx context.Context, contentTypeID string) error {
+	now := time.Now().Unix()
+	return s.queries.ClearContentTypeDefaultLayoutTemplate(ctx, db.ClearContentTypeDefaultLayoutTemplateParams{UpdatedAt: now, ID: contentTypeID})
+}
+
+func (s *Service) Usage(ctx context.Context, templateID string) (Usage, error) {
+	var usage Usage
+	if s.db == nil {
+		return usage, errors.New("database is not configured")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT display_name, default_layout_template_id, default_archive_template_id FROM content_types WHERE default_layout_template_id = ? OR default_archive_template_id = ?`, templateID, templateID)
+	if err != nil {
+		return usage, err
+	}
+	for rows.Next() {
+		var name string
+		var single, archive sql.NullString
+		if err := rows.Scan(&name, &single, &archive); err != nil {
+			_ = rows.Close()
+			return usage, err
+		}
+		if single.Valid && single.String == templateID {
+			usage.DefaultSingleFor = name
+		}
+		if archive.Valid && archive.String == templateID {
+			usage.DefaultArchiveFor = name
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return usage, err
+	}
+	_ = rows.Close()
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT r.entry_id) FROM entry_revisions r JOIN entries e ON e.id = r.entry_id WHERE r.layout_template_id = ? AND (r.id = e.published_revision_id OR r.revision_number = (SELECT MAX(r2.revision_number) FROM entry_revisions r2 WHERE r2.entry_id = r.entry_id))`, templateID).Scan(&usage.ExplicitEntries)
+	return usage, err
+}
+
+func (s *Service) Delete(ctx context.Context, templateID string) error {
+	if _, err := s.queries.GetLayoutTemplate(ctx, templateID); err != nil {
+		return err
+	}
+	usage, err := s.Usage(ctx, templateID)
+	if err != nil {
+		return err
+	}
+	if usage.InUse() {
+		return errors.New("this template cannot be deleted because it is currently in use")
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM layout_templates WHERE id = ?`, templateID)
+	return err
+}
+
+func (s *Service) RestoreRevision(ctx context.Context, templateID, revisionID, authorID string) (string, error) {
+	revision, err := s.queries.GetLayoutTemplateRevision(ctx, revisionID)
+	if err != nil {
+		return "", err
+	}
+	if revision.TemplateID != templateID {
+		return "", errors.New("revision does not belong to this template")
+	}
+	latest, err := s.queries.GetLatestLayoutTemplateRevision(ctx, templateID)
+	if err != nil {
+		return "", err
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	createdBy := sql.NullString{}
+	if authorID != "" {
+		createdBy = sql.NullString{String: authorID, Valid: true}
+	}
+	err = s.queries.CreateLayoutTemplateRevision(ctx, db.CreateLayoutTemplateRevisionParams{ID: id, TemplateID: templateID, RevisionNumber: latest.RevisionNumber + 1, DocumentJson: revision.DocumentJson, CreatedBy: createdBy, CreatedAt: time.Now().Unix()})
+	return id, err
 }
 
 func (s *Service) ResolveEffectiveDocument(ctx context.Context, entryDoc *document.Document, contentTypeID string, layoutTemplateID sql.NullString) (*document.Document, string, error) {
@@ -300,19 +395,4 @@ func (s *Service) ResolveEffectiveDocument(ctx context.Context, entryDoc *docume
 		}
 	}
 	return doc, revID, nil
-}
-
-func stringsTrim(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	j := 0
-	for j < len(s) && (s[j] == ' ' || s[j] == '\n' || s[j] == '\t' || s[j] == '\r') {
-		j++
-	}
-	k := len(s)
-	for k > j && (s[k-1] == ' ' || s[k-1] == '\n' || s[k-1] == '\t' || s[k-1] == '\r') {
-		k--
-	}
-	return s[j:k]
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kokosx/stratum/internal/blocks"
@@ -38,7 +39,12 @@ func defaultRandomID() (string, error) {
 func SetRandomID(fn func() (string, error)) { randomID = fn }
 
 func (s *Service) Create(ctx context.Context, name string) (string, error) {
-	if stringsTrim(name) == "" {
+	return s.CreateForLocation(ctx, name, "")
+}
+
+func (s *Service) CreateForLocation(ctx context.Context, name, location string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return "", errors.New("name is required")
 	}
 	id, err := randomID()
@@ -51,6 +57,13 @@ func (s *Service) Create(ctx context.Context, name string) (string, error) {
 	}
 	now := time.Now().Unix()
 	docJSON := `{"version":1,"nodes":[{"id":"` + id + `-root","block":"core/section","version":1,"props":{},"settings":{},"children":[{"id":"` + id + `-text","block":"core/text","version":1,"props":{"text":"New site part"},"settings":{}}]}]}`
+	if location == "header" || location == "footer" {
+		menuLocation := "primary"
+		if location == "footer" {
+			menuLocation = "footer"
+		}
+		docJSON = `{"version":1,"nodes":[{"id":"` + id + `-root","block":"core/section","version":1,"props":{},"settings":{},"children":[{"id":"` + id + `-stack","block":"core/stack","version":1,"props":{},"settings":{},"children":[{"id":"` + id + `-logo","block":"core/site-logo","version":1,"props":{},"settings":{}},{"id":"` + id + `-nav","block":"core/navigation","version":1,"props":{},"settings":{"location":"` + menuLocation + `"}}]}]}]}`
+	}
 	if d, err := document.Decode([]byte(docJSON)); err == nil {
 		if err := ValidateSitePartDocument(s.blocks, d); err != nil {
 			docJSON = `{"version":1,"nodes":[]}`
@@ -91,11 +104,10 @@ func (s *Service) SaveDraft(ctx context.Context, partID, name, docJSON, authorID
 	if err := ValidateSitePartDocument(s.blocks, doc); err != nil {
 		return err
 	}
-	if err := s.validateNoCycles(ctx, partID, doc); err != nil {
+	if err := s.validateNoCycles(ctx, partID, doc, false); err != nil {
 		return err
 	}
-	part, err := s.queries.GetSitePart(ctx, partID)
-	if err != nil {
+	if _, err := s.queries.GetSitePart(ctx, partID); err != nil {
 		return err
 	}
 	if s.db == nil {
@@ -113,14 +125,8 @@ func (s *Service) SaveDraft(ctx context.Context, partID, name, docJSON, authorID
 		return err
 	}
 	nextRev := latest.RevisionNumber + 1
-	if part.Name != name {
-		if err := qtx.UpdateSitePart(ctx, db.UpdateSitePartParams{Name: name, UpdatedAt: now, ID: partID}); err != nil {
-			return err
-		}
-	} else {
-		if err := qtx.UpdateSitePart(ctx, db.UpdateSitePartParams{Name: name, UpdatedAt: now, ID: partID}); err != nil {
-			return err
-		}
+	if err := qtx.UpdateSitePart(ctx, db.UpdateSitePartParams{Name: name, UpdatedAt: now, ID: partID}); err != nil {
+		return err
 	}
 	revID, err := randomID()
 	if err != nil {
@@ -158,7 +164,7 @@ func (s *Service) Publish(ctx context.Context, partID, name, docJSON, authorID s
 		if err := ValidateSitePartDocument(s.blocks, d); err != nil {
 			return err
 		}
-		if err := s.validateNoCycles(ctx, partID, d); err != nil {
+		if err := s.validateNoCycles(ctx, partID, d, true); err != nil {
 			return err
 		}
 		enc, err := json.Marshal(d)
@@ -179,7 +185,7 @@ func (s *Service) Publish(ctx context.Context, partID, name, docJSON, authorID s
 		if err := ValidateSitePartDocument(s.blocks, doc); err != nil {
 			return err
 		}
-		if err := s.validateNoCycles(ctx, partID, doc); err != nil {
+		if err := s.validateNoCycles(ctx, partID, doc, true); err != nil {
 			return err
 		}
 	}
@@ -259,6 +265,30 @@ func (s *Service) GetLocation(ctx context.Context, location string) (db.SitePart
 	return s.queries.GetSitePartLocation(ctx, location)
 }
 
+func (s *Service) RestoreRevision(ctx context.Context, partID, revisionID, authorID string) (string, error) {
+	revision, err := s.queries.GetSitePartRevision(ctx, revisionID)
+	if err != nil {
+		return "", err
+	}
+	if revision.SitePartID != partID {
+		return "", errors.New("revision does not belong to this Site Part")
+	}
+	latest, err := s.queries.GetLatestSitePartRevision(ctx, partID)
+	if err != nil {
+		return "", err
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	createdBy := sql.NullString{}
+	if authorID != "" {
+		createdBy = sql.NullString{String: authorID, Valid: true}
+	}
+	err = s.queries.CreateSitePartRevision(ctx, db.CreateSitePartRevisionParams{ID: id, SitePartID: partID, RevisionNumber: latest.RevisionNumber + 1, DocumentJson: revision.DocumentJson, CreatedBy: createdBy, CreatedAt: time.Now().Unix()})
+	return id, err
+}
+
 func (s *Service) ListLocations(ctx context.Context) ([]db.SitePartLocation, error) {
 	return s.queries.ListSitePartLocations(ctx)
 }
@@ -276,104 +306,56 @@ func (s *Service) IsUsedAsHeaderOrFooter(ctx context.Context, partID string) (bo
 	return false, ""
 }
 
-func (s *Service) IsReferenced(ctx context.Context, partID string) (bool, int) {
-	count := 0
+func (s *Service) IsReferenced(ctx context.Context, partID string) (bool, int, error) {
 	if s.db == nil {
-		return false, 0
+		return false, 0, errors.New("database is not configured")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT document_json FROM site_part_revisions WHERE id IN (SELECT id FROM site_part_revisions WHERE (site_part_id, revision_number) IN (SELECT site_part_id, MAX(revision_number) FROM site_part_revisions GROUP BY site_part_id))`)
-	if err == nil {
-		defer rows.Close()
+	owners := make(map[string]struct{})
+	queries := []struct {
+		prefix string
+		sql    string
+	}{
+		{"site-part:", `SELECT site_part_id, document_json FROM site_part_revisions WHERE (site_part_id, revision_number) IN (SELECT site_part_id, MAX(revision_number) FROM site_part_revisions GROUP BY site_part_id)`},
+		{"site-part:", `SELECT p.id, r.document_json FROM site_parts p JOIN site_part_revisions r ON r.id = p.published_revision_id`},
+		{"template:", `SELECT template_id, document_json FROM layout_template_revisions WHERE (template_id, revision_number) IN (SELECT template_id, MAX(revision_number) FROM layout_template_revisions GROUP BY template_id)`},
+		{"template:", `SELECT t.id, r.document_json FROM layout_templates t JOIN layout_template_revisions r ON r.id = t.published_revision_id`},
+		{"entry:", `SELECT entry_id, document_json FROM entry_revisions WHERE (entry_id, revision_number) IN (SELECT entry_id, MAX(revision_number) FROM entry_revisions GROUP BY entry_id)`},
+		{"entry:", `SELECT e.id, r.document_json FROM entries e JOIN entry_revisions r ON r.id = e.published_revision_id`},
+	}
+	for _, query := range queries {
+		rows, err := s.db.QueryContext(ctx, query.sql)
+		if err != nil {
+			return false, 0, err
+		}
 		for rows.Next() {
-			var js string
-			if err := rows.Scan(&js); err == nil {
-				if containsSitePartRef(js, partID) {
-					count++
-				}
+			var ownerID, raw string
+			if err := rows.Scan(&ownerID, &raw); err != nil {
+				continue
+			}
+			doc, err := document.Decode([]byte(raw))
+			if err == nil && ReferencesSitePart(doc, partID) {
+				owners[query.prefix+ownerID] = struct{}{}
 			}
 		}
-	}
-	rows2, err := s.db.QueryContext(ctx, `SELECT document_json FROM layout_template_revisions WHERE id IN (SELECT id FROM layout_template_revisions WHERE (template_id, revision_number) IN (SELECT template_id, MAX(revision_number) FROM layout_template_revisions GROUP BY template_id))`)
-	if err == nil {
-		defer rows2.Close()
-		for rows2.Next() {
-			var js string
-			if err := rows2.Scan(&js); err == nil {
-				if containsSitePartRef(js, partID) {
-					count++
-				}
-			}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return false, 0, err
 		}
+		_ = rows.Close()
 	}
-	rows3, err := s.db.QueryContext(ctx, `SELECT document_json FROM entry_revisions WHERE id IN (SELECT published_revision_id FROM entries WHERE published_revision_id IS NOT NULL)`)
-	if err == nil {
-		defer rows3.Close()
-		for rows3.Next() {
-			var js string
-			if err := rows3.Scan(&js); err == nil {
-				if containsSitePartRef(js, partID) {
-					count++
-				}
-			}
-		}
-	}
-	rows4, err := s.db.QueryContext(ctx, `SELECT document_json FROM entry_revisions WHERE (entry_id, revision_number) IN (SELECT entry_id, MAX(revision_number) FROM entry_revisions GROUP BY entry_id)`)
-	if err == nil {
-		defer rows4.Close()
-		for rows4.Next() {
-			var js string
-			if err := rows4.Scan(&js); err == nil {
-				if containsSitePartRef(js, partID) {
-					count++
-				}
-			}
-		}
-	}
-	return count > 0, count
+	return len(owners) > 0, len(owners), nil
 }
 
-func containsSitePartRef(jsonStr, targetID string) bool {
-	return contains(jsonStr, targetID)
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && indexOf(s, substr) >= 0
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
-
-func stringsTrim(s string) string {
-	if len(s) == 0 {
-		return s
-	}
-	j := 0
-	for j < len(s) && (s[j] == ' ' || s[j] == '\n' || s[j] == '\t' || s[j] == '\r') {
-		j++
-	}
-	k := len(s)
-	for k > j && (s[k-1] == ' ' || s[k-1] == '\n' || s[k-1] == '\t' || s[k-1] == '\r') {
-		k--
-	}
-	return s[j:k]
-}
-
-func (s *Service) validateNoCycles(ctx context.Context, partID string, doc *document.Document) error {
-	refs := collectSitePartRefs(doc)
+func (s *Service) validateNoCycles(ctx context.Context, partID string, doc *document.Document, publishedGraph bool) error {
+	refs := CollectSitePartRefs(doc)
 	if len(refs) == 0 {
 		return nil
 	}
 	visited := map[string]bool{partID: true}
-	return s.checkCycleDFS(ctx, refs, visited, 1)
+	return s.checkCycleDFS(ctx, refs, visited, 1, publishedGraph)
 }
 
-func (s *Service) checkCycleDFS(ctx context.Context, refs []string, visited map[string]bool, depth int) error {
+func (s *Service) checkCycleDFS(ctx context.Context, refs []string, visited map[string]bool, depth int, publishedGraph bool) error {
 	if depth > 16 {
 		return errors.New("site part reference depth exceeds limit (possible cycle)")
 	}
@@ -381,20 +363,35 @@ func (s *Service) checkCycleDFS(ctx context.Context, refs []string, visited map[
 		if visited[ref] {
 			return fmt.Errorf("cyclic site part reference detected: %s", ref)
 		}
-		rev, err := s.queries.GetLatestSitePartRevision(ctx, ref)
+		part, err := s.queries.GetSitePart(ctx, ref)
 		if err != nil {
+			if publishedGraph {
+				return fmt.Errorf("referenced Site Part %q does not exist", ref)
+			}
 			continue
+		}
+		var rev db.SitePartRevision
+		if publishedGraph {
+			if !part.PublishedRevisionID.Valid {
+				return fmt.Errorf("Referenced Site Part %q is not published.", part.Name)
+			}
+			rev, err = s.queries.GetPublishedSitePartRevision(ctx, ref)
+		} else {
+			rev, err = s.queries.GetLatestSitePartRevision(ctx, ref)
+		}
+		if err != nil {
+			return fmt.Errorf("load referenced Site Part %q: %w", part.Name, err)
 		}
 		doc, err := document.Decode([]byte(rev.DocumentJson))
 		if err != nil {
 			continue
 		}
-		nested := collectSitePartRefs(doc)
+		nested := CollectSitePartRefs(doc)
 		if len(nested) == 0 {
 			continue
 		}
 		visited[ref] = true
-		if err := s.checkCycleDFS(ctx, nested, visited, depth+1); err != nil {
+		if err := s.checkCycleDFS(ctx, nested, visited, depth+1, publishedGraph); err != nil {
 			return err
 		}
 		delete(visited, ref)
@@ -402,11 +399,14 @@ func (s *Service) checkCycleDFS(ctx context.Context, refs []string, visited map[
 	return nil
 }
 
-func collectSitePartRefs(doc *document.Document) []string {
+// CollectSitePartRefs returns exact, de-duplicated core/site-part references
+// discovered by traversing SDT nodes. Arbitrary JSON text is never searched.
+func CollectSitePartRefs(doc *document.Document) []string {
 	if doc == nil {
 		return nil
 	}
 	var out []string
+	seen := make(map[string]struct{})
 	var walk func([]document.Node)
 	walk = func(nodes []document.Node) {
 		for _, n := range nodes {
@@ -415,7 +415,10 @@ func collectSitePartRefs(doc *document.Document) []string {
 				if len(n.Settings) > 0 {
 					_ = json.Unmarshal(n.Settings, &settings)
 					if id, ok := settings["sitePartId"].(string); ok && id != "" {
-						out = append(out, id)
+						if _, exists := seen[id]; !exists {
+							seen[id] = struct{}{}
+							out = append(out, id)
+						}
 					}
 				}
 			}
@@ -426,4 +429,13 @@ func collectSitePartRefs(doc *document.Document) []string {
 	}
 	walk(doc.Nodes)
 	return out
+}
+
+func ReferencesSitePart(doc *document.Document, partID string) bool {
+	for _, id := range CollectSitePartRefs(doc) {
+		if id == partID {
+			return true
+		}
+	}
+	return false
 }

@@ -15,7 +15,7 @@ func ValidateSitePartDocument(registry *blocks.Registry, doc *document.Document)
 	if registry == nil {
 		return errors.New("block registry is not configured")
 	}
-	if err := registry.ValidateDocument(doc); err != nil {
+	if err := registry.ValidateDocumentForContext(doc, blocks.EditorModeSitePart); err != nil {
 		return err
 	}
 	var check func([]document.Node) error

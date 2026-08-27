@@ -11,9 +11,9 @@
     {{ range .Content.Templates }}
     <tr>
       <td><a href="/admin/appearance/templates/{{ .ID }}/edit">{{ .Name }}</a></td>
-      <td>{{ .ContentTypeName }}</td>
+      <td>{{ if eq .Kind "archive" }}Archive{{ else }}Single{{ end }} · {{ .ContentTypeName }}</td>
       <td>{{ .Status }}</td>
-      <td>{{ if .IsDefault }}✓ Default{{ end }}</td>
+      <td>{{ if .IsDefault }}✓ Default{{ else if .IsDefaultArchive }}✓ Default Archive{{ end }}</td>
       <td><a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a></td>
     </tr>
     {{ else }}

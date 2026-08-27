@@ -18,6 +18,32 @@ func (r *Registry) ValidateDocument(doc *document.Document) error {
 	return current.validateDocument(doc)
 }
 
+// ValidateDocumentForContext applies the normal schema validation and then
+// verifies every block is permitted in the server-owned editor context.
+func (r *Registry) ValidateDocumentForContext(doc *document.Document, mode string) error {
+	current := r.snapshot.Load()
+	if current == nil {
+		return fmt.Errorf("block registry is not initialized")
+	}
+	if err := current.validateDocument(doc); err != nil {
+		return err
+	}
+	var walk func([]document.Node) error
+	walk = func(nodes []document.Node) error {
+		for _, node := range nodes {
+			definition := current.definitions[BlockKey{Name: node.Block, Version: int64(node.Version)}]
+			if definition == nil || !isEditorContextAllowed(definition.EditorContexts, mode) {
+				return fmt.Errorf("block %s is not allowed in %s context", node.Block, mode)
+			}
+			if err := walk(node.Children); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk(doc.Nodes)
+}
+
 func (s *snapshot) validateDocument(doc *document.Document) error {
 	if err := document.Validate(doc); err != nil {
 		return err

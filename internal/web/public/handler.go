@@ -764,8 +764,9 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	} else {
 		rc.Definition = content.DefinitionFor(entry.ContentTypeID)
 	}
-	rc.SitePartReader = &handlerSitePartReader{queries: h.queries, blocks: h.blocks}
+	rc.SitePartReader = newHandlerSitePartReader(h.queries, h.blocks)
 	rc.CollectedSiteParts = make(map[string]string)
+	rc.Dependencies = &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)}
 	rc.SitePartStack = make(map[string]struct{})
 	rc.SitePartDepth = 0
 	menus := h.hub.Navigation.LocationsForPath(path)
@@ -786,11 +787,9 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	_, themeCSS, themeJS := h.hub.Assets.URLs()
 	usedBlocks := append([]rendering.BlockKey(nil), prepared.UsedBlocks...)
 	usedBlocks = append(usedBlocks, hfUsed...)
-	// Add used blocks from all referenced site parts (including nested)
-	for sid := range rc.CollectedSiteParts {
-		if pd, _, err := rc.SitePartReader.GetSitePart(ctx, sid); err == nil && pd != nil {
-			usedBlocks = append(usedBlocks, pd.UsedBlocks...)
-		}
+	// Add used blocks discovered while resolving referenced Site Parts.
+	for _, dependency := range rc.Dependencies.SiteParts {
+		usedBlocks = append(usedBlocks, dependency.UsedBlocks...)
 	}
 	// Deduplicate used blocks
 	seenBlocks := make(map[rendering.BlockKey]struct{}, len(usedBlocks))
@@ -885,6 +884,9 @@ func (h *Handler) renderHeaderFooter(ctx context.Context, siteSnap *site.Snapsho
 	if baseRC.CollectedSiteParts == nil {
 		baseRC.CollectedSiteParts = make(map[string]string)
 	}
+	if baseRC.Dependencies == nil {
+		baseRC.Dependencies = &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)}
+	}
 	renderLoc := func(loc string) (template.HTML, *rendering.PreparedDocument, string) {
 		row, err := h.queries.GetSitePartLocation(ctx, loc)
 		if err != nil || !row.SitePartID.Valid || row.SitePartID.String == "" {
@@ -915,6 +917,7 @@ func (h *Handler) renderHeaderFooter(ctx context.Context, siteSnap *site.Snapsho
 			QueryCache:         baseRC.QueryCache,
 			SitePartReader:     baseRC.SitePartReader,
 			CollectedSiteParts: baseRC.CollectedSiteParts,
+			Dependencies:       baseRC.Dependencies,
 			SitePartStack:      map[string]struct{}{row.SitePartID.String: {}},
 			SitePartDepth:      0,
 			LCP:                &rendering.LCPState{},
@@ -1081,7 +1084,11 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	// EPIC 2: Check for archive template (takes precedence over shell for applicable content types)
 	var archiveTemplateDoc *document.Document
 	var archiveTemplateID, archiveTemplateRevID string
-	if tmpl, err := layouts.ResolveArchive(ctx, h.queries, archiveContentType); err == nil && tmpl != nil {
+	tmpl, templateErr := layouts.ResolveArchive(ctx, h.queries, archiveContentType)
+	if templateErr != nil {
+		return pagecache.Entry{}, fmt.Errorf("resolve configured archive template: %w", templateErr)
+	}
+	if tmpl != nil {
 		archiveTemplateDoc = tmpl.Document
 		archiveTemplateID = tmpl.TemplateID
 		archiveTemplateRevID = tmpl.RevisionID
@@ -1097,39 +1104,39 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	// For post archives, shell is fallback only if no archive template. For other types, shell is not used for product-style archives (no EntryID).
 	if archiveTemplateDoc == nil {
 		if rt, ok := h.hub.Routes.Lookup(archivePath); ok && rt.RouteType == "archive" && rt.EntryID.Valid {
-		if s, serr := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); serr == nil {
-			tmp := s
-			shellRow = &tmp
-			shellFound = true
-		}
-	}
-	// Fallback: if archive path is "/" for latest posts home with no archive route, shell remains nil
-	if shellFound {
-		shellTitle = shellRow.Title
-		shellDesc = stringValue(shellRow.Excerpt)
-		shellSeoTitle = stringValue(shellRow.SeoTitle)
-		shellSeoDesc = stringValue(shellRow.SeoDescription)
-		shellFeatured = stringValue(shellRow.FeaturedMediaID)
-		shellSocial = stringValue(shellRow.SocialMediaID)
-		shellRobotsIndex = seo.NullIntToBoolPtr(shellRow.SeoRobotsIndex.Valid, shellRow.SeoRobotsIndex.Int64)
-		shellRobotsFollow = seo.NullIntToBoolPtr(shellRow.SeoRobotsFollow.Valid, shellRow.SeoRobotsFollow.Int64)
-		shellCanonical = stringValue(shellRow.CanonicalUrl)
-		if d, derr := document.Decode([]byte(shellRow.DocumentJson)); derr == nil {
-			effectiveDoc, layoutRevID, rerr := h.layoutsService.ResolveEffectiveDocument(ctx, d, shellRow.ContentTypeID, shellRow.LayoutTemplateID)
-			if rerr != nil {
-				return pagecache.Entry{}, fmt.Errorf("resolve archive layout: %w", rerr)
-			}
-			cacheKey := shellRow.RevisionID
-			if layoutRevID != "" {
-				cacheKey = shellRow.RevisionID + ":" + layoutRevID
-			}
-			if p, perr := h.blocks.PreparedCache(cacheKey, effectiveDoc); perr == nil {
-				prepared = p
-			} else if p2, perr2 := h.blocks.Prepare(effectiveDoc); perr2 == nil {
-				prepared = p2
+			if s, serr := h.queries.GetPublishedEntryByID(ctx, rt.EntryID.String); serr == nil {
+				tmp := s
+				shellRow = &tmp
+				shellFound = true
 			}
 		}
-	}
+		// Fallback: if archive path is "/" for latest posts home with no archive route, shell remains nil
+		if shellFound {
+			shellTitle = shellRow.Title
+			shellDesc = stringValue(shellRow.Excerpt)
+			shellSeoTitle = stringValue(shellRow.SeoTitle)
+			shellSeoDesc = stringValue(shellRow.SeoDescription)
+			shellFeatured = stringValue(shellRow.FeaturedMediaID)
+			shellSocial = stringValue(shellRow.SocialMediaID)
+			shellRobotsIndex = seo.NullIntToBoolPtr(shellRow.SeoRobotsIndex.Valid, shellRow.SeoRobotsIndex.Int64)
+			shellRobotsFollow = seo.NullIntToBoolPtr(shellRow.SeoRobotsFollow.Valid, shellRow.SeoRobotsFollow.Int64)
+			shellCanonical = stringValue(shellRow.CanonicalUrl)
+			if d, derr := document.Decode([]byte(shellRow.DocumentJson)); derr == nil {
+				effectiveDoc, layoutRevID, rerr := h.layoutsService.ResolveEffectiveDocument(ctx, d, shellRow.ContentTypeID, shellRow.LayoutTemplateID)
+				if rerr != nil {
+					return pagecache.Entry{}, fmt.Errorf("resolve archive layout: %w", rerr)
+				}
+				cacheKey := shellRow.RevisionID
+				if layoutRevID != "" {
+					cacheKey = shellRow.RevisionID + ":" + layoutRevID
+				}
+				if p, perr := h.blocks.PreparedCache(cacheKey, effectiveDoc); perr == nil {
+					prepared = p
+				} else if p2, perr2 := h.blocks.Prepare(effectiveDoc); perr2 == nil {
+					prepared = p2
+				}
+			}
+		}
 		if !shellFound {
 			// No shell: default title/desc
 			if archivePath == "/" {
@@ -1143,24 +1150,23 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 				}
 			}
 		}
+	} else {
+		// Archive template active: set SEO title from term or content type for fallback
+		if termArchive {
+			shellTitle = termName
+			shellDesc = termDesc
+		} else if definition, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil && definition.PluralName != "" {
+			shellTitle = definition.PluralName
 		} else {
-			// Archive template active: set SEO title from term or content type for fallback
-			if termArchive {
-				shellTitle = termName
-				shellDesc = termDesc
-			} else if definition, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil && definition.PluralName != "" {
-				shellTitle = definition.PluralName
-			} else {
-				shellTitle = archiveContentType
-			}
-			// Prepare archive template for later rendering
-			if pd, err := h.blocks.PreparedCache(archiveTemplateRevID, archiveTemplateDoc); err == nil {
-				prepared = pd
-			} else if pd2, err2 := h.blocks.Prepare(archiveTemplateDoc); err2 == nil {
-				prepared = pd2
-			}
-			shellFound = false
+			shellTitle = archiveContentType
 		}
+		// Prepare archive template for later rendering
+		prepared, err = h.blocks.PreparedCache(archiveTemplateRevID, archiveTemplateDoc)
+		if err != nil {
+			return pagecache.Entry{}, fmt.Errorf("prepare configured archive template: %w", err)
+		}
+		shellFound = false
+	}
 
 	// Build archive context for Collection(source=context) – single source for both shell and fallback
 	pagination := rendering.PaginationContext{
@@ -1174,16 +1180,17 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	if pageNum < totalPages {
 		pagination.NextURL = seo.PaginatedPath(archivePath, pageNum+1)
 	}
+	archiveTitle, archiveDescription := resolveArchivePresentation(termArchive, termName, termDesc, shellTitle, shellDesc)
 	archCtx := &rendering.ArchiveContext{
-		Entries:    archiveEntries,
-		Pagination: pagination,
-		Permalink:  seo.PaginatedPath(archivePath, pageNum),
+		Entries:     archiveEntries,
+		Pagination:  pagination,
+		Permalink:   seo.PaginatedPath(archivePath, pageNum),
+		Title:       archiveTitle,
+		Description: archiveDescription,
 	}
 	if termArchive {
 		archCtx.TaxonomyID = taxonomyID
 		archCtx.TermID = termID
-		archCtx.Title = termName
-		archCtx.Description = termDesc
 	}
 	var shellContent template.HTML
 	var usedBlocks []rendering.BlockKey
@@ -1191,7 +1198,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	menusForArchive := h.hub.Navigation.LocationsForPath(archivePath)
 	if prepared != nil {
 		rc := h.archiveRenderContext(siteSnap, shellRow, archivePath, archCtx, origin)
-		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
+		rc.Route = rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination, ArchiveTitle: archiveTitle, ArchiveDescription: archiveDescription}
 		if termArchive {
 			rc.Route.TaxonomyID = taxonomyID
 			rc.Route.TermID = termID
@@ -1210,8 +1217,9 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		} else {
 			rc.Definition = content.DefinitionFor(archiveContentType)
 		}
-		rc.SitePartReader = &handlerSitePartReader{queries: h.queries, blocks: h.blocks}
+		rc.SitePartReader = newHandlerSitePartReader(h.queries, h.blocks)
 		rc.CollectedSiteParts = make(map[string]string)
+		rc.Dependencies = &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)}
 		rc.SitePartStack = make(map[string]struct{})
 		rc.Navigation = menusForArchive
 		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
@@ -1223,7 +1231,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		archiveRC = rc
 	} else {
 		// Shell-less fallback: render a minimal Collection so theme can stay .Content-only.
-		routeCtx := rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
+		routeCtx := rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination, ArchiveTitle: archiveTitle, ArchiveDescription: archiveDescription}
 		if termArchive {
 			routeCtx.TaxonomyID = taxonomyID
 			routeCtx.TermID = termID
@@ -1267,7 +1275,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			baseRCForHF.CollectedSiteParts = make(map[string]string)
 		}
 		if baseRCForHF.SitePartReader == nil {
-			baseRCForHF.SitePartReader = &handlerSitePartReader{queries: h.queries, blocks: h.blocks}
+			baseRCForHF.SitePartReader = newHandlerSitePartReader(h.queries, h.blocks)
 		}
 		if baseRCForHF.Navigation == nil {
 			baseRCForHF.Navigation = menusForArchive
@@ -1281,7 +1289,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 				siteCtxHF.LogoHeight = view.Height
 			}
 		}
-		routeCtxHF := rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination}
+		routeCtxHF := rendering.RouteContext{Path: archivePath, IsArchive: true, ContentType: archiveContentType, Archive: archCtx, Pagination: pagination, ArchiveTitle: archiveTitle, ArchiveDescription: archiveDescription}
 		if termArchive {
 			routeCtxHF.TaxonomyID = taxonomyID
 			routeCtxHF.TermID = termID
@@ -1294,25 +1302,21 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			Mode:               rendering.ModePublic,
 			ContentReader:      &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media},
 			QueryCache:         make(map[string][]rendering.ArchiveEntry),
-			SitePartReader:     &handlerSitePartReader{queries: h.queries, blocks: h.blocks},
+			SitePartReader:     newHandlerSitePartReader(h.queries, h.blocks),
 			CollectedSiteParts: make(map[string]string),
+			Dependencies:       &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
 			SitePartStack:      make(map[string]struct{}),
 			Navigation:         menusForArchive,
 		}
 	}
 	headerHTML, footerHTML, hfUsed = h.renderHeaderFooter(ctx, siteSnap, archivePath, baseRCForHF)
 	usedBlocks = append(usedBlocks, hfUsed...)
-	for sid := range baseRCForHF.CollectedSiteParts {
-		if pd, _, err := baseRCForHF.SitePartReader.GetSitePart(ctx, sid); err == nil && pd != nil {
-			usedBlocks = append(usedBlocks, pd.UsedBlocks...)
-		}
+	for _, dependency := range baseRCForHF.Dependencies.SiteParts {
+		usedBlocks = append(usedBlocks, dependency.UsedBlocks...)
 	}
 	if prepared != nil {
 		for sid := range archiveRC.CollectedSiteParts {
 			if _, exists := baseRCForHF.CollectedSiteParts[sid]; !exists {
-				if pd, _, err := baseRCForHF.SitePartReader.GetSitePart(ctx, sid); err == nil && pd != nil {
-					usedBlocks = append(usedBlocks, pd.UsedBlocks...)
-				}
 				baseRCForHF.CollectedSiteParts[sid] = archiveRC.CollectedSiteParts[sid]
 			}
 		}
@@ -1795,6 +1799,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	rc := rendering.RenderContext{
 		Site:      rendering.SiteContext{Name: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, URL: siteSnap.SiteURL},
 		Entry:     rendering.EntryContext{ID: input.EntryID, Slug: input.Slug, ContentTypeID: input.ContentTypeID, Title: input.Title, Excerpt: input.Excerpt, Permalink: path, FeaturedImage: input.FeaturedMediaID, Fields: input.Fields},
+		Archive:   input.Archive,
 		IsPreview: true,
 		EntryID:   input.EntryID,
 	}
@@ -1811,7 +1816,9 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	// If this preview is for the current Posts Page, provide a real ArchiveContext
 	// (page 1 of published posts) so the drafted layout renders with live data.
 	// This is preview only; it does not publish the draft.
-	if input.EntryID != "" && siteSnap.PostsPageEntryID != "" && input.EntryID == siteSnap.PostsPageEntryID {
+	if input.Archive != nil {
+		rc.ArchiveURL = input.Archive.Permalink
+	} else if input.EntryID != "" && siteSnap.PostsPageEntryID != "" && input.EntryID == siteSnap.PostsPageEntryID {
 		// Build archive entries for preview (page 1)
 		perPage := int(siteSnap.PostsPerPage)
 		if perPage <= 0 {
@@ -1881,7 +1888,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	rc.ContentReader = &handlerContentReader{queries: h.queries, siteSnap: siteSnap, media: h.media}
 	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 	if rc.Archive != nil {
-		rc.Route = rendering.RouteContext{Path: path, IsArchive: true, ContentType: "post", Archive: rc.Archive}
+		rc.Route = rendering.RouteContext{Path: path, IsArchive: true, ContentType: input.ContentTypeID, Archive: rc.Archive, Pagination: rc.Archive.Pagination, ArchiveTitle: rc.Archive.Title, ArchiveDescription: rc.Archive.Description}
 	}
 	if rc.LCP == nil {
 		rc.LCP = &rendering.LCPState{}
@@ -1899,22 +1906,74 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	}
 	// Use prepared rendering to keep collections and archive
 	previewResolved := h.resolvePreviewSEO(ctx, siteSnap, input, path, "")
+	rc.Navigation = h.hub.Navigation.LocationsForPath(path)
+	rc.SitePartReader = newHandlerSitePartReader(h.queries, h.blocks)
+	rc.CollectedSiteParts = make(map[string]string)
+	rc.Dependencies = &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)}
 	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
 	if err != nil {
 		return nil, err
 	}
 	menus := h.hub.Navigation.LocationsForPath(path)
+	headerHTML, footerHTML, regionUsed := h.renderHeaderFooter(ctx, siteSnap, path, rc)
+	renderRegionOverride := func(doc *document.Document) (template.HTML, []rendering.BlockKey, error) {
+		if doc == nil {
+			return "", nil, nil
+		}
+		pd, err := h.blocks.Prepare(doc)
+		if err != nil {
+			return "", nil, err
+		}
+		regionRC := rc
+		regionRC.Entry = rendering.EntryContext{}
+		regionRC.EntryID = ""
+		regionRC.LCP = &rendering.LCPState{}
+		regionRC.Mode = rendering.ModePreview
+		html, err := h.blocks.RenderPrepared(ctx, pd, regionRC)
+		return html, pd.UsedBlocks, err
+	}
+	if input.HeaderDocument != nil {
+		var overrideUsed []rendering.BlockKey
+		headerHTML, overrideUsed, err = renderRegionOverride(input.HeaderDocument)
+		regionUsed = append(regionUsed, overrideUsed...)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if input.FooterDocument != nil {
+		var overrideUsed []rendering.BlockKey
+		footerHTML, overrideUsed, err = renderRegionOverride(input.FooterDocument)
+		regionUsed = append(regionUsed, overrideUsed...)
+		if err != nil {
+			return nil, err
+		}
+	}
 	siteIcon := h.siteIconView(ctx, siteSnap)
 	head := h.headView(siteSnap, previewResolved, siteIcon)
 	head.Preloads = h.lcpPreloads(ctx, prepared, rc)
 	_, themeCSS, themeJS := h.hub.Assets.URLs()
-	blocksCSS := h.hub.Assets.BlocksCSSFor(prepared.UsedBlocks)
+	usedBlocks := append([]rendering.BlockKey(nil), prepared.UsedBlocks...)
+	usedBlocks = append(usedBlocks, regionUsed...)
+	for _, dependency := range rc.Dependencies.SiteParts {
+		usedBlocks = append(usedBlocks, dependency.UsedBlocks...)
+	}
+	blocksCSS := h.hub.Assets.BlocksCSSFor(usedBlocks)
+	regions := make(map[string]template.HTML)
+	if headerHTML != "" {
+		regions["header"] = headerHTML
+	}
+	if footerHTML != "" {
+		regions["footer"] = footerHTML
+	}
 	view := themes.PageView{
 		Site:       themes.SiteView{Title: rc.Site.Name, Tagline: rc.Site.Tagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: rc.Site.LogoURL, LogoWidth: rc.Site.LogoWidth, LogoHeight: rc.Site.LogoHeight},
 		Entry:      themes.EntryView{Title: rc.Entry.Title, SEOTitle: previewResolved.OpenGraph.Title, SEODescription: previewResolved.Description, CanonicalURL: previewResolved.Canonical},
 		Head:       head,
 		Navigation: menus,
 		Content:    content,
+		Header:     headerHTML,
+		Footer:     footerHTML,
+		Regions:    regions,
 		Assets:     themes.AssetsView{BlocksCSS: blocksCSS, ThemeCSS: themeCSS, ThemeJS: themeJS},
 	}
 	page, err := h.themes.Render(view, input.Temporary)
@@ -2023,6 +2082,16 @@ func (h *Handler) archiveRenderContext(siteSnap *site.Snapshot, shell *db.GetPub
 		rc.Site.SocialLinks = siteSnap.SocialLinks
 	}
 	return rc
+}
+
+// resolveArchivePresentation centralizes the semantic title/description passed
+// to archive blocks. Taxonomy terms are canonical. For ordinary archives the
+// already-resolved legacy presentation is a compatibility fallback only.
+func resolveArchivePresentation(termArchive bool, termName, termDescription, fallbackTitle, fallbackDescription string) (string, string) {
+	if termArchive {
+		return strings.TrimSpace(termName), strings.TrimSpace(termDescription)
+	}
+	return strings.TrimSpace(fallbackTitle), strings.TrimSpace(fallbackDescription)
 }
 
 func (h *Handler) buildArchiveEntries(ctx context.Context, rows []db.ListPublishedEntriesByContentTypeRow, siteSnap *site.Snapshot, contentTypeID string) []rendering.ArchiveEntry {

@@ -3,14 +3,17 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
+	"github.com/kokosx/stratum/internal/rendering"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
@@ -22,39 +25,46 @@ type layoutTemplatesData struct {
 }
 
 type layoutTemplateRow struct {
-	ID              string
-	Name            string
-	ContentTypeID   string
-	ContentTypeName string
-	Kind            string
-	Status          string
-	IsDefault       bool
+	ID               string
+	Name             string
+	ContentTypeID    string
+	ContentTypeName  string
+	Kind             string
+	Status           string
+	IsDefault        bool
 	IsDefaultArchive bool
 }
 
 type layoutTemplateFormData struct {
-	Heading         string
-	Action          string
-	PublishAction   string
-	DefaultAction   string
+	Heading              string
+	Action               string
+	PublishAction        string
+	DefaultAction        string
 	ArchiveDefaultAction string
-	BackURL         string
-	TemplateID      string
-	Name            string
-	ContentTypeID   string
-	ContentTypeName string
-	Kind            string
-	ReadOnlyCT      bool
-	DocumentJSON    string
-	EditorJSON      template.JS
-	CSRFToken       string
-	Error           string
-	Dirty           string
-	Status          string
-	PublicNote      string
-	IsDefault       bool
-	IsDefaultArchive bool
-	ContentTypes    []ctOption
+	ClearDefaultAction   string
+	ClearArchiveAction   string
+	DeleteAction         string
+	RevisionsURL         string
+	BackURL              string
+	TemplateID           string
+	Name                 string
+	ContentTypeID        string
+	ContentTypeName      string
+	Kind                 string
+	ReadOnlyCT           bool
+	DocumentJSON         string
+	EditorJSON           template.JS
+	CSRFToken            string
+	Error                string
+	Dirty                string
+	Status               string
+	PublicNote           string
+	IsDefault            bool
+	IsDefaultArchive     bool
+	ContentTypes         []ctOption
+	Warning              string
+	CanSetDefault        bool
+	CanSetArchiveDefault bool
 }
 
 type ctOption struct {
@@ -112,7 +122,7 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 
 func layoutTemplateStatusFromMaps(tmpl db.LayoutTemplate, latestMap map[string]db.LayoutTemplateRevision) string {
 	if !tmpl.PublishedRevisionID.Valid {
-		return "Unpublished"
+		return "Draft"
 	}
 	latest, ok := latestMap[tmpl.ID]
 	if !ok {
@@ -121,12 +131,12 @@ func layoutTemplateStatusFromMaps(tmpl db.LayoutTemplate, latestMap map[string]d
 	if latest.ID == tmpl.PublishedRevisionID.String {
 		return "Published"
 	}
-	return "Draft changes"
+	return "Published · Unpublished changes"
 }
 
 func (h *Handler) layoutTemplateStatus(r *http.Request, tmpl db.LayoutTemplate) string {
 	if !tmpl.PublishedRevisionID.Valid {
-		return "Unpublished"
+		return "Draft"
 	}
 	latest, err := h.queries.GetLatestLayoutTemplateRevision(r.Context(), tmpl.ID)
 	if err != nil {
@@ -135,7 +145,7 @@ func (h *Handler) layoutTemplateStatus(r *http.Request, tmpl db.LayoutTemplate) 
 	if latest.ID == tmpl.PublishedRevisionID.String {
 		return "Published"
 	}
-	return "Draft changes"
+	return "Published · Unpublished changes"
 }
 
 func (h *Handler) newLayoutTemplate(w http.ResponseWriter, r *http.Request) {
@@ -269,8 +279,17 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	isDefaultArchive := false
-	if ct, err := h.queries.GetContentType(r.Context(), tmpl.ContentTypeID); err == nil && ct.DefaultArchiveTemplateID.Valid && ct.DefaultArchiveTemplateID.String == tmpl.ID {
-		isDefaultArchive = true
+	canSetDefault, canSetArchiveDefault := true, false
+	warning := ""
+	if ct, err := h.queries.GetContentType(r.Context(), tmpl.ContentTypeID); err == nil {
+		isDefaultArchive = ct.DefaultArchiveTemplateID.Valid && ct.DefaultArchiveTemplateID.String == tmpl.ID
+	}
+	if definition, err := content.NewCatalog(h.queries).GetDefinition(r.Context(), tmpl.ContentTypeID); err == nil {
+		canSetDefault = definition.Routing.Single
+		canSetArchiveDefault = definition.Routing.Archive
+		if tmpl.Kind == "single" && definition.Capabilities.HasContent && !documentHasBlock(doc.Nodes, "core/content-slot") {
+			warning = "This template does not include Entry Content. Freeform content from entries will not be displayed."
+		}
 	}
 	data := layoutTemplateFormData{
 		Heading:              "Edit Template",
@@ -278,6 +297,10 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		PublishAction:        "/admin/appearance/templates/" + tmpl.ID + "/publish",
 		DefaultAction:        "/admin/appearance/templates/" + tmpl.ID + "/default",
 		ArchiveDefaultAction: "/admin/appearance/templates/" + tmpl.ID + "/default-archive",
+		ClearDefaultAction:   "/admin/appearance/templates/" + tmpl.ID + "/clear-default",
+		ClearArchiveAction:   "/admin/appearance/templates/" + tmpl.ID + "/clear-default-archive",
+		DeleteAction:         "/admin/appearance/templates/" + tmpl.ID + "/delete",
+		RevisionsURL:         "/admin/appearance/templates/" + tmpl.ID + "/revisions",
 		BackURL:              "/admin/appearance/templates",
 		TemplateID:           tmpl.ID,
 		Name:                 tmpl.Name,
@@ -293,10 +316,22 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		Status:               status,
 		IsDefault:            isDefault,
 		IsDefaultArchive:     isDefaultArchive,
+		Warning:              warning,
+		CanSetDefault:        canSetDefault,
+		CanSetArchiveDefault: canSetArchiveDefault,
 	}
 	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Template - " + tmpl.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render layout editor: %v", err)
 	}
+}
+
+func documentHasBlock(nodes []document.Node, block string) bool {
+	for _, node := range nodes {
+		if node.Block == block || documentHasBlock(node.Children, block) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) saveLayoutTemplate(w http.ResponseWriter, r *http.Request) {
@@ -450,8 +485,12 @@ func (h *Handler) previewLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	if err := layouts.ValidateLayoutTemplateDocument(h.blocks, doc); err != nil {
+	if err := layouts.ValidateTemplateDocument(h.blocks, doc, tmpl.Kind, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if tmpl.Kind == "archive" {
+		h.previewArchiveLayoutTemplate(w, r, tmpl, doc)
 		return
 	}
 	sampleEntryDoc := &document.Document{
@@ -514,6 +553,56 @@ func (h *Handler) previewLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write(page)
 }
 
+func (h *Handler) previewArchiveLayoutTemplate(w http.ResponseWriter, r *http.Request, tmpl db.LayoutTemplate, doc *document.Document) {
+	definition, err := content.NewCatalog(h.queries).GetDefinition(r.Context(), tmpl.ContentTypeID)
+	if err != nil {
+		http.Error(w, "Content type is unavailable", http.StatusUnprocessableEntity)
+		return
+	}
+	perPage := 10
+	rows, err := content.NewRepository(h.queries).QueryPublished(r.Context(), content.EntryQuery{ContentType: content.ContentTypeID(tmpl.ContentTypeID), Limit: perPage})
+	if err != nil {
+		http.Error(w, "Archive entries are unavailable", http.StatusUnprocessableEntity)
+		return
+	}
+	entries := make([]rendering.ArchiveEntry, 0, len(rows))
+	for _, row := range rows {
+		fields, _ := content.DecodeFieldSnapshot(row.FieldsJSON)
+		entries = append(entries, rendering.ArchiveEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: tmpl.ContentTypeID, Title: row.Title, Excerpt: row.Excerpt, URL: row.RoutePath, Fields: fields})
+	}
+	total, err := h.queries.CountPublishedEntriesByContentType(r.Context(), tmpl.ContentTypeID)
+	if err != nil {
+		total = int64(len(entries))
+	}
+	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	path := definition.Routing.BasePath
+	if path == "" {
+		path = "/"
+	}
+	archive := &rendering.ArchiveContext{
+		Entries:    entries,
+		Pagination: rendering.PaginationContext{Current: 1, TotalPages: totalPages, TotalItems: total},
+		Permalink:  path,
+		Title:      definition.EffectiveLabel(),
+	}
+	if h.documentPreview == nil {
+		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	page, err := h.documentPreview(r.Context(), RenderInput{Document: doc, Title: archive.Title, Path: path, ContentTypeID: tmpl.ContentTypeID, Archive: archive})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(page)
+}
+
 func (h *Handler) setDefaultLayoutTemplate(w http.ResponseWriter, r *http.Request) {
 	if !h.validCSRF(r) {
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
@@ -556,4 +645,175 @@ func (h *Handler) setDefaultArchiveTemplate(w http.ResponseWriter, r *http.Reque
 	}
 	h.setFlash(w, "Default archive template updated.")
 	http.Redirect(w, r, "/admin/appearance/templates/"+id+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) clearDefaultLayoutTemplate(w http.ResponseWriter, r *http.Request) {
+	h.clearDefaultTemplate(w, r, false)
+}
+
+func (h *Handler) clearDefaultArchiveTemplate(w http.ResponseWriter, r *http.Request) {
+	h.clearDefaultTemplate(w, r, true)
+}
+
+func (h *Handler) clearDefaultTemplate(w http.ResponseWriter, r *http.Request, archive bool) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	tmpl, err := h.queries.GetLayoutTemplate(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if archive {
+		err = h.layoutsService.ClearDefaultArchive(r.Context(), tmpl.ContentTypeID)
+	} else {
+		err = h.layoutsService.ClearDefault(r.Context(), tmpl.ContentTypeID)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateContent()
+	}
+	h.setFlash(w, "Default template cleared.")
+	http.Redirect(w, r, "/admin/appearance/templates/"+tmpl.ID+"/edit", http.StatusSeeOther)
+}
+
+func (h *Handler) deleteLayoutTemplate(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	id := r.PathValue("id")
+	usage, err := h.layoutsService.Usage(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if usage.InUse() {
+		message := "This template cannot be deleted because it is currently in use."
+		if usage.DefaultSingleFor != "" {
+			message += " Default Single Template for " + usage.DefaultSingleFor + "."
+		}
+		if usage.DefaultArchiveFor != "" {
+			message += " Default Archive Template for " + usage.DefaultArchiveFor + "."
+		}
+		if usage.ExplicitEntries > 0 {
+			message += " Explicitly selected by " + fmt.Sprint(usage.ExplicitEntries) + " entries."
+		}
+		http.Error(w, message, http.StatusBadRequest)
+		return
+	}
+	if err := h.layoutsService.Delete(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateAll()
+	}
+	h.setFlash(w, "Template deleted.")
+	http.Redirect(w, r, "/admin/appearance/templates", http.StatusSeeOther)
+}
+
+func (h *Handler) listLayoutTemplateRevisions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	tmpl, err := h.queries.GetLayoutTemplate(r.Context(), id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	revisions, err := h.queries.ListLayoutTemplateRevisions(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Revision history is unavailable", http.StatusInternalServerError)
+		return
+	}
+	token, _ := h.csrfToken(w, r)
+	var out strings.Builder
+	out.WriteString(`<!doctype html><meta name="robots" content="noindex,nofollow"><title>Template revisions</title><main><h1>Revision history: ` + template.HTMLEscapeString(tmpl.Name) + `</h1><p><a href="/admin/appearance/templates/` + template.URLQueryEscaper(id) + `/edit">Back to editor</a></p><ol>`)
+	latestID := ""
+	if len(revisions) > 0 {
+		latestID = revisions[0].ID
+	}
+	for _, revision := range revisions {
+		status := "Revision " + fmt.Sprint(revision.RevisionNumber)
+		if tmpl.PublishedRevisionID.Valid && tmpl.PublishedRevisionID.String == revision.ID {
+			status += " · Published"
+		} else if revision.ID == latestID {
+			status += " · Current draft"
+		}
+		author := ""
+		if revision.CreatedBy.Valid {
+			author = " · Author " + template.HTMLEscapeString(revision.CreatedBy.String)
+		}
+		createdAt := time.Unix(revision.CreatedAt, 0).Format("2006-01-02 15:04")
+		out.WriteString(`<li><strong>` + template.HTMLEscapeString(status) + `</strong> · <time>` + createdAt + `</time>` + author + ` <a href="/admin/appearance/templates/` + template.URLQueryEscaper(id) + `/revisions/` + template.URLQueryEscaper(revision.ID) + `/preview">Preview</a> <form method="post" action="/admin/appearance/templates/` + template.URLQueryEscaper(id) + `/revisions/` + template.URLQueryEscaper(revision.ID) + `/restore" style="display:inline"><input type="hidden" name="csrf_token" value="` + template.HTMLEscapeString(token) + `"><button type="submit">Restore</button></form></li>`)
+	}
+	out.WriteString(`</ol></main>`)
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(out.String()))
+}
+
+func (h *Handler) previewLayoutTemplateRevision(w http.ResponseWriter, r *http.Request) {
+	id, revisionID := r.PathValue("id"), r.PathValue("revisionID")
+	tmpl, err := h.queries.GetLayoutTemplate(r.Context(), id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	revision, err := h.queries.GetLayoutTemplateRevision(r.Context(), revisionID)
+	if err != nil || revision.TemplateID != id {
+		http.NotFound(w, r)
+		return
+	}
+	doc, err := document.Decode([]byte(revision.DocumentJson))
+	if err != nil || layouts.ValidateTemplateDocument(h.blocks, doc, tmpl.Kind, nil) != nil {
+		http.Error(w, "Invalid template revision", http.StatusUnprocessableEntity)
+		return
+	}
+	if tmpl.Kind == "archive" {
+		h.previewArchiveLayoutTemplate(w, r, tmpl, doc)
+		return
+	}
+	sample := &document.Document{Version: 1, Nodes: []document.Node{{ID: "preview-content", Block: "core/text", Version: 1, Props: json.RawMessage(`{"text":"This is where the entry content will appear."}`), Settings: json.RawMessage(`{}`)}}}
+	title, excerpt, path := "Example Entry", "", "/example"
+	fields := map[string]any{}
+	if rows, queryErr := content.NewRepository(h.queries).QueryPublished(r.Context(), content.EntryQuery{ContentType: content.ContentTypeID(tmpl.ContentTypeID), Limit: 1}); queryErr == nil && len(rows) > 0 {
+		if published, publishedErr := h.queries.GetPublishedEntryByID(r.Context(), rows[0].ID); publishedErr == nil {
+			sample, _ = document.Decode([]byte(published.DocumentJson))
+			title, excerpt, path = published.Title, stringValue(published.Excerpt), rows[0].RoutePath
+			fields = fieldValues(published.FieldsJson)
+		}
+	}
+	composed, err := layouts.Compose(doc, sample)
+	if err != nil || h.documentPreview == nil {
+		http.Error(w, "Preview is unavailable", http.StatusUnprocessableEntity)
+		return
+	}
+	page, err := h.documentPreview(r.Context(), RenderInput{Document: composed, Title: title, Excerpt: excerpt, Path: path, ContentTypeID: tmpl.ContentTypeID, Fields: fields})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(page)
+}
+
+func (h *Handler) restoreLayoutTemplateRevision(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	user, _ := h.currentUser(r)
+	if _, err := h.layoutsService.RestoreRevision(r.Context(), r.PathValue("id"), r.PathValue("revisionID"), user.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	h.setFlash(w, "Revision restored as a new draft.")
+	http.Redirect(w, r, "/admin/appearance/templates/"+r.PathValue("id")+"/edit", http.StatusSeeOther)
 }

@@ -481,7 +481,7 @@ func (h *Handler) hierarchyParentOptions(ctx context.Context, contentTypeID, ent
 }
 
 func (h *Handler) loadLayoutTemplateOptions(ctx context.Context, contentTypeID string) []layoutTemplateOption {
-	rows, err := h.queries.ListPublishedLayoutTemplatesByContentType(ctx, contentTypeID)
+	rows, err := h.queries.ListPublishedLayoutTemplatesByContentTypeAndKind(ctx, db.ListPublishedLayoutTemplatesByContentTypeAndKindParams{ContentTypeID: contentTypeID, Kind: "single"})
 	if err != nil {
 		return nil
 	}
@@ -705,6 +705,9 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 		}
 		if tmpl.ContentTypeID != contentType {
 			return fmt.Errorf("This template belongs to %s and cannot be used by a %s", tmpl.ContentTypeID, contentType)
+		}
+		if tmpl.Kind != "single" {
+			return errors.New("Archive templates cannot be assigned to entries")
 		}
 		if !tmpl.PublishedRevisionID.Valid {
 			return errors.New("The selected layout template has not been published yet.")
