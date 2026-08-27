@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -94,10 +96,37 @@ func youtubeIDFunc(url string) string {
 // vimeoID extracts the numeric Vimeo video id from common URL shapes.
 func vimeoIDFunc(url string) string {
 	url = strings.TrimSpace(url)
-	if strings.Contains(url, "vimeo.com/") {
-		return lastPathSegment(url, "vimeo.com/")
+	if !strings.Contains(url, "vimeo.com/") {
+		return ""
 	}
-	return ""
+	// Support both vimeo.com/{id} and player.vimeo.com/video/{id}.
+	// Extract the last path segment that is purely numeric.
+	// Trim query and hash.
+	if idx := strings.IndexAny(url, "?#"); idx >= 0 {
+		url = url[:idx]
+	}
+	url = strings.TrimSuffix(url, "/")
+	if idx := strings.LastIndex(url, "/"); idx >= 0 {
+		candidate := url[idx+1:]
+		candidate = strings.TrimSpace(candidate)
+		if isNumericID(candidate) {
+			return candidate
+		}
+	}
+	// Fallback to previous marker logic for unusual shapes.
+	return lastPathSegment(url, "vimeo.com/")
+}
+
+func isNumericID(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func lastPathSegment(url, marker string) string {
@@ -153,4 +182,79 @@ func tagOpenFunc(tag string) template.HTML {
 
 func tagCloseFunc(tag string) template.HTML {
 	return template.HTML("</" + tag + ">")
+}
+
+func safeURLFunc(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "#") {
+		if strings.HasPrefix(raw, "//") {
+			return ""
+		}
+		if strings.ContainsAny(raw, " \"'<>") {
+			return ""
+		}
+		return raw
+	}
+	if strings.HasPrefix(raw, "/") {
+		if strings.HasPrefix(raw, "//") {
+			return ""
+		}
+		if strings.ContainsAny(raw, " \"'<>") {
+			return ""
+		}
+		return raw
+	}
+	if strings.Contains(raw, ":") {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		scheme := strings.ToLower(parsed.Scheme)
+		switch scheme {
+		case "http", "https", "mailto", "tel":
+			if strings.ContainsAny(raw, " \"'<>") {
+				return ""
+			}
+			return raw
+		default:
+			return ""
+		}
+	}
+	// Relative without scheme: allow simple paths without spaces or control chars.
+	if strings.ContainsAny(raw, " \"'<>") || strings.Contains(raw, "//") {
+		return ""
+	}
+	// Disallow javascript/data etc without colon already handled, but be safe.
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "vbscript:") {
+		return ""
+	}
+	return raw
+}
+
+var anchorSanitizePattern = regexp.MustCompile(`[^A-Za-z0-9_-]`)
+
+func anchorIDFunc(raw any) string {
+	s, _ := raw.(string)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	// Remove any characters not allowed in HTML id.
+	s = anchorSanitizePattern.ReplaceAllString(s, "")
+	if s == "" {
+		return ""
+	}
+	// IDs should not start with a digit for CSS usability; prefix if needed.
+	if s[0] >= '0' && s[0] <= '9' {
+		s = "a-" + s
+	}
+	// Limit length to avoid abuse.
+	if len(s) > 64 {
+		s = s[:64]
+	}
+	return s
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/patterns"
 	"github.com/kokosx/stratum/internal/rendering"
 )
 
@@ -23,6 +24,11 @@ type editorBootstrap struct {
 	ContentTypes     []editorOption                          `json:"contentTypes,omitempty"`
 	FieldCatalogs    map[string][]content.FieldCatalogOption `json:"fieldCatalogs,omitempty"`
 	TaxonomyCatalogs map[string][]taxonomyCatalogEntry       `json:"taxonomyCatalogs,omitempty"`
+	Patterns         []patterns.Pattern                      `json:"patterns,omitempty"`
+	ContextKind      string                                  `json:"contextKind,omitempty"`
+	SiteParts        any                                     `json:"siteParts,omitempty"`
+	TemplateKind     string                                  `json:"templateKind,omitempty"`
+	SitePartID       string                                  `json:"sitePartId,omitempty"`
 }
 
 type taxonomyCatalogEntry struct {
@@ -81,6 +87,11 @@ func (h *Handler) taxonomyCatalogs(ctx context.Context) map[string][]taxonomyCat
 		}
 	}
 	return out
+}
+
+func (h *Handler) patternsForContext(ctx string) []patterns.Pattern {
+	cat := patterns.NewCatalog()
+	return cat.List(ctx)
 }
 
 func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {

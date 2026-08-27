@@ -348,6 +348,8 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 				"tagOpen":       tagOpenFunc,
 				"richText":      richtext.Render,
 				"tagClose":      tagCloseFunc,
+				"safeURL":       safeURLFunc,
+				"anchorID":      anchorIDFunc,
 			}).Parse(definition.Template)
 			if err != nil {
 				return nil, fmt.Errorf("parse block %s@%d template: %w", key.name, key.version, err)

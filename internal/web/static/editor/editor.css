@@ -176,3 +176,11 @@
 .inspector-group legend { border-bottom: 1px solid var(--ui-border); color: var(--ui-text); }
 .array-item { border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); background: var(--ui-surface); }
 .collection-filter-row { border-color: var(--ui-border); background: var(--ui-surface-subtle); }
+
+/* EPIC 3: library tabs + pattern cards */
+.library-tabs { display: flex; gap: 0; margin: 8px 0 12px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); overflow: hidden; }
+.library-tab { flex: 1; padding: 8px 10px; border: 0; background: var(--ui-surface); color: var(--ui-text-muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.library-tab + .library-tab { border-left: 1px solid var(--ui-border); }
+.library-tab.is-active { background: var(--ui-primary); color: #fff; }
+.pattern-card { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); }
+.pattern-card .button { margin-top: 4px; }

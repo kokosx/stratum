@@ -37,12 +37,12 @@ var entrySlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 // Entry public paths are "/<slug>", so reserving these slugs keeps /admin,
 // /stratum, /sitemap.xml and /robots.txt owned exclusively by the application.
 var reservedSlugs = map[string]bool{
-	"admin":        true,
-	"stratum":      true,
-	"sitemap.xml":  true,
-	"robots.txt":   true,
-	"sitemap-xml":  true,
-	"robots-txt":   true,
+	"admin":       true,
+	"stratum":     true,
+	"sitemap.xml": true,
+	"robots.txt":  true,
+	"sitemap-xml": true,
+	"robots-txt":  true,
 }
 
 // entryFormData is the presentation model shared by every Entry editor
@@ -425,7 +425,7 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
 	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs,
+		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("entry"), ContextKind: "entry",
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

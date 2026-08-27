@@ -24,7 +24,7 @@ type Pattern struct {
 
 // Catalog holds the bundled patterns.
 type Catalog struct {
-	byID   map[string]Pattern
+	byID    map[string]Pattern
 	ordered []Pattern
 }
 

@@ -23,12 +23,15 @@
   const state = {
     document: bootstrap.document,
     catalog: bootstrap.catalog,
+    patterns: bootstrap.patterns || [],
     selectedNodeId: null,
     dirty: false,
     collapsed: new Set(),
     mode: "edit", // "edit" | "preview"
     previewWidth: "100%",
+    libraryTab: "blocks",
   };
+  const persistedJSON = JSON.stringify(bootstrap.document);
   const definitions = new Map(
     [...state.catalog, ...(bootstrap.definitions || [])].map((item) => [`${item.block}@${item.version}`, item])
   );
@@ -37,7 +40,7 @@
   let previewTimer = null;
   let metadataTimer = null;
 
-  // --- History (P1.32) -----------------------------------------------------
+  // --- History -----------------------------------------------------
 
   const history = [];
   let historyIndex = -1;
@@ -74,13 +77,23 @@
     restoreSnapshot();
   }
 
+  function updateDirty() {
+    const cur = JSON.stringify(state.document);
+    const isDirty = cur !== persistedJSON;
+    state.dirty = isDirty;
+    if (dirtyElement) {
+      dirtyElement.textContent = isDirty ? "Unsaved" : "Saved";
+      dirtyElement.className = isDirty ? "editor-status is-dirty" : "editor-status is-saved";
+    }
+  }
+
   function restoreSnapshot() {
     state.document = JSON.parse(history[historyIndex]);
     state.document.nodes ||= [];
     state.document.nodes.forEach(hydrateNode);
     state.selectedNodeId = null;
     renderAll({ preview: true });
-    markSaved();
+    updateDirty();
   }
 
   // --- Utilities -----------------------------------------------------------
@@ -141,6 +154,15 @@
 
   state.document.nodes ||= [];
   state.document.nodes.forEach(hydrateNode);
+  // Initialize library tabs once DOM is ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initLibraryTabs);
+  } else {
+    initLibraryTabs();
+  }
+  // Also ensure pattern catalog rendered initially
+  // Defer to allow catalogElement to exist
+  setTimeout(() => renderCatalog(""), 0);
 
   // --- Document queries ----------------------------------------------------
 
@@ -364,7 +386,7 @@
   function removeNode(id) {
     const found = findNode(id);
     if (!found) return;
-    // P1.33: confirm for container subtree removal
+    // Confirm for container subtree removal
     if (subtreeHasChildren(found.node)) {
       const def = definitionFor(found.node);
       const label = def?.displayName || found.node.block;
@@ -377,7 +399,7 @@
     changed();
   }
 
-  // P1.39: duplicate with fresh IDs for entire subtree
+  // Duplicate with fresh IDs for entire subtree
   function duplicateSubtree(node) {
     const clone = JSON.parse(JSON.stringify(node));
     assignNewIDs(clone);
@@ -399,6 +421,77 @@
     changed();
   }
 
+  // --- Patterns ------------------------------------------------------------
+
+  function clonePatternNodes(pattern) {
+    const nodes = JSON.parse(JSON.stringify(pattern.document.nodes || []));
+    nodes.forEach((n) => assignNewIDs(n));
+    // Hydrate defaults for each cloned node (so missing settings get defaults)
+    nodes.forEach(function hydrateCloned(n) {
+      const def = definitions.get(`${n.block}@${n.version}`);
+      if (def) {
+        n.props ||= {};
+        n.settings ||= {};
+        n.children ||= [];
+        hydrateObject(n.props, def.schema.props);
+        hydrateObject(n.settings, def.schema.settings);
+      }
+      (n.children || []).forEach(hydrateCloned);
+    });
+    return nodes;
+  }
+
+  function insertionPointForPattern(rootBlocks) {
+    const selected = state.selectedNodeId && findNode(state.selectedNodeId);
+    if (!selected) return { siblings: state.document.nodes, index: state.document.nodes.length };
+    const containerNode = selected.node;
+    const containerDef = definitionFor(containerNode);
+    // If selected is container and it can accept all root blocks, insert as children
+    if (containerDef && containerDef.schema.children.mode !== "none") {
+      let canAcceptAll = true;
+      for (const pb of rootBlocks) {
+        if (!childrenAllow(containerDef, pb.block, containerNode.children.length)) {
+          canAcceptAll = false;
+          break;
+        }
+        // also check allowed blocks list
+        if (containerDef.schema.children.mode === "allowed" && !containerDef.schema.children.blocks.includes(pb.block)) {
+          canAcceptAll = false;
+          break;
+        }
+      }
+      if (canAcceptAll) {
+        return { siblings: containerNode.children, index: containerNode.children.length };
+      }
+    }
+    // Otherwise use normal insertion point for first block
+    if (rootBlocks.length > 0) {
+      return insertionPoint(rootBlocks[0].block);
+    }
+    return { siblings: state.document.nodes, index: state.document.nodes.length };
+  }
+
+  function insertPattern(patternId) {
+    const pattern = state.patterns.find((p) => p.id === patternId);
+    if (!pattern) return;
+    const cloned = clonePatternNodes(pattern);
+    if (!cloned.length) return;
+    // Validate that blocks are still allowed (editor catalog may have changed)
+    // Server will validate on save, but we do a basic client check
+    pushHistory();
+    const point = insertionPointForPattern(cloned);
+    // Check if point container can actually accept (fallback to root if not)
+    // For simplicity, if point siblings is not root and not accepting, fallback to root
+    let targetSiblings = point.siblings;
+    let targetIndex = point.index;
+    // Insert all cloned roots sequentially
+    for (let i = 0; i < cloned.length; i++) {
+      targetSiblings.splice(targetIndex + i, 0, cloned[i]);
+    }
+    state.selectedNodeId = cloned[0].id;
+    changed();
+  }
+
   // --- Render cycle --------------------------------------------------------
 
   function markSaved() {
@@ -410,12 +503,8 @@
   }
 
   function changed(options = {}) {
-    state.dirty = true;
-    if (dirtyElement) {
-      dirtyElement.textContent = "Unsaved";
-      dirtyElement.className = "editor-status is-dirty";
-    }
     documentInput.value = JSON.stringify(state.document);
+    updateDirty();
     if (options.tree !== false) renderTree();
     if (options.inspector !== false) renderInspector();
     schedulePreview();
@@ -428,9 +517,10 @@
     if (options.preview) schedulePreview();
   }
 
-  // --- Catalog (P1.36: remove fake icon) -----------------------------------
+  // --- Catalog ---------------------------------------------------
 
   function renderCatalog(filter = "") {
+    // Render Blocks
     catalogElement.replaceChildren();
     const query = filter.trim().toLowerCase();
     const matches = state.catalog.filter((d) =>
@@ -469,6 +559,87 @@
         catalogElement.append(button);
       });
     if (!matches.length) catalogElement.append(element("p", "editor-empty", "No matching blocks."));
+    // Render Patterns as well (kept separate)
+    renderPatternCatalog(filter);
+  }
+
+  function renderPatternCatalog(filter = "") {
+    const patternCatalog = document.getElementById("pattern-catalog");
+    if (!patternCatalog) return;
+    patternCatalog.replaceChildren();
+    const query = (filter || "").trim().toLowerCase();
+    let patterns = state.patterns;
+    if (query) {
+      patterns = patterns.filter((p) =>
+        `${p.name} ${p.description || ""} ${p.category || ""}`.toLowerCase().includes(query)
+      );
+    }
+    // Group by category
+    const byCategory = {};
+    patterns.forEach((p) => {
+      const cat = p.category || "Other";
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(p);
+    });
+    const categories = Object.keys(byCategory).sort();
+    if (!patterns.length) {
+      patternCatalog.append(element("p", "editor-empty", "No matching patterns."));
+      return;
+    }
+    categories.forEach((cat) => {
+      patternCatalog.append(element("h3", "catalog-category", cat));
+      byCategory[cat].forEach((p) => {
+        const card = element("div", "catalog-item pattern-card");
+        const title = element("strong", "", p.name);
+        card.append(title);
+        if (p.description) card.append(element("small", "", p.description));
+        const meta = element("small", "muted", p.category);
+        card.append(meta);
+        const btn = element("button", "button button-primary");
+        btn.type = "button";
+        btn.textContent = "Insert";
+        btn.addEventListener("click", () => insertPattern(p.id));
+        card.append(btn);
+        patternCatalog.append(card);
+      });
+    });
+  }
+
+  function initLibraryTabs() {
+    const tabs = document.querySelectorAll(".library-tab");
+    const blockCat = document.getElementById("block-catalog");
+    const patternCat = document.getElementById("pattern-catalog");
+    const searchEl = document.getElementById("block-search");
+    if (!tabs.length || !blockCat || !patternCat) return;
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((t) => {
+          t.classList.remove("is-active");
+          t.setAttribute("aria-selected", "false");
+        });
+        tab.classList.add("is-active");
+        tab.setAttribute("aria-selected", "true");
+        const wanted = tab.dataset.tab;
+        state.libraryTab = wanted;
+        if (wanted === "patterns") {
+          blockCat.hidden = true;
+          patternCat.hidden = false;
+          if (searchEl) searchEl.placeholder = "Search patterns";
+        } else {
+          blockCat.hidden = false;
+          patternCat.hidden = true;
+          if (searchEl) searchEl.placeholder = "Search blocks";
+        }
+      });
+    });
+    // Initial state
+    if (state.libraryTab === "patterns") {
+      blockCat.hidden = true;
+      patternCat.hidden = false;
+    } else {
+      blockCat.hidden = false;
+      patternCat.hidden = true;
+    }
   }
 
   // --- Tree ----------------------------------------------------------------
@@ -543,7 +714,7 @@
     return value ? value.slice(0, 70) : "";
   }
 
-  // P1.35: don't expose raw block identifier; displayName is the primary label.
+  // DisplayName is the primary label.
   function renderNode(node) {
     const definition = definitionFor(node);
     const container = isContainer(node);
@@ -578,7 +749,7 @@
 
     const actions = element("span", "node__actions");
 
-    // Collapse toggle for containers (P1.38)
+    // Collapse toggle for containers
     if (container && node.children.length > 0) {
       const collapseBtn = actionButton(collapsed ? "▸" : "▾", collapsed ? "Expand" : "Collapse", () => {
         if (state.collapsed.has(node.id)) state.collapsed.delete(node.id);
@@ -589,7 +760,7 @@
       actions.append(collapseBtn);
     }
 
-    // Duplicate (P1.39)
+    // Duplicate
     actions.append(actionButton("⧉", "Duplicate", () => duplicateNode(node.id)));
 
     if (canIndent(node.id)) actions.append(actionButton("↳", "Indent", () => indentNode(node.id)));
@@ -1408,7 +1579,7 @@
     previewTimer = setTimeout(updatePreview, 400);
   }
 
-  // P1.30: send title/excerpt/slug/seo in preview POST
+  // Send title/excerpt/slug/seo in preview POST
   async function updatePreview() {
     const titleEl = document.getElementById("entry-title");
     const excerptEl = document.getElementById("entry-excerpt");
@@ -1468,7 +1639,7 @@
     }
   }
 
-  // P1.41: preview toggle + device width
+  // Preview toggle + device width
   function setMode(mode) {
     state.mode = mode;
     const workspace = document.querySelector(".editor-workspace");
@@ -1495,7 +1666,7 @@
     if (frame) frame.style.width = width;
   }
 
-  // --- Metadata change listeners (P1.29/30/31) -----------------------------
+  // --- Metadata change listeners -----------------------------
 
   function setupMetadataListeners() {
     const metadataFields = [
@@ -1574,7 +1745,7 @@
     });
   }
 
-  // --- Keyboard shortcuts (P1.44) ------------------------------------------
+  // --- Keyboard shortcuts ------------------------------------------
 
   document.addEventListener("keydown", (event) => {
     const mod = event.metaKey || event.ctrlKey;
@@ -1593,7 +1764,7 @@
     }
   });
 
-  // --- beforeunload (P1.31) ------------------------------------------------
+  // --- beforeunload ------------------------------------------------
 
   window.addEventListener("beforeunload", (event) => {
     if (state.dirty) {
@@ -1604,7 +1775,7 @@
 
   // --- Bootstrap ------------------------------------------------------------
 
-  document.getElementById("block-search").addEventListener("input", (event) => renderCatalog(event.target.value));
+  document.getElementById("block-search").addEventListener("input", (event) => { const v = event.target.value; renderCatalog(v); renderPatternCatalog(v); });
   form.addEventListener("submit", () => {
     documentInput.value = JSON.stringify(state.document);
     state.dirty = false;

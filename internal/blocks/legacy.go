@@ -14,11 +14,11 @@ var legacyMetadata = map[string]struct {
 		Contexts: []string{"single-template"},
 	},
 	"core/image": {
-		Contexts:     []string{"entry", "layout-template"},
+		Contexts:     []string{"entry", "single-template", "archive-template", "site-part", "layout-template"},
 		LCPCandidate: true, RequiresFeatured: false,
 	},
 	"core/featured-image": {
-		Contexts:     []string{"entry", "layout-template"},
+		Contexts:     []string{"entry", "single-template", "archive-template"},
 		LCPCandidate: true, RequiresFeatured: true,
 	},
 	"core/posts": {

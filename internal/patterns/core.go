@@ -39,7 +39,7 @@ func heroCentered() Pattern {
 		Name:        "Hero — centered",
 		Description: "Centered headline, supporting text and two calls to action.",
 		Category:    "Hero",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -58,7 +58,7 @@ func heroSplit() Pattern {
 					]}
 				]},
 				{"id":"b9","block":"core/stack","version":1,"props":{},"settings":{"direction":"vertical","gap":"md","align":"stretch","justify":"start","wrap":false,"width":"auto"},"children":[
-					{"id":"b10","block":"core/image","version":1,"props":{"mediaId":"","alt":"","caption":""},"settings":{"align":"none","decorative":true,"sizes":"","eager":false,"radius":"lg","aspect":"4:3","fit":"cover"},"children":[]}
+					{"id":"b10","block":"core/image","version":1,"props":{"mediaId":"","alt":"","caption":""},"settings":{"align":"none","decorative":true,"sizes":"","priority":"normal","radius":"lg","aspect":"4:3","fit":"cover"},"children":[]}
 				]}
 			]}
 		]}
@@ -68,7 +68,7 @@ func heroSplit() Pattern {
 		Name:        "Hero — split",
 		Description: "Two-column hero with headline and image.",
 		Category:    "Hero",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -102,7 +102,7 @@ func featuresThreeColumns() Pattern {
 		Name:        "Features — 3 columns",
 		Description: "Three feature cards in a responsive grid.",
 		Category:    "Features",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -123,7 +123,7 @@ func ctaCentered() Pattern {
 		Name:        "CTA — centered",
 		Description: "Centered call to action with heading and button.",
 		Category:    "CTA",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -147,7 +147,7 @@ func testimonialsGrid() Pattern {
 		Name:        "Testimonials — grid",
 		Description: "Three quotes in a grid.",
 		Category:    "Testimonials",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -172,7 +172,7 @@ func logoWall() Pattern {
 		Name:        "Logo wall",
 		Description: "Row of logos or brand names.",
 		Category:    "Logos",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -212,7 +212,7 @@ func pricingThreeTiers() Pattern {
 		Name:        "Pricing — 3 tiers",
 		Description: "Three pricing cards with headings, prices and buttons.",
 		Category:    "Pricing",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -242,7 +242,7 @@ func faqAccordion() Pattern {
 		Name:        "FAQ — accordion",
 		Description: "Section with heading and FAQ accordion.",
 		Category:    "FAQ",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -252,7 +252,7 @@ func contentImageText() Pattern {
 	nodes := mustNodes(`[
 		{"id":"i1","block":"core/section","version":1,"props":{},"settings":{"width":"wide","verticalSpacing":"lg","horizontalPadding":"md","align":"left","background":"default","minHeight":"auto","anchorID":""},"children":[
 			{"id":"i2","block":"core/columns","version":1,"props":{},"settings":{"columns":2,"ratio":"equal","gap":"lg","mobileStack":true},"children":[
-				{"id":"i3","block":"core/image","version":1,"props":{"mediaId":"","alt":"","caption":""},"settings":{"align":"none","decorative":true,"sizes":"","eager":false,"radius":"md","aspect":"4:3","fit":"cover"},"children":[]},
+				{"id":"i3","block":"core/image","version":1,"props":{"mediaId":"","alt":"","caption":""},"settings":{"align":"none","decorative":true,"sizes":"","priority":"normal","radius":"md","aspect":"4:3","fit":"cover"},"children":[]},
 				{"id":"i4","block":"core/stack","version":1,"props":{},"settings":{"direction":"vertical","gap":"md","align":"stretch","justify":"center","wrap":false,"width":"auto"},"children":[
 					{"id":"i5","block":"core/heading","version":2,"props":{"text":{"version":1,"content":[{"text":"Crafted for clarity","marks":[]}] },"level":2},"settings":{"align":"left","visualSize":"lg","tone":"default","maxWidth":"none"},"children":[]},
 					{"id":"i6","block":"core/text","version":2,"props":{"text":{"version":1,"content":[{"text":"Our editor is HTML-first and server-driven. You shape content, Stratum handles the rest.","marks":[]}] }},"settings":{"align":"left","tone":"muted","size":"md","maxWidth":"none"},"children":[]},
@@ -266,7 +266,7 @@ func contentImageText() Pattern {
 		Name:        "Content — image + text",
 		Description: "Two-column image and text.",
 		Category:    "Content",
-		Contexts:    []string{"entry", "layout-template", "site-part"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}
@@ -294,7 +294,7 @@ func latestPosts() Pattern {
 		Name:        "Blog — latest posts",
 		Description: "Collection of latest posts with card layout.",
 		Category:    "Blog",
-		Contexts:    []string{"entry", "layout-template"},
+		Contexts:    []string{"entry", "single-template", "site-part"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}

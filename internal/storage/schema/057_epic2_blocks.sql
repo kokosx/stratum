@@ -13,7 +13,7 @@ VALUES (
     'core-site-part-v1', 'core', 'site-part', 1, 'Site Part', 'Reusable global section (Header, Footer, or custom part).',
     '{"schemaVersion":1,"props":{"type":"object","properties":{}},"settings":{"type":"object","required":["sitePartId"],"properties":{"sitePartId":{"type":"string","default":""}}},"children":{"mode":"none"},"editor":{"category":"reusable","icon":"site-part","contexts":["entry","layout-template","site-part"],"fields":{"settings.sitePartId":{"label":"Site Part","control":"select","group":"Content","optionsSource":"site-parts"}}}}',
     'runtime',
-    '<div class="stratum-site-part">{{ .Children }}</div>',
+    '<div class="stratum-site-part"></div>',
     '.stratum-site-part{margin:0}',
     'core', 1, unixepoch(), unixepoch()
 )

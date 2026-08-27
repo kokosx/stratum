@@ -270,8 +270,8 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 			sitePartsCatalog = append(sitePartsCatalog, map[string]string{"id": p.ID, "name": p.Name})
 		}
 	}
-	bootstrap, err := json.Marshal(map[string]any{
-		"document": json.RawMessage(rev.DocumentJson), "catalog": h.blocks.EditorCatalogFor(catalogMode), "definitions": h.blocks.EditorDefinitions(doc), "previewURL": previewURL, "contentTypeID": tmpl.ContentTypeID, "contentTypes": contentTypes, "fieldCatalogs": fieldCatalogs, "taxonomyCatalogs": taxonomyCatalogs, "siteParts": sitePartsCatalog, "contextKind": catalogMode, "templateKind": tmpl.Kind,
+	bootstrap, err := json.Marshal(editorBootstrap{
+		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor(catalogMode), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: previewURL, ContentTypeID: tmpl.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext(catalogMode), ContextKind: catalogMode, SiteParts: sitePartsCatalog, TemplateKind: tmpl.Kind,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

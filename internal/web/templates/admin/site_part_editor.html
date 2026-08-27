@@ -19,9 +19,14 @@
   {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
   <div class="editor-workspace">
     <aside class="editor-panel block-library" aria-label="Block library">
-      <h2>Block Library</h2>
+      <h2>Library</h2>
+      <div class="library-tabs" role="tablist">
+        <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-tab="blocks">Blocks</button>
+        <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="patterns">Patterns</button>
+      </div>
       <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
-      <div id="block-catalog"></div>
+      <div id="block-catalog" data-library="blocks"></div>
+      <div id="pattern-catalog" data-library="patterns" hidden></div>
     </aside>
     <section class="editor-panel document-canvas" aria-label="Document">
       <div class="editor-panel-heading"><h2>Document</h2></div>

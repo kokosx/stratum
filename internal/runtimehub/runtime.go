@@ -93,12 +93,16 @@ func (h *Runtime) ReloadNavigation(ctx context.Context) error {
 
 // ReloadTheme reloads the theme snapshot, rebuilds asset fingerprints, and
 // invalidates the page cache (theme styles/custom CSS changed).
+// Site Styles affect every page, so the entire page cache is cleared.
 func (h *Runtime) ReloadTheme(ctx context.Context) error {
 	if err := h.Themes.Reload(ctx); err != nil {
 		return err
 	}
 	h.Assets.Rebuild(h.Blocks, h.Themes)
-	h.Pages.InvalidateTag("theme")
+	h.Pages.InvalidateAll()
+	h.Sitemap.Invalidate()
+	h.Robots.Invalidate()
+	h.Feed.Invalidate()
 	return nil
 }
 

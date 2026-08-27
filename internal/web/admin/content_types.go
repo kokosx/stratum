@@ -26,14 +26,14 @@ type contentTypesData struct {
 }
 type contentTypeRow struct {
 	ID, Label, ItemLabel, BasePath string
-	Builtin, Single, Archive      bool
-	HasContent                    bool
+	Builtin, Single, Archive       bool
+	HasContent                     bool
 }
 type contentTypeForm struct {
-	ID, Name, PluralName, BasePath string // Name=ItemLabel, PluralName=Label (for backward compat)
-	Single, Archive, Hierarchical bool
+	ID, Name, PluralName, BasePath     string // Name=ItemLabel, PluralName=Label (for backward compat)
+	Single, Archive, Hierarchical      bool
 	HasContent, Excerpt, Featured, SEO bool
-	Preset string // structured | pages (only on create)
+	Preset                             string // structured | pages (only on create)
 }
 
 // IsBuiltin reports whether this form is for a core type (page/post).
@@ -345,18 +345,18 @@ func contentTypeFormFromRequest(r *http.Request) contentTypeForm {
 	// Support legacy "public" alias for Single
 	single := r.FormValue("single") != "" || r.FormValue("has_single") != "" || r.FormValue("routing_single") != "" || r.FormValue("public") != ""
 	return contentTypeForm{
-		ID: strings.TrimSpace(r.FormValue("id")),
-		Name: strings.TrimSpace(r.FormValue("name")),
-		PluralName: strings.TrimSpace(r.FormValue("plural_name")),
-		BasePath: strings.TrimSpace(r.FormValue("base_path")),
-		Single: single,
-		Archive: r.FormValue("archive") != "",
+		ID:           strings.TrimSpace(r.FormValue("id")),
+		Name:         strings.TrimSpace(r.FormValue("name")),
+		PluralName:   strings.TrimSpace(r.FormValue("plural_name")),
+		BasePath:     strings.TrimSpace(r.FormValue("base_path")),
+		Single:       single,
+		Archive:      r.FormValue("archive") != "",
 		Hierarchical: r.FormValue("hierarchical") != "",
-		HasContent: r.FormValue("has_content") != "" || r.FormValue("content") != "",
-		Excerpt: r.FormValue("excerpt") != "",
-		Featured: r.FormValue("featured") != "",
-		SEO: r.FormValue("seo") != "",
-		Preset: strings.TrimSpace(r.FormValue("preset")),
+		HasContent:   r.FormValue("has_content") != "" || r.FormValue("content") != "",
+		Excerpt:      r.FormValue("excerpt") != "",
+		Featured:     r.FormValue("featured") != "",
+		SEO:          r.FormValue("seo") != "",
+		Preset:       strings.TrimSpace(r.FormValue("preset")),
 	}
 }
 func formFromDefinition(d content.ContentTypeDefinition) contentTypeForm {
@@ -372,12 +372,12 @@ func contentTypeInput(f contentTypeForm, fields []content.FieldDefinition) conte
 	return content.ContentTypeInput{
 		ID: content.ContentTypeID(f.ID), Name: f.Name, PluralName: f.PluralName,
 		Hierarchical: f.Hierarchical,
-		Public: f.Single, // sync for backward compat
+		Public:       f.Single, // sync for backward compat
 		Config: content.ContentTypeConfig{
 			SchemaVersion: 2,
-			Fields: fields,
-			Features: content.ContentTypeFeatures{Content: f.HasContent, Excerpt: f.Excerpt, FeaturedMedia: f.Featured, SEO: f.SEO},
-			Routing: content.ContentTypeRouting{Single: f.Single, BasePath: f.BasePath, Archive: f.Archive},
+			Fields:        fields,
+			Features:      content.ContentTypeFeatures{Content: f.HasContent, Excerpt: f.Excerpt, FeaturedMedia: f.Featured, SEO: f.SEO},
+			Routing:       content.ContentTypeRouting{Single: f.Single, BasePath: f.BasePath, Archive: f.Archive},
 		},
 	}
 }

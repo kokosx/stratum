@@ -217,8 +217,8 @@ func (h *Handler) renderSitePartEditor(w http.ResponseWriter, r *http.Request, p
 			sitePartsCatalog = append(sitePartsCatalog, map[string]string{"id": p.ID, "name": p.Name})
 		}
 	}
-	bootstrap, err := json.Marshal(map[string]any{
-		"document": json.RawMessage(rev.DocumentJson), "catalog": h.blocks.EditorCatalogFor("site-part"), "definitions": h.blocks.EditorDefinitions(doc), "previewURL": "/admin/appearance/site-parts/" + part.ID + "/preview", "contentTypes": contentTypes, "fieldCatalogs": fieldCatalogs, "taxonomyCatalogs": taxonomyCatalogs, "siteParts": sitePartsCatalog, "sitePartID": part.ID, "contextKind": "site-part",
+	bootstrap, err := json.Marshal(editorBootstrap{
+		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("site-part"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/site-parts/" + part.ID + "/preview", ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("site-part"), ContextKind: "site-part", SiteParts: sitePartsCatalog, SitePartID: part.ID,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
