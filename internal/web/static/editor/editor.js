@@ -740,7 +740,92 @@
       const options = bootstrap.fieldCatalogs?.[scopedContentType(node)] || [];
       return node.block === "core/entry-media" ? options.filter((option) => option.type === "media") : options.filter((option) => option.type !== "media");
     }
+    if (source === "taxonomies") {
+      const ct = scopedContentType(node);
+      const cats = bootstrap.taxonomyCatalogs?.[ct] || [];
+      return cats.map(t => ({ value: t.id, label: t.label }));
+    }
+    if (source === "taxonomy-terms") {
+      const ct = scopedContentType(node);
+      const taxonomyId = node.settings?.taxonomyId || "";
+      const cats = bootstrap.taxonomyCatalogs?.[ct] || [];
+      const tax = cats.find(t => t.id === taxonomyId);
+      if (!tax) return [];
+      return tax.terms.map(term => ({ value: term.id, label: term.label }));
+    }
     return [];
+  }
+
+  function fieldTypeFor(field, ct) {
+    const opts = bootstrap.fieldCatalogs?.[ct] || [];
+    const found = opts.find(o => o.value === field);
+    return found ? found.type : null;
+  }
+  function operatorsForType(type) {
+    switch (type) {
+      case "text": case "textarea": return ["equals","not_equals","contains","exists","not_exists"];
+      case "number": return ["equals","not_equals","greater_than","greater_or_equal","less_than","less_or_equal","exists","not_exists"];
+      case "boolean": return ["is_true","is_false","exists","not_exists"];
+      case "date": case "datetime": return ["equals","before","after","exists","not_exists"];
+      case "select": return ["equals","not_equals","exists","not_exists"];
+      case "url": case "email": return ["equals","not_equals","contains","exists","not_exists"];
+      case "media": return ["exists","not_exists","equals"];
+      default: return ["equals","not_equals","contains","exists","not_exists"];
+    }
+  }
+  function needsValue(op) { return !["exists","not_exists","is_true","is_false"].includes(op); }
+  function valueControlForType(fieldType, operator, value, fieldOptions, update) {
+    if (!needsValue(operator)) {
+      const span = element("span", "filter-value--none", "—");
+      span.setAttribute("aria-hidden","true");
+      return span;
+    }
+    if (fieldType === "number") {
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.value = value ?? "";
+      inp.step = "any";
+      inp.addEventListener("input", () => update(inp.value));
+      return inp;
+    }
+    if (fieldType === "date") {
+      const inp = document.createElement("input");
+      inp.type = "date"; inp.value = value ?? "";
+      inp.addEventListener("input", () => update(inp.value));
+      return inp;
+    }
+    if (fieldType === "datetime") {
+      const inp = document.createElement("input");
+      inp.type = "datetime-local"; inp.value = value ?? "";
+      inp.addEventListener("input", () => update(inp.value));
+      return inp;
+    }
+    if (fieldType === "boolean") {
+      // boolean uses is_true/is_false operators without value; fallback to checkbox if equals needed
+      const inp = document.createElement("input");
+      inp.type = "checkbox"; inp.checked = Boolean(value);
+      inp.addEventListener("change", () => update(inp.checked));
+      return inp;
+    }
+    if (fieldType === "select" && fieldOptions && fieldOptions.length) {
+      const sel = document.createElement("select");
+      const empty = element("option", "", "Select…");
+      empty.value = ""; sel.append(empty);
+      fieldOptions.forEach(opt => {
+        const o = element("option", "", opt);
+        o.value = opt; o.selected = opt === value; sel.append(o);
+      });
+      if (value && !fieldOptions.includes(value)) {
+        const miss = element("option", "", `${value} (unavailable)`);
+        miss.value = value; miss.selected = true; sel.append(miss);
+      }
+      sel.addEventListener("change", () => update(sel.value));
+      return sel;
+    }
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.value = value ?? "";
+    inp.placeholder = "Value";
+    inp.addEventListener("input", () => update(inp.value));
+    return inp;
   }
 
   function dynamicOptionControl(source, node, value, update) {
@@ -1140,6 +1225,98 @@
   }
 
   function buildArray(node, object, name, schema, path) {
+    // Type-aware Collection filter builder
+    if (node.block === "core/collection" && path === "settings.filters") {
+      const container = element("div", "collection-filters");
+      const values = object[name] || (object[name] = []);
+      if (values.length === 0) {
+        container.append(element("p", "editor-empty", "No filters. Add a filter to narrow the collection."));
+      }
+      values.forEach((value, index) => {
+        const row = element("div", "collection-filter-row");
+        const ct = scopedContentType(node);
+        const fieldVal = value.field || "entry.title";
+        const ft = fieldTypeFor(fieldVal, ct) || "text";
+        const allowedOps = operatorsForType(ft);
+        // Field select
+        const fieldWrap = element("label", "inspector-field");
+        fieldWrap.append(element("span", "", "Field"));
+        const fieldSel = document.createElement("select");
+        const fieldOpts = dynamicOptions("entry-fields", node);
+        // Ensure current field exists in options
+        if (fieldVal && !fieldOpts.some(o => o.value === fieldVal)) {
+          const miss = element("option", "", `${fieldVal} (unavailable)`);
+          miss.value = fieldVal; miss.selected = true; fieldSel.append(miss);
+        }
+        fieldOpts.forEach(o => {
+          const opt = element("option", "", o.label);
+          opt.value = o.value; opt.selected = o.value === fieldVal; fieldSel.append(opt);
+        });
+        // Operator select - filtered by field type
+        const opWrap = element("label", "inspector-field");
+        opWrap.append(element("span", "", "Operator"));
+        const opSel = document.createElement("select");
+        const curOp = value.operator || allowedOps[0];
+        allowedOps.forEach(op => {
+          const opt = element("option", "", op);
+          opt.value = op; opt.selected = op === curOp; opSel.append(opt);
+        });
+        if (!allowedOps.includes(curOp)) {
+          const miss = element("option", "", `${curOp} (unavailable)`);
+          miss.value = curOp; miss.selected = true; opSel.append(miss);
+        }
+        // Value control - type aware
+        const valWrap = element("label", "inspector-field");
+        valWrap.append(element("span", "", "Value"));
+        const fieldDef = bootstrap.fieldCatalogs?.[ct]?.find(o => o.value === fieldVal);
+        const fieldOptions = fieldDef?.options || null;
+        const valControl = valueControlForType(ft, curOp, value.value, fieldOptions, (next) => { value.value = next; maybePushHistory(); changed({ tree:false, inspector:false }); renderTree(); });
+        const valContainer = element("div", "filter-value-control");
+        valContainer.append(valControl);
+        // Visibility of value based on operator
+        if (!needsValue(curOp)) valWrap.hidden = true;
+
+        fieldSel.addEventListener("change", () => {
+          value.field = fieldSel.value;
+          // Reset operator to first allowed for new type
+          const newType = fieldTypeFor(fieldSel.value, ct) || "text";
+          const newOps = operatorsForType(newType);
+          if (!newOps.includes(value.operator)) value.operator = newOps[0];
+          // Clear value if operator doesn't need it
+          if (!needsValue(value.operator)) value.value = "";
+          maybePushHistory();
+          changed({ tree:false });
+          renderInspector();
+          renderTree();
+        });
+        opSel.addEventListener("change", () => {
+          value.operator = opSel.value;
+          if (!needsValue(value.operator)) value.value = "";
+          maybePushHistory();
+          changed({ tree:false });
+          renderInspector();
+          renderTree();
+        });
+
+        fieldWrap.append(fieldSel);
+        opWrap.append(opSel);
+        valWrap.append(valContainer);
+        row.append(fieldWrap, opWrap, valWrap);
+        row.append(actionButton("✕", "Remove filter", () => { values.splice(index, 1); changed({ tree: false }); renderInspector(); }, true));
+        container.append(row);
+      });
+      const add = element("button", "button button-secondary", "+ Add filter");
+      add.type = "button";
+      add.addEventListener("click", () => {
+        const ct = scopedContentType(node);
+        const defaultField = (bootstrap.fieldCatalogs?.[ct]?.[0]?.value) || "entry.title";
+        values.push({ field: defaultField, operator: operatorsForType(fieldTypeFor(defaultField, ct) || "text")[0], value: "" });
+        changed({ tree: false });
+        renderInspector();
+      });
+      container.append(add);
+      return container;
+    }
     const container = element("div", "array-items");
     const values = object[name] || [];
     values.forEach((value, index) => {

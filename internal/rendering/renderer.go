@@ -108,6 +108,11 @@ type RenderContext struct {
 	// in one request hit the cache.
 	QueryCache map[string][]ArchiveEntry
 
+	// Definition is the effective ContentTypeDefinition for the current Entry scope.
+	// It is used for typed field resolution (e.g. suppressing media IDs from entry-field).
+	// Zero value means unknown (e.g. preview with no content type) – fallback to untyped.
+	Definition content.ContentTypeDefinition
+
 	// Comments is the approved comment tree for the current entry (public only).
 	Comments        []CommentView
 	CommentsCount   int
@@ -142,6 +147,11 @@ type ContentReader interface {
 	Query(ctx context.Context, query content.EntryQuery) ([]ArchiveEntry, error)
 }
 
+// DefinitionProvider is an optional host capability for typed field resolution.
+type DefinitionProvider interface {
+	Definition(ctx context.Context, contentType string) (content.ContentTypeDefinition, error)
+}
+
 // WithEntry returns a shallow copy of rc with Entry scoped to the given archive entry.
 // This is used by Collection to render its child blocks per-item.
 func (rc RenderContext) WithEntry(ae ArchiveEntry) RenderContext {
@@ -159,6 +169,20 @@ func (rc RenderContext) WithEntry(ae ArchiveEntry) RenderContext {
 		Fields:        ae.Fields,
 	}
 	rc.EntryID = ae.ID
+	// Try to resolve typed definition for the scoped entry via host capability.
+	if rc.ContentReader != nil {
+		if provider, ok := rc.ContentReader.(DefinitionProvider); ok {
+			if def, err := provider.Definition(context.Background(), ae.ContentTypeID); err == nil {
+				rc.Definition = def
+			} else {
+				rc.Definition = content.DefinitionFor(ae.ContentTypeID)
+			}
+		} else {
+			rc.Definition = content.DefinitionFor(ae.ContentTypeID)
+		}
+	} else {
+		rc.Definition = content.DefinitionFor(ae.ContentTypeID)
+	}
 	return rc
 }
 
@@ -606,8 +630,8 @@ func (e *entryFieldRenderer) Render(_ context.Context, node PreparedNode, rc Ren
 		}
 		return "", nil
 	}
-	value, ok := content.ResolveEntryField(ref, rc.Entry.Title, rc.Entry.Excerpt, rc.Entry.Permalink, rc.Entry.PublishISO, rc.Entry.FeaturedImage, rc.Entry.Fields)
-	if !ok || value == nil {
+	resolved := content.ResolveEntryFieldTyped(ref, rc.Definition, rc.Entry.Title, rc.Entry.Excerpt, rc.Entry.Permalink, rc.Entry.PublishISO, rc.Entry.FeaturedImage, rc.Entry.Fields)
+	if !resolved.Exists || resolved.Value == nil {
 		if rc.IsPreview || rc.Mode == ModePreview {
 			return template.HTML(`<span class="stratum-placeholder">Entry field</span>`), nil
 		}
@@ -615,9 +639,21 @@ func (e *entryFieldRenderer) Render(_ context.Context, node PreparedNode, rc Ren
 	}
 	// Media IDs are never emitted as text. core/entry-media is the only block
 	// allowed to turn a media reference into markup.
-	if ref.System == "entry.featured_media" {
+	if resolved.Type == content.FieldMedia || ref.System == "entry.featured_media" {
 		return "", nil
 	}
+	// Fallback: if typed resolution was unavailable but value looks like a media ID, suppress heuristically.
+	if resolved.Type == "" && ref.Key != "" {
+		if s, ok := resolved.Value.(string); ok && isLikelyMediaID(s) {
+			// If we cannot prove it's not media, be conservative: do not leak.
+			// Check if UI catalog for this content type lists this key as media.
+			if rc.Definition.ID != "" {
+				// If definition is present but type unknown, it was deleted/historical – suppress anyway.
+				return "", nil
+			}
+		}
+	}
+	value := resolved.Value
 	text := ""
 	switch v := value.(type) {
 	case bool:
@@ -640,6 +676,20 @@ func (e *entryFieldRenderer) Render(_ context.Context, node PreparedNode, rc Ren
 	suffix, _ := node.Settings["suffix"].(string)
 	escaped := template.HTMLEscapeString(prefix + text + suffix)
 	return template.HTML("<" + tag + ` class="stratum-entry-field">` + escaped + "</" + tag + ">"), nil
+}
+
+func isLikelyMediaID(s string) bool {
+	// Media IDs are base64url 22-char strings from randomID(). Be conservative.
+	if len(s) < 16 || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 type entryMediaRenderer struct{}
@@ -758,10 +808,16 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 			} else if rc.ContentReader != nil {
 				fetched, err := rc.ContentReader.Query(ctx, query)
 				if err != nil {
-					return "", fmt.Errorf("collection %s: %w", node.ID, err)
+					// Historical/deleted field refs must not panic the public render – treat as empty.
+					if isHistoricCollectionError(err) {
+						entries = nil
+					} else {
+						return "", fmt.Errorf("collection %s: %w", node.ID, err)
+					}
+				} else {
+					entries = fetched
+					rc.QueryCache[cacheKey] = entries
 				}
-				entries = fetched
-				rc.QueryCache[cacheKey] = entries
 			} else {
 				// Fallback to legacy Collections map (populated by public handler for old docs)
 				if col, ok := rc.Collections[node.ID]; ok {
@@ -774,9 +830,14 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 		} else if rc.ContentReader != nil {
 			fetched, err := rc.ContentReader.Query(ctx, query)
 			if err != nil {
-				return "", fmt.Errorf("collection %s: %w", node.ID, err)
+				if isHistoricCollectionError(err) {
+					entries = nil
+				} else {
+					return "", fmt.Errorf("collection %s: %w", node.ID, err)
+				}
+			} else {
+				entries = fetched
 			}
-			entries = fetched
 		}
 		// Pagination handling for collection when source=query and pagination flag true?
 		// Pagination is handled at route level for archive (source=context). For
@@ -832,6 +893,11 @@ func intFromSettings(m map[string]any, key string, def int) int {
 		}
 	}
 	return def
+}
+
+func isHistoricCollectionError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "does not exist for content type") || strings.Contains(msg, "not allowed for field") || strings.Contains(msg, "requires a value")
 }
 
 func collectionCacheKey(contentType string, limit, offset int, order string, excludeIDs []string) string {
@@ -1156,6 +1222,9 @@ func (r *Renderer) collectionEntriesForWinner(ctx context.Context, colNode Prepa
 		}
 		query = query.Normalized()
 		if err := query.Validate(); err != nil {
+			if isHistoricCollectionError(err) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		cacheKey := query.CacheKey()
@@ -1165,6 +1234,9 @@ func (r *Renderer) collectionEntriesForWinner(ctx context.Context, colNode Prepa
 			} else if rc.ContentReader != nil {
 				fetched, err := rc.ContentReader.Query(ctx, query)
 				if err != nil {
+					if isHistoricCollectionError(err) {
+						return nil, nil
+					}
 					return nil, err
 				}
 				entries = fetched
@@ -1178,6 +1250,9 @@ func (r *Renderer) collectionEntriesForWinner(ctx context.Context, colNode Prepa
 		} else if rc.ContentReader != nil {
 			fetched, err := rc.ContentReader.Query(ctx, query)
 			if err != nil {
+				if isHistoricCollectionError(err) {
+					return nil, nil
+				}
 				return nil, err
 			}
 			entries = fetched

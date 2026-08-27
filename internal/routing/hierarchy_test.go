@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/kokosx/stratum/internal/content"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
@@ -41,7 +42,8 @@ func TestSyncHierarchyPublishMovesPublishedSubtreeAndRedirects(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := SyncHierarchyPublish(ctx, queries, HierarchyEntry{EntryID: "company", ContentTypeID: "page", Slug: "about", Title: "company"}, 2); err != nil {
+	def := content.DefinitionFor("page")
+	if _, err := SyncHierarchyPublish(ctx, queries, def, HierarchyEntry{EntryID: "company", ContentTypeID: "page", Slug: "about", Title: "company"}, 2); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []struct{ path, kind, target string }{{"/about", RouteTypeEntry, ""}, {"/about/team", RouteTypeEntry, ""}, {"/company", RouteTypeRedirect, "/about"}, {"/company/team", RouteTypeRedirect, "/about/team"}} {

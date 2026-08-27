@@ -113,7 +113,6 @@ func TestProductSliceHTTP(t *testing.T) {
 		t.Fatalf("create product type %d body %s", resp.StatusCode, bodyString(t, resp))
 	}
 	resp.Body.Close()
-	t.Logf("product type created")
 
 	addField := func(label, key, typ string) {
 		t.Helper()
@@ -142,14 +141,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	addField("SKU", "sku", "text")
 	addField("Featured", "featured", "boolean")
 	addField("Product Image", "product_image", "media")
-	t.Logf("fields added")
-
-	// Verify definition
-	defRow, err := queries.GetContentType(ctx, "product")
-	if err != nil {
-		t.Fatalf("get product ct %v", err)
-	}
-	t.Logf("config %s", defRow.ConfigJson)
 
 	// Create MacBook product via HTTP
 	createProduct := func(title, slug, price, sku string, featured bool) {
@@ -177,35 +168,7 @@ func TestProductSliceHTTP(t *testing.T) {
 		resp.Body.Close()
 	}
 	createProduct("MacBook Pro", "macbook-pro", "999", "MBP-001", true)
-	t.Logf("macbook created")
 	// Debug DB after product creation
-	{
-		rows, _ := queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "product", Limit: 10, Offset: 0})
-		for _, r := range rows {
-			t.Logf("after create published row id %s slug %s fields %s route %s", r.ID, r.Slug, r.FieldsJson, r.RoutePath)
-			if pub, err := queries.GetPublishedEntryByID(ctx, r.ID); err == nil {
-				docSnippet := pub.DocumentJson
-				if len(docSnippet) > 100 {
-					docSnippet = docSnippet[:100]
-				}
-				t.Logf("GetPublishedEntryByID fields %s doc %s", pub.FieldsJson, docSnippet)
-			}
-			if rev, err := queries.GetLatestEntryRevision(ctx, r.ID); err == nil {
-				t.Logf("GetLatest fields %s", rev.FieldsJson)
-			}
-			if route, err := queries.GetRouteByPath(ctx, "/products/macbook-pro"); err == nil {
-				t.Logf("route for /products/macbook-pro id %s entry %s type %s", route.ID, route.EntryID.String, route.RouteType)
-			}
-			if route, err := queries.GetRouteByPath(ctx, r.RoutePath); err == nil {
-				t.Logf("route for %s id %s entry %s", r.RoutePath, route.ID, route.EntryID.String)
-			}
-		}
-		// also list all routes
-		allRoutes, _ := queries.ListRoutes(ctx)
-		for _, rt := range allRoutes {
-			t.Logf("route %s -> %s type %s entry %s ct %s", rt.Path, rt.RedirectTo.String, rt.RouteType, rt.EntryID.String, rt.ContentTypeID.String)
-		}
-	}
 	// Check public
 	resp = getPath(t, client, server.URL, "/products/macbook-pro")
 	if resp.StatusCode != http.StatusOK {
@@ -215,14 +178,12 @@ func TestProductSliceHTTP(t *testing.T) {
 	if !strings.Contains(b, "MacBook") && !strings.Contains(b, "macbook") {
 		t.Fatalf("product page missing title %s", b[:1000])
 	}
-	t.Logf("public product OK")
 
 	resp = getPath(t, client, server.URL, "/products")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("archive %d %s", resp.StatusCode, bodyString(t, resp))
 	}
 	resp.Body.Close()
-	t.Logf("archive OK")
 
 	// Create layout template
 	tok := csrfToken(t, client, server.URL, "/admin/appearance/templates/new")
@@ -239,7 +200,6 @@ func TestProductSliceHTTP(t *testing.T) {
 		t.Fatalf("no tmpl id %s", loc)
 	}
 	tmplID := m[1]
-	t.Logf("tmpl id %s", tmplID)
 	tmplDoc := `{"version":1,"nodes":[{"id":"sec1","block":"core/section","version":1,"props":{},"settings":{},"children":[{"id":"ef1","block":"core/entry-field","version":1,"props":{"source":"entry.title"},"settings":{"tag":"h1"}},{"id":"em1","block":"core/entry-media","version":1,"props":{"source":"fields.product_image"},"settings":{}},{"id":"ef2","block":"core/entry-field","version":1,"props":{"source":"fields.price"},"settings":{"tag":"p","prefix":"$"}},{"id":"slot","block":"core/content-slot","version":1,"props":{},"settings":{}}]}]}`
 	tok = csrfToken(t, client, server.URL, "/admin/appearance/templates/"+tmplID+"/edit")
 	f = url.Values{"name": {"Product Template"}, "document_json": {tmplDoc}, "csrf_token": {tok}}
@@ -262,43 +222,16 @@ func TestProductSliceHTTP(t *testing.T) {
 		t.Fatalf("default tmpl %d %s", resp.StatusCode, bodyString(t, resp))
 	}
 	resp.Body.Close()
-	t.Logf("template published & default")
 	// debug default
-	defRow2, _ := queries.GetContentType(ctx, "product")
-	t.Logf("after default ct default %q valid %v", defRow2.DefaultLayoutTemplateID.String, defRow2.DefaultLayoutTemplateID.Valid)
-	row2, err := queries.GetLayoutTemplateWithPublishedRevision(ctx, tmplID)
-	if err != nil {
-		t.Logf("get tmpl with rev err %v", err)
-	} else {
-		t.Logf("tmpl doc %s", row2.DocumentJson[:300])
-	}
-	// try direct resolve
-	// get product entry
-	prodEntry, _ := queries.GetEntry(ctx, func() string {
-		rows, _ := queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "product", Limit: 1, Offset: 0})
-		if len(rows) > 0 {
-			return rows[0].ID
-		}
-		return ""
-	}())
-	t.Logf("prod entry id %s", prodEntry.ID)
-	_ = prodEntry
 	// direct resolve disabled for now to isolate handler logs
 	// if prodEntry.ID != "" {
 	// 	rev, _ := queries.GetLatestEntryRevision(ctx, prodEntry.ID)
-	// 	t.Logf("rev layout_template_id %q fields %s", rev.LayoutTemplateID.String, rev.FieldsJson)
 	// 	doc, _ := document.Decode([]byte(rev.DocumentJson))
 	// 	eff, revID, err := layouts.ResolveEffectiveDocumentWithID(ctx, queries, doc, "product", sql.NullString{})
-	// 	t.Logf("direct resolve err %v revID %q nodes %d", err, revID, len(eff.Nodes))
 	// 	if eff != nil && len(eff.Nodes) >0 {
-	// 		t.Logf("eff first node %s children %d", eff.Nodes[0].Block, len(eff.Nodes[0].Children))
-	// 		for i,ch:=range eff.Nodes[0].Children { t.Logf(" child %d %s source %v", i, ch.Block, string(ch.Props)) }
 	// 		pd, err := hub.Blocks.Prepare(eff)
-	// 		t.Logf("prepare err %v nodes %d", err, len(pd.Nodes))
 	// 		if err == nil {
-	// 			t.Logf("rev fields json %s", rev.FieldsJson)
 	// 			for _, n := range pd.Nodes {
-	// 				t.Logf("prepared node %s children %d", n.Block, len(n.Children))
 	// 			}
 	// 			fields, _ := content.DecodeFieldSnapshot(rev.FieldsJson)
 	// 			rc := rendering.RenderContext{
@@ -308,7 +241,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	// 			html, err := hub.Blocks.RenderPrepared(ctx, pd, rc)
 	// 			snippet := string(html)
 	// 			if len(snippet) > 500 { snippet = snippet[:500] }
-	// 			t.Logf("render err %v html len %d snippet %s", err, len(html), snippet)
 	// 		}
 	// 	}
 	// }
@@ -326,14 +258,10 @@ func TestProductSliceHTTP(t *testing.T) {
 	if len(b) > 8000 {
 		snippet = b[:8000]
 	}
-	t.Logf("product body snippet %s", snippet[len(snippet)/2:])
-	t.Logf("full body contains entry-field %v price %v H1 %v", strings.Contains(b, "stratum-entry-field"), strings.Contains(b, "$999"), strings.Contains(b, "<h1"))
 	// also check for title in H1
 	if strings.Contains(b, "stratum-entry-field") {
-		t.Logf("found entry-field")
 	}
 	if strings.Contains(b, "MacBook") {
-		t.Logf("found MacBook")
 	}
 	if !strings.Contains(b, "$999") {
 		// dump middle part
@@ -343,14 +271,11 @@ func TestProductSliceHTTP(t *testing.T) {
 			if end > len(b) {
 				end = len(b)
 			}
-			t.Logf("around entry-field: %s", b[idx:end])
 		}
 		// dump whole body length
-		t.Logf("body len %d", len(b))
 		// also check if template composition happened by looking for section
 		t.Fatalf("template not applied missing $999 - body has entry-field %v, len %d, snippet %s", strings.Contains(b, "stratum-entry-field"), len(b), snippet[len(snippet)/2:][:1000])
 	}
-	t.Logf("template rendering OK")
 
 	// Create shop page with collection
 	collectionDoc := `{"version":1,"nodes":[{"id":"h1","block":"core/heading","version":2,"props":{"text":{"version":1,"content":[{"text":"Featured Products"}]}},"settings":{"level":2}},{"id":"coll1","block":"core/collection","version":2,"props":{},"settings":{"contentType":"product","limit":6,"excludeCurrent":false,"orderBy":"fields.price","direction":"asc","filters":[{"field":"fields.featured","operator":"is_true"}]},"children":[{"id":"stack1","block":"core/stack","version":1,"props":{},"settings":{},"children":[{"id":"cem","block":"core/entry-media","version":1,"props":{"source":"fields.product_image"},"settings":{}},{"id":"cef1","block":"core/entry-field","version":1,"props":{"source":"entry.title"},"settings":{"tag":"h3"}},{"id":"cef2","block":"core/entry-field","version":1,"props":{"source":"fields.price"},"settings":{"tag":"p","prefix":"$"}},{"id":"el","block":"core/entry-link","version":1,"props":{"text":"View"},"settings":{}}]}]}]}`
@@ -366,7 +291,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	if !strings.Contains(b, "MacBook") || !strings.Contains(b, "$999") {
 		t.Fatalf("shop missing macbook %s", b[:3000])
 	}
-	t.Logf("shop ok")
 
 	// Add second product
 	createProduct("iPhone", "iphone", "499", "IPH-001", true)
@@ -377,7 +301,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	if idx499 == -1 || idx999 == -1 || idx499 > idx999 {
 		t.Fatalf("order wrong idx499 %d idx999 %d %s", idx499, idx999, b[:3000])
 	}
-	t.Logf("order asc ok")
 
 	// Draft change
 	rows, err := queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: "product", Limit: 100, Offset: 0})
@@ -408,7 +331,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	if !strings.Contains(b, "$499") {
 		t.Fatalf("499 missing after draft %s", b[:2000])
 	}
-	t.Logf("draft not leaked ok")
 	tok = csrfToken(t, client, server.URL, "/admin/content/product/"+iphoneID+"/edit")
 	f = url.Values{"title": {"iPhone"}, "slug": {"iphone"}, "field_price": {"1500"}, "field_sku": {"IPH-001"}, "field_featured": {"true"}, "field_featured_present": {"true"}, "document_json": {`{"version":1,"nodes":[]}`}, "csrf_token": {tok}}
 	resp = postForm(t, client, server.URL, "/admin/content/product/"+iphoneID+"/publish", f)
@@ -426,7 +348,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	if idx999 == -1 || idx1500 == -1 || idx999 > idx1500 {
 		t.Fatalf("order after publish wrong %d %d %s", idx999, idx1500, b[:2000])
 	}
-	t.Logf("publish order ok")
 
 	// Test base path change
 	// Change /products -> /catalog
@@ -460,7 +381,6 @@ func TestProductSliceHTTP(t *testing.T) {
 		t.Fatalf("redirect loc %q", loc)
 	}
 	resp.Body.Close()
-	t.Logf("base change + redirect ok")
 
 	// Test delete - create temp type and delete it
 	tok = csrfToken(t, client, server.URL, "/admin/settings/content-types/new")
@@ -478,7 +398,6 @@ func TestProductSliceHTTP(t *testing.T) {
 		t.Fatalf("create deletable %d %s", resp.StatusCode, bodyString(t, resp))
 	}
 	resp.Body.Close()
-	t.Logf("deletable created")
 	// delete it - should succeed (no entries)
 	tok = csrfToken(t, client, server.URL, "/admin/settings/content-types/deletable")
 	f = url.Values{"csrf_token": {tok}}
@@ -491,7 +410,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	if _, err := queries.GetContentType(ctx, "deletable"); err == nil {
 		t.Fatalf("deletable still exists after delete")
 	}
-	t.Logf("delete deletable ok")
 	// try delete product with entries - should fail
 	tok = csrfToken(t, client, server.URL, "/admin/settings/content-types/product")
 	f = url.Values{"csrf_token": {tok}}
@@ -504,7 +422,6 @@ func TestProductSliceHTTP(t *testing.T) {
 	if !strings.Contains(body, "contains") || !strings.Contains(body, "entries") {
 		t.Fatalf("delete product error message missing, body %s", body[:2000])
 	}
-	t.Logf("delete blocked when entries exist ok")
 	// try delete builtin page - should fail
 	tok = csrfToken(t, client, server.URL, "/admin/settings/content-types/page")
 	f = url.Values{"csrf_token": {tok}}
@@ -516,7 +433,5 @@ func TestProductSliceHTTP(t *testing.T) {
 	if !strings.Contains(body, "built-in") {
 		t.Fatalf("delete page should mention built-in, body %s", body[:2000])
 	}
-	t.Logf("delete builtin blocked ok")
 
-	t.Logf("ALL PRODUCT SLICE PASSED")
 }

@@ -378,8 +378,9 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 		migratedDoc = doc
 	}
 	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
+	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs,
+		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

@@ -14,7 +14,7 @@
       <label class="editor-excerpt">Excerpt<textarea id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea></label>
    {{ end }}
    {{ if .Content.CustomFields }}
-   <section class="panel" style="margin:12px 0;padding:16px;">
+   <section class="card">
      <h3 style="margin:0 0 12px;">Custom Fields</h3>
      {{ range .Content.CustomFields }}{{ $field := . }}
      <div class="form-field">
@@ -71,9 +71,9 @@
 	       {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish">Unpublish</button>{{ end }}
     </div>
   </header>
-  <section class="panel publishing-panel" style="margin:12px 0;padding:16px;display:grid;gap:12px;">
+  <section class="card publishing-panel">
     <h3 style="margin:0;">Publishing</h3>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+    <div class="form-actions">
       <span>Status: <strong>{{ .Content.Status }}</strong></span>
       {{ if .Content.HasScheduled }}<span>Publish: {{ .Content.ScheduledAt }} <button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button></span>{{ end }}
     </div>
@@ -116,14 +116,14 @@
     })();
   </script>
   {{ if .Content.SupportsComments }}
-  <section class="panel" style="margin:12px 0;padding:16px;">
+  <section class="card">
     <h3 style="margin:0 0 8px;">Discussion</h3>
     <label class="check-row"><input type="checkbox" name="comments_enabled" value="1" {{ if .Content.CommentsEnabled }}checked{{ end }}> Allow comments</label>
     <p class="field-desc">When enabled, visitors can post comments on the published version. Changes apply on next publish.</p>
   </section>
   {{ end }}
   {{ if .Content.Hierarchical }}
-  <section class="panel" style="margin:12px 0;padding:16px;">
+  <section class="card">
     <h3 style="margin:0 0 8px;">Page Attributes</h3>
     <label class="form-field">Parent
       <select name="parent_entry_id" {{ if .Content.IsPostsPage }}disabled{{ end }}>
@@ -138,12 +138,12 @@
   {{ end }}
   {{ range .Content.TaxonomyPanels }}
   {{ $panel := . }}
-  <div class="panel taxonomy-panel" style="margin:12px 0;padding:16px;">
+  <div class="panel taxonomy-panel" class="card">
     <h3 style="margin:0 0 8px;">{{ $panel.Taxonomy.PluralName }}</h3>
     {{ if $panel.Taxonomy.Hierarchical }}
       <div class="taxonomy-hierarchy">
         {{ range $panel.Terms }}
-          <label class="check-row" style="margin-left:{{ multiply .Depth 16 }}px">
+          <label class="check-row" style="--depth: {{ .Depth }}">
             <input type="checkbox" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ .ID }}" {{ if index $panel.AssignedIDs .ID }}checked{{ end }}>
             {{ .Name }} <small class="muted">({{ .Slug }})</small>
           </label>
@@ -160,11 +160,11 @@
   </div>
   {{ end }}
   <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
-  {{ if .Content.IsPostsPage }}<div class="posts-page-badge" style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;margin:12px 0;display:flex;gap:12px;align-items:center;"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Public archive: {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
-  {{ if .Content.HasUnpublishedChanges }}<div class="unpublished-badge" style="padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;margin:12px 0;"><strong>Unpublished changes</strong><span> — Public archive is using the previously published revision.</span> {{ if .Content.PublicURL }}<a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a>{{ end }}</div>{{ end }}
-  {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert" style="margin:12px 0;padding:8px 12px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;">{{ .Content.PostsPageWarning }}</p>{{ end }}
+  {{ if .Content.IsPostsPage }}<div class="posts-page-badge"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Public archive: {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
+  {{ if .Content.HasUnpublishedChanges }}<div class="unpublished-badge"><strong>Unpublished changes</strong><span> — Public archive is using the previously published revision.</span> {{ if .Content.PublicURL }}<a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a>{{ end }}</div>{{ end }}
+  {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert" class="notice notice-warning">{{ .Content.PostsPageWarning }}</p>{{ end }}
 	{{ if .Content.Revisions }}
-	<section class="panel" style="margin:12px 0;padding:16px;">
+	<section class="card">
 	  <h3 style="margin:0 0 8px;">Revision History</h3>
 	  {{ range .Content.Revisions }}<div style="display:flex;gap:8px;align-items:center;margin:6px 0;"><span>Revision {{ .Number }}: {{ .Title }} ({{ .Slug }}){{ if .Published }} <strong>Published</strong>{{ end }}</span><a class="button" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a><button class="button" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button></div>{{ end }}
 	</section>

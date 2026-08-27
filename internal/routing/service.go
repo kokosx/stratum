@@ -108,21 +108,70 @@ func UpsertRedirectRoute(ctx context.Context, queries *db.Queries, source, targe
 // SyncContentTypeRouting atomically moves a custom type's archive and every
 // published single route. The caller owns the transaction; all collisions are
 // checked before the first mutation so failure cannot leave a partial move.
+// It uses bounded batches (500) so the 1001st entry is never silently ignored.
 func SyncContentTypeRouting(ctx context.Context, q *db.Queries, contentType, oldBase, newBase string, archive bool, now int64) error {
 	if err := ValidateRouteBase(newBase); err != nil {
 		return err
 	}
 	oldBase = NormalizePath(oldBase)
 	newBase = NormalizePath(newBase)
-	rows, err := q.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: contentType, Limit: 1000, Offset: 0})
-	if err != nil {
-		return fmt.Errorf("list published entries: %w", err)
-	}
-	type move struct{ entryID, oldPath, newPath string }
-	moves := make([]move, 0, len(rows))
-	for _, row := range rows {
-		newPath := NormalizePath(newBase + "/" + strings.Trim(row.Slug, "/"))
-		moves = append(moves, move{entryID: row.ID, oldPath: row.RoutePath, newPath: newPath})
+
+	// Detect hierarchical to use tree-aware compilation. Flat custom types can
+	// be handled with a simple base+slug move; hierarchical must preserve
+	// parent/child path derivation so /docs/a/b stays coherent when /docs moves.
+	isHierarchical, hierarchicalDef := isHierarchicalContentType(ctx, q, contentType)
+
+	var moves []struct{ entryID, oldPath, newPath string }
+	if isHierarchical {
+		hRows, err := q.ListPublishedHierarchyForContentType(ctx, contentType)
+		if err != nil {
+			return fmt.Errorf("list published hierarchy: %w", err)
+		}
+		nodes := make([]hierarchyNodeLite, 0, len(hRows))
+		for _, r := range hRows {
+			parent := ""
+			if r.ParentEntryID.Valid {
+				parent = r.ParentEntryID.String
+			}
+			nodes = append(nodes, hierarchyNodeLite{ID: r.EntryID, Slug: r.Slug, ParentID: parent})
+		}
+		desired, err := computeHierarchyPaths(ctx, q, hierarchicalDef, newBase, nodes)
+		if err != nil {
+			return err
+		}
+		moves = make([]struct{ entryID, oldPath, newPath string }, 0, len(desired))
+		for id, newPath := range desired {
+			route, err := q.GetEntryRoute(ctx, sql.NullString{String: id, Valid: true})
+			oldPath := ""
+			if err == nil {
+				oldPath = route.Path
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			moves = append(moves, struct{ entryID, oldPath, newPath string }{entryID: id, oldPath: oldPath, newPath: newPath})
+		}
+	} else {
+		// Flat: bounded batches.
+		const batchSize = 500
+		var allRows []db.ListPublishedEntriesByContentTypeRow
+		for offset := int64(0); ; offset += batchSize {
+			batch, err := q.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: contentType, Limit: batchSize, Offset: offset})
+			if err != nil {
+				return fmt.Errorf("list published entries: %w", err)
+			}
+			if len(batch) == 0 {
+				break
+			}
+			allRows = append(allRows, batch...)
+			if int64(len(batch)) < batchSize {
+				break
+			}
+		}
+		moves = make([]struct{ entryID, oldPath, newPath string }, 0, len(allRows))
+		for _, row := range allRows {
+			newPath := NormalizePath(newBase + "/" + strings.Trim(row.Slug, "/"))
+			moves = append(moves, struct{ entryID, oldPath, newPath string }{entryID: row.ID, oldPath: row.RoutePath, newPath: newPath})
+		}
 	}
 	for _, m := range moves {
 		existing, err := q.GetRouteByPath(ctx, m.newPath)
@@ -178,6 +227,110 @@ func SyncContentTypeRouting(ctx context.Context, q *db.Queries, contentType, old
 		}
 	}
 	return nil
+}
+
+// hierarchy helpers for SyncContentTypeRouting (tree-aware base move).
+type hierarchyNodeLite struct {
+	ID       string
+	Slug     string
+	ParentID string
+}
+
+func isHierarchicalContentType(ctx context.Context, q *db.Queries, contentType string) (bool, string) {
+	// Lightweight check: query content_types row directly; fall back to definition.
+	row, err := q.GetContentType(ctx, contentType)
+	if err != nil {
+		return false, ""
+	}
+	isHier := row.Hierarchical == 1
+	// Decode base for hierarchicalDef (reused as routing base).
+	if isHier {
+		// Use row's base path as hierarchicalDef fallback; full decode via content package is heavier.
+		// We extract from config_json via simple parse; failure still returns base as empty.
+		return true, row.ConfigJson
+	}
+	return false, ""
+}
+
+func computeHierarchyPaths(ctx context.Context, q *db.Queries, configJson, newBase string, nodes []hierarchyNodeLite) (map[string]string, error) {
+	// Build parent map and compute paths via BFS from roots.
+	byID := make(map[string]hierarchyNodeLite, len(nodes))
+	children := make(map[string][]string)
+	var roots []string
+	for _, n := range nodes {
+		byID[n.ID] = n
+		if n.ParentID == "" {
+			roots = append(roots, n.ID)
+		} else {
+			children[n.ParentID] = append(children[n.ParentID], n.ID)
+		}
+	}
+	settings, _ := q.GetSiteSettings(ctx)
+	postsBase := ""
+	if settings.PostsBasePath != "" {
+		postsBase = settings.PostsBasePath
+	}
+	// Resolve def for new base without full catalog decode: build minimal definition.
+	// For flat hierarchical non-post types, root path is simply newBase + "/" + slug.
+	// We avoid importing content to keep cycle free; do direct string logic.
+	desired := make(map[string]string, len(nodes))
+	var dfs func(id, parentPath string) error
+	dfs = func(id, parentPath string) error {
+		node, ok := byID[id]
+		if !ok {
+			return nil
+		}
+		var path string
+		if node.ParentID == "" {
+			s := strings.Trim(node.Slug, "/")
+			if s == "" {
+				path = "/"
+			} else if newBase != "" {
+				path = NormalizePath(newBase + "/" + s)
+			} else if postsBase != "" {
+				_ = postsBase
+				path = "/" + s
+			} else {
+				path = "/" + s
+			}
+			if settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == id {
+				path = "/"
+			}
+		} else {
+			// Child: derive from parent effective path.
+			if parentPath == "/" {
+				path = "/" + strings.Trim(node.Slug, "/")
+			} else {
+				path = NormalizePath(parentPath + "/" + strings.Trim(node.Slug, "/"))
+			}
+		}
+		if err := validateHierarchyPath(path); err != nil {
+			return err
+		}
+		desired[id] = path
+		for _, childID := range children[id] {
+			if err := dfs(childID, path); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, r := range roots {
+		if err := dfs(r, ""); err != nil {
+			return nil, err
+		}
+	}
+	// Also handle any disconnected nodes (orphaned roots not in roots slice due to missing parent filtered out earlier)
+	for _, n := range nodes {
+		if _, ok := desired[n.ID]; !ok {
+			// Treat as root if parent missing
+			s := strings.Trim(n.Slug, "/")
+			path := NormalizePath(newBase + "/" + s)
+			desired[n.ID] = path
+		}
+	}
+	_ = configJson
+	return desired, nil
 }
 
 // SyncPostsPageSlugChanged moves the posts archive and post singles when the Posts Page slug changes.

@@ -19,6 +19,10 @@ type handlerContentReader struct {
 	}
 }
 
+func (r *handlerContentReader) Definition(ctx context.Context, contentType string) (content.ContentTypeDefinition, error) {
+	return content.NewCatalog(r.queries).GetDefinition(ctx, contentType)
+}
+
 func (r *handlerContentReader) Query(ctx context.Context, query content.EntryQuery) ([]rendering.ArchiveEntry, error) {
 	// Delegate to the generic content.Repository so query semantics (limit clamp,
 	// order, exclude handling, overfetch) are defined in one place. Rendering

@@ -226,8 +226,9 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
+	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("layout-template"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/templates/" + tmpl.ID + "/preview", ContentTypeID: tmpl.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs,
+		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("layout-template"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/templates/" + tmpl.ID + "/preview", ContentTypeID: tmpl.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

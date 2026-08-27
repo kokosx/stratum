@@ -1,10 +1,271 @@
 {{ define "content" }}
-<section class="settings-shell"><header class="page-heading"><h1>Content Types</h1><p>Define structured, revisioned content without adding database tables.</p></header>
-{{ if .Content.Error }}<p class="form-error" role="alert">{{ .Content.Error }}</p>{{ end }}
-{{ if eq .Content.Mode "list" }}
-<p><a class="button button-primary" href="/admin/settings/content-types/new">Add Content Type</a></p><div class="panel"><table><thead><tr><th>Name</th><th>Key</th><th>Visibility</th><th>URL base</th></tr></thead><tbody>{{ range .Content.Rows }}<tr><td><a href="/admin/settings/content-types/{{ .ID }}">{{ .PluralName }}</a>{{ if .Builtin }} <small>Built-in</small>{{ end }}</td><td><code>{{ .ID }}</code></td><td>{{ if .Public }}Public{{ else }}Private{{ end }}{{ if .Archive }} · Archive{{ end }}</td><td>{{ .BasePath }}</td></tr>{{ end }}</tbody></table></div>
-{{ else }}
-<form class="panel settings-section" method="post" action="{{ if eq .Content.Mode "new" }}/admin/settings/content-types{{ else }}/admin/settings/content-types/{{ .Content.Form.ID }}{{ end }}"><input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><h2>{{ if eq .Content.Mode "new" }}Add Content Type{{ else }}Edit {{ .Content.Form.PluralName }}{{ end }}</h2><div class="form-field"><label>Singular name<input name="name" value="{{ .Content.Form.Name }}" required maxlength="100"></label></div><div class="form-field"><label>Plural name<input name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100"></label></div><div class="form-field"><label>Key<input name="id" value="{{ .Content.Form.ID }}" {{ if eq .Content.Mode "edit" }}readonly{{ end }} required pattern="[a-z][a-z0-9_]*"></label><p class="field-desc">Stable machine key; it cannot be changed later.</p></div><div class="form-field"><label>URL base<input name="base_path" value="{{ .Content.Form.BasePath }}" placeholder="/products" maxlength="100"></label></div><label class="check-row"><input type="checkbox" name="public" {{ if .Content.Form.Public }}checked{{ end }}> Public</label><label class="check-row"><input type="checkbox" name="hierarchical" {{ if .Content.Form.Hierarchical }}checked{{ end }}> Hierarchical</label><label class="check-row"><input type="checkbox" name="archive" {{ if .Content.Form.Archive }}checked{{ end }}> Has archive</label><h3>Features</h3><label class="check-row"><input type="checkbox" name="excerpt" {{ if .Content.Form.Excerpt }}checked{{ end }}> Excerpt</label><label class="check-row"><input type="checkbox" name="featured" {{ if .Content.Form.Featured }}checked{{ end }}> Featured media</label><label class="check-row"><input type="checkbox" name="seo" {{ if .Content.Form.SEO }}checked{{ end }}> SEO</label>
-{{ if eq .Content.Mode "edit" }}<h3>Fields</h3>{{ if .Content.Fields }}<table><thead><tr><th>Label</th><th>Key</th><th>Type</th><th>Required</th><th>Actions</th></tr></thead><tbody>{{ range .Content.Fields }}<tr><td><input type="hidden" name="field_present_{{ .Key }}" value="1"><input name="field_label_{{ .Key }}" value="{{ .Label }}" required><input name="field_help_{{ .Key }}" value="{{ .HelpText }}" placeholder="Help text"><input name="field_placeholder_{{ .Key }}" value="{{ .UI.Placeholder }}" placeholder="Placeholder"></td><td><code>{{ .Key }}</code></td><td>{{ .Type }}</td><td><input type="checkbox" name="field_required_{{ .Key }}" {{ if .Required }}checked{{ end }}></td><td><button class="button" name="move_up" value="1" onclick="this.form.field_key_action.value='{{ .Key }}'">↑</button><button class="button" name="move_down" value="1" onclick="this.form.field_key_action.value='{{ .Key }}'">↓</button><button class="button button-danger" name="remove_field" value="1" onclick="this.form.field_key_action.value='{{ .Key }}'">Remove</button></td></tr>{{ end }}</tbody></table><input type="hidden" name="field_key_action" value="">{{ else }}<p>No custom fields yet.</p>{{ end }}<fieldset><legend>Add field</legend><label>Label<input name="field_label"></label><label>Key<input name="field_key" pattern="[a-z][a-z0-9_]*"></label><label>Type<select name="field_type"><option value="text">Text</option><option value="textarea">Textarea</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="date">Date</option><option value="datetime">Date &amp; time</option><option value="url">URL</option><option value="email">Email</option><option value="media">Media</option><option value="select">Select</option></select></label><label class="check-row"><input type="checkbox" name="field_required"> Required</label><label>Default<input name="field_default"></label><label>Placeholder<input name="field_placeholder"></label><label>Help text<input name="field_help"></label><label>Minimum (Number)<input type="number" step="any" name="field_min"></label><label>Maximum (Number)<input type="number" step="any" name="field_max"></label><label>Select options (comma-separated)<input name="field_options"></label><button class="button" name="add_field" value="1">Add Field and Save</button></fieldset>{{ end }}<p><button class="button button-primary" type="submit">Save Content Type</button> <a class="button" href="/admin/settings/content-types">Back</a></p></form>{{ if and (eq .Content.Mode "edit") (ne .Content.Form.ID "page") (ne .Content.Form.ID "post") }}<form method="post" action="/admin/settings/content-types/{{ .Content.Form.ID }}/delete" onsubmit="return confirm('Delete content type {{ .Content.Form.ID }}? This cannot be undone.')"><input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><button class="button button-danger" type="submit">Delete Content Type</button></form>{{ end }}
-{{ end }}</section>
+<section class="settings-shell">
+  <header class="page-heading" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+    <div>
+      <h1>Content Types</h1>
+      <p>Create and manage structured content models.</p>
+    </div>
+    {{ if eq .Content.Mode "list" }}
+    <a class="button button-primary" href="/admin/settings/content-types/new">+ Add content type</a>
+    {{ end }}
+  </header>
+
+  <nav class="settings-nav" aria-label="Settings sections">
+    <a href="/admin/settings/general" class="settings-nav__link">General</a>
+    <a href="/admin/settings/content-types" class="settings-nav__link is-active" aria-current="page">Content Types</a>
+    <a href="/admin/settings/reading" class="settings-nav__link">Reading</a>
+    <a href="/admin/settings/seo" class="settings-nav__link">SEO &amp; Crawling</a>
+    <a href="/admin/settings/performance" class="settings-nav__link">Performance</a>
+  </nav>
+
+  {{ if .Content.Error }}<div class="form-error" role="alert">{{ .Content.Error }}</div>{{ end }}
+  {{ if .Content.FieldRemovalWarning }}
+  <div class="notice notice-warning" role="alert">
+    <strong>Heads up:</strong> {{ .Content.FieldRemovalWarning }}
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <a class="button button-secondary" href="/admin/settings/content-types/{{ .Content.Form.ID }}">Cancel</a>
+      <form method="post" action="/admin/settings/content-types/{{ .Content.Form.ID }}" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+        <input type="hidden" name="field_key_action" value="{{ .Content.PendingRemoveKey }}">
+        <input type="hidden" name="remove_field" value="1">
+        <input type="hidden" name="confirm_remove" value="1">
+        <input type="hidden" name="name" value="{{ .Content.Form.Name }}">
+        <input type="hidden" name="plural_name" value="{{ .Content.Form.PluralName }}">
+        <input type="hidden" name="base_path" value="{{ .Content.Form.BasePath }}">
+        {{ if .Content.Form.Public }}<input type="hidden" name="public" value="on">{{ end }}
+        {{ if .Content.Form.Hierarchical }}<input type="hidden" name="hierarchical" value="on">{{ end }}
+        {{ if .Content.Form.Archive }}<input type="hidden" name="archive" value="on">{{ end }}
+        <button class="button button-danger" type="submit">Remove field</button>
+      </form>
+    </div>
+  </div>
+  {{ end }}
+
+  {{ if eq .Content.Mode "list" }}
+    {{ if .Content.Rows }}
+    <div class="card">
+      <div class="card-body" style="padding:0;">
+        <table class="data-table" style="border:0;box-shadow:none;border-radius:0;">
+          <thead>
+            <tr><th>Name</th><th>Key</th><th>Visibility</th><th>URL base</th><th></th></tr>
+          </thead>
+          <tbody>
+            {{ range .Content.Rows }}
+            <tr>
+              <td>
+                <div class="data-table__primary"><a href="/admin/settings/content-types/{{ .ID }}">{{ .PluralName }}</a> {{ if .Builtin }}<span class="status-badge status-badge--core">Core</span>{{ end }}</div>
+                <div class="data-table__meta">{{ .Name }} · {{ if .Public }}<span class="status-badge status-badge--published" style="height:18px;font-size:11px;">Public</span>{{ else }}<span class="status-badge status-badge--private" style="height:18px;font-size:11px;">Private</span>{{ end }} {{ if .Archive }}<span class="status-badge status-badge--scheduled" style="height:18px;font-size:11px;">Archive</span>{{ end }}</div>
+              </td>
+              <td><code>{{ .ID }}</code></td>
+              <td>
+                {{ if .Public }}Public{{ else }}Private{{ end }}
+                {{ if .Archive }} · Archive{{ end }}
+              </td>
+              <td><code>{{ if .BasePath }}{{ .BasePath }}{{ else }}—{{ end }}</code></td>
+              <td style="text-align:right;"><a class="button button-secondary button-small" href="/admin/settings/content-types/{{ .ID }}">Manage</a></td>
+            </tr>
+            {{ end }}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {{ else }}
+    <div class="card">
+      <div class="empty-state">
+        <h3>No custom content types yet.</h3>
+        <p>Create Product, Service, Case Study or another structured type. They behave like Posts but with your own fields and URLs.</p>
+        <a class="button button-primary" href="/admin/settings/content-types/new">Add content type</a>
+      </div>
+    </div>
+    {{ end }}
+  {{ else }}
+  <form class="settings-content" method="post" action="{{ if eq .Content.Mode "new" }}/admin/settings/content-types{{ else }}/admin/settings/content-types/{{ .Content.Form.ID }}{{ end }}">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    {{ if eq .Content.Mode "edit" }}<input type="hidden" name="field_key_action" value="">{{ end }}
+
+    <div class="card">
+      <div class="card-header"><h2>Identity</h2></div>
+      <div class="card-body" style="display:grid;gap:16px;">
+        <div class="field-grid">
+          <div class="form-group">
+            <label class="form-label" for="ct-name">Singular name</label>
+            <input class="form-control" id="ct-name" name="name" value="{{ .Content.Form.Name }}" required maxlength="100" placeholder="Product">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ct-plural">Plural name</label>
+            <input class="form-control" id="ct-plural" name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100" placeholder="Products">
+          </div>
+        </div>
+        <div class="form-group" style="max-width:480px;">
+          <label class="form-label" for="ct-key">Key</label>
+          <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" {{ if eq .Content.Mode "edit" }}readonly{{ end }} required pattern="[a-z][a-z0-9_]*" placeholder="product">
+          <p class="form-help">Stable machine key. Cannot be changed later. Lowercase letters, numbers and underscores.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Routing</h2><span class="form-help">Public content is routable; private content has no public URLs.</span></div>
+      <div class="card-body" style="display:grid;gap:16px;">
+        <label class="toggle-row">
+          <span><strong>Public content</strong><br><span class="form-help">If disabled, entries have no canonical routes or archive. Publish still creates a revision internally.</span></span>
+          <input type="checkbox" name="public" {{ if .Content.Form.Public }}checked{{ end }} {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}disabled{{ end }}>
+          {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}<input type="hidden" name="public" value="on">{{ end }}
+        </label>
+        {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+          <div class="notice notice-info">Routing for <strong>{{ .Content.Form.ID }}</strong> is core-owned. URL base is managed in <a href="/admin/settings/reading">Reading → Posts URL base</a> for Posts, and Page URLs are always <code>/slug</code>.</div>
+        {{ else }}
+          <div class="form-group" style="max-width:480px;">
+            <label class="form-label" for="ct-base">URL base</label>
+            <input class="form-control" id="ct-base" name="base_path" value="{{ .Content.Form.BasePath }}" placeholder="/products" maxlength="100">
+            <p class="form-help">Absolute prefix for entry URLs and archive, e.g. <code>/products</code>. No trailing slash.</p>
+          </div>
+          <label class="toggle-row">
+            <span><strong>Has archive</strong><br><span class="form-help">Enables an archive at the URL base listing published entries.</span></span>
+            <input type="checkbox" name="archive" {{ if .Content.Form.Archive }}checked{{ end }}>
+          </label>
+          <label class="toggle-row">
+            <span><strong>Hierarchical</strong><br><span class="form-help">Like Pages: entries can have parents, URLs nest as <code>/base/parent/child</code>.</span></span>
+            <input type="checkbox" name="hierarchical" {{ if .Content.Form.Hierarchical }}checked{{ end }}>
+          </label>
+        {{ end }}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Features</h2></div>
+      <div class="card-body" style="display:grid;gap:12px;">
+        {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+          <p class="form-help">Features for core types are managed by Stratum and cannot be disabled here. Custom fields can still be added below.</p>
+          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
+            <span>Excerpt</span><input type="checkbox" {{ if .Content.Form.Excerpt }}checked{{ end }} disabled>
+          </div>
+          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
+            <span>Featured image</span><input type="checkbox" {{ if .Content.Form.Featured }}checked{{ end }} disabled>
+          </div>
+          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
+            <span>SEO</span><input type="checkbox" {{ if .Content.Form.SEO }}checked{{ end }} disabled>
+          </div>
+        {{ else }}
+          <label class="toggle-row"><span>Excerpt</span><input type="checkbox" name="excerpt" {{ if .Content.Form.Excerpt }}checked{{ end }}></label>
+          <label class="toggle-row"><span>Featured image</span><input type="checkbox" name="featured" {{ if .Content.Form.Featured }}checked{{ end }}></label>
+          <label class="toggle-row"><span>SEO</span><input type="checkbox" name="seo" {{ if .Content.Form.SEO }}checked{{ end }}></label>
+        {{ end }}
+      </div>
+    </div>
+
+    {{ if eq .Content.Mode "edit" }}
+    <div class="card">
+      <div class="card-header">
+        <h2>Custom fields</h2>
+        <span class="form-help">Fields stored in revision snapshots.</span>
+      </div>
+      <div class="card-body">
+        {{ if .Content.Fields }}
+        <div class="fields-builder">
+          {{ range .Content.Fields }}
+          <div class="field-card">
+            <div class="field-card__header" onclick="this.nextElementSibling.hidden = !this.nextElementSibling.hidden">
+              <span class="field-card__drag">≡</span>
+              <div class="field-card__main">
+                <p class="field-card__title">{{ .Label }}</p>
+                <p class="field-card__meta">{{ .Type }} {{ if .Required }}· Required{{ end }} · key: <code>{{ .Key }}</code></p>
+              </div>
+              <div class="field-card__actions">
+                <button class="button button-secondary button-small" type="button" onclick="event.stopPropagation(); this.closest('.field-card').querySelector('.field-card__body').hidden = !this.closest('.field-card').querySelector('.field-card__body').hidden">Edit</button>
+                <button class="button button-small" name="move_up" value="1" onclick="event.stopPropagation(); this.form.field_key_action.value='{{ .Key }}'; this.form.requestSubmit();">↑</button>
+                <button class="button button-small" name="move_down" value="1" onclick="event.stopPropagation(); this.form.field_key_action.value='{{ .Key }}'; this.form.requestSubmit();">↓</button>
+                <button class="button button-danger button-small" name="remove_field" value="1" onclick="event.stopPropagation(); if(!confirm('Remove field {{ .Key }}? Existing revisions keep their values but future blocks will stop resolving it.')) return; this.form.field_key_action.value='{{ .Key }}'; this.form.requestSubmit();">Remove</button>
+              </div>
+            </div>
+            <div class="field-card__body" hidden>
+              <input type="hidden" name="field_present_{{ .Key }}" value="1">
+              <div class="field-grid">
+                <div class="form-group"><label class="form-label">Label</label><input class="form-control" name="field_label_{{ .Key }}" value="{{ .Label }}" required></div>
+                <div class="form-group"><label class="form-label">Key</label><code>{{ .Key }}</code></div>
+              </div>
+              <div class="form-group"><label class="form-label">Help text</label><input class="form-control" name="field_help_{{ .Key }}" value="{{ .HelpText }}" placeholder="Help shown under the input"></div>
+              <div class="form-group"><label class="form-label">Placeholder</label><input class="form-control" name="field_placeholder_{{ .Key }}" value="{{ .UI.Placeholder }}" placeholder="Placeholder text"></div>
+              <label class="toggle-row"><span>Required</span><input type="checkbox" name="field_required_{{ .Key }}" {{ if .Required }}checked{{ end }}></label>
+            </div>
+          </div>
+          {{ end }}
+        </div>
+        {{ else }}
+        <div class="empty-state" style="padding:24px;">
+          <p>No custom fields yet.</p>
+          <p class="form-help">Add fields to store structured data per entry.</p>
+        </div>
+        {{ end }}
+
+        <fieldset class="card" style="margin-top:20px;padding:16px;">
+          <legend style="font-weight:600;">Add field</legend>
+          <div class="field-grid">
+            <div class="form-group"><label class="form-label" for="fld-label">Label</label><input class="form-control" id="fld-label" name="field_label" placeholder="Price"></div>
+            <div class="form-group"><label class="form-label" for="fld-key">Key</label><input class="form-control" id="fld-key" name="field_key" pattern="[a-z][a-z0-9_]*" placeholder="price"></div>
+          </div>
+          <div class="field-grid">
+            <div class="form-group"><label class="form-label">Type</label>
+              <select class="form-control" name="field_type" id="fld-type">
+                <option value="text">Text</option><option value="textarea">Textarea</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="date">Date</option><option value="datetime">Date & time</option><option value="url">URL</option><option value="email">Email</option><option value="media">Media</option><option value="select">Select</option>
+              </select>
+            </div>
+            <div class="form-group"><label class="form-label">Default</label><input class="form-control" name="field_default" placeholder="Optional initial value"></div>
+          </div>
+          <div class="field-grid">
+            <div class="form-group"><label class="form-label">Placeholder</label><input class="form-control" name="field_placeholder" placeholder="Placeholder"></div>
+            <div class="form-group"><label class="form-label">Help text</label><input class="form-control" name="field_help" placeholder="Help text"></div>
+          </div>
+          <div id="fld-opts" class="form-group" hidden>
+            <label class="form-label">Options (for Select)</label>
+            <div id="fld-options-list" style="display:grid;gap:8px;"></div>
+            <button class="button button-secondary button-small" type="button" onclick="addOption()">+ Add option</button>
+            <input type="hidden" name="field_options" id="fld-options-hidden">
+            <p class="form-help">One option per line. Shown as a select.</p>
+          </div>
+          <div class="field-grid">
+            <div class="form-group"><label class="form-label">Minimum</label><input class="form-control" name="field_min" type="number" step="any" placeholder="Min for number"></div>
+            <div class="form-group"><label class="form-label">Maximum</label><input class="form-control" name="field_max" type="number" step="any" placeholder="Max for number"></div>
+          </div>
+          <label class="toggle-row"><span>Required</span><input type="checkbox" name="field_required"></label>
+        </fieldset>
+        <script>
+          (function(){
+            const typeSel = document.getElementById('fld-type');
+            const opts = document.getElementById('fld-opts');
+            const list = document.getElementById('fld-options-list');
+            const hidden = document.getElementById('fld-options-hidden');
+            function sync(){ opts.hidden = typeSel.value !== 'select'; }
+            typeSel.addEventListener('change', sync); sync();
+            window.addOption = function(val){
+              const row = document.createElement('div');
+              row.style.display='flex'; row.style.gap='8px';
+              const inp = document.createElement('input');
+              inp.className='form-control'; inp.placeholder='Option';
+              if(val) inp.value=val;
+              inp.addEventListener('input', updateHidden);
+              const rm = document.createElement('button');
+              rm.type='button'; rm.className='button button-secondary button-small'; rm.textContent='Remove';
+              rm.onclick = ()=>{ row.remove(); updateHidden(); };
+              row.append(inp, rm); list.append(row); updateHidden();
+            };
+            function updateHidden(){
+              const vals = Array.from(list.querySelectorAll('input')).map(i=>i.value.trim()).filter(Boolean);
+              hidden.value = vals.join(', ');
+            }
+            // existing select options hydration if editing? not needed for add form
+          })();
+        </script>
+      </div>
+    </div>
+    {{ end }}
+
+    <div class="card-footer" style="position:sticky;bottom:0;z-index:2;">
+      <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
+      <button class="button button-primary" type="submit">Save changes</button>
+      {{ if eq .Content.Mode "edit" }}<button class="button button-danger" type="submit" formaction="/admin/settings/content-types/{{ .Content.Form.ID }}/delete" formmethod="post" onclick="return confirm('Delete content type {{ .Content.Form.ID }}? This cannot be undone.')">Delete</button>{{ end }}
+    </div>
+  </form>
+  {{ end }}
+</section>
 {{ end }}

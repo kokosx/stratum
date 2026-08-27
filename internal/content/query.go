@@ -151,3 +151,85 @@ func (q EntryQuery) Validate() error {
 	}
 	return nil
 }
+
+// ValidateForDefinition checks field existence and operator compatibility
+// against the concrete ContentTypeDefinition. It must be called after Validate.
+func (q EntryQuery) ValidateForDefinition(def ContentTypeDefinition) error {
+	if err := q.Validate(); err != nil {
+		return err
+	}
+	// Build field type index: system + custom.
+	typeIndex := make(map[string]FieldType)
+	typeIndex["entry.title"] = FieldText
+	typeIndex["entry.permalink"] = FieldURL
+	typeIndex["entry.published_at"] = FieldDateTime
+	if def.Capabilities.HasExcerpt {
+		typeIndex["entry.excerpt"] = FieldTextarea
+	}
+	if def.Capabilities.HasFeatured {
+		typeIndex["entry.featured_media"] = FieldMedia
+	}
+	for _, f := range def.Fields {
+		typeIndex["fields."+f.Key] = f.Type
+	}
+	allowed := func(ft FieldType, op QueryOperator) bool {
+		switch ft {
+		case FieldText, FieldTextarea:
+			return op == OpEquals || op == OpNotEquals || op == OpContains || op == OpExists || op == OpNotExists
+		case FieldNumber:
+			return op == OpEquals || op == OpNotEquals || op == OpGreater || op == OpGreaterEqual || op == OpLess || op == OpLessEqual || op == OpExists || op == OpNotExists
+		case FieldBoolean:
+			return op == OpIsTrue || op == OpIsFalse || op == OpExists || op == OpNotExists
+		case FieldDate, FieldDateTime:
+			return op == OpEquals || op == OpBefore || op == OpAfter || op == OpExists || op == OpNotExists
+		case FieldSelect:
+			return op == OpEquals || op == OpNotEquals || op == OpExists || op == OpNotExists
+		case FieldURL, FieldEmail:
+			return op == OpEquals || op == OpNotEquals || op == OpContains || op == OpExists || op == OpNotExists
+		case FieldMedia:
+			return op == OpExists || op == OpNotExists || op == OpEquals
+		default:
+			return false
+		}
+	}
+	for _, filter := range q.Filters {
+		ft, ok := typeIndex[filter.Field]
+		if !ok {
+			// Schemaless legacy types (no field definitions) allow ad-hoc snapshot fields for backward compat.
+			// This keeps repository tests that insert products with empty config.json working while new
+			// schema-aware types remain strictly validated.
+			if len(def.Fields) == 0 && strings.HasPrefix(filter.Field, "fields.") {
+				// Infer permissive type: treat as text/number/boolean generic – allow all common operators except strict type mismatches.
+				// For boolean `is_true` we need boolean, for `contains` we need text – we allow both leniently.
+				continue
+			}
+			// Try to resolve via ParseFieldRef for system fields that may still be valid but not in index (e.g. excerpt when not enabled): treat as not allowed.
+			if _, err := ParseFieldRef(filter.Field); err == nil {
+				return fmt.Errorf("field %q does not exist for content type %q", filter.Field, def.ID)
+			}
+			return fmt.Errorf("field %q does not exist for content type %q", filter.Field, def.ID)
+		}
+		if !allowed(ft, filter.Operator) {
+			return fmt.Errorf("operator %q is not allowed for field %q of type %q", filter.Operator, filter.Field, ft)
+		}
+		// Value presence check for operators that require/don't require value.
+		needsValue := filter.Operator != OpExists && filter.Operator != OpNotExists && filter.Operator != OpIsTrue && filter.Operator != OpIsFalse
+		hasValue := filter.Value != nil && fmt.Sprint(filter.Value) != ""
+		if needsValue && !hasValue {
+			return fmt.Errorf("operator %q requires a value for field %q", filter.Operator, filter.Field)
+		}
+		if !needsValue && hasValue {
+			// IsTrue/IsFalse/Exists/NotExists should not have value – but allow silently ignoring for compat
+		}
+	}
+	if q.OrderBy != "" {
+		if _, ok := typeIndex[q.OrderBy]; !ok {
+			if len(def.Fields) == 0 && strings.HasPrefix(q.OrderBy, "fields.") {
+				// Allow legacy schemaless order.
+			} else {
+				return fmt.Errorf("orderBy field %q does not exist for content type %q", q.OrderBy, def.ID)
+			}
+		}
+	}
+	return nil
+}

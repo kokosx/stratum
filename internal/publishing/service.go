@@ -181,67 +181,79 @@ func PublishWithQueries(ctx context.Context, qtx *db.Queries, entry db.Entry, re
 	if (isHomepage || isPostsPage) && (rev.Visibility == "private" || rev.Visibility == "password") {
 		return content.ErrProtectedPage
 	}
-	// Publishing a hierarchical entry as private removes its route; reject if public descendants would become orphaned.
-	if rev.Visibility == "private" && def.Capabilities.Hierarchical {
-		rows, err := qtx.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
-		if err != nil {
-			return err
-		}
-		nodes := make([]content.HierarchyNode, 0, len(rows))
-		for _, r := range rows {
-			parent := ""
-			if r.ParentEntryID.Valid {
-				parent = r.ParentEntryID.String
-			}
-			nodes = append(nodes, content.HierarchyNode{EntryID: r.EntryID, ParentEntryID: parent})
-		}
-		h, err := content.NewHierarchy(nodes)
-		if err != nil {
-			return err
-		}
-		if len(h.Descendants(entry.ID)) != 0 {
-			return content.ErrPublishedDescendants
-		}
-	}
-	switch rev.Visibility {
-	case "private":
+	// Non-public content types never expose public canonical routes or archives.
+	// They can still be marked as published internally, but the frontend must not routable.
+	if !def.Capabilities.Public {
 		if route, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entry.ID, Valid: true}); err == nil {
 			if err := qtx.DeleteRoute(ctx, route.ID); err != nil {
-				return fmt.Errorf("remove private route: %w", err)
+				return fmt.Errorf("remove non-public route: %w", err)
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check private route: %w", err)
+			return fmt.Errorf("check non-public route: %w", err)
 		}
-	case "public", "password":
-		if isPostsPage && entry.ContentTypeID == "page" {
-			oldBase := settings.PostsBasePath
-			if oldBase == "" {
-				oldBase = routing.DefaultPostsBase
-			}
-			newBase := routing.NormalizePath("/" + strings.Trim(rev.Slug, "/"))
-			if oldBase != newBase {
-				if err := routing.ValidatePostsBasePath(newBase); err != nil {
-					return err
-				}
-				if err := routing.SyncPostsPageSlugChanged(ctx, qtx, entry.ID, rev.Slug, oldBase, newBase, settings.HomepageMode, now); err != nil {
-					return err
-				}
-			}
-		} else if def.Capabilities.Hierarchical {
-			if _, err := routing.SyncHierarchyPublish(ctx, qtx, routing.HierarchyEntry{
-				EntryID: entry.ID, ContentTypeID: entry.ContentTypeID, Slug: rev.Slug, Status: "active", Title: rev.Title,
-				ParentEntryID: nullString(rev.ParentEntryID), MenuOrder: rev.MenuOrder,
-			}, now); err != nil {
+	} else {
+		// Publishing a hierarchical entry as private removes its route; reject if public descendants would become orphaned.
+		if rev.Visibility == "private" && def.Capabilities.Hierarchical {
+			rows, err := qtx.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
+			if err != nil {
 				return err
 			}
-		} else {
-			computedPath := routing.EntryPathForDefinition(def, rev.Slug, settings.PostsBasePath)
-			if err := routing.UpsertEntryRoute(ctx, qtx, entry.ID, computedPath, now); err != nil {
+			nodes := make([]content.HierarchyNode, 0, len(rows))
+			for _, r := range rows {
+				parent := ""
+				if r.ParentEntryID.Valid {
+					parent = r.ParentEntryID.String
+				}
+				nodes = append(nodes, content.HierarchyNode{EntryID: r.EntryID, ParentEntryID: parent})
+			}
+			h, err := content.NewHierarchy(nodes)
+			if err != nil {
 				return err
 			}
+			if len(h.Descendants(entry.ID)) != 0 {
+				return content.ErrPublishedDescendants
+			}
 		}
-	default:
-		return fmt.Errorf("unknown visibility %q", rev.Visibility)
+		switch rev.Visibility {
+		case "private":
+			if route, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entry.ID, Valid: true}); err == nil {
+				if err := qtx.DeleteRoute(ctx, route.ID); err != nil {
+					return fmt.Errorf("remove private route: %w", err)
+				}
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("check private route: %w", err)
+			}
+		case "public", "password":
+			if isPostsPage && entry.ContentTypeID == "page" {
+				oldBase := settings.PostsBasePath
+				if oldBase == "" {
+					oldBase = routing.DefaultPostsBase
+				}
+				newBase := routing.NormalizePath("/" + strings.Trim(rev.Slug, "/"))
+				if oldBase != newBase {
+					if err := routing.ValidatePostsBasePath(newBase); err != nil {
+						return err
+					}
+					if err := routing.SyncPostsPageSlugChanged(ctx, qtx, entry.ID, rev.Slug, oldBase, newBase, settings.HomepageMode, now); err != nil {
+						return err
+					}
+				}
+			} else if def.Capabilities.Hierarchical {
+				if _, err := routing.SyncHierarchyPublish(ctx, qtx, def, routing.HierarchyEntry{
+					EntryID: entry.ID, ContentTypeID: entry.ContentTypeID, Slug: rev.Slug, Status: "active", Title: rev.Title,
+					ParentEntryID: nullString(rev.ParentEntryID), MenuOrder: rev.MenuOrder,
+				}, now); err != nil {
+					return err
+				}
+			} else {
+				computedPath := routing.EntryPathForDefinition(def, rev.Slug, settings.PostsBasePath)
+				if err := routing.UpsertEntryRoute(ctx, qtx, entry.ID, computedPath, now); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unknown visibility %q", rev.Visibility)
+		}
 	}
 	if isPostsPage && rev.Visibility != "private" {
 		if err := validatePostsBlocksForPublish(ctx, qtx, entry.ID, doc); err != nil {

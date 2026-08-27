@@ -759,6 +759,11 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	rc.QueryCache = make(map[string][]rendering.ArchiveEntry)
 	rc.EntryID = entry.ID
 	rc.LCP = &rendering.LCPState{}
+	if def, err := content.NewCatalog(h.queries).GetDefinition(ctx, entry.ContentTypeID); err == nil {
+		rc.Definition = def
+	} else {
+		rc.Definition = content.DefinitionFor(entry.ContentTypeID)
+	}
 	// renderEntry runs only after the entry visibility gate; it is the normal
 	// public rendering path and must provide comments before blocks render.
 	h.populateCommentsContext(ctx, &rc, entry.ID, true)
@@ -925,8 +930,8 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 				if mv, ok := mediaCache[r.FeaturedMediaID.String]; ok {
 					ae.FeaturedImage = mv
 				}
-				ae.Fields, _ = content.DecodeFieldSnapshot(r.FieldsJson)
 			}
+			ae.Fields, _ = content.DecodeFieldSnapshot(r.FieldsJson)
 			archiveEntries = append(archiveEntries, ae)
 		}
 	} else {
@@ -1022,7 +1027,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		archCtx.Title = termName
 		archCtx.Description = termDesc
 	}
-	var content template.HTML
+	var shellContent template.HTML
 	var usedBlocks []rendering.BlockKey
 	var archiveRC rendering.RenderContext
 	if prepared != nil {
@@ -1041,11 +1046,16 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			rc.EntryID = shellRow.ID
 		}
 		rc.LCP = &rendering.LCPState{}
+		if def, err := content.NewCatalog(h.queries).GetDefinition(ctx, archiveContentType); err == nil {
+			rc.Definition = def
+		} else {
+			rc.Definition = content.DefinitionFor(archiveContentType)
+		}
 		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
 		if cerr != nil {
 			return pagecache.Entry{}, fmt.Errorf("render archive shell: %w", cerr)
 		}
-		content = c
+		shellContent = c
 		usedBlocks = prepared.UsedBlocks
 		archiveRC = rc
 	} else {
@@ -1078,7 +1088,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		}}}
 		if p, err := h.blocks.Prepare(fallbackDoc); err == nil {
 			if c, err := h.blocks.RenderPrepared(ctx, p, rc); err == nil {
-				content = c
+				shellContent = c
 				usedBlocks = p.UsedBlocks
 			}
 		}
@@ -1133,7 +1143,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		Site:        themes.SiteView{Title: siteSnap.SiteTitle, Tagline: siteSnap.SiteTagline, Language: siteSnap.Language, SiteURL: siteSnap.SiteURL, LogoURL: siteIconURL(siteSnap, h.media), LogoWidth: 0, LogoHeight: 0},
 		Head:        head,
 		Navigation:  menus,
-		Content:     content,
+		Content:     shellContent,
 		ContentType: archiveContentType,
 		Kind:        themes.PageKindArchive,
 		IsFrontPage: archivePath == "/",
@@ -1626,6 +1636,13 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	}
 	if rc.LCP == nil {
 		rc.LCP = &rendering.LCPState{}
+	}
+	if input.ContentTypeID != "" {
+		if def, err := content.NewCatalog(h.queries).GetDefinition(ctx, input.ContentTypeID); err == nil {
+			rc.Definition = def
+		} else {
+			rc.Definition = content.DefinitionFor(input.ContentTypeID)
+		}
 	}
 	prepared, err := h.blocks.Prepare(effectiveDoc)
 	if err != nil {

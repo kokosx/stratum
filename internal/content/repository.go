@@ -42,6 +42,18 @@ func (r *Repository) QueryPublished(ctx context.Context, q EntryQuery) ([]Publis
 		return nil, err
 	}
 	if len(q.Filters) > 0 || q.OrderBy != "" {
+		// Validate field existence and operator compatibility against the effective definition.
+		if def, err := NewCatalog(r.queries).GetDefinition(ctx, string(q.ContentType)); err == nil {
+			if err := q.ValidateForDefinition(def); err != nil {
+				return nil, err
+			}
+		} else {
+			// Fallback to builtin definitions for cases where DB has no row (pre-catalog).
+			def := DefinitionFor(string(q.ContentType))
+			if err := q.ValidateForDefinition(def); err != nil {
+				return nil, err
+			}
+		}
 		return r.queryPublishedAdvanced(ctx, q)
 	}
 	if q.TermID != "" {
@@ -154,30 +166,51 @@ func (r *Repository) queryPublishedAdvanced(ctx context.Context, q EntryQuery) (
 	// SQLite JSON snapshots are acceptable for the current CMS scale. Fetch a
 	// bounded published projection and evaluate only host-validated refs/operators.
 	// The join remains pinned to entries.published_revision_id, so drafts cannot leak.
+	// We use bounded batches and fetch the entire matching set so sorting/filtering
+	// is globally correct (no LIMIT 1000 truncation).
+	const batchSize = 500
 	entries := make([]PublishedEntry, 0)
 	if q.TermID != "" {
-		rows, err := r.queries.ListPublishedEntriesByTerm(ctx, db.ListPublishedEntriesByTermParams{TermID: q.TermID, ContentTypeID: string(q.ContentType), Limit: 1000, Offset: 0})
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			if contains(q.ExcludeIDs, row.ID) {
-				continue
+		for offset := int64(0); ; offset += batchSize {
+			rows, err := r.queries.ListPublishedEntriesByTerm(ctx, db.ListPublishedEntriesByTermParams{TermID: q.TermID, ContentTypeID: string(q.ContentType), Limit: batchSize, Offset: offset})
+			if err != nil {
+				return nil, err
 			}
-			entries = append(entries, PublishedEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: q.ContentType, Title: row.Title, Excerpt: sqlNullToString(row.Excerpt), FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath, PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson})
+			if len(rows) == 0 {
+				break
+			}
+			for _, row := range rows {
+				if contains(q.ExcludeIDs, row.ID) {
+					continue
+				}
+				entries = append(entries, PublishedEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: q.ContentType, Title: row.Title, Excerpt: sqlNullToString(row.Excerpt), FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath, PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson})
+			}
+			if int64(len(rows)) < batchSize {
+				break
+			}
 		}
 	} else {
-		rows, err := r.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: string(q.ContentType), Limit: 1000, Offset: 0})
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			if contains(q.ExcludeIDs, row.ID) {
-				continue
+		for offset := int64(0); ; offset += batchSize {
+			rows, err := r.queries.ListPublishedEntriesByContentType(ctx, db.ListPublishedEntriesByContentTypeParams{ContentTypeID: string(q.ContentType), Limit: batchSize, Offset: offset})
+			if err != nil {
+				return nil, err
 			}
-			entries = append(entries, PublishedEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: q.ContentType, Title: row.Title, Excerpt: sqlNullToString(row.Excerpt), FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath, PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson})
+			if len(rows) == 0 {
+				break
+			}
+			for _, row := range rows {
+				if contains(q.ExcludeIDs, row.ID) {
+					continue
+				}
+				entries = append(entries, PublishedEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: q.ContentType, Title: row.Title, Excerpt: sqlNullToString(row.Excerpt), FeaturedMediaID: row.FeaturedMediaID, RoutePath: row.RoutePath, PublishedAt: row.PublishedAt, FirstPublishedAt: row.FirstPublishedAt, RevisionID: row.RevisionID, FieldsJSON: row.FieldsJson})
+			}
+			if int64(len(rows)) < batchSize {
+				break
+			}
 		}
 	}
+	// TODO: future SQLite json_extract indexing could push filtering/sorting into SQL.
+	// For now we scan revision snapshots in Go with bounded batches, guaranteeing correctness.
 	filtered := entries[:0]
 	for _, entry := range entries {
 		ok, err := matchesFilters(entry, q.Filters)

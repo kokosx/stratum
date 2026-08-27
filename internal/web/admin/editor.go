@@ -15,13 +15,26 @@ import (
 type RenderInput = rendering.RenderInput
 
 type editorBootstrap struct {
-	Document      json.RawMessage                         `json:"document"`
-	Catalog       any                                     `json:"catalog"`
-	Definitions   any                                     `json:"definitions"`
-	PreviewURL    string                                  `json:"previewUrl"`
-	ContentTypeID string                                  `json:"contentTypeId,omitempty"`
-	ContentTypes  []editorOption                          `json:"contentTypes,omitempty"`
-	FieldCatalogs map[string][]content.FieldCatalogOption `json:"fieldCatalogs,omitempty"`
+	Document         json.RawMessage                         `json:"document"`
+	Catalog          any                                     `json:"catalog"`
+	Definitions      any                                     `json:"definitions"`
+	PreviewURL       string                                  `json:"previewUrl"`
+	ContentTypeID    string                                  `json:"contentTypeId,omitempty"`
+	ContentTypes     []editorOption                          `json:"contentTypes,omitempty"`
+	FieldCatalogs    map[string][]content.FieldCatalogOption `json:"fieldCatalogs,omitempty"`
+	TaxonomyCatalogs map[string][]taxonomyCatalogEntry       `json:"taxonomyCatalogs,omitempty"`
+}
+
+type taxonomyCatalogEntry struct {
+	ID    string              `json:"id"`
+	Label string              `json:"label"`
+	Terms []taxonomyTermEntry `json:"terms"`
+}
+
+type taxonomyTermEntry struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Slug  string `json:"slug"`
 }
 
 type editorOption struct {
@@ -41,6 +54,33 @@ func (h *Handler) editorOptions(ctx context.Context) ([]editorOption, map[string
 		catalogs[string(definition.ID)] = content.FieldCatalog(definition)
 	}
 	return types, catalogs
+}
+
+func (h *Handler) taxonomyCatalogs(ctx context.Context) map[string][]taxonomyCatalogEntry {
+	definitions, err := content.NewCatalog(h.queries).ListDefinitions(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string][]taxonomyCatalogEntry, len(definitions))
+	for _, def := range definitions {
+		taxRows, err := h.queries.ListTaxonomiesByContentType(ctx, string(def.ID))
+		if err != nil || len(taxRows) == 0 {
+			continue
+		}
+		entries := make([]taxonomyCatalogEntry, 0, len(taxRows))
+		for _, tax := range taxRows {
+			terms, _ := h.queries.ListTermsByTaxonomy(ctx, tax.ID)
+			termEntries := make([]taxonomyTermEntry, 0, len(terms))
+			for _, t := range terms {
+				termEntries = append(termEntries, taxonomyTermEntry{ID: t.ID, Label: t.Name, Slug: t.Slug})
+			}
+			entries = append(entries, taxonomyCatalogEntry{ID: tax.ID, Label: tax.PluralName, Terms: termEntries})
+		}
+		if len(entries) > 0 {
+			out[string(def.ID)] = entries
+		}
+	}
+	return out
 }
 
 func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {

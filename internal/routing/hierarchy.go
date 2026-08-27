@@ -26,7 +26,9 @@ type HierarchyEntry struct {
 // SyncHierarchyPublish atomically compiles the prospective published hierarchy
 // into entry routes. It rebuilds only the published entry's subtree; public
 // requests continue to use the precomputed route runtime map.
-func SyncHierarchyPublish(ctx context.Context, q *db.Queries, prospective HierarchyEntry, now int64) ([]string, error) {
+// The caller must supply the resolved ContentTypeDefinition so custom
+// hierarchical types respect their DB-backed BasePath without hidden fallback.
+func SyncHierarchyPublish(ctx context.Context, q *db.Queries, def content.ContentTypeDefinition, prospective HierarchyEntry, now int64) ([]string, error) {
 	rows, err := q.ListPublishedHierarchyForContentType(ctx, prospective.ContentTypeID)
 	if err != nil {
 		return nil, err
@@ -89,7 +91,7 @@ func SyncHierarchyPublish(ctx context.Context, q *db.Queries, prospective Hierar
 		}
 		var path string
 		if node.ParentEntryID == "" {
-			path = EntryPath(prospective.ContentTypeID, node.Slug, settings.PostsBasePath)
+			path = EntryPathForDefinition(def, node.Slug, settings.PostsBasePath)
 			if settings.HomepageEntryID.Valid && settings.HomepageEntryID.String == id {
 				path = "/"
 			}

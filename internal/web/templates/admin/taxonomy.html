@@ -3,7 +3,7 @@
 
 {{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
 
-<div class="taxonomy-layout" style="display:grid;grid-template-columns:320px 1fr;gap:24px;">
+<div class="taxonomy-layout">
   <div class="taxonomy-form panel">
     <h2>Add New {{ .Content.TaxonomyName }}</h2>
     <form method="post" action="{{ if eq .Content.TaxonomyID "category" }}/admin/posts/categories{{ else }}/admin/posts/tags{{ end }}">
@@ -66,12 +66,12 @@
         {{ range .Content.Terms }}
         <tr>
           <td class="column-title">
-            <div style="padding-left: {{ multiply .Depth 16 }}px">
+            <div style="--depth: {{ .Depth }}">
               <strong>{{ .Name }}</strong>
             </div>
             <div class="row-actions">
               <span>
-                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/update{{ else }}/admin/posts/tags/{{ .ID }}/update{{ end }}" style="display:inline" class="taxonomy-edit-form">
+                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/update{{ else }}/admin/posts/tags/{{ .ID }}/update{{ end }}" class="inline-form" class="taxonomy-edit-form">
                   <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
                   <input type="hidden" name="name" value="{{ .Name }}">
                   <input type="hidden" name="slug" value="{{ .Slug }}">
@@ -81,7 +81,7 @@
                 </form> | 
               </span>
               <span>
-                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/delete{{ else }}/admin/posts/tags/{{ .ID }}/delete{{ end }}" style="display:inline" onsubmit="return confirm('Delete this {{ $.Content.TaxonomyName }}?')">
+                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/delete{{ else }}/admin/posts/tags/{{ .ID }}/delete{{ end }}" class="inline-form" onsubmit="return confirm('Delete this {{ $.Content.TaxonomyName }}?')">
                   <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
                   <button type="submit" class="row-action-link row-action-delete">Delete</button>
                 </form>
