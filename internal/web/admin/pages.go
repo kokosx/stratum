@@ -354,9 +354,17 @@ func (h *Handler) updateEntry(w http.ResponseWriter, r *http.Request, contentTyp
 		return
 	}
 	if publish {
-		h.setFlash(w, contentTypeTitle(contentType)+" published.")
+		if contentType == pageContentType || contentType == postContentType {
+			h.setFlash(w, contentTypeTitle(contentType)+" published.")
+		} else {
+			h.setFlash(w, "Saved.")
+		}
 	} else {
-		h.setFlash(w, contentTypeTitle(contentType)+" saved as draft.")
+		if contentType == pageContentType || contentType == postContentType {
+			h.setFlash(w, contentTypeTitle(contentType)+" saved as draft.")
+		} else {
+			h.setFlash(w, "Saved.")
+		}
 	}
 	http.Redirect(w, r, listingURL, http.StatusSeeOther)
 }
@@ -418,9 +426,17 @@ func (h *Handler) editorSaveFragment(w http.ResponseWriter, r *http.Request, con
 	if saveErr != nil {
 		events = append(events, toastEvent("error", entryWriteError(saveErr)))
 	} else if publish {
-		events = append(events, toastEvent("success", contentTypeTitle(contentType)+" published."))
+		if contentType == pageContentType || contentType == postContentType {
+			events = append(events, toastEvent("success", contentTypeTitle(contentType)+" published."))
+		} else {
+			events = append(events, toastEvent("success", "Saved."))
+		}
 	} else {
-		events = append(events, toastEvent("success", contentTypeTitle(contentType)+" draft saved."))
+		if contentType == pageContentType || contentType == postContentType {
+			events = append(events, toastEvent("success", contentTypeTitle(contentType)+" draft saved."))
+		} else {
+			events = append(events, toastEvent("success", "Saved."))
+		}
 	}
 	writeSSE(w, events...)
 }

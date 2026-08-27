@@ -649,7 +649,8 @@ func (h *Handler) navForUser(r *http.Request) []AdminNavItem {
 				continue
 			}
 			path := "/admin/content/" + string(definition.ID)
-			customNav = append(customNav, AdminNavItem{ID: "content-" + string(definition.ID), Label: definition.PluralName, Href: path, Icon: "pages", Children: []AdminNavItem{{ID: "content-" + string(definition.ID) + "-all", Label: "All " + definition.PluralName, Href: path}, {ID: "content-" + string(definition.ID) + "-new", Label: "Add New", Href: path + "/new"}}})
+			label := definition.Label()
+			customNav = append(customNav, AdminNavItem{ID: "content-" + string(definition.ID), Label: label, Href: path, Icon: "pages", Children: []AdminNavItem{{ID: "content-" + string(definition.ID) + "-all", Label: "All items", Href: path}, {ID: "content-" + string(definition.ID) + "-new", Label: "Add new", Href: path + "/new"}}})
 		}
 	}
 	if len(customNav) > 0 {

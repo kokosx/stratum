@@ -8,8 +8,13 @@
   <input type="hidden" name="content_type_id" id="entry-content-type" value="{{ .Content.ContentTypeID }}">
   <header class="editor-topbar">
     <div class="editor-metadata">
-      <label>Title<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
+      <label>{{ if .Content.ShowContent }}Title{{ else }}Name{{ end }}<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
+      {{ if .Content.ShowSlug }}
       <label>Slug<input id="entry-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
+      {{ else }}
+      <input type="hidden" name="slug" value="{{ .Content.Slug }}" id="entry-slug">
+      <p class="field-desc">Slug is generated automatically. It will be used if individual pages are enabled later.</p>
+      {{ end }}
       {{ if .Content.ShowExcerpt }}
       <label class="editor-excerpt">Excerpt<textarea id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea></label>
    {{ end }}
@@ -54,6 +59,7 @@
         </div>
       </div>
       {{ end }}
+      {{ if .Content.ShowTemplate }}
       <div class="form-field">
         <label class="field-label" for="entry-layout-template">Template</label>
         <select id="entry-layout-template" name="layout_template_id">
@@ -63,6 +69,7 @@
         {{ if .Content.LayoutTemplateError }}<p class="form-error" role="alert">{{ .Content.LayoutTemplateError }}</p>{{ end }}
         <p class="field-desc">Layout templates define the reusable structural layout surrounding the content.</p>
       </div>
+      {{ end }}
     </div>
     <div class="form-actions">
       <a class="button" href="{{ .Content.BackURL }}">Back</a>
@@ -78,6 +85,7 @@
       {{ if .Content.HasScheduled }}<span>Publish: {{ .Content.ScheduledAt }} <button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button></span>{{ end }}
     </div>
     <div style="display:grid;gap:8px;max-width:480px;">
+      {{ if .Content.ShowVisibility }}
       <label class="form-field">Visibility
         <select name="visibility" id="entry-visibility">
           <option value="public" {{ if eq .Content.Visibility "public" }}selected{{ end }}>Public</option>
@@ -88,6 +96,9 @@
       <label class="form-field" id="entry-password-field" {{ if ne .Content.Visibility "password" }}hidden{{ end }}>Password
         <input type="password" name="password" placeholder="{{ if eq .Content.Visibility "password" }}Leave blank to keep{{ else }}Enter password{{ end }}">
       </label>
+      {{ else }}
+      <input type="hidden" name="visibility" value="public">
+      {{ end }}
       {{ if .Content.SupportsSticky }}
       <label class="check-row"><input type="checkbox" name="sticky" value="1" {{ if .Content.Sticky }}checked{{ end }}> Sticky post (show first in lists)</label>
       {{ end }}
@@ -170,6 +181,7 @@
 	</section>
 	{{ end }}
   {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  {{ if .Content.ShowContent }}
   <div class="editor-workspace">
     <aside class="editor-panel block-library" aria-label="Block library">
       <h2>Block Library</h2>
@@ -186,6 +198,9 @@
       <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
     </aside>
   </div>
+  {{ else }}
+  <div class="notice notice-info" style="margin:16px 0;">This content type stores structured data only. Rich content editor is disabled.</div>
+  {{ end }}
   <section class="editor-preview-panel">
     <div class="editor-preview-toolbar">
       <div class="editor-mode-group">

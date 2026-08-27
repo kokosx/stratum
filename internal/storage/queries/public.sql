@@ -78,12 +78,12 @@ LIMIT 1;
 SELECT COUNT(*)
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
-JOIN routes rt ON rt.entry_id = e.id
+LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
   AND r.visibility = 'public'
-  AND rt.route_type = 'entry';
+;
 
 -- name: ListPublishedEntriesByContentType :many
 SELECT
@@ -96,11 +96,11 @@ SELECT
     r.excerpt,
     r.featured_media_id,
     r.fields_json,
-    rt.path AS route_path,
+    COALESCE(rt.path, '') AS route_path,
     r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
-JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
+LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL
@@ -123,11 +123,11 @@ SELECT
     r.excerpt,
     r.featured_media_id,
     r.fields_json,
-    rt.path AS route_path,
+    COALESCE(rt.path, '') AS route_path,
     r.sticky
 FROM entries e
 JOIN entry_revisions r ON r.id = e.published_revision_id
-JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
+LEFT JOIN routes rt ON rt.entry_id = e.id AND rt.route_type = 'entry'
 WHERE e.content_type_id = ?
   AND e.status = 'active'
   AND e.published_revision_id IS NOT NULL

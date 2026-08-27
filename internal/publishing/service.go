@@ -181,15 +181,16 @@ func PublishWithQueries(ctx context.Context, qtx *db.Queries, entry db.Entry, re
 	if (isHomepage || isPostsPage) && (rev.Visibility == "private" || rev.Visibility == "password") {
 		return content.ErrProtectedPage
 	}
-	// Non-public content types never expose public canonical routes or archives.
-	// They can still be marked as published internally, but the frontend must not routable.
-	if !def.Capabilities.Public {
+	// Route-less content types never expose canonical routes.
+	// They can still be marked as published internally, but the frontend must not be routable.
+	// Published means "live data", not "has a URL" – see STRATUMCMS Content Type Model Correction.
+	if !def.Routing.Single {
 		if route, err := qtx.GetEntryRoute(ctx, sql.NullString{String: entry.ID, Valid: true}); err == nil {
 			if err := qtx.DeleteRoute(ctx, route.ID); err != nil {
-				return fmt.Errorf("remove non-public route: %w", err)
+				return fmt.Errorf("remove route-less entry route: %w", err)
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("check non-public route: %w", err)
+			return fmt.Errorf("check route-less entry route: %w", err)
 		}
 	} else {
 		// Publishing a hierarchical entry as private removes its route; reject if public descendants would become orphaned.
@@ -371,7 +372,11 @@ func (s *Service) Unpublish(ctx context.Context, entryID string, now int64) erro
 	}
 
 	// Validate hierarchical descendants before destructive changes.
-	if content.DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical {
+	isHier := content.DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical
+	if def, err := content.NewCatalog(qtx).GetDefinition(ctx, entry.ContentTypeID); err == nil {
+		isHier = def.Capabilities.Hierarchical
+	}
+	if isHier {
 		rows, err := qtx.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
 		if err != nil {
 			return err

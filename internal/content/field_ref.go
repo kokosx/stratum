@@ -22,7 +22,12 @@ type FieldCatalogOption struct {
 // FieldCatalog is the server-owned list used by editor pickers. Stable refs are
 // values; translated/user-controlled labels are presentation only.
 func FieldCatalog(definition ContentTypeDefinition) []FieldCatalogOption {
-	options := []FieldCatalogOption{{Value: "entry.title", Label: "Title", Type: FieldText}, {Value: "entry.permalink", Label: "Permalink", Type: FieldURL}, {Value: "entry.published_at", Label: "Published Date", Type: FieldDateTime}}
+	options := []FieldCatalogOption{{Value: "entry.title", Label: "Title", Type: FieldText}}
+	// Permalink only when the type owns per-entry public URLs.
+	if definition.Routing.Single {
+		options = append(options, FieldCatalogOption{Value: "entry.permalink", Label: "Permalink", Type: FieldURL})
+	}
+	options = append(options, FieldCatalogOption{Value: "entry.published_at", Label: "Published Date", Type: FieldDateTime})
 	if definition.Capabilities.HasExcerpt {
 		options = append(options, FieldCatalogOption{Value: "entry.excerpt", Label: "Excerpt", Type: FieldTextarea})
 	}

@@ -44,7 +44,11 @@ func (h *Handler) editCustomEntry(w http.ResponseWriter, r *http.Request) {
 		scheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
 	}
 	base := "/admin/content/" + string(definition.ID)
-	h.renderEntryForm(w, r, entryFormData{Heading: "Edit " + definition.Name, Action: base + "/" + entry.ID, PublishAction: base + "/" + entry.ID + "/publish", BackURL: base, Title: revision.Title, Slug: revision.Slug, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), CanonicalURL: stringValue(revision.CanonicalUrl), FeaturedMediaID: stringValue(revision.FeaturedMediaID), SocialMediaID: stringValue(revision.SocialMediaID), RobotsIndex: robotsFormValue(revision.SeoRobotsIndex), RobotsFollow: robotsFormValue(revision.SeoRobotsFollow), SchemaMode: revision.SchemaMode, SiteURL: settings.SiteUrl, PublicPath: h.entryPublicPath(r, entry.ID), EntryID: entry.ID, DocumentJSON: revision.DocumentJson, FieldValues: fieldValues(revision.FieldsJson), Dirty: "Saved", Status: status, PublicURL: publicURL, ShowExcerpt: definition.Capabilities.HasExcerpt, ShowSEO: definition.Capabilities.HasSEO, ShowFeatured: definition.Capabilities.HasFeatured, HasUnpublishedChanges: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String != revision.ID, ContentTypeID: string(definition.ID), LayoutTemplateID: layoutID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), string(definition.ID)), ParentEntryID: stringValue(revision.ParentEntryID), MenuOrder: revision.MenuOrder, Hierarchical: definition.Capabilities.Hierarchical, Revisions: h.revisionHistory(r.Context(), entry), Visibility: revision.Visibility, ReviewState: revision.ReviewState, ScheduledAt: scheduledAt, HasScheduled: hasScheduled}, "content/"+string(definition.ID))
+	heading := "Edit item"
+	if definition.ItemLabel() != "" {
+		heading = "Edit " + definition.ItemLabel()
+	}
+	h.renderEntryForm(w, r, entryFormData{Heading: heading, Action: base + "/" + entry.ID, PublishAction: base + "/" + entry.ID + "/publish", BackURL: base, Title: revision.Title, Slug: revision.Slug, Excerpt: stringValue(revision.Excerpt), SEOTitle: stringValue(revision.SeoTitle), SEODescription: stringValue(revision.SeoDescription), CanonicalURL: stringValue(revision.CanonicalUrl), FeaturedMediaID: stringValue(revision.FeaturedMediaID), SocialMediaID: stringValue(revision.SocialMediaID), RobotsIndex: robotsFormValue(revision.SeoRobotsIndex), RobotsFollow: robotsFormValue(revision.SeoRobotsFollow), SchemaMode: revision.SchemaMode, SiteURL: settings.SiteUrl, PublicPath: h.entryPublicPath(r, entry.ID), EntryID: entry.ID, DocumentJSON: revision.DocumentJson, FieldValues: fieldValues(revision.FieldsJson), Dirty: "Saved", Status: status, PublicURL: publicURL, HasUnpublishedChanges: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String != revision.ID, ContentTypeID: string(definition.ID), LayoutTemplateID: layoutID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), string(definition.ID)), ParentEntryID: stringValue(revision.ParentEntryID), MenuOrder: revision.MenuOrder, Hierarchical: definition.Capabilities.Hierarchical, Revisions: h.revisionHistory(r.Context(), entry), Visibility: revision.Visibility, ReviewState: revision.ReviewState, ScheduledAt: scheduledAt, HasScheduled: hasScheduled}, "content/"+string(definition.ID))
 }
 func (h *Handler) saveCustomEntry(w http.ResponseWriter, r *http.Request) {
 	h.customUpdateEntry(w, r, false)
@@ -119,7 +123,8 @@ func (h *Handler) listCustomEntries(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	h.listEntries(w, r, string(definition.ID), definition.PluralName, "content/"+string(definition.ID))
+	label := definition.Label()
+	h.listEntries(w, r, string(definition.ID), label, "content/"+string(definition.ID))
 }
 func (h *Handler) newCustomEntry(w http.ResponseWriter, r *http.Request) {
 	definition, ok := h.customDefinition(w, r)
@@ -127,7 +132,13 @@ func (h *Handler) newCustomEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := "/admin/content/" + string(definition.ID)
-	h.renderEntryForm(w, r, entryFormData{Heading: "Add New " + definition.Name, Action: base, PublishAction: base, BackURL: base, DocumentJSON: `{"version":1,"nodes":[]}`, Dirty: "Saved", Status: "Draft", ShowExcerpt: definition.Capabilities.HasExcerpt, ShowSEO: definition.Capabilities.HasSEO, ShowFeatured: definition.Capabilities.HasFeatured, ContentTypeID: string(definition.ID), Hierarchical: definition.Capabilities.Hierarchical, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), string(definition.ID))}, "content/"+string(definition.ID))
+	heading := "Add new"
+	if definition.ItemLabel() != "" {
+		heading = "Add new " + definition.ItemLabel()
+	} else {
+		heading = "Add new item"
+	}
+	h.renderEntryForm(w, r, entryFormData{Heading: heading, Action: base, PublishAction: base, BackURL: base, DocumentJSON: `{"version":1,"nodes":[]}`, Dirty: "Saved", Status: "Draft", ContentTypeID: string(definition.ID), Hierarchical: definition.Capabilities.Hierarchical, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), string(definition.ID))}, "content/"+string(definition.ID))
 }
 func (h *Handler) createCustomEntry(w http.ResponseWriter, r *http.Request) {
 	definition, ok := h.customDefinition(w, r)
@@ -143,8 +154,12 @@ func (h *Handler) createCustomEntry(w http.ResponseWriter, r *http.Request) {
 	// custom type must use its DB-backed schema to capture revision fields.
 	input.fields = rawFieldValues(r, definition)
 	base := "/admin/content/" + string(definition.ID)
+	heading := "Add new item"
+	if definition.ItemLabel() != "" {
+		heading = "Add new " + definition.ItemLabel()
+	}
 	if err != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New " + definition.Name, Action: base, PublishAction: base, BackURL: base, Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), ContentTypeID: string(definition.ID), ShowExcerpt: definition.Capabilities.HasExcerpt, ShowSEO: definition.Capabilities.HasSEO, ShowFeatured: definition.Capabilities.HasFeatured, Error: err.Error()}, "content/"+string(definition.ID))
+		h.renderEntryForm(w, r, entryFormData{Heading: heading, Action: base, PublishAction: base, BackURL: base, Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), ContentTypeID: string(definition.ID), Error: err.Error()}, "content/"+string(definition.ID))
 		return
 	}
 	user, err := h.currentUser(r)
@@ -157,13 +172,13 @@ func (h *Handler) createCustomEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create custom entry: %v", err)
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New " + definition.Name, Action: base, PublishAction: base, BackURL: base, Title: input.title, Slug: input.slug, DocumentJSON: input.documentJSON, ContentTypeID: string(definition.ID), ShowExcerpt: definition.Capabilities.HasExcerpt, ShowSEO: definition.Capabilities.HasSEO, ShowFeatured: definition.Capabilities.HasFeatured, Error: entryWriteError(err)}, "content/"+string(definition.ID))
+		h.renderEntryForm(w, r, entryFormData{Heading: heading, Action: base, PublishAction: base, BackURL: base, Title: input.title, Slug: input.slug, DocumentJSON: input.documentJSON, ContentTypeID: string(definition.ID), Error: entryWriteError(err)}, "content/"+string(definition.ID))
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
 		h.runtime.InvalidateContent()
 		_ = h.runtime.ReloadRoutes(r.Context())
 	}
-	h.setFlash(w, definition.Name+" saved.")
+	h.setFlash(w, "Saved.")
 	http.Redirect(w, r, base, http.StatusSeeOther)
 }

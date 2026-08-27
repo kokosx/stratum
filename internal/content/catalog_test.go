@@ -12,7 +12,7 @@ func TestContentTypeConfigRoundTripAndCatalogDefinition(t *testing.T) {
 	_, _, queries := newTestRepository(t)
 	ctx := context.Background()
 	catalog := NewCatalog(queries)
-	input := ContentTypeInput{ID: "product", Name: "Product", PluralName: "Products", Public: true, Config: ContentTypeConfig{Fields: []FieldDefinition{{Key: "price", Label: "Price", Type: FieldNumber}}, Features: ContentTypeFeatures{FeaturedMedia: true, SEO: true}, Routing: ContentTypeRouting{BasePath: "/products", Archive: true}}}
+	input := ContentTypeInput{ID: "product", Name: "Product", PluralName: "Products", Public: true, Config: ContentTypeConfig{Fields: []FieldDefinition{{Key: "price", Label: "Price", Type: FieldNumber}}, Features: ContentTypeFeatures{FeaturedMedia: true, SEO: true}, Routing: ContentTypeRouting{Single: true, BasePath: "/products", Archive: true}}}
 	if err := catalog.CreateContentType(ctx, input); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestCatalogDeleteBlocksWithDependencies(t *testing.T) {
 	ctx := context.Background()
 	catalog := NewCatalog(queries)
 	// create deletable
-	input := ContentTypeInput{ID: "deletable", Name: "Deletable", PluralName: "Deletables", Public: true, Config: ContentTypeConfig{Routing: ContentTypeRouting{BasePath: "/deletable", Archive: true}}}
+	input := ContentTypeInput{ID: "deletable", Name: "Deletable", PluralName: "Deletables", Public: true, Config: ContentTypeConfig{Routing: ContentTypeRouting{Single: true, BasePath: "/deletable", Archive: true}}}
 	if err := catalog.CreateContentType(ctx, input); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestCatalogDeleteBlocksWithDependencies(t *testing.T) {
 		t.Fatal("deletable still exists after delete")
 	}
 	// create product with entry
-	input = ContentTypeInput{ID: "product", Name: "Product", PluralName: "Products", Public: true, Config: ContentTypeConfig{Routing: ContentTypeRouting{BasePath: "/products", Archive: true}}}
+	input = ContentTypeInput{ID: "product", Name: "Product", PluralName: "Products", Public: true, Config: ContentTypeConfig{Routing: ContentTypeRouting{Single: true, BasePath: "/products", Archive: true}}}
 	if err := catalog.CreateContentType(ctx, input); err != nil {
 		t.Fatal(err)
 	}

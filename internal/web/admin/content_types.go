@@ -2,20 +2,16 @@ package admin
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/content"
-	"github.com/kokosx/stratum/internal/routing"
-	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/contenttypes"
 )
 
 type contentTypesData struct {
@@ -29,12 +25,15 @@ type contentTypesData struct {
 	FieldRemovalCount   int
 }
 type contentTypeRow struct {
-	ID, Name, PluralName, BasePath string
-	Builtin, Public, Archive       bool
+	ID, Label, ItemLabel, BasePath string
+	Builtin, Single, Archive      bool
+	HasContent                    bool
 }
 type contentTypeForm struct {
-	ID, Name, PluralName, BasePath                        string
-	Public, Hierarchical, Archive, Excerpt, Featured, SEO bool
+	ID, Name, PluralName, BasePath string // Name=ItemLabel, PluralName=Label (for backward compat)
+	Single, Archive, Hierarchical bool
+	HasContent, Excerpt, Featured, SEO bool
+	Preset string // structured | pages (only on create)
 }
 
 func (h *Handler) requireManageSite(w http.ResponseWriter, r *http.Request) bool {
@@ -56,7 +55,11 @@ func (h *Handler) listContentTypes(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]contentTypeRow, 0, len(defs))
 	for _, d := range defs {
-		rows = append(rows, contentTypeRow{ID: string(d.ID), Name: d.Name, PluralName: d.PluralName, BasePath: d.Routing.BasePath, Builtin: d.ID == content.ContentTypePage || d.ID == content.ContentTypePost, Public: d.Capabilities.Public, Archive: d.IsArchived()})
+		rows = append(rows, contentTypeRow{
+			ID: string(d.ID), Label: d.Label(), ItemLabel: d.ItemLabel(),
+			BasePath: d.Routing.BasePath, Builtin: d.ID == content.ContentTypePage || d.ID == content.ContentTypePost,
+			Single: d.Routing.Single, Archive: d.Routing.Archive, HasContent: d.Capabilities.HasContent,
+		})
 	}
 	h.renderContentTypes(w, r, contentTypesData{Mode: "list", Rows: rows})
 }
@@ -64,7 +67,8 @@ func (h *Handler) newContentType(w http.ResponseWriter, r *http.Request) {
 	if !h.requireManageSite(w, r) {
 		return
 	}
-	h.renderContentTypes(w, r, contentTypesData{Mode: "new", Form: contentTypeForm{Public: true, SEO: true}})
+	// Default preset structured (simplest)
+	h.renderContentTypes(w, r, contentTypesData{Mode: "new", Form: contentTypeForm{Preset: "structured", SEO: false}})
 }
 func (h *Handler) createContentType(w http.ResponseWriter, r *http.Request) {
 	if !h.requireManageSite(w, r) {
@@ -75,37 +79,61 @@ func (h *Handler) createContentType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := contentTypeFormFromRequest(r)
-	// Built-ins are not creatable via UI, but guard anyway.
 	if f.ID == string(content.ContentTypePage) || f.ID == string(content.ContentTypePost) {
 		h.renderContentTypes(w, r, contentTypesData{Mode: "new", Form: f, Error: "reserved content type key"})
 		return
 	}
-	// Page/Post routing is core-owned; ignore generic URL base for them (not applicable on create).
 	if f.ID == string(content.ContentTypePage) || f.ID == string(content.ContentTypePost) {
 		f.BasePath = ""
 	}
-	tx, err := h.database.BeginTx(r.Context(), nil)
-	if err != nil {
-		http.Error(w, "Internal Server Error", 500)
-		return
+	// Apply preset defaults if present (simple create flow)
+	preset := strings.TrimSpace(r.FormValue("preset"))
+	if preset == "" {
+		preset = f.Preset
 	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
-	if err := content.NewCatalog(qtx).CreateContentType(r.Context(), contentTypeInput(f, nil)); err != nil {
-		h.renderContentTypes(w, r, contentTypesData{Mode: "new", Form: f, Error: err.Error()})
-		return
-	}
-	// Only create public routes for public types; private types remain unroutable until enabled.
-	if f.Public && f.BasePath != "" {
-		if err := routing.SyncContentTypeRouting(r.Context(), qtx, f.ID, f.BasePath, f.BasePath, f.Archive, time.Now().Unix()); err != nil {
-			h.renderContentTypes(w, r, contentTypesData{Mode: "new", Form: f, Error: err.Error()})
-			return
+	if preset != "" {
+		if preset == "pages" || preset == "content_with_pages" {
+			f.Single = true
+			f.HasContent = true
+			if f.Featured == false && !r.Form.Has("featured") {
+				f.Featured = true
+			}
+			if f.SEO == false && !r.Form.Has("seo") {
+				f.SEO = true
+			}
+			if strings.TrimSpace(f.BasePath) == "" && f.Single {
+				base := "/" + strings.ToLower(strings.ReplaceAll(f.ID, "_", "-"))
+				f.BasePath = base
+			}
+		} else {
+			// structured items preset
+			f.Single = false
+			f.Archive = false
+			f.HasContent = false
+			f.Excerpt = false
+			f.Featured = false
+			f.SEO = false
+			f.BasePath = ""
 		}
-	} else if f.Public && f.Archive && f.BasePath != "" {
-		// Ensure archive route for public archived types even if no entries yet (handled above when base set).
+	} else {
+		// Legacy path: no preset, respect explicit fields (including public alias already mapped to Single)
+		// If HasContent not specified explicitly, infer from Single for backward compat
+		if !r.Form.Has("has_content") && !r.Form.Has("content") {
+			// Default HasContent true for backward compat when Single true, false otherwise?
+			// Keep whatever was parsed (false) but for legacy products that expect content, we need true
+			// Heuristic: if Single true and no explicit has_content, assume true (historical default)
+			if f.Single {
+				f.HasContent = true
+			}
+		}
 	}
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Internal Server Error", 500)
+	// If single/archive both false, ignore base
+	if !f.Single && !f.Archive {
+		f.BasePath = ""
+	}
+	svc := contenttypes.New(h.database, h.queries)
+	if err := svc.Create(r.Context(), contentTypeInput(f, nil)); err != nil {
+		h.renderContentTypes(w, r, contentTypesData{Mode: "new", Form: f, Error: err.Error()})
 		return
 	}
 	if h.runtime != nil {
@@ -141,6 +169,7 @@ func (h *Handler) saveContentType(w http.ResponseWriter, r *http.Request) {
 	}
 	f := contentTypeFormFromRequest(r)
 	f.ID = r.PathValue("id")
+	// Parse new fields: single, has_content, etc. contentTypeFormFromRequest already does
 	fields := append([]content.FieldDefinition(nil), d.Fields...)
 	for i := range fields {
 		if r.FormValue("field_present_"+fields[i].Key) != "" {
@@ -200,138 +229,50 @@ func (h *Handler) saveContentType(w http.ResponseWriter, r *http.Request) {
 		}
 		fields = append(fields, field)
 	}
-	// Core-owned routing for Page/Post: ignore generic base/archive changes.
+	// Preserve capabilities during field manipulation (add/remove/move) where checkboxes are not re-sent
+	isFieldOp := r.FormValue("add_field") != "" || r.FormValue("remove_field") != "" || r.FormValue("move_up") != "" || r.FormValue("move_down") != ""
+	if isFieldOp {
+		if !r.Form.Has("has_content") && !r.Form.Has("content") {
+			f.HasContent = d.Capabilities.HasContent
+		}
+		if !r.Form.Has("single") && !r.Form.Has("public") && !r.Form.Has("has_single") {
+			f.Single = d.Routing.Single
+		}
+		if !r.Form.Has("archive") {
+			f.Archive = d.Routing.Archive
+		}
+		if !r.Form.Has("hierarchical") {
+			f.Hierarchical = d.Capabilities.Hierarchical
+		}
+		if !r.Form.Has("excerpt") {
+			f.Excerpt = d.Capabilities.HasExcerpt
+		}
+		if !r.Form.Has("featured") {
+			f.Featured = d.Capabilities.HasFeatured
+		}
+		if !r.Form.Has("seo") {
+			f.SEO = d.Capabilities.HasSEO
+		}
+		if !r.Form.Has("base_path") {
+			f.BasePath = d.Routing.BasePath
+		}
+	}
+	// For built-ins, ignore routing changes (core-owned)
 	isBuiltin := d.ID == content.ContentTypePage || d.ID == content.ContentTypePost
-	prevPublic := d.Capabilities.Public
-	newPublic := f.Public
 	if isBuiltin {
-		newPublic = prevPublic
-		f.Public = prevPublic
-		f.BasePath = ""
-		f.Archive = d.IsArchived()
+		f.Single = d.Routing.Single
+		f.Archive = d.Routing.Archive
+		f.BasePath = d.Routing.BasePath
 		f.Hierarchical = d.Capabilities.Hierarchical
+		f.HasContent = d.Capabilities.HasContent
 	}
-	prevBase := d.Routing.BasePath
-	newBase := f.BasePath
-	prevArchive := d.IsArchived()
-	newArchive := f.Archive
-
-	tx, err := h.database.BeginTx(r.Context(), nil)
-	if err != nil {
-		http.Error(w, "Internal Server Error", 500)
-		return
+	// If both single and archive off, clear base
+	if !f.Single && !f.Archive {
+		f.BasePath = ""
 	}
-	defer tx.Rollback()
-	qtx := h.queries.WithTx(tx)
-	if err := content.NewCatalog(qtx).UpdateContentType(r.Context(), contentTypeInput(f, fields)); err != nil {
+	svc := contenttypes.New(h.database, h.queries)
+	if err := svc.Update(r.Context(), string(d.ID), contentTypeInput(f, fields)); err != nil {
 		h.renderContentTypes(w, r, contentTypesData{Mode: "edit", Form: f, Fields: fields, Error: err.Error()})
-		return
-	}
-	now := time.Now().Unix()
-	// Public → private: delete all public entry and archive routes transactionally.
-	if prevPublic && !newPublic {
-		if route, err := qtx.GetArchiveRouteByContentType(r.Context(), sql.NullString{String: string(d.ID), Valid: true}); err == nil {
-			_ = qtx.DeleteRoute(r.Context(), route.ID)
-		}
-		// Delete canonical entry routes in bounded batches via hierarchy listing (covers all published regardless of route).
-		hRows, _ := qtx.ListPublishedHierarchyForContentType(r.Context(), string(d.ID))
-		for _, row := range hRows {
-			if rt, err := qtx.GetEntryRoute(r.Context(), sql.NullString{String: row.EntryID, Valid: true}); err == nil {
-				_ = qtx.DeleteRoute(r.Context(), rt.ID)
-			}
-		}
-		// Also cover any flat published entries that might not appear in hierarchy? Hierarchy already covers all published for this type.
-	} else if !prevPublic && newPublic {
-		// Private → public: recreate archive and entry routes for already-published entries.
-		if newArchive && newBase != "" {
-			if _, err := qtx.GetArchiveRouteByContentType(r.Context(), sql.NullString{String: string(d.ID), Valid: true}); err != nil {
-				b := make([]byte, 16)
-				_, _ = rand.Read(b)
-				id := base64.RawURLEncoding.EncodeToString(b)
-				_ = qtx.CreateRoute(r.Context(), db.CreateRouteParams{ID: id, Path: newBase, RouteType: routing.RouteTypeArchive, ContentTypeID: sql.NullString{String: string(d.ID), Valid: true}, CreatedAt: now, UpdatedAt: now})
-			}
-		}
-		hRows, _ := qtx.ListPublishedHierarchyForContentType(r.Context(), string(d.ID))
-		// For hierarchical types, compute parent-aware paths; for flat, use base+slug.
-		isHier := d.Capabilities.Hierarchical || f.Hierarchical
-		if isHier && len(hRows) > 0 {
-			// Build hierarchy for path computation.
-			nodes := make([]content.HierarchyNode, 0, len(hRows))
-			for _, r := range hRows {
-				parent := ""
-				if r.ParentEntryID.Valid {
-					parent = r.ParentEntryID.String
-				}
-				nodes = append(nodes, content.HierarchyNode{EntryID: r.EntryID, Slug: r.Slug, ParentEntryID: parent, MenuOrder: r.MenuOrder, Title: r.Title})
-			}
-			if hTree, err := content.NewHierarchy(nodes); err == nil {
-				// Compute desired paths via new base.
-				paths := make(map[string]string, len(nodes))
-				var compile func(string) (string, error)
-				compile = func(id string) (string, error) {
-					if p, ok := paths[id]; ok {
-						return p, nil
-					}
-					n, ok := hTree.Node(id)
-					if !ok {
-						return "", fmt.Errorf("missing %s", id)
-					}
-					var p string
-					if n.ParentEntryID == "" {
-						def := content.ContentTypeDefinition{ID: d.ID, Routing: content.RoutingPolicy{BasePath: newBase}, Capabilities: content.Capabilities{HasArchive: newArchive}}
-						p = routing.EntryPathForDefinition(def, n.Slug, "")
-					} else {
-						pp, err := compile(n.ParentEntryID)
-						if err != nil {
-							return "", err
-						}
-						p = routing.ChildEntryPath(pp, n.Slug)
-					}
-					paths[id] = p
-					return p, nil
-				}
-				for _, n := range nodes {
-					if _, err := compile(n.EntryID); err != nil {
-						h.renderContentTypes(w, r, contentTypesData{Mode: "edit", Form: f, Fields: fields, Error: err.Error()})
-						return
-					}
-				}
-				for id, p := range paths {
-					_ = routing.UpsertEntryRoute(r.Context(), qtx, id, p, now)
-				}
-			}
-		} else {
-			for _, row := range hRows {
-				def := content.ContentTypeDefinition{ID: d.ID, Routing: content.RoutingPolicy{BasePath: newBase}, Capabilities: content.Capabilities{HasArchive: newArchive}}
-				p := routing.EntryPathForDefinition(def, row.Slug, "")
-				_ = routing.UpsertEntryRoute(r.Context(), qtx, row.EntryID, p, now)
-			}
-		}
-	} else if prevPublic && newPublic {
-		// Public → public: handle base/archive moves.
-		if !isBuiltin && (prevBase != newBase || prevArchive != newArchive) {
-			// If new base is empty but archive wants path, validation already enforced; fallback to previous.
-			if newBase == "" && newArchive {
-				// Public archived types require base – keep previous to avoid invalid state.
-				newBase = prevBase
-			}
-			if newBase != "" {
-				if err := routing.SyncContentTypeRouting(r.Context(), qtx, string(d.ID), prevBase, newBase, newArchive, now); err != nil {
-					h.renderContentTypes(w, r, contentTypesData{Mode: "edit", Form: f, Fields: fields, Error: err.Error()})
-					return
-				}
-			} else {
-				// Base cleared while staying public without archive – just delete archive if needed.
-				if !newArchive {
-					if route, err := qtx.GetArchiveRouteByContentType(r.Context(), sql.NullString{String: string(d.ID), Valid: true}); err == nil {
-						_ = qtx.DeleteRoute(r.Context(), route.ID)
-					}
-				}
-			}
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Internal Server Error", 500)
 		return
 	}
 	if h.runtime != nil {
@@ -362,7 +303,6 @@ func (h *Handler) deleteContentType(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Clean up archive route if present (no entries exist, so single routes already empty)
 	if def.Routing.BasePath != "" {
 		if route, err := qtx.GetArchiveRouteByContentType(r.Context(), sql.NullString{String: id, Valid: true}); err == nil {
 			_ = qtx.DeleteRoute(r.Context(), route.ID)
@@ -399,13 +339,44 @@ func (h *Handler) renderContentTypes(w http.ResponseWriter, r *http.Request, dat
 }
 func contentTypeFormFromRequest(r *http.Request) contentTypeForm {
 	_ = r.ParseForm()
-	return contentTypeForm{ID: strings.TrimSpace(r.FormValue("id")), Name: strings.TrimSpace(r.FormValue("name")), PluralName: strings.TrimSpace(r.FormValue("plural_name")), BasePath: strings.TrimSpace(r.FormValue("base_path")), Public: r.FormValue("public") != "", Hierarchical: r.FormValue("hierarchical") != "", Archive: r.FormValue("archive") != "", Excerpt: r.FormValue("excerpt") != "", Featured: r.FormValue("featured") != "", SEO: r.FormValue("seo") != ""}
+	// Support legacy "public" alias for Single
+	single := r.FormValue("single") != "" || r.FormValue("has_single") != "" || r.FormValue("routing_single") != "" || r.FormValue("public") != ""
+	return contentTypeForm{
+		ID: strings.TrimSpace(r.FormValue("id")),
+		Name: strings.TrimSpace(r.FormValue("name")),
+		PluralName: strings.TrimSpace(r.FormValue("plural_name")),
+		BasePath: strings.TrimSpace(r.FormValue("base_path")),
+		Single: single,
+		Archive: r.FormValue("archive") != "",
+		Hierarchical: r.FormValue("hierarchical") != "",
+		HasContent: r.FormValue("has_content") != "" || r.FormValue("content") != "",
+		Excerpt: r.FormValue("excerpt") != "",
+		Featured: r.FormValue("featured") != "",
+		SEO: r.FormValue("seo") != "",
+		Preset: strings.TrimSpace(r.FormValue("preset")),
+	}
 }
 func formFromDefinition(d content.ContentTypeDefinition) contentTypeForm {
-	return contentTypeForm{ID: string(d.ID), Name: d.Name, PluralName: d.PluralName, BasePath: d.Routing.BasePath, Public: d.Capabilities.Public, Hierarchical: d.Capabilities.Hierarchical, Archive: d.IsArchived(), Excerpt: d.Capabilities.HasExcerpt, Featured: d.Capabilities.HasFeatured, SEO: d.Capabilities.HasSEO}
+	return contentTypeForm{
+		ID: string(d.ID), Name: d.Name, PluralName: d.PluralName,
+		BasePath: d.Routing.BasePath, Single: d.Routing.Single, Hierarchical: d.Capabilities.Hierarchical,
+		Archive: d.Routing.Archive, HasContent: d.Capabilities.HasContent,
+		Excerpt: d.Capabilities.HasExcerpt, Featured: d.Capabilities.HasFeatured, SEO: d.Capabilities.HasSEO,
+	}
 }
 func contentTypeInput(f contentTypeForm, fields []content.FieldDefinition) content.ContentTypeInput {
-	return content.ContentTypeInput{ID: content.ContentTypeID(f.ID), Name: f.Name, PluralName: f.PluralName, Public: f.Public, Hierarchical: f.Hierarchical, Config: content.ContentTypeConfig{Fields: fields, Features: content.ContentTypeFeatures{Excerpt: f.Excerpt, FeaturedMedia: f.Featured, SEO: f.SEO}, Routing: content.ContentTypeRouting{BasePath: f.BasePath, Archive: f.Archive}}}
+	// Map new fields to config
+	return content.ContentTypeInput{
+		ID: content.ContentTypeID(f.ID), Name: f.Name, PluralName: f.PluralName,
+		Hierarchical: f.Hierarchical,
+		Public: f.Single, // sync for backward compat
+		Config: content.ContentTypeConfig{
+			SchemaVersion: 2,
+			Fields: fields,
+			Features: content.ContentTypeFeatures{Content: f.HasContent, Excerpt: f.Excerpt, FeaturedMedia: f.Featured, SEO: f.SEO},
+			Routing: content.ContentTypeRouting{Single: f.Single, BasePath: f.BasePath, Archive: f.Archive},
+		},
+	}
 }
 func fieldDefinitionFromRequest(r *http.Request) (content.FieldDefinition, error) {
 	typ := content.FieldType(r.FormValue("field_type"))
@@ -461,7 +432,6 @@ func countFieldUsage(ctx context.Context, database *sql.DB, fieldKey string) int
 	}
 	needle := `"fields.` + fieldKey + `"`
 	count := 0
-	// Bounded scans: entry revisions
 	rows, err := database.QueryContext(ctx, `SELECT document_json FROM entry_revisions WHERE document_json LIKE ?`, "%"+needle+"%")
 	if err == nil {
 		defer rows.Close()
@@ -475,7 +445,6 @@ func countFieldUsage(ctx context.Context, database *sql.DB, fieldKey string) int
 			}
 		}
 	}
-	// Layout template revisions
 	rows2, err := database.QueryContext(ctx, `SELECT document_json FROM layout_template_revisions WHERE document_json LIKE ?`, "%"+needle+"%")
 	if err == nil {
 		defer rows2.Close()
@@ -489,6 +458,5 @@ func countFieldUsage(ctx context.Context, database *sql.DB, fieldKey string) int
 			}
 		}
 	}
-	// Also check orderBy / filters stored as JSON in block settings? Already covered by document_json scan.
 	return count
 }

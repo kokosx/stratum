@@ -178,7 +178,11 @@ func (s *LifecycleService) assertNotProtected(ctx context.Context, entryID strin
 }
 
 func (s *LifecycleService) assertNoPublishedDescendants(ctx context.Context, entry db.Entry) error {
-	if !DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical || !entry.PublishedRevisionID.Valid {
+	isHier := DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical
+	if def, err := NewCatalog(s.queries).GetDefinition(ctx, entry.ContentTypeID); err == nil {
+		isHier = def.Capabilities.Hierarchical
+	}
+	if !isHier || !entry.PublishedRevisionID.Valid {
 		return nil
 	}
 	rows, err := s.queries.ListPublishedHierarchyForContentType(ctx, entry.ContentTypeID)
@@ -204,7 +208,11 @@ func (s *LifecycleService) assertNoPublishedDescendants(ctx context.Context, ent
 }
 
 func (s *LifecycleService) assertNoLatestDescendants(ctx context.Context, entry db.Entry) error {
-	if !DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical {
+	isHier := DefinitionFor(entry.ContentTypeID).Capabilities.Hierarchical
+	if def, err := NewCatalog(s.queries).GetDefinition(ctx, entry.ContentTypeID); err == nil {
+		isHier = def.Capabilities.Hierarchical
+	}
+	if !isHier {
 		return nil
 	}
 	rows, err := s.queries.ListLatestHierarchyForContentType(ctx, entry.ContentTypeID)

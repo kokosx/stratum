@@ -21,23 +21,27 @@ const (
 // previous `if contentType == "post"` branch in generic code.
 type Capabilities struct {
 	Hierarchical     bool
+	HasContent       bool
 	HasExcerpt       bool
 	HasFeatured      bool
 	HasSEO           bool
-	Public           bool
+	Public           bool // deprecated: use Routing.Single; kept for backward compat
 	HasArchive       bool
 	SupportsSticky   bool
 	SupportsComments bool
+	Single           bool // whether each published entry may have its own canonical public URL
 }
 
 // RoutingPolicy describes how entries of this type are addressed on the public
 // site. It is the only place that knows posts live under /{postsBase}/{slug}.
 type RoutingPolicy struct {
+	// Single indicates whether each published entry may have its own canonical public URL.
+	Single bool
 	// Archive indicates whether this type has a dedicated archive route.
 	Archive bool
 	// ArchiveContentType is the type for archive routes (e.g. post for /blog)
 	ArchiveContentType ContentTypeID
-	// BasePath is the effective prefix for custom public entries and archives.
+	// BasePath is the effective prefix for custom routable entries and archives.
 	// Pages deliberately leave it empty; posts retain their settings-backed adapter.
 	BasePath string
 }
@@ -53,12 +57,14 @@ type ContentTypeConfig struct {
 }
 
 type ContentTypeFeatures struct {
+	Content       bool `json:"content,omitempty"`
 	Excerpt       bool `json:"excerpt,omitempty"`
 	FeaturedMedia bool `json:"featuredMedia,omitempty"`
 	SEO           bool `json:"seo,omitempty"`
 }
 
 type ContentTypeRouting struct {
+	Single   bool   `json:"single,omitempty"`
 	BasePath string `json:"basePath,omitempty"`
 	Archive  bool   `json:"archive,omitempty"`
 }
@@ -131,6 +137,9 @@ func ValidateContentTypeConfig(config ContentTypeConfig) error {
 			return err
 		}
 	}
+	// BasePath requirement for Single/Archive is enforced at the Catalog
+	// layer where builtin vs custom distinction is known. ValidateContentTypeConfig
+	// stays permissive so builtin Page (Single true, no base) remains valid.
 	return nil
 }
 
@@ -193,21 +202,53 @@ type ContentTypeDefinition struct {
 	Templates     TemplatePolicy
 }
 
+// Label returns the administrative label for the content type (plural form).
+// For custom types Label is the primary display name shown in the sidebar.
+func (d ContentTypeDefinition) Label() string {
+	if d.PluralName != "" {
+		return d.PluralName
+	}
+	if d.Name != "" {
+		return d.Name
+	}
+	return string(d.ID)
+}
+
+// ItemLabel returns the singular item label if configured, or empty if not.
+// It is optional to avoid English singular/plural grammar assumptions.
+func (d ContentTypeDefinition) ItemLabel() string {
+	if d.Name != "" && d.Name != d.PluralName {
+		return d.Name
+	}
+	return ""
+}
+
+// EffectiveLabel returns the best human-readable label for UI contexts that
+// previously used PluralName/Name. For custom types created with the new
+// simplified flow, Label is the required field; ItemLabel is optional.
+func (d ContentTypeDefinition) EffectiveLabel() string { return d.Label() }
+
+// HasSingle reports whether this type owns per-entry canonical routes.
+func (d ContentTypeDefinition) HasSingle() bool { return d.Capabilities.Single || d.Routing.Single }
+
+// HasContent reports whether this type uses the rich SDT block editor.
+func (d ContentTypeDefinition) HasContentCapability() bool { return d.Capabilities.HasContent }
+
 // KnownDefinitions returns built-in definitions. Custom types will be loaded
 // from the DB and merged with these defaults.
 func KnownDefinitions() map[ContentTypeID]ContentTypeDefinition {
 	return map[ContentTypeID]ContentTypeDefinition{
 		ContentTypePage: {
 			ID: ContentTypePage, Name: "Page", PluralName: "Pages",
-			Capabilities: Capabilities{Hierarchical: true, HasExcerpt: false, HasFeatured: true, HasSEO: true, Public: true, HasArchive: false, SupportsSticky: false, SupportsComments: false},
-			Routing:      RoutingPolicy{Archive: false},
+			Capabilities: Capabilities{Hierarchical: true, HasContent: true, HasExcerpt: false, HasFeatured: true, HasSEO: true, Public: true, Single: true, HasArchive: false, SupportsSticky: false, SupportsComments: false},
+			Routing:      RoutingPolicy{Single: true, Archive: false},
 			SEO:          SEOProfile{SchemaType: "WebPage", OpenGraphType: "website"},
 			Templates:    TemplatePolicy{SinglePatterns: []string{"single-page", "single"}, ArchivePatterns: nil},
 		},
 		ContentTypePost: {
 			ID: ContentTypePost, Name: "Post", PluralName: "Posts",
-			Capabilities: Capabilities{Hierarchical: false, HasExcerpt: true, HasFeatured: true, HasSEO: true, Public: true, HasArchive: true, SupportsSticky: true, SupportsComments: true},
-			Routing:      RoutingPolicy{Archive: true, ArchiveContentType: ContentTypePost},
+			Capabilities: Capabilities{Hierarchical: false, HasContent: true, HasExcerpt: true, HasFeatured: true, HasSEO: true, Public: true, Single: true, HasArchive: true, SupportsSticky: true, SupportsComments: true},
+			Routing:      RoutingPolicy{Single: true, Archive: true, ArchiveContentType: ContentTypePost},
 			SEO:          SEOProfile{SchemaType: "BlogPosting", OpenGraphType: "article"},
 			Templates:    TemplatePolicy{SinglePatterns: []string{"single-post", "single"}, ArchivePatterns: []string{"archive-post", "archive"}},
 		},
@@ -222,7 +263,8 @@ func DefinitionFor(id string) ContentTypeDefinition {
 	}
 	return ContentTypeDefinition{
 		ID: ContentTypeID(id), Name: id, PluralName: id,
-		Capabilities: Capabilities{HasSEO: true, Public: true},
+		Capabilities: Capabilities{HasContent: true, HasSEO: true, Public: true, Single: false},
+		Routing:      RoutingPolicy{Single: false},
 		SEO:          SEOProfile{SchemaType: "WebPage", OpenGraphType: "website"},
 		Templates:    TemplatePolicy{SinglePatterns: []string{"single-" + id, "single"}, ArchivePatterns: []string{"archive-" + id, "archive"}},
 	}

@@ -50,7 +50,7 @@ func (h *Handler) editorOptions(ctx context.Context) ([]editorOption, map[string
 	types := make([]editorOption, 0, len(definitions))
 	catalogs := make(map[string][]content.FieldCatalogOption, len(definitions))
 	for _, definition := range definitions {
-		types = append(types, editorOption{Value: string(definition.ID), Label: definition.PluralName})
+		types = append(types, editorOption{Value: string(definition.ID), Label: definition.Label()})
 		catalogs[string(definition.ID)] = content.FieldCatalog(definition)
 	}
 	return types, catalogs

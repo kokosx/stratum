@@ -32,9 +32,10 @@
         <input type="hidden" name="name" value="{{ .Content.Form.Name }}">
         <input type="hidden" name="plural_name" value="{{ .Content.Form.PluralName }}">
         <input type="hidden" name="base_path" value="{{ .Content.Form.BasePath }}">
-        {{ if .Content.Form.Public }}<input type="hidden" name="public" value="on">{{ end }}
-        {{ if .Content.Form.Hierarchical }}<input type="hidden" name="hierarchical" value="on">{{ end }}
+        {{ if .Content.Form.Single }}<input type="hidden" name="single" value="on">{{ end }}
         {{ if .Content.Form.Archive }}<input type="hidden" name="archive" value="on">{{ end }}
+        {{ if .Content.Form.Hierarchical }}<input type="hidden" name="hierarchical" value="on">{{ end }}
+        {{ if .Content.Form.HasContent }}<input type="hidden" name="has_content" value="on">{{ end }}
         <button class="button button-danger" type="submit">Remove field</button>
       </form>
     </div>
@@ -47,18 +48,18 @@
       <div class="card-body" style="padding:0;">
         <table class="data-table" style="border:0;box-shadow:none;border-radius:0;">
           <thead>
-            <tr><th>Name</th><th>Key</th><th>Visibility</th><th>URL base</th><th></th></tr>
+            <tr><th>Content type</th><th>Key</th><th>Routing</th><th>URL base</th><th></th></tr>
           </thead>
           <tbody>
             {{ range .Content.Rows }}
             <tr>
               <td>
-                <div class="data-table__primary"><a href="/admin/settings/content-types/{{ .ID }}">{{ .PluralName }}</a> {{ if .Builtin }}<span class="status-badge status-badge--core">Core</span>{{ end }}</div>
-                <div class="data-table__meta">{{ .Name }} · {{ if .Public }}<span class="status-badge status-badge--published" style="height:18px;font-size:11px;">Public</span>{{ else }}<span class="status-badge status-badge--private" style="height:18px;font-size:11px;">Private</span>{{ end }} {{ if .Archive }}<span class="status-badge status-badge--scheduled" style="height:18px;font-size:11px;">Archive</span>{{ end }}</div>
+                <div class="data-table__primary"><a href="/admin/settings/content-types/{{ .ID }}">{{ .Label }}</a> {{ if .Builtin }}<span class="status-badge status-badge--core">Core</span>{{ end }}</div>
+                <div class="data-table__meta">{{ if .ItemLabel }}{{ .ItemLabel }} · {{ end }}{{ if .Single }}Single{{ else }}Data only{{ end }} {{ if .Archive }}· Archive{{ end }} {{ if .HasContent }}· Rich content{{ end }}</div>
               </td>
               <td><code>{{ .ID }}</code></td>
               <td>
-                {{ if .Public }}Public{{ else }}Private{{ end }}
+                {{ if .Single }}Single{{ else }}Data only{{ end }}
                 {{ if .Archive }} · Archive{{ end }}
               </td>
               <td><code>{{ if .BasePath }}{{ .BasePath }}{{ else }}—{{ end }}</code></td>
@@ -78,65 +79,79 @@
       </div>
     </div>
     {{ end }}
-  {{ else }}
-  <form class="settings-content" method="post" action="{{ if eq .Content.Mode "new" }}/admin/settings/content-types{{ else }}/admin/settings/content-types/{{ .Content.Form.ID }}{{ end }}">
+  {{ else if eq .Content.Mode "new" }}
+  <form class="settings-content" method="post" action="/admin/settings/content-types">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-    {{ if eq .Content.Mode "edit" }}<input type="hidden" name="field_key_action" value="">{{ end }}
 
     <div class="card">
-      <div class="card-header"><h2>Identity</h2></div>
+      <div class="card-header"><h2>Create content type</h2></div>
+      <div class="card-body" style="display:grid;gap:16px;">
+        <div class="form-group" style="max-width:480px;">
+          <label class="form-label" for="ct-label">Name</label>
+          <input class="form-control" id="ct-label" name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100" placeholder="Technologies">
+          <p class="form-help">Label shown in the admin. Example: Technologies, Testimonials, Products.</p>
+        </div>
+        <div class="form-group" style="max-width:480px;">
+          <label class="form-label" for="ct-key">Key</label>
+          <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" required pattern="[a-z][a-z0-9_]*" placeholder="technology">
+          <p class="form-help">Stable machine key. Cannot be changed later. Lowercase letters, numbers and underscores.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">How will you use it?</label>
+          <label class="toggle-row" style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+            <span><strong>Structured items</strong><br><span class="form-help">Store reusable data and display it in Collections. Items don't have their own pages by default.</span></span>
+            <input type="radio" name="preset" value="structured" {{ if eq .Content.Form.Preset "structured" }}checked{{ else if eq .Content.Form.Preset "" }}checked{{ end }}>
+          </label>
+          <label class="toggle-row" style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+            <span><strong>Content with pages</strong><br><span class="form-help">Each item can have its own public URL and rich content.</span></span>
+            <input type="radio" name="preset" value="pages" {{ if eq .Content.Form.Preset "pages" }}checked{{ end }}>
+          </label>
+          <p class="form-help">You can change routing and capabilities after creation.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card-footer" style="position:sticky;bottom:0;z-index:2;">
+      <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
+      <button class="button button-primary" type="submit">Create</button>
+    </div>
+  </form>
+  {{ else }}
+  <form class="settings-content" method="post" action="/admin/settings/content-types/{{ .Content.Form.ID }}">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <input type="hidden" name="field_key_action" value="">
+
+    <div class="card">
+      <div class="card-header"><h2>General</h2></div>
       <div class="card-body" style="display:grid;gap:16px;">
         <div class="field-grid">
           <div class="form-group">
-            <label class="form-label" for="ct-name">Singular name</label>
-            <input class="form-control" id="ct-name" name="name" value="{{ .Content.Form.Name }}" required maxlength="100" placeholder="Product">
+            <label class="form-label" for="ct-label">Name</label>
+            <input class="form-control" id="ct-label" name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100" placeholder="Technologies">
+            <p class="form-help">Admin label. Used in sidebar and listings.</p>
           </div>
           <div class="form-group">
-            <label class="form-label" for="ct-plural">Plural name</label>
-            <input class="form-control" id="ct-plural" name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100" placeholder="Products">
+            <label class="form-label" for="ct-item">Item label (optional)</label>
+            <input class="form-control" id="ct-item" name="name" value="{{ .Content.Form.Name }}" maxlength="100" placeholder="Technology">
+            <p class="form-help">Singular label. Leave empty for neutral UI.</p>
           </div>
         </div>
         <div class="form-group" style="max-width:480px;">
           <label class="form-label" for="ct-key">Key</label>
-          <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" {{ if eq .Content.Mode "edit" }}readonly{{ end }} required pattern="[a-z][a-z0-9_]*" placeholder="product">
-          <p class="form-help">Stable machine key. Cannot be changed later. Lowercase letters, numbers and underscores.</p>
+          <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" readonly required pattern="[a-z][a-z0-9_]*">
+          <p class="form-help">Stable machine key. Cannot be changed.</p>
         </div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header"><h2>Routing</h2><span class="form-help">Public content is routable; private content has no public URLs.</span></div>
-      <div class="card-body" style="display:grid;gap:16px;">
-        <label class="toggle-row">
-          <span><strong>Public content</strong><br><span class="form-help">If disabled, entries have no canonical routes or archive. Publish still creates a revision internally.</span></span>
-          <input type="checkbox" name="public" {{ if .Content.Form.Public }}checked{{ end }} {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}disabled{{ end }}>
-          {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}<input type="hidden" name="public" value="on">{{ end }}
-        </label>
-        {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
-          <div class="notice notice-info">Routing for <strong>{{ .Content.Form.ID }}</strong> is core-owned. URL base is managed in <a href="/admin/settings/reading">Reading → Posts URL base</a> for Posts, and Page URLs are always <code>/slug</code>.</div>
-        {{ else }}
-          <div class="form-group" style="max-width:480px;">
-            <label class="form-label" for="ct-base">URL base</label>
-            <input class="form-control" id="ct-base" name="base_path" value="{{ .Content.Form.BasePath }}" placeholder="/products" maxlength="100">
-            <p class="form-help">Absolute prefix for entry URLs and archive, e.g. <code>/products</code>. No trailing slash.</p>
-          </div>
-          <label class="toggle-row">
-            <span><strong>Has archive</strong><br><span class="form-help">Enables an archive at the URL base listing published entries.</span></span>
-            <input type="checkbox" name="archive" {{ if .Content.Form.Archive }}checked{{ end }}>
-          </label>
-          <label class="toggle-row">
-            <span><strong>Hierarchical</strong><br><span class="form-help">Like Pages: entries can have parents, URLs nest as <code>/base/parent/child</code>.</span></span>
-            <input type="checkbox" name="hierarchical" {{ if .Content.Form.Hierarchical }}checked{{ end }}>
-          </label>
-        {{ end }}
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header"><h2>Features</h2></div>
+      <div class="card-header"><h2>Content</h2></div>
       <div class="card-body" style="display:grid;gap:12px;">
-        {{ if and (eq .Content.Mode "edit") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+        {{ if and (eq .Content.Form.ID "page") (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
           <p class="form-help">Features for core types are managed by Stratum and cannot be disabled here. Custom fields can still be added below.</p>
+          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
+            <span>Rich content editor</span><input type="checkbox" checked disabled>
+          </div>
           <div class="toggle-row" style="opacity:.6;pointer-events:none;">
             <span>Excerpt</span><input type="checkbox" {{ if .Content.Form.Excerpt }}checked{{ end }} disabled>
           </div>
@@ -147,6 +162,7 @@
             <span>SEO</span><input type="checkbox" {{ if .Content.Form.SEO }}checked{{ end }} disabled>
           </div>
         {{ else }}
+          <label class="toggle-row"><span><strong>Rich content editor</strong><br><span class="form-help">Allow blocks (SDT) as main content.</span></span><input type="checkbox" name="has_content" {{ if .Content.Form.HasContent }}checked{{ end }}></label>
           <label class="toggle-row"><span>Excerpt</span><input type="checkbox" name="excerpt" {{ if .Content.Form.Excerpt }}checked{{ end }}></label>
           <label class="toggle-row"><span>Featured image</span><input type="checkbox" name="featured" {{ if .Content.Form.Featured }}checked{{ end }}></label>
           <label class="toggle-row"><span>SEO</span><input type="checkbox" name="seo" {{ if .Content.Form.SEO }}checked{{ end }}></label>
@@ -154,7 +170,62 @@
       </div>
     </div>
 
-    {{ if eq .Content.Mode "edit" }}
+    <div class="card">
+      <div class="card-header"><h2>Routing</h2><span class="form-help">Individual pages and archive are independent. Publish is live data, not necessarily a URL.</span></div>
+      <div class="card-body" style="display:grid;gap:16px;">
+        {{ if and (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+          <div class="notice notice-info">Routing for <strong>{{ .Content.Form.ID }}</strong> is core-owned. URL base is managed in <a href="/admin/settings/reading">Reading → Posts URL base</a> for Posts, and Page URLs are always <code>/slug</code>.</div>
+        {{ else }}
+          <label class="toggle-row">
+            <span><strong>Individual pages</strong><br><span class="form-help">Each published item can have its own canonical public URL.</span></span>
+            <input type="checkbox" name="single" id="ct-single" {{ if .Content.Form.Single }}checked{{ end }}>
+          </label>
+          <label class="toggle-row">
+            <span><strong>Archive page</strong><br><span class="form-help">Enables an archive at the URL base listing published items.</span></span>
+            <input type="checkbox" name="archive" id="ct-archive" {{ if .Content.Form.Archive }}checked{{ end }}>
+          </label>
+          <div class="form-group" id="ct-base-group" style="max-width:480px;">
+            <label class="form-label" for="ct-base">URL base</label>
+            <input class="form-control" id="ct-base" name="base_path" value="{{ .Content.Form.BasePath }}" placeholder="/products" maxlength="100">
+            <p class="form-help">Absolute prefix for entry URLs and/or archive, e.g. <code>/products</code>. No trailing slash.</p>
+          </div>
+          <script>
+            (function(){
+              var single = document.getElementById('ct-single');
+              var archive = document.getElementById('ct-archive');
+              var baseGroup = document.getElementById('ct-base-group');
+              function sync(){
+                var show = single.checked || archive.checked;
+                baseGroup.style.display = show ? '' : 'none';
+                if (!show) {
+                  document.getElementById('ct-base').value = '';
+                }
+              }
+              if (single && archive && baseGroup) {
+                single.addEventListener('change', sync);
+                archive.addEventListener('change', sync);
+                sync();
+              }
+            })();
+          </script>
+        {{ end }}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Structure</h2></div>
+      <div class="card-body" style="display:grid;gap:12px;">
+        {{ if and (or (eq .Content.Form.ID "page") (eq .Content.Form.ID "post")) }}
+          <p class="form-help">Hierarchical is core-owned for Pages/Posts.</p>
+        {{ else }}
+          <label class="toggle-row">
+            <span><strong>Hierarchical</strong><br><span class="form-help">Like Pages: entries can have parents, URLs nest as <code>/base/parent/child</code>.</span></span>
+            <input type="checkbox" name="hierarchical" {{ if .Content.Form.Hierarchical }}checked{{ end }}>
+          </label>
+        {{ end }}
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header">
         <h2>Custom fields</h2>
@@ -253,17 +324,15 @@
               const vals = Array.from(list.querySelectorAll('input')).map(i=>i.value.trim()).filter(Boolean);
               hidden.value = vals.join(', ');
             }
-            // existing select options hydration if editing? not needed for add form
           })();
         </script>
       </div>
     </div>
-    {{ end }}
 
     <div class="card-footer" style="position:sticky;bottom:0;z-index:2;">
       <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
       <button class="button button-primary" type="submit">Save changes</button>
-      {{ if eq .Content.Mode "edit" }}<button class="button button-danger" type="submit" formaction="/admin/settings/content-types/{{ .Content.Form.ID }}/delete" formmethod="post" onclick="return confirm('Delete content type {{ .Content.Form.ID }}? This cannot be undone.')">Delete</button>{{ end }}
+      <button class="button button-danger" type="submit" formaction="/admin/settings/content-types/{{ .Content.Form.ID }}/delete" formmethod="post" onclick="return confirm('Delete content type {{ .Content.Form.ID }}? This cannot be undone.')">Delete</button>
     </div>
   </form>
   {{ end }}

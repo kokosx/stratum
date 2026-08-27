@@ -88,7 +88,13 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 	}
 	items := make([]EntryData, 0, len(result.Entries))
 	depths := map[string]int{}
-	if content.DefinitionFor(contentType).Capabilities.Hierarchical {
+	isHierarchical := false
+	if def, err := content.NewCatalog(h.queries).GetDefinition(r.Context(), contentType); err == nil {
+		isHierarchical = def.Capabilities.Hierarchical
+	} else {
+		isHierarchical = content.DefinitionFor(contentType).Capabilities.Hierarchical
+	}
+	if isHierarchical {
 		if rows, hierarchyErr := h.queries.ListLatestHierarchyForContentType(r.Context(), contentType); hierarchyErr == nil {
 			nodes := make([]content.HierarchyNode, 0, len(rows))
 			for _, row := range rows {

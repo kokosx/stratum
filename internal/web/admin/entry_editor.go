@@ -101,6 +101,10 @@ type entryFormData struct {
 	ShowExcerpt           bool
 	ShowSEO               bool
 	ShowFeatured          bool
+	ShowContent           bool
+	ShowSlug              bool
+	ShowVisibility        bool
+	ShowTemplate          bool
 	IsPostsPage           bool
 	PostsPagePath         string
 	PostsPageWarning      string
@@ -219,6 +223,44 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 		data.Hierarchical = true
 		data.HierarchyParents, data.HierarchyWarning = h.hierarchyParentOptions(r.Context(), data.ContentTypeID, data.EntryID, data.ParentEntryID)
 	}
+	// Capability-driven visibility for entry editor
+	data.ShowContent = definition.Capabilities.HasContent
+	// Built-ins always have content; custom uses HasContent flag
+	if data.ContentTypeID == pageContentType || data.ContentTypeID == postContentType {
+		data.ShowContent = true
+	} else if data.ShowContent == false && definition.Capabilities.HasContent {
+		data.ShowContent = true
+	}
+	data.ShowSlug = definition.Routing.Single
+	data.ShowVisibility = definition.Routing.Single
+	data.ShowTemplate = definition.Routing.Single
+	// SEO only makes sense when there is a public URL target
+	if definition.Capabilities.HasSEO {
+		if definition.Routing.Single || definition.Routing.Archive {
+			// For archive-only, SEO for archive could exist but scope small – hide for now unless Single
+			if definition.Routing.Single {
+				data.ShowSEO = true
+			} else {
+				data.ShowSEO = false
+			}
+		} else {
+			data.ShowSEO = false
+		}
+	} else {
+		data.ShowSEO = false
+	}
+	// Preserve existing excerpt/featured flags but respect capability
+	if definition.Capabilities.HasExcerpt {
+		data.ShowExcerpt = true
+	} else {
+		data.ShowExcerpt = false
+	}
+	if definition.Capabilities.HasFeatured {
+		data.ShowFeatured = true
+	} else {
+		data.ShowFeatured = false
+	}
+	// Ensure excerpt/featured hidden when HasContent false? No, they are independent per spec, but for Technology they are false.
 	// Validate current selection: if it refers to unavailable template, surface warning
 	if data.LayoutTemplateID != "" {
 		found := false
@@ -473,6 +515,40 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 			definition = content.DefinitionFor(contentType)
 		} else {
 			return fmt.Errorf("load content type: %w", definitionErr)
+		}
+	}
+	// Capability-driven sanitization per STRATUMCMS correction spec
+	if !definition.Routing.Single {
+		// Route-less types: visibility must be public; slug auto-generated already, no private/password
+		if input.visibility != "public" {
+			input.visibility = "public"
+			input.password = ""
+		}
+		// Layout templates only make sense with Single
+		if input.layoutTemplateID != "" {
+			// Silently clear; UI hides selector
+			input.layoutTemplateID = ""
+		}
+	}
+	if !definition.Capabilities.HasSEO {
+		input.seoTitle = ""
+		input.seoDescription = ""
+		input.canonicalURL = ""
+		input.robotsIndex = nil
+		input.robotsFollow = nil
+		input.schemaMode = ""
+		input.socialMediaID = ""
+	}
+	if !definition.Capabilities.HasExcerpt {
+		input.excerpt = ""
+	}
+	if !definition.Capabilities.HasFeatured {
+		input.featuredMediaID = ""
+	}
+	if !definition.Capabilities.HasContent {
+		// Keep document as empty valid SDT; allow historic nodes but don't require blocks
+		if len(doc.Nodes) == 0 {
+			// ensure empty document is valid
 		}
 	}
 	documentJSON, err := json.Marshal(doc)
@@ -1192,6 +1268,10 @@ func readEntryInput(r *http.Request, contentTypes ...string) (entryInput, error)
 	if input.title == "" {
 		return input, errors.New("title is required")
 	}
+	// For route-less content types slug is generated automatically from title
+	if input.slug == "" {
+		input.slug = slugify(input.title)
+	}
 	if !entrySlugPattern.MatchString(input.slug) {
 		return input, errors.New("slug may contain lowercase letters, numbers, and hyphens only")
 	}
@@ -1502,4 +1582,37 @@ func entryWriteError(err error) string {
 		return err.Error()
 	}
 	return "Could not save the entry."
+}
+
+
+func slugify(title string) string {
+	s := strings.ToLower(strings.TrimSpace(title))
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			prevDash = false
+		} else if r == '-' {
+			if !prevDash {
+				b.WriteRune('-')
+				prevDash = true
+			}
+		} else {
+			if !prevDash {
+				b.WriteRune('-')
+				prevDash = true
+			}
+		}
+	}
+	res := strings.Trim(b.String(), "-")
+	if res == "" {
+		res = "item"
+	}
+	if len(res) > 100 {
+		res = res[:100]
+	}
+	return res
 }
