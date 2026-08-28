@@ -10,6 +10,7 @@ import (
 
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/richtext"
 )
@@ -136,6 +137,20 @@ type RenderContext struct {
 
 	// Navigation carries the site navigation menus for blocks like core/navigation.
 	Navigation map[string]navigation.Menu
+
+	// FormReader is the host capability used by core/form. It exposes only the
+	// active public projection; notification settings and submissions stay in the domain.
+	FormReader FormReader
+	FormCache  map[string]forms.FormView
+	FormResult FormResultContext
+}
+
+type FormReader interface {
+	GetActiveForm(context.Context, string) (forms.FormView, bool)
+}
+
+type FormResultContext struct {
+	SuccessFormID string
 }
 
 // DependencyState is the small request-local state shared while rendering a
@@ -379,10 +394,66 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 			renderer.runtimes[key] = &archiveDescriptionRenderer{}
 		case "core/navigation":
 			renderer.runtimes[key] = &navigationRenderer{}
+		case "core/form":
+			renderer.runtimes[key] = &formRenderer{}
 		}
 	}
 
 	return renderer, nil
+}
+
+var publicFormTemplate = template.Must(template.New("public-form").Parse(`<form id="form-{{ .InstanceID }}" method="post" action="/_stratum/forms/{{ .Form.ID }}" class="stratum-form"><input type="hidden" name="return_to" value="{{ .ReturnTo }}"><div class="stratum-form-honeypot" aria-hidden="true"><label for="form-{{ .InstanceID }}-website">Leave this field empty</label><input id="form-{{ .InstanceID }}-website" name="website_confirm" tabindex="-1" autocomplete="off"></div>{{ range .Form.Fields }}<div class="stratum-form-field stratum-form-field-{{ .Type }}">{{ if eq .Type "checkbox" }}<label for="form-{{ $.InstanceID }}-field-{{ .ID }}"><input id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}" type="checkbox" value="1"{{ if .Required }} required{{ end }}> {{ .Label }}</label>{{ else }}<label for="form-{{ $.InstanceID }}-field-{{ .ID }}">{{ .Label }}</label>{{ if eq .Type "textarea" }}<textarea id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}" placeholder="{{ .Placeholder }}" maxlength="10000"{{ if .Required }} required{{ end }}></textarea>{{ else if eq .Type "select" }}<select id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}"{{ if .Required }} required{{ end }}><option value="">Select…</option>{{ range .Options }}<option value="{{ . }}">{{ . }}</option>{{ end }}</select>{{ else }}<input id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}" type="{{ .Type }}" placeholder="{{ .Placeholder }}" maxlength="{{ if eq .Type "email" }}320{{ else }}500{{ end }}"{{ if .Required }} required{{ end }}>{{ end }}{{ end }}</div>{{ end }}<button type="submit">{{ .Form.SubmitLabel }}</button></form>`))
+
+type formRenderer struct{}
+
+func (f *formRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
+	formID, _ := node.Settings["formId"].(string)
+	if formID == "" || rc.FormReader == nil {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<div class="block-placeholder">Form unavailable</div>`), nil
+		}
+		return "", nil
+	}
+	view, ok := rc.FormCache[formID]
+	if !ok {
+		view, ok = rc.FormReader.GetActiveForm(ctx, formID)
+		if ok && rc.FormCache != nil {
+			rc.FormCache[formID] = view
+		}
+	}
+	if !ok {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<div class="block-placeholder">Form unavailable</div>`), nil
+		}
+		return "", nil
+	}
+	if rc.FormResult.SuccessFormID == formID {
+		var out bytes.Buffer
+		_ = template.Must(template.New("success").Parse(`<div id="form-{{ .ID }}" class="stratum-form-success" role="status">{{ .Message }}</div>`)).Execute(&out, map[string]string{"ID": safeDOMToken(node.ID), "Message": view.SuccessMessage})
+		return template.HTML(out.String()), nil
+	}
+	returnTo := rc.Route.Path
+	if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+		returnTo = "/"
+	}
+	var out bytes.Buffer
+	err := publicFormTemplate.Execute(&out, map[string]any{"InstanceID": safeDOMToken(node.ID), "Form": view, "ReturnTo": returnTo})
+	return template.HTML(out.String()), err
+}
+
+func safeDOMToken(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "form"
+	}
+	return b.String()
 }
 
 // RegisterRuntime allows external callers (e.g. tests or future plugin loader)

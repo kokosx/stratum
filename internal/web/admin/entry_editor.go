@@ -425,7 +425,7 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
 	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("entry"), ContextKind: "entry",
+		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("entry"), ContextKind: "entry", Forms: h.formOptions(r.Context()),
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

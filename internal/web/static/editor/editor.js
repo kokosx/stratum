@@ -922,6 +922,7 @@
 
   function dynamicOptions(source, node) {
     if (source === "content-types") return bootstrap.contentTypes || [];
+    if (source === "forms") return bootstrap.forms || [];
     if (source === "entry-fields") {
       const options = bootstrap.fieldCatalogs?.[scopedContentType(node)] || [];
       return node.block === "core/entry-media" ? options.filter((option) => option.type === "media") : options.filter((option) => option.type !== "media");

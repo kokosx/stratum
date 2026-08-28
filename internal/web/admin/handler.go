@@ -19,6 +19,7 @@ import (
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/comments"
 	"github.com/kokosx/stratum/internal/content"
+	"github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
@@ -58,6 +59,11 @@ type Handler struct {
 	usersTemplate                *template.Template
 	commentsTemplate             *template.Template
 	contentTypesTemplate         *template.Template
+	formsTemplate                *template.Template
+	formNewTemplate              *template.Template
+	formEditorTemplate           *template.Template
+	submissionsTemplate          *template.Template
+	submissionTemplate           *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -69,6 +75,7 @@ type Handler struct {
 	publishing                   *publishing.Service
 	scheduler                    *publishing.Scheduler
 	comments                     *comments.Service
+	forms                        *forms.Service
 }
 
 type LayoutData struct {
@@ -219,6 +226,26 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	formsTemplate, err := template.New("forms").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "forms.html")
+	if err != nil {
+		return nil, err
+	}
+	formNewTemplate, err := template.New("form_new").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_new.html")
+	if err != nil {
+		return nil, err
+	}
+	formEditorTemplate, err := template.New("form_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_editor.html")
+	if err != nil {
+		return nil, err
+	}
+	submissionsTemplate, err := template.New("form_submissions").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_submissions.html")
+	if err != nil {
+		return nil, err
+	}
+	submissionTemplate, err := template.New("form_submission").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_submission.html")
+	if err != nil {
+		return nil, err
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
@@ -248,6 +275,11 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		usersTemplate:                usersTemplate,
 		commentsTemplate:             commentsTemplate,
 		contentTypesTemplate:         contentTypesTemplate,
+		formsTemplate:                formsTemplate,
+		formNewTemplate:              formNewTemplate,
+		formEditorTemplate:           formEditorTemplate,
+		submissionsTemplate:          submissionsTemplate,
+		submissionTemplate:           submissionTemplate,
 		layoutTemplatesTemplate:      layoutTemplatesTemplate,
 		layoutTemplateFormTemplate:   layoutTemplateFormTemplate,
 		layoutTemplateEditorTemplate: layoutTemplateEditorTemplate,
@@ -264,6 +296,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		publishing:                   publisher,
 		scheduler:                    scheduler,
 		comments:                     commentsService,
+		forms:                        runtime.Forms,
 	}, nil
 }
 
@@ -287,6 +320,17 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/users/{id}", h.requireAuth(h.updateUser))
 	mux.HandleFunc("POST /admin/users/{id}/password", h.requireAuth(h.resetUserPassword))
 	mux.HandleFunc("GET /admin/comments", h.requireAuth(h.listComments))
+	mux.HandleFunc("GET /admin/forms", h.requireAuth(h.listForms))
+	mux.HandleFunc("GET /admin/forms/new", h.requireAuth(h.newForm))
+	mux.HandleFunc("POST /admin/forms", h.requireAuth(h.createForm))
+	mux.HandleFunc("GET /admin/forms/{id}/edit", h.requireAuth(h.editForm))
+	mux.HandleFunc("POST /admin/forms/{id}", h.requireAuth(h.saveForm))
+	mux.HandleFunc("POST /admin/forms/{id}/delete", h.requireAuth(h.deleteForm))
+	mux.HandleFunc("GET /admin/forms/{id}/submissions", h.requireAuth(h.listFormSubmissions))
+	mux.HandleFunc("GET /admin/forms/{id}/export.csv", h.requireAuth(h.exportFormSubmissions))
+	mux.HandleFunc("GET /admin/forms/{id}/submissions/{submissionID}", h.requireAuth(h.viewFormSubmission))
+	mux.HandleFunc("POST /admin/forms/{id}/submissions/{submissionID}/status", h.requireAuth(h.updateFormSubmissionStatus))
+	mux.HandleFunc("POST /admin/forms/{id}/submissions/{submissionID}/delete", h.requireAuth(h.deleteFormSubmission))
 	mux.HandleFunc("POST /admin/comments/bulk", h.requireAuth(h.bulkComments))
 	mux.HandleFunc("POST /admin/comments/{id}/approve", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "approve") }))
 	mux.HandleFunc("POST /admin/comments/{id}/pending", h.requireAuth(func(w http.ResponseWriter, r *http.Request) { h.moderateComment(w, r, "pending") }))

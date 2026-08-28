@@ -1,0 +1,9 @@
+{{ define "content" }}
+<div class="page-heading"><div><h1>{{ .Content.Form.Name }}</h1><p class="muted">Received: {{ .Content.Received }}</p></div><a class="button" href="/admin/forms/{{ .Content.Form.ID }}/submissions">Back to submissions</a></div>
+<div class="card" style="max-width:800px"><dl>
+{{ range .Content.Values }}<dt><strong>{{ .Label }}</strong></dt><dd style="white-space:pre-wrap;margin:4px 0 20px">{{ if .Value }}{{ .Value }}{{ else }}<span class="muted">—</span>{{ end }}</dd>{{ end }}
+</dl></div>
+<div class="card" style="max-width:800px;margin-top:20px"><h2>Status: {{ .Content.Submission.Status }}</h2><form method="post" action="/admin/forms/{{ .Content.Form.ID }}/submissions/{{ .Content.Submission.ID }}/status"><input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><button class="button" name="status" value="read">Mark read</button> <button class="button" name="status" value="new">Mark unread</button> <button class="button" name="status" value="spam">Mark spam</button> <button class="button" name="status" value="archived">Archive</button></form></div>
+<form method="post" action="/admin/forms/{{ .Content.Form.ID }}/submissions/{{ .Content.Submission.ID }}/delete" style="margin-top:20px" onsubmit="return confirm('Permanently delete this submission?')"><input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><button class="button" type="submit">Delete submission</button></form>
+{{ end }}
+

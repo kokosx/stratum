@@ -218,7 +218,7 @@ func (h *Handler) renderSitePartEditor(w http.ResponseWriter, r *http.Request, p
 		}
 	}
 	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("site-part"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/site-parts/" + part.ID + "/preview", ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("site-part"), ContextKind: "site-part", SiteParts: sitePartsCatalog, SitePartID: part.ID,
+		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("site-part"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/site-parts/" + part.ID + "/preview", ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("site-part"), ContextKind: "site-part", SiteParts: sitePartsCatalog, SitePartID: part.ID, Forms: h.formOptions(r.Context()),
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

@@ -9,8 +9,11 @@ package runtimehub
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/kokosx/stratum/internal/blocks"
+	"github.com/kokosx/stratum/internal/forms"
+	"github.com/kokosx/stratum/internal/mailer"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
 	"github.com/kokosx/stratum/internal/pagecache"
@@ -30,6 +33,7 @@ type Runtime struct {
 	Site       *site.Runtime
 	Navigation *navigation.Runtime
 	Routes     *routing.Runtime
+	Forms      *forms.Service
 
 	Pages   *PageCache
 	Assets  *AssetManifest
@@ -54,6 +58,11 @@ func New(queries *db.Queries, blocks *blocks.Registry, themes *themes.Runtime, m
 		Sitemap:    NewSitemapCache(),
 		Robots:     NewRobotsCache(),
 		Feed:       NewFeedCache(),
+	}
+	if database, ok := queries.DB().(*sql.DB); ok {
+		smtpMailer := mailer.FromEnvironment()
+		hub.Forms = forms.NewService(database, queries, smtpMailer, smtpMailer.From)
+		hub.Forms.SetInvalidator(hub.Pages.InvalidateAll)
 	}
 	if err := hub.Site.Reload(context.Background()); err != nil {
 		return nil, err

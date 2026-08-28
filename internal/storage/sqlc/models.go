@@ -104,6 +104,25 @@ type EntryRevisionTerm struct {
 	TermID     string `json:"term_id"`
 }
 
+type Form struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	SchemaVersion  int64  `json:"schema_version"`
+	DefinitionJson string `json:"definition_json"`
+	Active         int64  `json:"active"`
+	CreatedAt      int64  `json:"created_at"`
+	UpdatedAt      int64  `json:"updated_at"`
+}
+
+type FormSubmission struct {
+	ID                 string `json:"id"`
+	FormID             string `json:"form_id"`
+	Status             string `json:"status"`
+	ValuesJson         string `json:"values_json"`
+	SchemaSnapshotJson string `json:"schema_snapshot_json"`
+	CreatedAt          int64  `json:"created_at"`
+}
+
 type ImportMapping struct {
 	Source     string `json:"source"`
 	ObjectType string `json:"object_type"`

@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/kokosx/stratum/internal/compress"
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/pagecache"
@@ -39,6 +41,8 @@ import (
 
 var testRouteRegistry sync.Map // maps *db.Queries -> *Handler for test auto-reload
 
+type formSuccessContextKey struct{}
+
 type Handler struct {
 	queries        *db.Queries
 	blocks         *blocks.Registry
@@ -54,6 +58,7 @@ type Handler struct {
 	unlockLimiter *publishing.UnlockLimiter
 	search        *search.Service
 	comments      *comments.Service
+	forms         *forms.Service
 	auth          *auth.Service
 }
 
@@ -90,6 +95,7 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		h.comments.SetInvalidator(func(entryID string) {
 			hub.Pages.InvalidateTag("entry:" + entryID)
 		})
+		h.forms = hub.Forms
 		// Public comment submission accepts the same signed-in session as admin.
 		// Failure to initialize auth only leaves public comments anonymous.
 		h.auth, _ = auth.NewService(database, hub.Queries, !h.dev)
@@ -112,6 +118,10 @@ func (h *Handler) AssetURLs() (blocksCSS, themeCSS, themeJS string) {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Password-protected pages accept POST for unlock form.
 	if r.Method == http.MethodPost {
+		if strings.HasPrefix(r.URL.Path, "/_stratum/forms/") {
+			h.handleFormSubmit(w, r)
+			return
+		}
 		if r.URL.Path == "/comments" {
 			h.handleCommentSubmit(w, r)
 			return
@@ -183,6 +193,17 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		h.warnNoSiteURL.Do(func() {
 			log.Printf("stratum: no Site URL configured; canonical, OG and schema URLs fall back to the request host (%s). Configure Site URL in Settings for production.", origin)
 		})
+	}
+	if successID := strings.TrimSpace(r.URL.Query().Get("form_success")); successID != "" {
+		ctx := context.WithValue(r.Context(), formSuccessContextKey{}, successID)
+		r = r.WithContext(ctx)
+		entry, err := h.renderPage(ctx, origin, r.URL.Path)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		h.writePage(w, r, entry)
+		return
 	}
 	// When canonical depends on the request origin (no configured Site URL), the
 	// cache key must include the origin so HTML for the wrong host is never served.
@@ -573,7 +594,10 @@ func (h *Handler) writePage(w http.ResponseWriter, r *http.Request, entry pageca
 	// HTML must revalidate: the public URL is stable across Publish, so a long
 	// immutable max-age would freeze stale content in browsers/CDNs. no-cache
 	// still allows storing the response; clients must revalidate via ETag.
-	const htmlCacheControl = "no-cache"
+	htmlCacheControl := "no-cache"
+	if _, ok := r.Context().Value(formSuccessContextKey{}).(string); ok {
+		htmlCacheControl = "no-store"
+	}
 
 	if etagWeakMatch(r.Header.Get("If-None-Match"), entry.ETag) {
 		w.Header().Set("ETag", entry.ETag)
@@ -774,7 +798,7 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	// renderEntry runs only after the entry visibility gate; it is the normal
 	// public rendering path and must provide comments before blocks render.
 	h.populateCommentsContext(ctx, &rc, entry.ID, true)
-	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
+	content, err := h.renderBlocks(ctx, prepared, rc)
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("render document: %w", err)
 	}
@@ -927,7 +951,7 @@ func (h *Handler) renderHeaderFooter(ctx context.Context, siteSnap *site.Snapsho
 			rc.Archive = baseRC.Route.Archive
 			rc.Route = baseRC.Route
 		}
-		html, err := h.blocks.RenderPrepared(ctx, pd, rc)
+		html, err := h.renderBlocks(ctx, pd, rc)
 		if err != nil {
 			log.Printf("render site-part %s: %v", row.SitePartID.String, err)
 			return "", pd, revID
@@ -1222,7 +1246,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 		rc.Dependencies = &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)}
 		rc.SitePartStack = make(map[string]struct{})
 		rc.Navigation = menusForArchive
-		c, cerr := h.blocks.RenderPrepared(ctx, prepared, rc)
+		c, cerr := h.renderBlocks(ctx, prepared, rc)
 		if cerr != nil {
 			return pagecache.Entry{}, fmt.Errorf("render archive shell: %w", cerr)
 		}
@@ -1258,7 +1282,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 			Children: []document.Node{{ID: "fallback-title", Block: "core/entry-title", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{}`)}},
 		}}}
 		if p, err := h.blocks.Prepare(fallbackDoc); err == nil {
-			if c, err := h.blocks.RenderPrepared(ctx, p, rc); err == nil {
+			if c, err := h.renderBlocks(ctx, p, rc); err == nil {
 				shellContent = c
 				usedBlocks = p.UsedBlocks
 			}
@@ -1910,7 +1934,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	rc.SitePartReader = newHandlerSitePartReader(h.queries, h.blocks)
 	rc.CollectedSiteParts = make(map[string]string)
 	rc.Dependencies = &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)}
-	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
+	content, err := h.renderBlocks(ctx, prepared, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -1929,7 +1953,7 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 		regionRC.EntryID = ""
 		regionRC.LCP = &rendering.LCPState{}
 		regionRC.Mode = rendering.ModePreview
-		html, err := h.blocks.RenderPrepared(ctx, pd, regionRC)
+		html, err := h.renderBlocks(ctx, pd, regionRC)
 		return html, pd.UsedBlocks, err
 	}
 	if input.HeaderDocument != nil {
@@ -2347,6 +2371,11 @@ func (h *Handler) lcpPreloads(ctx context.Context, prepared *rendering.PreparedD
 // runtime. The live public frontend and the editor previews share this exact
 // path, so they cannot drift apart.
 func (h *Handler) renderThemedDocument(ctx context.Context, siteSnap *site.Snapshot, doc *document.Document, rc rendering.RenderContext, resolved seo.Resolved, path string, temporary map[string]any, customCSS *string) ([]byte, string, error) {
+	rc.FormReader = h.forms
+	rc.FormCache = make(map[string]forms.FormView)
+	if successID, ok := ctx.Value(formSuccessContextKey{}).(string); ok {
+		rc.FormResult.SuccessFormID = successID
+	}
 	if rc.LCP == nil {
 		rc.LCP = &rendering.LCPState{}
 	}
@@ -2354,7 +2383,7 @@ func (h *Handler) renderThemedDocument(ctx context.Context, siteSnap *site.Snaps
 	if err != nil {
 		return nil, "", fmt.Errorf("prepare document: %w", err)
 	}
-	content, err := h.blocks.RenderPrepared(ctx, prepared, rc)
+	content, err := h.renderBlocks(ctx, prepared, rc)
 	if err != nil {
 		return nil, "", fmt.Errorf("render document: %w", err)
 	}
@@ -2379,6 +2408,68 @@ func (h *Handler) renderThemedDocument(ctx context.Context, siteSnap *site.Snaps
 	}
 	page, err := h.themes.Render(view, temporary)
 	return page, resolved.Robots, err
+}
+
+func (h *Handler) renderBlocks(ctx context.Context, prepared *rendering.PreparedDocument, rc rendering.RenderContext) (template.HTML, error) {
+	rc.FormReader = h.forms
+	if rc.FormCache == nil {
+		rc.FormCache = make(map[string]forms.FormView)
+	}
+	if successID, ok := ctx.Value(formSuccessContextKey{}).(string); ok {
+		rc.FormResult.SuccessFormID = successID
+	}
+	return h.blocks.RenderPrepared(ctx, prepared, rc)
+}
+
+func (h *Handler) handleFormSubmit(w http.ResponseWriter, r *http.Request) {
+	if h.forms == nil {
+		http.NotFound(w, r)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, forms.MaxPublicBodyBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid form submission", http.StatusUnprocessableEntity)
+		return
+	}
+	formID := strings.TrimPrefix(r.URL.Path, "/_stratum/forms/")
+	if formID == "" || strings.Contains(formID, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	returnTo := r.PostForm.Get("return_to")
+	if !forms.ValidateReturnPath(returnTo) {
+		http.Error(w, "Invalid form submission", http.StatusUnprocessableEntity)
+		return
+	}
+	values := make(map[string][]string, len(r.PostForm))
+	for key, value := range r.PostForm {
+		if key == "return_to" || key == "website_confirm" {
+			continue
+		}
+		values[key] = value
+	}
+	clientIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		clientIP = host
+	}
+	_, err := h.forms.Submit(r.Context(), formID, forms.SubmitInput{Values: values, Honeypot: r.PostForm.Get("website_confirm"), ClientIP: clientIP, Now: time.Now()})
+	if err != nil && !errors.Is(err, forms.ErrHoneypot) {
+		switch {
+		case errors.Is(err, forms.ErrRateLimited):
+			http.Error(w, "Too many submissions", http.StatusTooManyRequests)
+		case errors.Is(err, forms.ErrNotFound):
+			http.NotFound(w, r)
+		default:
+			http.Error(w, "Invalid form submission", http.StatusUnprocessableEntity)
+		}
+		return
+	}
+	target, _ := url.Parse(returnTo)
+	query := target.Query()
+	query.Set("form_success", formID)
+	target.RawQuery = query.Encode()
+	target.Fragment = "form-" + formID
+	http.Redirect(w, r, target.String(), http.StatusSeeOther)
 }
 
 func (h *Handler) serveSitemap(w http.ResponseWriter, r *http.Request) {

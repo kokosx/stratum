@@ -27,8 +27,24 @@ type editorBootstrap struct {
 	Patterns         []patterns.Pattern                      `json:"patterns,omitempty"`
 	ContextKind      string                                  `json:"contextKind,omitempty"`
 	SiteParts        any                                     `json:"siteParts,omitempty"`
+	Forms            any                                     `json:"forms,omitempty"`
 	TemplateKind     string                                  `json:"templateKind,omitempty"`
 	SitePartID       string                                  `json:"sitePartId,omitempty"`
+}
+
+func (h *Handler) formOptions(ctx context.Context) []editorOption {
+	if h.forms == nil {
+		return nil
+	}
+	items, err := h.forms.ListActive(ctx)
+	if err != nil {
+		return nil
+	}
+	options := make([]editorOption, 0, len(items))
+	for _, item := range items {
+		options = append(options, editorOption{Value: item.ID, Label: item.Name})
+	}
+	return options
 }
 
 type taxonomyCatalogEntry struct {

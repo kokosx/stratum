@@ -36,6 +36,10 @@ func AdminNav() []AdminNavItem {
 			{ID: "pages-new", Label: "Add New", Href: "/admin/pages/new"},
 		}},
 		{ID: "comments", Label: "Comments", Href: "/admin/comments", Icon: "comments"},
+		{ID: "forms", Label: "Forms", Href: "/admin/forms", Icon: "forms", Children: []AdminNavItem{
+			{ID: "forms-all", Label: "All Forms", Href: "/admin/forms"},
+			{ID: "forms-new", Label: "Add New", Href: "/admin/forms/new"},
+		}},
 		{ID: "media", Label: "Media", Href: "/admin/media", Icon: "media", Children: []AdminNavItem{
 			{ID: "media-library", Label: "Library", Href: "/admin/media"},
 		}},
@@ -118,6 +122,11 @@ func ResolveNav(path string) NavState {
 		return NavState{ActiveSection: "dashboard", ActiveItem: "dashboard"}
 	case strings.HasPrefix(path, "/admin/comments"):
 		return NavState{ActiveSection: "comments", ActiveItem: "comments"}
+	case strings.HasPrefix(path, "/admin/forms"):
+		if path == "/admin/forms/new" {
+			return NavState{ActiveSection: "forms", ActiveItem: "forms-new"}
+		}
+		return NavState{ActiveSection: "forms", ActiveItem: "forms-all"}
 	case strings.HasPrefix(path, "/admin/posts"):
 		if strings.HasPrefix(path, "/admin/posts/categories") {
 			return NavState{ActiveSection: "posts", ActiveItem: "posts-categories"}

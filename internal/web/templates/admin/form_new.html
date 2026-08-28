@@ -1,0 +1,11 @@
+{{ define "content" }}
+<div class="page-heading"><h1>New Form</h1></div>
+{{ if .Content.Error }}<div class="notice notice-error">{{ .Content.Error }}</div>{{ end }}
+<form method="post" action="/admin/forms" class="card" style="max-width:640px">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <div class="form-field"><label for="form-name">Name</label><input id="form-name" name="name" value="{{ .Content.Form.Name }}" required maxlength="200" placeholder="Contact Form"></div>
+  <p class="field-desc">The new form starts with required Name, Email, and Message fields.</p>
+  <button class="button button-primary" type="submit">Create</button> <a class="button" href="/admin/forms">Cancel</a>
+</form>
+{{ end }}
+

@@ -26,6 +26,7 @@ type Querier interface {
 	CountEntries(ctx context.Context) (int64, error)
 	CountEntriesAdmin(ctx context.Context, arg CountEntriesAdminParams) (int64, error)
 	CountEntriesByAdminStatus(ctx context.Context, arg CountEntriesByAdminStatusParams) (CountEntriesByAdminStatusRow, error)
+	CountFormSubmissions(ctx context.Context, formID string) (int64, error)
 	CountImportRunsForSource(ctx context.Context, source string) (int64, error)
 	CountLayoutTemplatesByKind(ctx context.Context, kind string) (int64, error)
 	CountMedia(ctx context.Context) (int64, error)
@@ -38,6 +39,8 @@ type Querier interface {
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
 	CreateEntry(ctx context.Context, arg CreateEntryParams) error
 	CreateEntryRevision(ctx context.Context, arg CreateEntryRevisionParams) error
+	CreateForm(ctx context.Context, arg CreateFormParams) error
+	CreateFormSubmission(ctx context.Context, arg CreateFormSubmissionParams) error
 	CreateImportMapping(ctx context.Context, arg CreateImportMappingParams) error
 	CreateImportRun(ctx context.Context, arg CreateImportRunParams) error
 	CreateLayoutTemplate(ctx context.Context, arg CreateLayoutTemplateParams) error
@@ -58,6 +61,8 @@ type Querier interface {
 	DeleteComment(ctx context.Context, id string) error
 	DeleteContentType(ctx context.Context, id string) error
 	DeleteEntry(ctx context.Context, id string) error
+	DeleteForm(ctx context.Context, id string) error
+	DeleteFormSubmission(ctx context.Context, id string) error
 	DeleteMedia(ctx context.Context, id string) error
 	DeleteMediaVariant(ctx context.Context, id string) error
 	DeleteNavigationItemsByMenu(ctx context.Context, menuID string) error
@@ -88,6 +93,8 @@ type Querier interface {
 	// Public Page lookup must use routes (Route path -> Entry). This helper exists only
 	// for flat content-type tests and non-hierarchical lookups; prefer route-based lookup in production.
 	GetFlatEntryBySlug(ctx context.Context, arg GetFlatEntryBySlugParams) (Entry, error)
+	GetForm(ctx context.Context, id string) (Form, error)
+	GetFormSubmission(ctx context.Context, id string) (FormSubmission, error)
 	GetImportMapping(ctx context.Context, arg GetImportMappingParams) (string, error)
 	GetLatestEntryRevision(ctx context.Context, entryID string) (EntryRevision, error)
 	GetLatestLayoutTemplateRevision(ctx context.Context, templateID string) (LayoutTemplateRevision, error)
@@ -127,6 +134,8 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, email string) (GetUserByEmailRow, error)
 	GetUserByID(ctx context.Context, id string) (GetUserByIDRow, error)
 	HasAdmin(ctx context.Context) (bool, error)
+	ListActiveForms(ctx context.Context) ([]Form, error)
+	ListAllFormSubmissions(ctx context.Context, formID string) ([]FormSubmission, error)
 	ListApprovedCommentsByEntry(ctx context.Context, arg ListApprovedCommentsByEntryParams) ([]Comment, error)
 	ListArchiveRoutes(ctx context.Context) ([]Route, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
@@ -134,11 +143,14 @@ type Querier interface {
 	ListCommentsByEntry(ctx context.Context, entryID string) ([]Comment, error)
 	ListCommentsFiltered(ctx context.Context, arg ListCommentsFilteredParams) ([]Comment, error)
 	ListContentTypes(ctx context.Context) ([]ContentType, error)
+	ListDocumentsForFormReferenceScan(ctx context.Context) ([]string, error)
 	ListDuePublicationJobs(ctx context.Context, scheduledAt int64) ([]PublicationJob, error)
 	ListEntriesAdmin(ctx context.Context, arg ListEntriesAdminParams) ([]ListEntriesAdminRow, error)
 	ListEntriesByContentType(ctx context.Context, contentTypeID string) ([]ListEntriesByContentTypeRow, error)
 	ListEntryRevisions(ctx context.Context, entryID string) ([]EntryRevision, error)
 	ListEntryRouteVisibilities(ctx context.Context) ([]ListEntryRouteVisibilitiesRow, error)
+	ListFormSubmissions(ctx context.Context, arg ListFormSubmissionsParams) ([]FormSubmission, error)
+	ListForms(ctx context.Context) ([]ListFormsRow, error)
 	ListLatestHierarchyForContentType(ctx context.Context, contentTypeID string) ([]ListLatestHierarchyForContentTypeRow, error)
 	ListLatestLayoutRevisions(ctx context.Context) ([]LayoutTemplateRevision, error)
 	ListLatestSitePartRevisions(ctx context.Context) ([]SitePartRevision, error)
@@ -220,6 +232,8 @@ type Querier interface {
 	UpdateCommentStatus(ctx context.Context, arg UpdateCommentStatusParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
 	UpdateEntryProjection(ctx context.Context, arg UpdateEntryProjectionParams) error
+	UpdateForm(ctx context.Context, arg UpdateFormParams) error
+	UpdateFormSubmissionStatus(ctx context.Context, arg UpdateFormSubmissionStatusParams) error
 	UpdateGeneralSettings(ctx context.Context, arg UpdateGeneralSettingsParams) error
 	UpdateLayoutTemplate(ctx context.Context, arg UpdateLayoutTemplateParams) error
 	UpdateMediaMetadata(ctx context.Context, arg UpdateMediaMetadataParams) error
