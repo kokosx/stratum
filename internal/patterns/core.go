@@ -287,14 +287,12 @@ func latestPosts() Pattern {
 			]}
 		]}
 	]`)
-	// fix missing quotes etc - ensure valid JSON; reconstruct node with generic children
-	// The above already valid; but we used correct version for collection
 	return Pattern{
 		ID:          "latest-posts",
 		Name:        "Blog — latest posts",
 		Description: "Collection of latest posts with card layout.",
 		Category:    "Blog",
-		Contexts:    []string{"entry", "single-template", "site-part"},
+		Contexts:    []string{"entry", "single-template"},
 		Source:      "core",
 		Document:    doc(nodes),
 	}

@@ -66,7 +66,7 @@ var supportedOptionsSources = map[string]bool{"content-types": true, "entry-fiel
 var supportedControls = map[string]bool{
 	"text": true, "textarea": true, "number": true, "checkbox": true,
 	"select": true, "segmented": true, "radio": true, "range": true,
-	"media": true, "richtext": true,
+	"media": true, "media-multiple": true, "richtext": true,
 }
 
 var blockNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_-]*$`)
@@ -245,6 +245,14 @@ func (s *Schema) validateContract() error {
 		case "text", "textarea":
 			if value.Type != "string" {
 				return fmt.Errorf("editor.fields.%s: control %s requires string", path, field.Control)
+			}
+		case "media":
+			if value.Type != "string" {
+				return fmt.Errorf("editor.fields.%s: control media requires string", path)
+			}
+		case "media-multiple":
+			if value.Type != "array" || value.Items == nil || value.Items.Type != "string" {
+				return fmt.Errorf("editor.fields.%s: control media-multiple requires array<string>", path)
 			}
 		}
 	}

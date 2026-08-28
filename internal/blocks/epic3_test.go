@@ -524,6 +524,141 @@ func TestEpic3_Button_Safety(t *testing.T) {
 	}
 }
 
+func TestEpic3_GalleryV1_BackwardCompatibility(t *testing.T) {
+	reg := newMigratedRegistry(t)
+	// Historical v1 documents with legacy gap/aspectRatio/captions must still render
+	cases := []string{
+		`{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":1,"props":{"images":"m1,m2"},"settings":{"columns":3,"gap":"none","aspectRatio":"1:1","captions":true}}]}`,
+		`{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":1,"props":{"images":"m1,m2"},"settings":{"columns":2,"gap":"xs","aspectRatio":"4:3","captions":false}}]}`,
+		`{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":1,"props":{"images":"m1,m2"},"settings":{"columns":3,"gap":"sm","aspectRatio":"16:9","captions":true}}]}`,
+		`{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":1,"props":{"images":"m1,m2"},"settings":{"columns":4,"gap":"md","aspectRatio":"3:2","captions":false}}]}`,
+		// Transitional post-061 style with new keys on v1
+		`{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":1,"props":{"images":"m1,m2"},"settings":{"columns":3,"gap":"md","aspect":"square","radius":"lg"}}]}`,
+	}
+	for i, raw := range cases {
+		doc := decodeDoc(t, raw)
+		if err := reg.ValidateDocument(doc); err != nil {
+			t.Fatalf("case %d validate: %v", i, err)
+		}
+		prep, err := reg.Prepare(doc)
+		if err != nil {
+			t.Fatalf("case %d prepare: %v", i, err)
+		}
+		html, err := reg.RenderPrepared(context.Background(), prep, rendering.RenderContext{LCP: &rendering.LCPState{}, QueryCache: make(map[string][]rendering.ArchiveEntry)})
+		if err != nil {
+			t.Fatalf("case %d render: %v", i, err)
+		}
+		if !strings.Contains(string(html), "stratum-gallery") {
+			t.Fatalf("case %d missing gallery: %s", i, html)
+		}
+	}
+}
+
+func TestEpic3_GalleryV1_HiddenFromCatalogButRenderable(t *testing.T) {
+	reg := newMigratedRegistry(t)
+	catalog := reg.EditorCatalog()
+	for _, d := range catalog {
+		if d.Block == "core/gallery" && d.Version == 1 {
+			t.Fatalf("gallery v1 should be hidden from editor catalog")
+		}
+	}
+	foundV2 := false
+	for _, d := range catalog {
+		if d.Block == "core/gallery" && d.Version == 2 {
+			foundV2 = true
+		}
+	}
+	if !foundV2 {
+		t.Fatalf("gallery v2 should be in catalog")
+	}
+	// But v1 still renderable via Prepare
+	doc := decodeDoc(t, `{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":1,"props":{"images":"m1"},"settings":{"columns":2,"gap":"sm"}}]}`)
+	if _, err := reg.Prepare(doc); err != nil {
+		t.Fatalf("v1 still renderable: %v", err)
+	}
+}
+
+func TestEpic3_GalleryV2_Array(t *testing.T) {
+	reg := newMigratedRegistry(t)
+	// V2 with array images
+	raw := `{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":2,"props":{"images":["m1","m2","m3"]},"settings":{"columns":3,"gap":"md","aspect":"square","radius":"md"}}]}`
+	doc := decodeDoc(t, raw)
+	html := renderWithRegistry(t, reg, doc, rendering.RenderContext{})
+	if strings.Count(html, `loading="lazy"`) != 3 {
+		t.Fatalf("v2 should render 3 lazy images: %s", html)
+	}
+	if !strings.Contains(html, "stratum-gallery-cols-3") || !strings.Contains(html, "stratum-gallery-radius-md") {
+		t.Fatalf("v2 classes missing: %s", html)
+	}
+	// Empty v2 public should render nothing, preview placeholder
+	empty := decodeDoc(t, `{"version":1,"nodes":[{"id":"g","block":"core/gallery","version":2,"props":{"images":[]},"settings":{"columns":3,"gap":"md","aspect":"auto","radius":"none"}}]}`)
+	htmlPublic := renderWithRegistry(t, reg, empty, rendering.RenderContext{})
+	if strings.Contains(htmlPublic, "No images selected") {
+		t.Fatalf("public empty gallery should not show placeholder: %s", htmlPublic)
+	}
+	htmlPreview := renderWithRegistry(t, reg, empty, rendering.RenderContext{IsPreview: true})
+	if !strings.Contains(htmlPreview, "No images selected") {
+		t.Fatalf("preview empty gallery should show placeholder: %s", htmlPreview)
+	}
+}
+
+func TestEpic3_Embed_HostValidation(t *testing.T) {
+	reg := newMigratedRegistry(t)
+	valid := []string{
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://youtu.be/dQw4w9WgXcQ"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://vimeo.com/12345678"},"settings":{"aspect":"16:9"}}]}`,
+	}
+	for i, raw := range valid {
+		doc := decodeDoc(t, raw)
+		html := renderWithRegistry(t, reg, doc, rendering.RenderContext{})
+		if !strings.Contains(html, "<iframe") {
+			t.Fatalf("valid %d should render iframe: %s", i, html)
+		}
+	}
+	invalid := []string{
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://evil.example/youtube.com/watch?v=dQw4w9WgXcQ"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://vimeo.com.evil.example/123"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://www.youtube.com/watch?v=short"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"https://vimeo.com/abc123"},"settings":{"aspect":"16:9"}}]}`,
+		`{"version":1,"nodes":[{"id":"e","block":"core/embed","version":1,"props":{"url":"javascript:alert(1)"},"settings":{"aspect":"16:9"}}]}`,
+	}
+	for i, raw := range invalid {
+		doc := decodeDoc(t, raw)
+		html := renderWithRegistry(t, reg, doc, rendering.RenderContext{})
+		if strings.Contains(html, "<iframe") {
+			t.Fatalf("invalid %d should not render iframe: %s", i, html)
+		}
+	}
+}
+
+func TestEpic3_PublicPlaceholder_Image(t *testing.T) {
+	reg := newMigratedRegistry(t)
+	empty := decodeDoc(t, `{"version":1,"nodes":[{"id":"i","block":"core/image","version":1,"props":{"mediaId":""},"settings":{"priority":"auto"}}]}`)
+	htmlPublic := renderWithRegistry(t, reg, empty, rendering.RenderContext{})
+	if strings.Contains(htmlPublic, "Image unavailable") {
+		t.Fatalf("public missing image should not show placeholder: %s", htmlPublic)
+	}
+	htmlPreview := renderWithRegistry(t, reg, empty, rendering.RenderContext{IsPreview: true})
+	if !strings.Contains(htmlPreview, "Image unavailable") {
+		t.Fatalf("preview missing image should show placeholder: %s", htmlPreview)
+	}
+}
+
+func TestEpic3_SiteLogo_PublicPlaceholder(t *testing.T) {
+	reg := newMigratedRegistry(t)
+	doc := decodeDoc(t, `{"version":1,"nodes":[{"id":"l","block":"core/site-logo","version":1,"props":{},"settings":{"width":0,"link":true}}]}`)
+	htmlPublic := renderWithRegistry(t, reg, doc, rendering.RenderContext{Site: rendering.SiteContext{}})
+	if strings.Contains(htmlPublic, "Site logo") {
+		t.Fatalf("public site logo missing should not show placeholder: %s", htmlPublic)
+	}
+	htmlPreview := renderWithRegistry(t, reg, doc, rendering.RenderContext{IsPreview: true, Site: rendering.SiteContext{}})
+	if !strings.Contains(htmlPreview, "Site logo") {
+		t.Fatalf("preview site logo missing should show placeholder: %s", htmlPreview)
+	}
+}
+
 func maxInt(a, b int) int {
 	if a > b {
 		return a

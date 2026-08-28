@@ -323,7 +323,7 @@ func TestEpic3_SingleTemplate_Pattern(t *testing.T) {
 	prep, _ := reg.Prepare(doc)
 	html, _ := reg.RenderPrepared(context.Background(), prep, rendering.RenderContext{
 		Entry: rendering.EntryContext{Title: "Hello", Permalink: "/hello"},
-		LCP: &rendering.LCPState{},
+		LCP:   &rendering.LCPState{},
 	})
 	if !strings.Contains(string(html), "Hello") && !strings.Contains(string(html), "stratum-entry-field") {
 		// Single article pattern uses entry-title which renders via entry context; if not supplied, placeholder may show in preview
@@ -345,15 +345,15 @@ func TestEpic3_ArchivePattern(t *testing.T) {
 	// Render as archive with context entries
 	archive := &rendering.ArchiveContext{
 		Entries: []rendering.ArchiveEntry{{ID: "1", Title: "Post 1", URL: "/post1"}, {ID: "2", Title: "Post 2", URL: "/post2"}},
-		Title: "Archive Title", Description: "Desc",
+		Title:   "Archive Title", Description: "Desc",
 		Pagination: rendering.PaginationContext{Current: 1, TotalPages: 1},
 	}
 	rc := rendering.RenderContext{
-		Route: rendering.RouteContext{Archive: archive, ArchiveTitle: "Archive Title", ArchiveDescription: "Desc"},
-		Archive: archive,
-		LCP: &rendering.LCPState{},
+		Route:         rendering.RouteContext{Archive: archive, ArchiveTitle: "Archive Title", ArchiveDescription: "Desc"},
+		Archive:       archive,
+		LCP:           &rendering.LCPState{},
 		ContentReader: &fakeContentReaderEpic3{entries: archive.Entries},
-		QueryCache: make(map[string][]rendering.ArchiveEntry),
+		QueryCache:    make(map[string][]rendering.ArchiveEntry),
 	}
 	prep, _ := reg.Prepare(doc)
 	html, _ := reg.RenderPrepared(context.Background(), prep, rc)
@@ -386,6 +386,7 @@ func renderEpic3(t *testing.T, reg *blocks.Registry, doc *document.Document) str
 }
 
 type fakeContentReaderEpic3 struct{ entries []rendering.ArchiveEntry }
+
 func (f *fakeContentReaderEpic3) Query(_ context.Context, q content.EntryQuery) ([]rendering.ArchiveEntry, error) {
 	return f.entries, nil
 }

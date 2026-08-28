@@ -133,6 +133,13 @@ func randomID() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+var canonicalContexts = map[string]bool{
+	"entry":            true,
+	"single-template":  true,
+	"archive-template": true,
+	"site-part":        true,
+}
+
 func isContextAllowed(contexts []string, mode string) bool {
 	if len(contexts) == 0 {
 		return true
@@ -146,9 +153,19 @@ func isContextAllowed(contexts []string, mode string) bool {
 }
 
 // ValidateAll checks every bundled pattern decodes, has unique internal IDs,
-// uses known block versions, and passes block registry validation when a registry is supplied.
+// uses known block versions, passes block registry validation when a registry is supplied,
+// and is valid in every declared context.
 func (c *Catalog) ValidateAll(reg *blocks.Registry) error {
 	for _, p := range c.ordered {
+		// Validate contexts are canonical
+		for _, ctx := range p.Contexts {
+			if !canonicalContexts[ctx] {
+				return fmt.Errorf("pattern %s has invalid context %q", p.ID, ctx)
+			}
+		}
+		if len(p.Contexts) == 0 {
+			return fmt.Errorf("pattern %s has no contexts", p.ID)
+		}
 		// Check unique IDs inside pattern
 		ids := make(map[string]bool)
 		if err := document.Walk(&p.Document, func(n document.Node) error {
@@ -166,6 +183,12 @@ func (c *Catalog) ValidateAll(reg *blocks.Registry) error {
 		if reg != nil {
 			if err := reg.ValidateDocument(&p.Document); err != nil {
 				return fmt.Errorf("pattern %s block validation: %w", p.ID, err)
+			}
+			// Must be valid in every declared context
+			for _, ctx := range p.Contexts {
+				if err := reg.ValidateDocumentForContext(&p.Document, ctx); err != nil {
+					return fmt.Errorf("pattern %s invalid for context %q: %w", p.ID, ctx, err)
+				}
 			}
 		}
 	}

@@ -76,45 +76,115 @@ func splitFunc(sep, value string) []string {
 // youtubeID extracts an 11-character YouTube video id from common URL shapes
 // (watch, youtu.be, embed, shorts). It returns "" when the URL is not a
 // recognizable YouTube link so the Video block can fall back gracefully.
-func youtubeIDFunc(url string) string {
-	url = strings.TrimSpace(url)
-	switch {
-	case strings.Contains(url, "youtu.be/"):
-		return lastPathSegment(url, "youtu.be/")
-	case strings.Contains(url, "youtube.com/shorts/"):
-		return lastPathSegment(url, "youtube.com/shorts/")
-	case strings.Contains(url, "youtube.com/embed/"):
-		return lastPathSegment(url, "youtube.com/embed/")
-	case strings.Contains(url, "youtube.com/watch?v="):
-		return queryValue(url, "v")
-	case strings.Contains(url, "youtube.com/v/"):
-		return lastPathSegment(url, "youtube.com/v/")
+func youtubeIDFunc(raw string) string {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	path := parsed.Path
+	query := parsed.Query()
+	// Normalize host without port
+	switch host {
+	case "youtu.be", "www.youtu.be":
+		// youtu.be/{id}
+		id := strings.Trim(path, "/")
+		if idx := strings.IndexAny(id, "?#&/"); idx >= 0 {
+			id = id[:idx]
+		}
+		if isValidYouTubeID(id) {
+			return id
+		}
+		return ""
+	case "youtube.com", "www.youtube.com", "m.youtube.com":
+		// /watch?v=, /embed/, /shorts/, /v/
+		if strings.HasPrefix(path, "/watch") {
+			if id := query.Get("v"); isValidYouTubeID(id) {
+				return id
+			}
+			return ""
+		}
+		if strings.HasPrefix(path, "/embed/") {
+			id := strings.TrimPrefix(path, "/embed/")
+			if idx := strings.IndexAny(id, "?#&/"); idx >= 0 {
+				id = id[:idx]
+			}
+			id = strings.Trim(id, "/")
+			if isValidYouTubeID(id) {
+				return id
+			}
+			return ""
+		}
+		if strings.HasPrefix(path, "/shorts/") {
+			id := strings.TrimPrefix(path, "/shorts/")
+			if idx := strings.IndexAny(id, "?#&/"); idx >= 0 {
+				id = id[:idx]
+			}
+			id = strings.Trim(id, "/")
+			if isValidYouTubeID(id) {
+				return id
+			}
+			return ""
+		}
+		if strings.HasPrefix(path, "/v/") {
+			id := strings.TrimPrefix(path, "/v/")
+			if idx := strings.IndexAny(id, "?#&/"); idx >= 0 {
+				id = id[:idx]
+			}
+			id = strings.Trim(id, "/")
+			if isValidYouTubeID(id) {
+				return id
+			}
+			return ""
+		}
 	}
 	return ""
 }
 
+func isValidYouTubeID(id string) bool {
+	if len(id) != 11 {
+		return false
+	}
+	for _, c := range id {
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // vimeoID extracts the numeric Vimeo video id from common URL shapes.
-func vimeoIDFunc(url string) string {
-	url = strings.TrimSpace(url)
-	if !strings.Contains(url, "vimeo.com/") {
+func vimeoIDFunc(raw string) string {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil {
 		return ""
 	}
-	// Support both vimeo.com/{id} and player.vimeo.com/video/{id}.
-	// Extract the last path segment that is purely numeric.
-	// Trim query and hash.
-	if idx := strings.IndexAny(url, "?#"); idx >= 0 {
-		url = url[:idx]
+	host := strings.ToLower(parsed.Hostname())
+	switch host {
+	case "vimeo.com", "www.vimeo.com", "player.vimeo.com":
+		// allowed
+	default:
+		return ""
 	}
-	url = strings.TrimSuffix(url, "/")
-	if idx := strings.LastIndex(url, "/"); idx >= 0 {
-		candidate := url[idx+1:]
-		candidate = strings.TrimSpace(candidate)
-		if isNumericID(candidate) {
-			return candidate
-		}
+	path := parsed.Path
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return ""
 	}
-	// Fallback to previous marker logic for unusual shapes.
-	return lastPathSegment(url, "vimeo.com/")
+	// For player.vimeo.com/video/{id}, the id is after /video/
+	// For vimeo.com/{id}, the id is the last segment
+	segments := strings.Split(path, "/")
+	candidate := segments[len(segments)-1]
+	if idx := strings.IndexAny(candidate, "?#&"); idx >= 0 {
+		candidate = candidate[:idx]
+	}
+	if isNumericID(candidate) {
+		return candidate
+	}
+	return ""
 }
 
 func isNumericID(s string) bool {

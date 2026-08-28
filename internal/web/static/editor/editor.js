@@ -441,34 +441,42 @@
     return nodes;
   }
 
+  function canInsertRoots(containerNode, roots) {
+    if (!containerNode) return true; // root accepts any
+    const def = definitionFor(containerNode);
+    if (!def) return false;
+    const rule = def.schema.children;
+    if (rule.mode === "none") return false;
+    if (rule.max !== undefined && rule.max !== null) {
+      if (containerNode.children.length + roots.length > rule.max) return false;
+    }
+    if (rule.mode === "allowed") {
+      for (const r of roots) {
+        if (!rule.blocks.includes(r.block)) return false;
+      }
+    }
+    return true;
+  }
+
   function insertionPointForPattern(rootBlocks) {
     const selected = state.selectedNodeId && findNode(state.selectedNodeId);
-    if (!selected) return { siblings: state.document.nodes, index: state.document.nodes.length };
-    const containerNode = selected.node;
-    const containerDef = definitionFor(containerNode);
-    // If selected is container and it can accept all root blocks, insert as children
-    if (containerDef && containerDef.schema.children.mode !== "none") {
-      let canAcceptAll = true;
-      for (const pb of rootBlocks) {
-        if (!childrenAllow(containerDef, pb.block, containerNode.children.length)) {
-          canAcceptAll = false;
-          break;
-        }
-        // also check allowed blocks list
-        if (containerDef.schema.children.mode === "allowed" && !containerDef.schema.children.blocks.includes(pb.block)) {
-          canAcceptAll = false;
-          break;
-        }
-      }
-      if (canAcceptAll) {
-        return { siblings: containerNode.children, index: containerNode.children.length };
-      }
+    if (!selected) {
+      if (canInsertRoots(null, rootBlocks)) return { siblings: state.document.nodes, index: state.document.nodes.length };
+      return null;
     }
-    // Otherwise use normal insertion point for first block
-    if (rootBlocks.length > 0) {
-      return insertionPoint(rootBlocks[0].block);
+    // 1. Try selected as container
+    if (canInsertRoots(selected.node, rootBlocks)) {
+      return { siblings: selected.node.children, index: selected.node.children.length };
     }
-    return { siblings: state.document.nodes, index: state.document.nodes.length };
+    // 2. Try parent as container (insert after selected)
+    if (selected.parent && canInsertRoots(selected.parent, rootBlocks)) {
+      return { siblings: selected.siblings, index: selected.index + 1 };
+    }
+    // 3. Try root
+    if (canInsertRoots(null, rootBlocks)) {
+      return { siblings: state.document.nodes, index: state.document.nodes.length };
+    }
+    return null;
   }
 
   function insertPattern(patternId) {
@@ -476,17 +484,20 @@
     if (!pattern) return;
     const cloned = clonePatternNodes(pattern);
     if (!cloned.length) return;
-    // Validate that blocks are still allowed (editor catalog may have changed)
-    // Server will validate on save, but we do a basic client check
-    pushHistory();
     const point = insertionPointForPattern(cloned);
-    // Check if point container can actually accept (fallback to root if not)
-    // For simplicity, if point siblings is not root and not accepting, fallback to root
-    let targetSiblings = point.siblings;
-    let targetIndex = point.index;
-    // Insert all cloned roots sequentially
+    if (!point) {
+      if (errorElement) {
+        errorElement.textContent = "Cannot insert pattern here — container does not allow this content.";
+        errorElement.hidden = false;
+        setTimeout(() => { errorElement.hidden = true; }, 3000);
+      } else {
+        alert("Cannot insert pattern here — container does not allow this content.");
+      }
+      return;
+    }
+    pushHistory();
     for (let i = 0; i < cloned.length; i++) {
-      targetSiblings.splice(targetIndex + i, 0, cloned[i]);
+      point.siblings.splice(point.index + i, 0, cloned[i]);
     }
     state.selectedNodeId = cloned[0].id;
     changed();
@@ -852,6 +863,10 @@
     }
     if (control === "media") {
       wrapper.append(buildMediaControl(node, object, name, updateFromObject(object, name)));
+      return wrapper;
+    }
+    if (control === "media-multiple") {
+      wrapper.append(buildMediaMultipleControl(node, object, name, updateFromObject(object, name)));
       return wrapper;
     }
 	if (control === "select" && metadata.optionsSource) {
@@ -1567,6 +1582,58 @@
         choose.addEventListener("click", openPicker);
         container.append(choose);
       }
+    }
+    render();
+    return container;
+  }
+
+  function buildMediaMultipleControl(node, object, name, update) {
+    const container = element("div", "inspector-media-multiple");
+    function render() {
+      const ids = Array.isArray(object[name]) ? object[name] : [];
+      container.replaceChildren();
+      if (ids.length) {
+        ids.forEach((mediaId, idx) => {
+          const row = element("div", "inspector-media-multiple__row");
+          const thumb = element("img");
+          thumb.alt = "";
+          thumb.src = "/media/" + mediaId + "/480";
+          thumb.style.width = "48px";
+          thumb.style.height = "48px";
+          thumb.style.objectFit = "cover";
+          thumb.style.borderRadius = "4px";
+          thumb.onerror = () => { thumb.onerror = null; thumb.src = "/media/" + mediaId + "/original"; };
+          row.append(thumb);
+          const label = element("span", "", mediaId.slice(0,8));
+          label.title = mediaId;
+          label.style.fontSize = "11px";
+          label.style.color = "#64748b";
+          row.append(label);
+          const actions = element("div", "inspector-media-multiple__actions");
+          const up = element("button", "button", "↑");
+          up.type = "button"; up.title = "Move up"; up.disabled = idx === 0;
+          up.addEventListener("click", () => { if (idx===0) return; const nxt = [...ids]; [nxt[idx-1], nxt[idx]]=[nxt[idx], nxt[idx-1]]; update(nxt); render(); });
+          const down = element("button", "button", "↓");
+          down.type = "button"; down.title = "Move down"; down.disabled = idx === ids.length-1;
+          down.addEventListener("click", () => { if (idx===ids.length-1) return; const nxt = [...ids]; [nxt[idx], nxt[idx+1]]=[nxt[idx+1], nxt[idx]]; update(nxt); render(); });
+          const remove = element("button", "button button-danger", "Remove");
+          remove.type = "button";
+          remove.addEventListener("click", () => { const nxt = ids.filter((_,i)=>i!==idx); update(nxt); render(); });
+          actions.append(up, down, remove);
+          row.append(actions);
+          container.append(row);
+        });
+      } else {
+        container.append(element("div", "inspector-media__empty", "No images selected"));
+      }
+      const add = element("button", "button button-primary", "Add image");
+      add.type = "button";
+      add.style.marginTop = "8px";
+      add.addEventListener("click", () => {
+        if (!window.openMediaPicker) return;
+        window.openMediaPicker({ onSelect: (asset) => { const cur = Array.isArray(object[name]) ? object[name] : []; const nxt = [...cur, asset.id]; update(nxt); render(); } });
+      });
+      container.append(add);
     }
     render();
     return container;
