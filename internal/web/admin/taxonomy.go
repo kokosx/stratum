@@ -13,13 +13,18 @@ import (
 )
 
 type taxonomyData struct {
-	TaxonomyID   string
-	TaxonomyName string
-	PluralName   string
-	Hierarchical bool
-	Terms        []taxonomyTermData
-	CSRFToken    string
-	Section      string
+	TaxonomyID           string
+	TaxonomyName         string
+	PluralName           string
+	Hierarchical         bool
+	Terms                []taxonomyTermData
+	CSRFToken            string
+	Section              string
+	ArchiveTemplateName  string
+	ArchiveTemplateID    string
+	HasArchiveTemplate   bool
+	ArchiveTemplateCount int
+	ContentTypePlural    string
 }
 
 type taxonomyTermData struct {
@@ -96,6 +101,22 @@ func (h *Handler) listTaxonomy(w http.ResponseWriter, r *http.Request, taxonomyI
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// Archive appearance guidance: Posts archive template is shared for taxonomy archives.
+	archiveName, archiveID, hasArchive, archiveCount := "", "", false, 0
+	contentPlural := "Posts"
+	if ct, err := h.queries.GetContentType(r.Context(), tax.ContentTypeID); err == nil {
+		contentPlural = ct.PluralName
+		if ct.DefaultArchiveTemplateID.Valid && ct.DefaultArchiveTemplateID.String != "" {
+			archiveID = ct.DefaultArchiveTemplateID.String
+			if tmpl, err := h.queries.GetLayoutTemplate(r.Context(), archiveID); err == nil {
+				archiveName = tmpl.Name
+				hasArchive = tmpl.PublishedRevisionID.Valid
+				if hasArchive {
+					archiveCount = 1
+				}
+			}
+		}
+	}
 	state := ResolveNav(r.URL.Path)
 	data := LayoutData{
 		Title:         tax.PluralName,
@@ -106,12 +127,17 @@ func (h *Handler) listTaxonomy(w http.ResponseWriter, r *http.Request, taxonomyI
 		Flash:         h.consumeFlash(w, r),
 		CSRFToken:     token,
 		Content: taxonomyData{
-			TaxonomyID:   taxonomyID,
-			TaxonomyName: tax.SingularName,
-			PluralName:   tax.PluralName,
-			Hierarchical: tax.Hierarchical != 0,
-			Terms:        dataTerms,
-			CSRFToken:    token,
+			TaxonomyID:           taxonomyID,
+			TaxonomyName:         tax.SingularName,
+			PluralName:           tax.PluralName,
+			Hierarchical:         tax.Hierarchical != 0,
+			Terms:                dataTerms,
+			CSRFToken:            token,
+			ArchiveTemplateName:  archiveName,
+			ArchiveTemplateID:    archiveID,
+			HasArchiveTemplate:   hasArchive,
+			ArchiveTemplateCount: archiveCount,
+			ContentTypePlural:    contentPlural,
 		},
 	}
 	if err := h.taxonomyTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
@@ -155,7 +181,7 @@ func (h *Handler) createTerm(w http.ResponseWriter, r *http.Request, taxonomyID,
 		slug = slugifyTerm(name)
 	}
 	svc := taxonomy.New(h.database, h.queries)
-	_, err := svc.CreateTerm(r.Context(), taxonomyID, name, slug, description, parentID)
+	created, err := svc.CreateTerm(r.Context(), taxonomyID, name, slug, description, parentID)
 	if err != nil {
 		log.Printf("create term %s %s: %v", taxonomyID, name, err)
 		h.setFlash(w, "Could not create term: "+err.Error())
@@ -163,6 +189,8 @@ func (h *Handler) createTerm(w http.ResponseWriter, r *http.Request, taxonomyID,
 		return
 	}
 	if h.runtime != nil {
+		h.runtime.Pages.InvalidateTag("taxonomy:" + taxonomyID)
+		h.runtime.Pages.InvalidateTag("term:" + created.ID)
 		_ = h.runtime.ReloadRoutes(r.Context())
 	}
 	h.setFlash(w, "Term created.")
@@ -217,6 +245,8 @@ func (h *Handler) updateTerm(w http.ResponseWriter, r *http.Request, taxonomyID,
 		return
 	}
 	if h.runtime != nil {
+		h.runtime.Pages.InvalidateTag("taxonomy:" + taxonomyID)
+		h.runtime.Pages.InvalidateTag("term:" + id)
 		_ = h.runtime.ReloadRoutes(r.Context())
 	}
 	h.setFlash(w, "Term updated.")
@@ -254,6 +284,8 @@ func (h *Handler) deleteTerm(w http.ResponseWriter, r *http.Request, taxonomyID,
 		return
 	}
 	if h.runtime != nil {
+		h.runtime.Pages.InvalidateTag("taxonomy:" + taxonomyID)
+		h.runtime.Pages.InvalidateTag("term:" + id)
 		_ = h.runtime.ReloadRoutes(r.Context())
 	}
 	h.setFlash(w, "Term deleted.")

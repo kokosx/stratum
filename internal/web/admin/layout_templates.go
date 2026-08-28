@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/rendering"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/taxonomy"
 )
 
 type layoutTemplatesData struct {
@@ -30,6 +32,7 @@ type layoutTemplateRow struct {
 	ContentTypeName  string
 	Kind             string
 	Status           string
+	IsPublished      bool
 	IsDefault        bool
 	IsDefaultArchive bool
 }
@@ -111,7 +114,8 @@ func (h *Handler) listLayoutTemplates(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		status := layoutTemplateStatusFromMaps(t, latestMap)
-		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Kind: t.Kind, Status: status, IsDefault: isDefault, IsDefaultArchive: isDefaultArchive})
+		isPublished := t.PublishedRevisionID.Valid
+		rows = append(rows, layoutTemplateRow{ID: t.ID, Name: t.Name, ContentTypeID: t.ContentTypeID, ContentTypeName: ctName, Kind: t.Kind, Status: status, IsPublished: isPublished, IsDefault: isDefault, IsDefaultArchive: isDefaultArchive})
 	}
 	data := layoutTemplatesData{Templates: rows, CSRFToken: token, Flash: h.consumeFlash(w, r)}
 	if err := h.layoutTemplatesTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Templates", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Flash: data.Flash, Content: data}); err != nil {
@@ -558,34 +562,101 @@ func (h *Handler) previewArchiveLayoutTemplate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Content type is unavailable", http.StatusUnprocessableEntity)
 		return
 	}
+	// Archive preview context: allow filtering by taxonomy term (e.g. Category: News) using same renderer.
+	previewTaxID := strings.TrimSpace(r.FormValue("preview_taxonomy_id"))
+	previewTermID := strings.TrimSpace(r.FormValue("preview_term_id"))
+	var previewTerm *db.Term
+	var previewTax *db.Taxonomy
+	if previewTaxID != "" && previewTermID != "" {
+		if tx, err := h.queries.GetTaxonomy(r.Context(), previewTaxID); err == nil {
+			previewTax = &tx
+		}
+		if t, err := h.queries.GetTerm(r.Context(), previewTermID); err == nil && previewTax != nil && t.TaxonomyID == previewTaxID {
+			previewTerm = &t
+		}
+		if previewTerm == nil {
+			previewTaxID, previewTermID = "", ""
+			previewTax, previewTerm = nil, nil
+		}
+	}
 	perPage := 10
-	rows, err := content.NewRepository(h.queries).QueryPublished(r.Context(), content.EntryQuery{ContentType: content.ContentTypeID(tmpl.ContentTypeID), Limit: perPage})
-	if err != nil {
-		http.Error(w, "Archive entries are unavailable", http.StatusUnprocessableEntity)
-		return
-	}
-	entries := make([]rendering.ArchiveEntry, 0, len(rows))
-	for _, row := range rows {
-		fields, _ := content.DecodeFieldSnapshot(row.FieldsJSON)
-		entries = append(entries, rendering.ArchiveEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: tmpl.ContentTypeID, Title: row.Title, Excerpt: row.Excerpt, URL: row.RoutePath, Fields: fields})
-	}
-	total, err := h.queries.CountPublishedEntriesByContentType(r.Context(), tmpl.ContentTypeID)
-	if err != nil {
-		total = int64(len(entries))
+	var total int64
+	var previewEntries []rendering.ArchiveEntry
+	var archiveTitle, archiveDesc string
+	var path string
+	if previewTerm != nil {
+		// Filter entries by term, preserve revision semantics (published revisions only).
+		termRows, err := h.queries.ListPublishedEntriesByTerm(r.Context(), db.ListPublishedEntriesByTermParams{TermID: previewTermID, ContentTypeID: tmpl.ContentTypeID, Limit: int64(perPage), Offset: 0})
+		if err != nil {
+			http.Error(w, "Archive entries are unavailable", http.StatusUnprocessableEntity)
+			return
+		}
+		if cnt, err := h.queries.ListPublishedEntriesByTermCount(r.Context(), db.ListPublishedEntriesByTermCountParams{TermID: previewTermID, ContentTypeID: tmpl.ContentTypeID}); err == nil {
+			total = cnt
+		} else {
+			total = int64(len(termRows))
+		}
+		entries := make([]rendering.ArchiveEntry, 0, len(termRows))
+		for _, row := range termRows {
+			fields, _ := content.DecodeFieldSnapshot(row.FieldsJson)
+			excerpt := ""
+			if row.Excerpt.Valid {
+				excerpt = row.Excerpt.String
+			}
+			entries = append(entries, rendering.ArchiveEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: tmpl.ContentTypeID, Title: row.Title, Excerpt: excerpt, URL: row.RoutePath, Fields: fields})
+		}
+		previewEntries = entries
+		archiveTitle = previewTerm.Name
+		archiveDesc = previewTerm.Description
+		// Derive archive path from term route if available.
+		if route, err := h.queries.GetRouteByTaxonomyTerm(r.Context(), db.GetRouteByTaxonomyTermParams{TaxonomyID: sql.NullString{String: previewTaxID, Valid: true}, TermID: sql.NullString{String: previewTermID, Valid: true}}); err == nil {
+			path = route.Path
+		} else if previewTax != nil {
+			path = taxonomy.TaxonomyTermPath(taxonomy.Taxonomy{ID: previewTax.ID, RouteBase: previewTax.RouteBase}, previewTerm.Slug)
+		} else {
+			path = definition.Routing.BasePath
+			if path == "" {
+				path = "/"
+			}
+		}
+	} else {
+		qrows, err := content.NewRepository(h.queries).QueryPublished(r.Context(), content.EntryQuery{ContentType: content.ContentTypeID(tmpl.ContentTypeID), Limit: perPage})
+		if err != nil {
+			http.Error(w, "Archive entries are unavailable", http.StatusUnprocessableEntity)
+			return
+		}
+		entries := make([]rendering.ArchiveEntry, 0, len(qrows))
+		for _, row := range qrows {
+			fields, _ := content.DecodeFieldSnapshot(row.FieldsJSON)
+			entries = append(entries, rendering.ArchiveEntry{ID: row.ID, Slug: row.Slug, ContentTypeID: tmpl.ContentTypeID, Title: row.Title, Excerpt: row.Excerpt, URL: row.RoutePath, Fields: fields})
+		}
+		previewEntries = entries
+		if cnt, err := h.queries.CountPublishedEntriesByContentType(r.Context(), tmpl.ContentTypeID); err == nil {
+			total = cnt
+		} else {
+			total = int64(len(entries))
+		}
+		path = definition.Routing.BasePath
+		if path == "" {
+			path = "/"
+		}
+		archiveTitle = definition.EffectiveLabel()
+		archiveDesc = ""
 	}
 	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
 	if totalPages < 1 {
 		totalPages = 1
 	}
-	path := definition.Routing.BasePath
-	if path == "" {
-		path = "/"
-	}
 	archive := &rendering.ArchiveContext{
-		Entries:    entries,
-		Pagination: rendering.PaginationContext{Current: 1, TotalPages: totalPages, TotalItems: total},
-		Permalink:  path,
-		Title:      definition.EffectiveLabel(),
+		Entries:     previewEntries,
+		Pagination:  rendering.PaginationContext{Current: 1, TotalPages: totalPages, TotalItems: total},
+		Permalink:   path,
+		Title:       archiveTitle,
+		Description: archiveDesc,
+	}
+	if previewTaxID != "" && previewTermID != "" {
+		archive.TaxonomyID = previewTaxID
+		archive.TermID = previewTermID
 	}
 	if h.documentPreview == nil {
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)

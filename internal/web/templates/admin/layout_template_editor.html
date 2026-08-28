@@ -16,6 +16,41 @@
       <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
     </div>
   </header>
+  <div class="card template-meta-card" style="margin:12px 0; padding:12px 16px;">
+    <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
+      <span><strong>{{ if eq .Content.Kind "archive" }}Archive{{ else }}Single{{ end }} · {{ .Content.ContentTypeName }} · {{ .Content.Status }}</strong></span>
+      {{ if eq .Content.Kind "archive" }}
+        {{ if .Content.IsDefaultArchive }}<span class="status-badge status-badge--default">Default</span><span>Default archive for {{ .Content.ContentTypeName }}</span>{{ else }}<span class="muted">Not default archive</span>{{ end }}
+      {{ else }}
+        {{ if .Content.IsDefault }}<span class="status-badge status-badge--default">Default</span><span>Default for {{ .Content.ContentTypeName }}</span>{{ else }}<span class="muted">Not default</span>{{ end }}
+      {{ end }}
+    </div>
+    <div style="margin-top:8px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+      {{ if eq .Content.Kind "archive" }}
+        {{ if .Content.IsDefaultArchive }}
+          <span>Default archive template for {{ .Content.ContentTypeName }}: <strong>Yes</strong></span>
+          <button class="button" type="submit" formaction="{{ .Content.ClearArchiveAction }}">Clear default</button>
+        {{ else }}
+          <span>Default archive template for {{ .Content.ContentTypeName }}: <strong>No</strong></span>
+          {{ if .Content.CanSetArchiveDefault }}
+            {{ if eq .Content.Status "Draft" }}<span class="muted">Publish this template before setting it as the default.</span>
+            {{ else }}<button class="button button-primary" type="submit" formaction="{{ .Content.ArchiveDefaultAction }}">Make default archive for {{ .Content.ContentTypeName }}</button>{{ end }}
+          {{ end }}
+        {{ end }}
+      {{ else }}
+        {{ if .Content.IsDefault }}
+          <span>Default template for {{ .Content.ContentTypeName }}: <strong>Yes</strong></span>
+          <button class="button" type="submit" formaction="{{ .Content.ClearDefaultAction }}">Clear default</button>
+        {{ else }}
+          <span>Default template for {{ .Content.ContentTypeName }}: <strong>No</strong></span>
+          {{ if .Content.CanSetDefault }}
+            {{ if eq .Content.Status "Draft" }}<span class="muted">Publish this template before setting it as the default.</span>
+            {{ else }}<button class="button button-primary" type="submit" formaction="{{ .Content.DefaultAction }}">Make default for {{ .Content.ContentTypeName }}</button>{{ end }}
+          {{ end }}
+        {{ end }}
+      {{ end }}
+    </div>
+  </div>
   <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
   {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
   {{ if .Content.Warning }}<p class="notice notice-warning" role="status">{{ .Content.Warning }}</p>{{ end }}
@@ -46,6 +81,14 @@
         <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
         <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
       </div>
+      {{ if eq .Content.Kind "archive" }}
+      <div class="editor-preview-context" style="margin-left:12px;">
+        <label for="archive-preview-context" style="font-size:0.85rem; margin-right:6px;">Preview:</label>
+        <select id="archive-preview-context" style="font-size:0.85rem; padding:4px;">
+          <option value="">Main archive</option>
+        </select>
+      </div>
+      {{ end }}
       <div class="editor-device-group">
         <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
         <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>

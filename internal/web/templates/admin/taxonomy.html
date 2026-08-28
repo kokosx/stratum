@@ -1,27 +1,43 @@
 {{ define "content" }}
-<div class="page-heading"><h1>{{ .Content.PluralName }}</h1></div>
+<header class="admin-page-header"><div><h1>{{ .Content.PluralName }}</h1></div></header>
 
 {{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
 
+<div class="notice notice-info" style="margin-bottom:16px;">
+  {{ if eq .Content.TaxonomyID "category" }}
+    {{ if .Content.HasArchiveTemplate }}
+      <p style="margin:0;">Category archive appearance:<br>Uses the default {{ .Content.ContentTypePlural }} Archive Template <strong>{{ .Content.ArchiveTemplateName }}</strong>. <a class="button" href="/admin/appearance/templates/{{ .Content.ArchiveTemplateID }}/edit" style="margin-left:8px;">Edit archive template</a></p>
+    {{ else }}
+      <p style="margin:0;">Category archive appearance:<br>No {{ .Content.ContentTypePlural }} Archive Template is configured. The default fallback layout is being used. <a class="button button-primary" href="/admin/appearance/templates/new?kind=archive" style="margin-left:8px;">Create archive template</a></p>
+    {{ end }}
+  {{ else }}
+    {{ if .Content.HasArchiveTemplate }}
+      <p style="margin:0;">Tag archive appearance:<br>Uses the default {{ .Content.ContentTypePlural }} Archive Template <strong>{{ .Content.ArchiveTemplateName }}</strong>. <a class="button" href="/admin/appearance/templates/{{ .Content.ArchiveTemplateID }}/edit" style="margin-left:8px;">Edit archive template</a></p>
+    {{ else }}
+      <p style="margin:0;">Tag archive appearance:<br>No {{ .Content.ContentTypePlural }} Archive Template is configured. The default fallback layout is being used. <a class="button button-primary" href="/admin/appearance/templates/new?kind=archive" style="margin-left:8px;">Create archive template</a></p>
+    {{ end }}
+  {{ end }}
+</div>
+
 <div class="taxonomy-layout">
-  <div class="taxonomy-form panel">
+  <div class="taxonomy-form admin-section" style="background:var(--ui-surface); border:1px solid var(--ui-border); border-radius:var(--ui-radius-md); padding:16px;">
     <h2>Add New {{ .Content.TaxonomyName }}</h2>
     <form method="post" action="{{ if eq .Content.TaxonomyID "category" }}/admin/posts/categories{{ else }}/admin/posts/tags{{ end }}">
       <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-      <div class="form-field">
-        <label for="term-name">Name</label>
-        <input type="text" id="term-name" name="name" required maxlength="200">
-        <p class="field-desc">The name as it appears on your site.</p>
+      <div class="form-group">
+        <label class="form-label" for="term-name">Name</label>
+        <input class="form-control" type="text" id="term-name" name="name" required maxlength="200">
+        <p class="form-help">The name as it appears on your site.</p>
       </div>
-      <div class="form-field">
-        <label for="term-slug">Slug</label>
-        <input type="text" id="term-slug" name="slug" placeholder="auto-generated" maxlength="200">
-        <p class="field-desc">The slug is the URL-friendly version. Leave empty to generate from name.</p>
+      <div class="form-group">
+        <label class="form-label" for="term-slug">Slug</label>
+        <input class="form-control" type="text" id="term-slug" name="slug" placeholder="auto-generated" maxlength="200">
+        <p class="form-help">Leave empty to generate from name.</p>
       </div>
       {{ if .Content.Hierarchical }}
-      <div class="form-field">
-        <label for="term-parent">Parent</label>
-        <select id="term-parent" name="parent_id">
+      <div class="form-group">
+        <label class="form-label" for="term-parent">Parent</label>
+        <select class="form-control" id="term-parent" name="parent_id">
           <option value="">— No parent —</option>
           {{ range .Content.Terms }}
             <option value="{{ .ID }}">{{ .Name }}</option>
@@ -29,16 +45,16 @@
         </select>
       </div>
       {{ end }}
-      <div class="form-field">
-        <label for="term-description">Description</label>
-        <textarea id="term-description" name="description" rows="3"></textarea>
-        <p class="field-desc">The description is not prominent by default; some themes may show it.</p>
+      <div class="form-group">
+        <label class="form-label" for="term-description">Description</label>
+        <textarea class="form-control" id="term-description" name="description" rows="3"></textarea>
+        <p class="form-help">Not prominent by default; archive templates may show it.</p>
       </div>
       <button type="submit" class="button button-primary">Add New {{ .Content.TaxonomyName }}</button>
     </form>
   </div>
 
-  <div class="taxonomy-list panel">
+  <div class="taxonomy-list admin-section" style="background:var(--ui-surface); border:1px solid var(--ui-border); border-radius:var(--ui-radius-md); padding:16px;">
     <div class="tablenav top">
       <form method="get" action="" class="search-box">
         <label for="term-search" class="screen-reader-text">Search {{ .Content.PluralName }}</label>
@@ -51,8 +67,8 @@
     </div>
     <h2>{{ .Content.PluralName }} List</h2>
     {{ if .Content.Terms }}
-    <div class="list-table-wrap">
-    <table class="list-table">
+    <div class="data-table-wrap">
+    <table class="data-table">
       <thead>
         <tr>
           <th>Name</th>
@@ -64,22 +80,14 @@
       </thead>
       <tbody>
         {{ range .Content.Terms }}
-        <tr>
+        {{ $term := . }}
+        <tr id="term-row-{{ .ID }}">
           <td class="column-title">
             <div style="--depth: {{ .Depth }}">
               <strong>{{ .Name }}</strong>
             </div>
             <div class="row-actions">
-              <span>
-                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/update{{ else }}/admin/posts/tags/{{ .ID }}/update{{ end }}" class="inline-form" class="taxonomy-edit-form">
-                  <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
-                  <input type="hidden" name="name" value="{{ .Name }}">
-                  <input type="hidden" name="slug" value="{{ .Slug }}">
-                  <input type="hidden" name="description" value="{{ .Description }}">
-                  {{ if $.Content.Hierarchical }}<input type="hidden" name="parent_id" value="{{ .ParentID }}">{{ end }}
-                  <button type="button" class="row-action-link" onclick="var f=this.closest('form');var n=prompt('Name', f.querySelector('input[name=name]').value); if(n===null) return; var s=prompt('Slug', f.querySelector('input[name=slug]').value); if(s===null) return; f.querySelector('input[name=name]').value=n; f.querySelector('input[name=slug]').value=s; f.submit();">Edit</button>
-                </form> | 
-              </span>
+              <span><button type="button" class="row-action-link" data-quick-edit="{{ .ID }}">Quick Edit</button> | </span>
               <span>
                 <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/delete{{ else }}/admin/posts/tags/{{ .ID }}/delete{{ end }}" class="inline-form" onsubmit="return confirm('Delete this {{ $.Content.TaxonomyName }}?')">
                   <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
@@ -92,6 +100,33 @@
           <td>{{ .Slug }}</td>
           <td>{{ .Count }}</td>
           <td>{{ if .Path }}<a href="{{ .Path }}" target="_blank" rel="noopener">View</a>{{ else }}—{{ end }}</td>
+        </tr>
+        <tr id="edit-{{ .ID }}" class="quick-edit-row" hidden>
+          <td colspan="5">
+            <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/update{{ else }}/admin/posts/tags/{{ .ID }}/update{{ end }}" class="quick-edit-form" style="background:var(--ui-surface-subtle); padding:12px; border:1px solid var(--ui-border); border-radius:var(--ui-radius-md);">
+              <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+              <h4 style="margin:0 0 8px; font-size:14px;">Quick Edit — {{ $term.Name }}</h4>
+              <div class="field-grid" style="max-width:520px;">
+                <div class="form-group"><label class="form-label">Name</label><input class="form-control" type="text" name="name" value="{{ .Name }}" required maxlength="200"></div>
+                <div class="form-group"><label class="form-label">Slug</label><input class="form-control" type="text" name="slug" value="{{ .Slug }}" required maxlength="200"></div>
+                <div class="form-group"><label class="form-label">Description</label><textarea class="form-control" name="description" rows="3">{{ .Description }}</textarea></div>
+                {{ if $.Content.Hierarchical }}
+                <div class="form-group"><label class="form-label">Parent</label>
+                  <select class="form-control" name="parent_id">
+                    <option value="">— No parent —</option>
+                    {{ range $.Content.Terms }}
+                      {{ if ne .ID $term.ID }}<option value="{{ .ID }}" {{ if eq $term.ParentID .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}
+                    {{ end }}
+                  </select>
+                </div>
+                {{ end }}
+                <div class="admin-page-actions">
+                  <button type="submit" class="button button-primary">Update</button>
+                  <button type="button" class="button" data-quick-cancel="{{ .ID }}">Cancel</button>
+                </div>
+              </div>
+            </form>
+          </td>
         </tr>
         {{ end }}
       </tbody>
@@ -109,4 +144,26 @@
     {{ end }}
   </div>
 </div>
+<script>
+(function(){
+  document.querySelectorAll('[data-quick-edit]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.getAttribute('data-quick-edit');
+      var row = document.getElementById('edit-'+id);
+      if(row) row.hidden = !row.hidden;
+      if(row && !row.hidden) {
+        var inp = row.querySelector('input[name=name]');
+        if(inp) inp.focus();
+      }
+    });
+  });
+  document.querySelectorAll('[data-quick-cancel]').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var id = btn.getAttribute('data-quick-cancel');
+      var row = document.getElementById('edit-'+id);
+      if(row) row.hidden = true;
+    });
+  });
+})();
+</script>
 {{ end }}

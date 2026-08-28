@@ -1,20 +1,25 @@
 {{ define "content" }}
-<section class="settings-section">
-  <h1>Users</h1>
-  <form method="post" action="/admin/users" class="settings-form">
+<header class="admin-page-header"><div><h1>Users</h1><p class="muted" style="margin:4px 0 0; font-size:13px;">Manage site accounts and roles.</p></div></header>
+
+<section class="admin-section" style="max-width:640px;">
+  <h2>Add user</h2>
+  <form method="post" action="/admin/users" class="field-grid">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-    <h2>Add user</h2>
-    <label>Email <input type="email" name="email" required></label>
-    <label>Password <input type="password" name="password" minlength="12" required></label>
-    <label>Role <select name="role"><option value="author">Author</option><option value="editor">Editor</option><option value="admin">Admin</option></select></label>
-    <button type="submit">Add user</button>
+    <div class="form-group"><label class="form-label" for="new-email">Email</label><input class="form-control" type="email" id="new-email" name="email" required></div>
+    <div class="form-group"><label class="form-label" for="new-password">Password</label><input class="form-control" type="password" id="new-password" name="password" minlength="12" required><p class="form-help">Minimum 12 characters.</p></div>
+    <div class="form-group"><label class="form-label" for="new-role">Role</label><select class="form-control" id="new-role" name="role"><option value="author">Author</option><option value="editor">Editor</option><option value="admin">Admin</option></select></div>
+    <div class="admin-page-actions"><button class="button button-primary" type="submit">Add user</button></div>
   </form>
-  {{ range .Content.Users }}<form id="user-{{ .ID }}" method="post" action="/admin/users/{{ .ID }}"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"></form><form id="password-{{ .ID }}" method="post" action="/admin/users/{{ .ID }}/password"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"></form>{{ end }}
-  <table class="settings-table">
-    <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr></thead>
+</section>
+
+{{ range .Content.Users }}<form id="user-{{ .ID }}" method="post" action="/admin/users/{{ .ID }}"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"></form><form id="password-{{ .ID }}" method="post" action="/admin/users/{{ .ID }}/password"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"></form>{{ end }}
+
+<div class="data-table-wrap">
+  <table class="data-table">
+    <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>{{ range .Content.Users }}
-      <tr><td>{{ .Email }}</td><td><select form="user-{{ .ID }}" name="role"><option value="author" {{ if eq .Role "author" }}selected{{ end }}>Author</option><option value="editor" {{ if eq .Role "editor" }}selected{{ end }}>Editor</option><option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>Admin</option></select></td><td><select form="user-{{ .ID }}" name="status"><option value="active" {{ if eq .Status "active" }}selected{{ end }}>Active</option><option value="disabled" {{ if eq .Status "disabled" }}selected{{ end }}>Disabled</option></select></td><td>{{ .CreatedAt }}</td><td><button form="user-{{ .ID }}" type="submit">Save</button><input form="password-{{ .ID }}" type="password" name="password" minlength="12" placeholder="New password"><button form="password-{{ .ID }}" type="submit">Reset password</button></td></tr>
+      <tr><td class="data-table__primary">{{ .Email }}</td><td><select class="form-control" style="height:32px; max-width:140px;" form="user-{{ .ID }}" name="role"><option value="author" {{ if eq .Role "author" }}selected{{ end }}>Author</option><option value="editor" {{ if eq .Role "editor" }}selected{{ end }}>Editor</option><option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>Admin</option></select></td><td><select class="form-control" style="height:32px; max-width:130px;" form="user-{{ .ID }}" name="status"><option value="active" {{ if eq .Status "active" }}selected{{ end }}>Active</option><option value="disabled" {{ if eq .Status "disabled" }}selected{{ end }}>Disabled</option></select> {{ if eq .Status "active" }}<span class="status-badge status-badge--active">Active</span>{{ else }}<span class="status-badge status-badge--disabled">Disabled</span>{{ end }}</td><td class="muted" style="font-size:12.5px;">{{ .CreatedAt }}</td><td><div class="admin-page-actions" style="gap:6px;"><button class="button button-small" form="user-{{ .ID }}" type="submit">Save</button><input class="form-control" style="height:32px; max-width:160px;" form="password-{{ .ID }}" type="password" name="password" minlength="12" placeholder="New password"><button class="button button-small" form="password-{{ .ID }}" type="submit">Reset</button></div></td></tr>
     {{ end }}</tbody>
   </table>
-</section>
+</div>
 {{ end }}

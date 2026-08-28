@@ -1277,10 +1277,13 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 				rc.Site.LogoHeight = view.Height
 			}
 		}
-		fallbackDoc := &document.Document{Version: 1, Nodes: []document.Node{{
-			ID: "fallback", Block: "core/collection", Version: 1, Settings: json.RawMessage(`{"source":"context"}`),
-			Children: []document.Node{{ID: "fallback-title", Block: "core/entry-title", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{}`)}},
-		}}}
+		fallbackDoc := &document.Document{Version: 1, Nodes: []document.Node{
+			{ID: "fallback-archive-title", Block: "core/archive-title", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{"level":1,"align":"left"}`)},
+			{ID: "fallback-archive-desc", Block: "core/archive-description", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{"align":"left"}`)},
+			{ID: "fallback", Block: "core/collection", Version: 2, Settings: json.RawMessage(`{"source":"context","limit":10}`),
+				Children: []document.Node{{ID: "fallback-title", Block: "core/entry-title", Version: 1, Props: json.RawMessage(`{}`), Settings: json.RawMessage(`{}`)}},
+			},
+		}}
 		if p, err := h.blocks.Prepare(fallbackDoc); err == nil {
 			if c, err := h.renderBlocks(ctx, p, rc); err == nil {
 				shellContent = c

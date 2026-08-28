@@ -10,8 +10,9 @@ import (
 )
 
 type fakeFormReader struct {
-	view   forms.FormView
-	active bool
+	view     forms.FormView
+	active   bool
+	disabled bool
 }
 
 func (f fakeFormReader) GetActiveForm(_ context.Context, id string) (forms.FormView, bool) {
@@ -19,6 +20,22 @@ func (f fakeFormReader) GetActiveForm(_ context.Context, id string) (forms.FormV
 		return f.view, true
 	}
 	return forms.FormView{}, false
+}
+
+func (f fakeFormReader) ResolveForm(_ context.Context, id string) forms.FormResolution {
+	if id == "" {
+		return forms.FormResolution{State: forms.FormStateMissing}
+	}
+	if id != f.view.ID {
+		return forms.FormResolution{State: forms.FormStateMissing}
+	}
+	if f.disabled {
+		return forms.FormResolution{State: forms.FormStateDisabled}
+	}
+	if f.active {
+		return forms.FormResolution{State: forms.FormStateActive, View: f.view}
+	}
+	return forms.FormResolution{State: forms.FormStateMissing}
 }
 
 func TestCoreFormRendersSemanticAccessibleFields(t *testing.T) {

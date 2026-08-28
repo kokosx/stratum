@@ -66,7 +66,7 @@
     </thead>
     <tbody>
       {{ range .Content.Entries }}
-      <tr>
+      <tr id="entry-row-{{ .ID }}">
         <td class="check-column"><input type="checkbox" name="ids" value="{{ .ID }}" class="entry-checkbox"></td>
         <td class="entry-title column-title">
           <strong style="--depth: {{ .Depth }}"><a href="{{ $.Content.EditBase }}/{{ .ID }}/edit">{{ .Title }}</a></strong>
@@ -76,6 +76,7 @@
               <span><form method="post" action="{{ $.Content.EditBase }}/{{ .ID }}/delete" class="inline-form" onsubmit="return confirm('Delete permanently? This cannot be undone.')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link row-action-delete">Delete Permanently</button></form></span>
             {{ else }}
               <span><a href="{{ $.Content.EditBase }}/{{ .ID }}/edit">Edit</a> | </span>
+              <span><button type="button" class="row-action-link" data-quick-edit="{{ .ID }}" data-quick-edit-base="{{ $.Content.EditBase }}">Quick Edit</button> | </span>
               {{ if .PublicURL }}<span><a href="{{ .PublicURL }}" target="_blank" rel="noopener noreferrer">View</a> | </span>{{ end }}
               <span><form method="post" action="{{ $.Content.EditBase }}/{{ .ID }}/trash" class="inline-form"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="row-action-link row-action-trash">Trash</button></form></span>
             {{ end }}
@@ -85,6 +86,7 @@
         <td>{{ .Slug }}</td>
         <td>{{ .UpdatedAt }}</td>
       </tr>
+      <tr id="quick-edit-row-{{ .ID }}" class="quick-edit-row" hidden><td colspan="5"><div id="quick-edit-container-{{ .ID }}"></div></td></tr>
       {{ else }}
       <tr><td colspan="5" class="muted">No entries found.</td></tr>
       {{ end }}
@@ -108,5 +110,41 @@
   document.getElementById('cb-select-all')?.addEventListener('change', function(){
     document.querySelectorAll('.entry-checkbox').forEach(function(cb){ cb.checked = document.getElementById('cb-select-all').checked; });
   });
+  // Quick Edit inline
+  (function(){
+    let openId = null;
+    document.querySelectorAll('[data-quick-edit]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        const id = btn.getAttribute('data-quick-edit');
+        const base = btn.getAttribute('data-quick-edit-base');
+        const row = document.getElementById('quick-edit-row-'+id);
+        const container = document.getElementById('quick-edit-container-'+id);
+        if(!row || !container) return;
+        if(openId && openId!==id){
+          const prevRow = document.getElementById('quick-edit-row-'+openId);
+          if(prevRow) prevRow.hidden=true;
+        }
+        if(!row.hidden && container.innerHTML.trim()!==""){
+          row.hidden=true; openId=null; return;
+        }
+        openId=id;
+        try{
+          const resp = await fetch(base+'/'+encodeURIComponent(id)+'/quick-edit', {headers:{'X-Requested-With':'fetch'}});
+          if(!resp.ok) throw new Error('Failed to load');
+          const html = await resp.text();
+          container.innerHTML = html;
+          row.hidden=false;
+          const firstInput = container.querySelector('input[name=title]');
+          if(firstInput) firstInput.focus();
+          container.querySelectorAll('[data-quick-cancel]').forEach(function(cancelBtn){
+            cancelBtn.addEventListener('click', function(){ row.hidden=true; openId=null; });
+          });
+        }catch(e){
+          container.innerHTML = '<p class="form-error">Could not load Quick Edit.</p>';
+          row.hidden=false;
+        }
+      });
+    });
+  })();
 </script>
 {{ end }}

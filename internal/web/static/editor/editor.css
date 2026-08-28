@@ -184,3 +184,32 @@
 .library-tab.is-active { background: var(--ui-primary); color: #fff; }
 .pattern-card { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); background: var(--ui-surface); }
 .pattern-card .button { margin-top: 4px; }
+
+/* Entry tabs — compact professional */
+.entry-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--ui-border); margin-bottom: 16px; }
+.entry-tab { padding: 10px 16px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--ui-text-muted); font: 600 13.5px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; cursor: pointer; margin-bottom: -1px; }
+.entry-tab:hover { color: var(--ui-text); background: var(--ui-surface-subtle); }
+.entry-tab.is-active, .entry-tab[aria-selected="true"] { color: var(--ui-primary); border-bottom-color: var(--ui-primary); background: transparent; }
+.entry-tab:focus-visible { outline: 2px solid var(--ui-focus); outline-offset: -2px; }
+.entry-global-header { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); padding: 16px; }
+
+/* Workbench height — shared so Editor/Preview do not jump */
+:root { --editor-workbench-height: clamp(560px, calc(100dvh - 240px), 820px); }
+.editor-workbench { display: grid; gap: 16px; }
+.editor-workspace { height: var(--editor-workbench-height); max-height: var(--editor-workbench-height); min-height: var(--editor-workbench-height); }
+.editor-workspace, .editor-preview-panel { height: var(--editor-workbench-height); max-height: var(--editor-workbench-height); }
+@media (max-width: 720px) {
+  :root { --editor-workbench-height: min(70dvh, 640px); }
+  .editor-workspace, .editor-preview-panel { height: auto; max-height: none; min-height: 420px; }
+}
+
+/* Library internal scroll — only catalog scrolls */
+.block-library { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.block-library .library-tabs, .block-library .editor-search, .block-library h2 { flex-shrink: 0; }
+#block-catalog, #pattern-catalog { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+/* Document + Inspector scroll within workbench */
+.document-canvas, .block-inspector { min-height: 0; overflow-y: auto; }
+.editor-preview-panel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.editor-preview-toolbar { flex-shrink: 0; }
+.editor-preview { flex: 1; min-height: 0; overflow: auto; }
+.editor-preview-frame { height: 100%; min-height: 100%; }

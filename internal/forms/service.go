@@ -224,12 +224,40 @@ func (s *Service) Get(ctx context.Context, id string) (Form, error) {
 	}
 	return formFromRow(row)
 }
+
+type FormState string
+
+const (
+	FormStateMissing  FormState = "missing"
+	FormStateDisabled FormState = "disabled"
+	FormStateActive   FormState = "active"
+)
+
+type FormResolution struct {
+	State FormState
+	View  FormView
+}
+
 func (s *Service) GetActiveForm(ctx context.Context, id string) (FormView, bool) {
-	form, err := s.Get(ctx, id)
-	if err != nil || !form.Active {
+	res := s.ResolveForm(ctx, id)
+	if res.State != FormStateActive {
 		return FormView{}, false
 	}
-	return FormView{ID: form.ID, Fields: form.Fields, SubmitLabel: form.SubmitLabel, SuccessMessage: form.SuccessMessage}, true
+	return res.View, true
+}
+
+func (s *Service) ResolveForm(ctx context.Context, id string) FormResolution {
+	if id == "" {
+		return FormResolution{State: FormStateMissing}
+	}
+	form, err := s.Get(ctx, id)
+	if err != nil {
+		return FormResolution{State: FormStateMissing}
+	}
+	if !form.Active {
+		return FormResolution{State: FormStateDisabled}
+	}
+	return FormResolution{State: FormStateActive, View: FormView{ID: form.ID, Fields: form.Fields, SubmitLabel: form.SubmitLabel, SuccessMessage: form.SuccessMessage}}
 }
 
 func (s *Service) List(ctx context.Context) ([]FormSummary, error) {

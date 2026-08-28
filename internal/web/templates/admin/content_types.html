@@ -1,12 +1,12 @@
 {{ define "content" }}
 <section class="settings-shell">
-  <header class="page-heading" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;">
+  <header class="admin-page-header">
     <div>
       <h1>Content Types</h1>
-      <p>Create and manage structured content models.</p>
+      <p class="muted">Create and manage structured content models.</p>
     </div>
     {{ if eq .Content.Mode "list" }}
-    <a class="button button-primary" href="/admin/settings/content-types/new">+ Add content type</a>
+    <div class="admin-page-actions"><a class="button button-primary" href="/admin/settings/content-types/new">Add content type</a></div>
     {{ end }}
   </header>
 
@@ -22,9 +22,9 @@
   {{ if .Content.FieldRemovalWarning }}
   <div class="notice notice-warning" role="alert">
     <strong>Heads up:</strong> {{ .Content.FieldRemovalWarning }}
-    <div style="display:flex;gap:8px;margin-top:12px;">
+    <div class="admin-page-actions">
       <a class="button button-secondary" href="/admin/settings/content-types/{{ .Content.Form.ID }}">Cancel</a>
-      <form method="post" action="/admin/settings/content-types/{{ .Content.Form.ID }}" style="display:inline;">
+      <form method="post" action="/admin/settings/content-types/{{ .Content.Form.ID }}">
         <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
         <input type="hidden" name="field_key_action" value="{{ .Content.PendingRemoveKey }}">
         <input type="hidden" name="remove_field" value="1">
@@ -45,8 +45,8 @@
   {{ if eq .Content.Mode "list" }}
     {{ if .Content.Rows }}
     <div class="card">
-      <div class="card-body" style="padding:0;">
-        <table class="data-table" style="border:0;box-shadow:none;border-radius:0;">
+      <div class="card-body">
+        <table class="data-table">
           <thead>
             <tr><th>Content type</th><th>Key</th><th>Routing</th><th>URL base</th><th></th></tr>
           </thead>
@@ -85,24 +85,24 @@
 
     <div class="card">
       <div class="card-header"><h2>Create content type</h2></div>
-      <div class="card-body" style="display:grid;gap:16px;">
-        <div class="form-group" style="max-width:480px;">
+      <div class="card-body field-grid">
+        <div class="form-group">
           <label class="form-label" for="ct-label">Name</label>
           <input class="form-control" id="ct-label" name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100" placeholder="Technologies">
           <p class="form-help">Label shown in the admin. Example: Technologies, Testimonials, Products.</p>
         </div>
-        <div class="form-group" style="max-width:480px;">
+        <div class="form-group">
           <label class="form-label" for="ct-key">Key</label>
           <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" required pattern="[a-z][a-z0-9_]*" placeholder="technology">
           <p class="form-help">Stable machine key. Cannot be changed later. Lowercase letters, numbers and underscores.</p>
         </div>
         <div class="form-group">
           <label class="form-label">How will you use it?</label>
-          <label class="toggle-row" style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+          <label class="toggle-row">
             <span><strong>Structured items</strong><br><span class="form-help">Store reusable data and display it in Collections. Items don't have their own pages by default.</span></span>
             <input type="radio" name="preset" value="structured" {{ if eq .Content.Form.Preset "structured" }}checked{{ else if eq .Content.Form.Preset "" }}checked{{ end }}>
           </label>
-          <label class="toggle-row" style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;">
+          <label class="toggle-row">
             <span><strong>Content with pages</strong><br><span class="form-help">Each item can have its own public URL and rich content.</span></span>
             <input type="radio" name="preset" value="pages" {{ if eq .Content.Form.Preset "pages" }}checked{{ end }}>
           </label>
@@ -111,7 +111,7 @@
       </div>
     </div>
 
-    <div class="card-footer" style="position:sticky;bottom:0;z-index:2;">
+    <div class="card-footer">
       <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
       <button class="button button-primary" type="submit">Create</button>
     </div>
@@ -123,7 +123,7 @@
 
     <div class="card">
       <div class="card-header"><h2>General</h2></div>
-      <div class="card-body" style="display:grid;gap:16px;">
+      <div class="card-body field-grid">
         <div class="field-grid">
           <div class="form-group">
             <label class="form-label" for="ct-label">Name</label>
@@ -136,7 +136,7 @@
             <p class="form-help">Singular label. Leave empty for neutral UI.</p>
           </div>
         </div>
-        <div class="form-group" style="max-width:480px;">
+        <div class="form-group">
           <label class="form-label" for="ct-key">Key</label>
           <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" readonly required pattern="[a-z][a-z0-9_]*">
           <p class="form-help">Stable machine key. Cannot be changed.</p>
@@ -146,7 +146,7 @@
 
     <div class="card">
       <div class="card-header"><h2>Content</h2></div>
-      <div class="card-body" style="display:grid;gap:12px;">
+      <div class="card-body field-grid">
         {{ if .Content.Form.IsBuiltin }}
           <p class="form-help">Features for core types are managed by Stratum and cannot be disabled here. Custom fields can still be added below.</p>
           <div class="toggle-row" style="opacity:.6;pointer-events:none;">
@@ -172,7 +172,7 @@
 
     <div class="card">
       <div class="card-header"><h2>Routing</h2><span class="form-help">Individual pages and archive are independent. Publish is live data, not necessarily a URL.</span></div>
-      <div class="card-body" style="display:grid;gap:16px;">
+      <div class="card-body field-grid">
         {{ if .Content.Form.IsBuiltin }}
           <div class="notice notice-info">Routing for <strong>{{ .Content.Form.ID }}</strong> is core-owned. URL base is managed in <a href="/admin/settings/reading">Reading → Posts URL base</a> for Posts, and Page URLs are always <code>/slug</code>.</div>
         {{ else }}
@@ -184,7 +184,7 @@
             <span><strong>Archive page</strong><br><span class="form-help">Enables an archive at the URL base listing published items.</span></span>
             <input type="checkbox" name="archive" id="ct-archive" {{ if .Content.Form.Archive }}checked{{ end }}>
           </label>
-          <div class="form-group" id="ct-base-group" style="max-width:480px;">
+          <div class="form-group" id="ct-base-group">
             <label class="form-label" for="ct-base">URL base</label>
             <input class="form-control" id="ct-base" name="base_path" value="{{ .Content.Form.BasePath }}" placeholder="/products" maxlength="100">
             <p class="form-help">Absolute prefix for entry URLs and/or archive, e.g. <code>/products</code>. No trailing slash.</p>
@@ -214,7 +214,7 @@
 
     <div class="card">
       <div class="card-header"><h2>Structure</h2></div>
-      <div class="card-body" style="display:grid;gap:12px;">
+      <div class="card-body field-grid">
         {{ if .Content.Form.IsBuiltin }}
           <p class="form-help">Hierarchical is core-owned for Pages/Posts.</p>
         {{ else }}
@@ -263,13 +263,13 @@
           {{ end }}
         </div>
         {{ else }}
-        <div class="empty-state" style="padding:24px;">
+        <div class="empty-state">
           <p>No custom fields yet.</p>
           <p class="form-help">Add fields to store structured data per entry.</p>
         </div>
         {{ end }}
 
-        <fieldset class="card" style="margin-top:20px;padding:16px;">
+        <fieldset class="card">
           <legend style="font-weight:600;">Add field</legend>
           <div class="field-grid">
             <div class="form-group"><label class="form-label" for="fld-label">Label</label><input class="form-control" id="fld-label" name="field_label" placeholder="Price"></div>
@@ -289,7 +289,7 @@
           </div>
           <div id="fld-opts" class="form-group" hidden>
             <label class="form-label">Options (for Select)</label>
-            <div id="fld-options-list" style="display:grid;gap:8px;"></div>
+            <div id="fld-options-list"></div>
             <button class="button button-secondary button-small" type="button" onclick="addOption()">+ Add option</button>
             <input type="hidden" name="field_options" id="fld-options-hidden">
             <p class="form-help">One option per line. Shown as a select.</p>
@@ -329,7 +329,7 @@
       </div>
     </div>
 
-    <div class="card-footer" style="position:sticky;bottom:0;z-index:2;">
+    <div class="card-footer">
       <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
       <button class="button button-primary" type="submit">Save changes</button>
       <button class="button button-danger" type="submit" formaction="/admin/settings/content-types/{{ .Content.Form.ID }}/delete" formmethod="post" onclick="return confirm('Delete content type {{ .Content.Form.ID }}? This cannot be undone.')">Delete</button>

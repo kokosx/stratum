@@ -117,6 +117,9 @@ type entryFormData struct {
 	LayoutTemplateID    string
 	LayoutTemplates     []layoutTemplateOption
 	LayoutTemplateError string
+	DefaultTemplateID   string
+	DefaultTemplateName string
+	HasDefaultTemplate  bool
 	TaxonomyPanels      []taxonomyPanelData
 	ParentEntryID       string
 	MenuOrder           int64
@@ -216,10 +219,18 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	if data.ContentTypeID != "" && data.LayoutTemplates == nil {
 		data.LayoutTemplates = h.loadLayoutTemplateOptions(r.Context(), data.ContentTypeID)
 	}
-	// Default selection for new entries: ContentType default
-	if data.EntryID == "" && data.LayoutTemplateID == "" && data.ContentTypeID != "" {
-		if ct, err := h.queries.GetContentType(r.Context(), data.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid {
-			data.LayoutTemplateID = ct.DefaultLayoutTemplateID.String
+	// Populate default template info for selector label (inherit semantics).
+	if data.ContentTypeID != "" {
+		if ct, err := h.queries.GetContentType(r.Context(), data.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String != "" {
+			data.DefaultTemplateID = ct.DefaultLayoutTemplateID.String
+			if tmpl, err := h.queries.GetLayoutTemplate(r.Context(), ct.DefaultLayoutTemplateID.String); err == nil {
+				data.DefaultTemplateName = tmpl.Name
+				data.HasDefaultTemplate = true
+			} else {
+				// Fallback: at least mark as having default if ID present even if name lookup fails.
+				data.HasDefaultTemplate = true
+				data.DefaultTemplateName = ct.DefaultLayoutTemplateID.String
+			}
 		}
 	}
 	if definition.Capabilities.Hierarchical {

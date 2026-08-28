@@ -6,475 +6,343 @@
   <input type="hidden" name="social_media_id" id="entry-social-media-id" value="{{ .Content.SocialMediaID }}">
   <input type="hidden" name="entry_id" id="entry-id" value="{{ .Content.EntryID }}">
   <input type="hidden" name="content_type_id" id="entry-content-type" value="{{ .Content.ContentTypeID }}">
-  <header class="editor-topbar">
-    <div class="editor-metadata">
-      <label>{{ if .Content.ShowContent }}Title{{ else }}Name{{ end }}<input id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required></label>
-      {{ if .Content.ShowSlug }}
-      <label>Slug<input id="entry-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></label>
-      {{ else }}
-      <input type="hidden" name="slug" value="{{ .Content.Slug }}" id="entry-slug">
-      <p class="field-desc">Slug is generated automatically. It will be used if individual pages are enabled later.</p>
-      {{ end }}
-      {{ if .Content.ShowExcerpt }}
-      <label class="editor-excerpt">Excerpt<textarea id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea></label>
-   {{ end }}
-   {{ if .Content.CustomFields }}
-   <section class="card">
-     <h3 style="margin:0 0 12px;">Custom Fields</h3>
-     {{ range .Content.CustomFields }}{{ $field := . }}
-     <div class="form-field">
-       {{ if eq .Type "boolean" }}
-       <input type="hidden" name="field_{{ .Key }}_present" value="true">
-       <label class="check-row"><input type="checkbox" name="field_{{ .Key }}" value="true" {{ if .Checked }}checked{{ end }}> {{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
-       {{ else if eq .Type "textarea" }}
-       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
-       <textarea id="field-{{ .Key }}" name="field_{{ .Key }}" rows="4" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>{{ .Value }}</textarea>
-       {{ else if eq .Type "select" }}
-       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
-       <select id="field-{{ .Key }}" name="field_{{ .Key }}" {{ if .Required }}required{{ end }}><option value="">Select…</option>{{ range .Options }}<option value="{{ . }}" {{ if eq $field.Selected . }}selected{{ end }}>{{ . }}</option>{{ end }}</select>
-       {{ else if eq .Type "media" }}
-       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
-       <input id="field-{{ .Key }}" type="hidden" name="field_{{ .Key }}" value="{{ .Value }}">
-       <div class="social-image-field"><div class="social-image-preview" id="field-{{ .Key }}-preview">{{ if .Value }}<img src="/media/{{ .Value }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="field-desc">No media selected</span>{{ end }}</div><div class="social-image-actions"><button class="button" type="button" data-custom-media-picker="field-{{ .Key }}">Choose media</button><button class="button button-danger" type="button" data-custom-media-remove="field-{{ .Key }}" {{ if not .Value }}hidden{{ end }}>Remove</button></div></div>
-       {{ else }}
-       <label class="field-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
-       <input id="field-{{ .Key }}" type="{{ if eq .Type "number" }}number{{ else if eq .Type "date" }}date{{ else if eq .Type "datetime" }}datetime-local{{ else if eq .Type "url" }}url{{ else if eq .Type "email" }}email{{ else }}text{{ end }}" name="field_{{ .Key }}" value="{{ .Value }}" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
-       {{ end }}
-       {{ if .HelpText }}<p class="field-desc">{{ .HelpText }}</p>{{ end }}
-     </div>
-     {{ end }}
-   </section>
-   {{ end }}
-      {{ if .Content.ShowFeatured }}
-      <div class="form-field editor-featured-image">
-        <span class="field-label">Featured Image</span>
-        <div class="social-image-field">
-          <div class="social-image-preview" id="entry-featured-preview">
-            {{ if .Content.FeaturedMediaID }}<img src="/media/{{ .Content.FeaturedMediaID }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="field-desc">No Featured Image</span>{{ end }}
-          </div>
-          <div class="social-image-actions">
-            <button type="button" class="button" id="entry-featured-choose">Choose image</button>
-            <button type="button" class="button button-danger" id="entry-featured-remove" {{ if not .Content.FeaturedMediaID }}hidden{{ end }}>Remove</button>
-          </div>
+
+  <header class="entry-global-header admin-section" style="display:grid; gap:12px;">
+    <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; justify-content:space-between;">
+      <div style="flex:1; min-width:240px; display:grid; gap:8px;">
+        <h1 style="margin:0; font-size:24px;">{{ .Content.Heading }}</h1>
+        <label class="form-label" for="entry-title">{{ if .Content.ShowContent }}Title{{ else }}Name{{ end }}</label>
+        <input class="form-control" id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required style="max-width:640px;">
+        <div id="editor-status-region" class="editor-status-region" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-size:12.5px;">
+          {{ template "editor-status-region" .Content }}
         </div>
+        {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+        {{ if .Content.HasUnpublishedChanges }}<div class="notice notice-warning" style="padding:8px 12px;">Unpublished changes — <a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a></div>{{ end }}
+        {{ if .Content.IsPostsPage }}<div class="notice notice-info" style="padding:8px 12px;">Posts Page — Public archive: <a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener">{{ .Content.PostsPagePath }}</a></div>{{ end }}
+        {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert">{{ .Content.PostsPageWarning }}</p>{{ end }}
       </div>
-      {{ end }}
-      {{ if .Content.ShowTemplate }}
-      <div class="form-field">
-        <label class="field-label" for="entry-layout-template">Template</label>
-        <select id="entry-layout-template" name="layout_template_id">
-          <option value="" {{ if eq .Content.LayoutTemplateID "" }}selected{{ end }}>Direct content</option>
-          {{ range .Content.LayoutTemplates }}<option value="{{ .ID }}" {{ if eq $.Content.LayoutTemplateID .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}
-        </select>
-        {{ if .Content.LayoutTemplateError }}<p class="form-error" role="alert">{{ .Content.LayoutTemplateError }}</p>{{ end }}
-        <p class="field-desc">Layout templates define the reusable structural layout surrounding the content.</p>
+      <div class="admin-page-actions" style="align-self:flex-start;">
+        {{ if .Content.PublicURL }}<a class="button" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View</a>{{ end }}
+        <a class="button" href="{{ .Content.BackURL }}">Back</a>
+        <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
+        <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
       </div>
-      {{ end }}
-    </div>
-    <div class="form-actions">
-      <a class="button" href="{{ .Content.BackURL }}">Back</a>
-      <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
-       <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
-	       {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish">Unpublish</button>{{ end }}
     </div>
   </header>
-  <section class="card publishing-panel">
-    <h3 style="margin:0;">Publishing</h3>
-    <div class="form-actions">
-      <span>Status: <strong>{{ .Content.Status }}</strong></span>
-      {{ if .Content.HasScheduled }}<span>Publish: {{ .Content.ScheduledAt }} <button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button></span>{{ end }}
-    </div>
-    <div style="display:grid;gap:8px;max-width:480px;">
-      {{ if .Content.ShowVisibility }}
-      <label class="form-field">Visibility
-        <select name="visibility" id="entry-visibility">
-          <option value="public" {{ if eq .Content.Visibility "public" }}selected{{ end }}>Public</option>
-          <option value="private" {{ if eq .Content.Visibility "private" }}selected{{ end }}>Private</option>
-          <option value="password" {{ if eq .Content.Visibility "password" }}selected{{ end }}>Password Protected</option>
-        </select>
-      </label>
-      <label class="form-field" id="entry-password-field" {{ if ne .Content.Visibility "password" }}hidden{{ end }}>Password
-        <input type="password" name="password" placeholder="{{ if eq .Content.Visibility "password" }}Leave blank to keep{{ else }}Enter password{{ end }}">
-      </label>
-      {{ else }}
-      <input type="hidden" name="visibility" value="public">
-      {{ end }}
-      {{ if .Content.SupportsSticky }}
-      <label class="check-row"><input type="checkbox" name="sticky" value="1" {{ if .Content.Sticky }}checked{{ end }}> Sticky post (show first in lists)</label>
-      {{ end }}
-      <label class="form-field">Publish date/time
-        <input type="datetime-local" name="scheduled_at" value="{{ .Content.ScheduledAt }}">
-        <span class="field-desc">Leave empty to publish immediately. Time is in site timezone.</span>
-      </label>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <button class="button" type="submit" name="review_state" value="pending" formaction="{{ .Content.Action }}/submit-review" data-on:click__prevent="@post('{{ .Content.Action }}/submit-review', {contentType: 'form'})">Submit for Review</button>
-        {{ if .Content.HasScheduled }}
-        <button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Reschedule</button>
-        {{ else }}
-        <button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Schedule</button>
-        {{ end }}
-        {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish" data-on:click__prevent="@post('{{ .Content.Action }}/unpublish', {contentType: 'form'})">Unpublish</button>{{ end }}
+
+  <div role="tablist" aria-label="Entry sections" class="entry-tabs" style="display:flex; gap:0; border-bottom:1px solid var(--ui-border); margin-bottom:16px;">
+    <button type="button" role="tab" id="tab-btn-editor" aria-selected="true" aria-controls="tab-editor" data-tab="editor" class="entry-tab is-active">Editor</button>
+    <button type="button" role="tab" id="tab-btn-settings" aria-selected="false" aria-controls="tab-settings" data-tab="settings" class="entry-tab">Settings</button>
+    <button type="button" role="tab" id="tab-btn-seo" aria-selected="false" aria-controls="tab-seo" data-tab="seo" class="entry-tab">SEO</button>
+  </div>
+
+  <div id="tab-editor" role="tabpanel" aria-labelledby="tab-btn-editor">
+    {{ if .Content.ShowContent }}
+    <div class="editor-workbench">
+      <div class="editor-workspace">
+        <aside class="editor-panel block-library" aria-label="Block library">
+          <h2>Library</h2>
+          <div class="library-tabs" role="tablist">
+            <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-tab="blocks">Blocks</button>
+            <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="patterns">Patterns</button>
+          </div>
+          <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
+          <div id="block-catalog" data-library="blocks"></div>
+          <div id="pattern-catalog" data-library="patterns" hidden></div>
+        </aside>
+        <section class="editor-panel document-canvas" aria-label="Document">
+          <div class="editor-panel-heading"><h2>Document</h2></div>
+          <div id="document-tree"></div>
+          <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
+        </section>
+        <aside class="editor-panel block-inspector" aria-label="Inspector">
+          <h2>Inspector</h2>
+          <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
+        </aside>
       </div>
+      <section class="editor-preview-panel">
+        <div class="editor-preview-toolbar">
+          <div class="editor-mode-group">
+            <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
+            <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
+          </div>
+          <div class="editor-device-group">
+            <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
+            <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>
+            <button class="editor-device-btn" type="button" data-width="375px">Mobile</button>
+          </div>
+        </div>
+        <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
+      </section>
     </div>
-  </section>
-  <script>
-    (function(){
-      var vis = document.getElementById('entry-visibility');
-      var pwdField = document.getElementById('entry-password-field');
-      if (!vis || !pwdField) return;
-      function toggle(){ pwdField.hidden = vis.value !== 'password'; }
-      vis.addEventListener('change', toggle);
-    })();
-  </script>
-  {{ if .Content.SupportsComments }}
-  <section class="card">
-    <h3 style="margin:0 0 8px;">Discussion</h3>
-    <label class="check-row"><input type="checkbox" name="comments_enabled" value="1" {{ if .Content.CommentsEnabled }}checked{{ end }}> Allow comments</label>
-    <p class="field-desc">When enabled, visitors can post comments on the published version. Changes apply on next publish.</p>
-  </section>
-  {{ end }}
-  {{ if .Content.Hierarchical }}
-  <section class="card">
-    <h3 style="margin:0 0 8px;">Page Attributes</h3>
-    <label class="form-field">Parent
-      <select name="parent_entry_id" {{ if .Content.IsPostsPage }}disabled{{ end }}>
-        <option value="">No parent</option>
-        {{ range .Content.HierarchyParents }}<option value="{{ .ID }}" {{ if eq $.Content.ParentEntryID .ID }}selected{{ end }}>{{ .Label }}</option>{{ end }}
-      </select>
-    </label>
-    <label class="form-field">Order<input type="number" name="menu_order" min="0" step="1" value="{{ .Content.MenuOrder }}"></label>
-    {{ if .Content.IsPostsPage }}<p class="field-desc">The Posts Page cannot have a parent and cannot be used as a parent.</p>{{ end }}
-    {{ if .Content.HierarchyWarning }}<p class="form-warning" role="alert">{{ .Content.HierarchyWarning }}</p>{{ end }}
-  </section>
-  {{ end }}
-  {{ range .Content.TaxonomyPanels }}
-  {{ $panel := . }}
-  <div class="panel taxonomy-panel" class="card">
-    <h3 style="margin:0 0 8px;">{{ $panel.Taxonomy.PluralName }}</h3>
-    {{ if $panel.Taxonomy.Hierarchical }}
-      <div class="taxonomy-hierarchy">
-        {{ range $panel.Terms }}
-          <label class="check-row" style="--depth: {{ .Depth }}">
-            <input type="checkbox" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ .ID }}" {{ if index $panel.AssignedIDs .ID }}checked{{ end }}>
-            {{ .Name }} <small class="muted">({{ .Slug }})</small>
-          </label>
-        {{ end }}
-        {{ if eq (len $panel.Terms) 0 }}<p class="muted">No {{ $panel.Taxonomy.PluralName }} yet. <a href="{{ if eq $panel.Taxonomy.ID "category" }}/admin/posts/categories{{ else }}/admin/posts/tags{{ end }}">Manage</a></p>{{ end }}
-      </div>
     {{ else }}
-      <div class="form-field">
-        <label for="taxonomy-{{ $panel.Taxonomy.ID }}">Add {{ $panel.Taxonomy.PluralName }}</label>
-        <input type="text" id="taxonomy-{{ $panel.Taxonomy.ID }}" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ $panel.AssignedTagRaw }}" placeholder="comma separated">
-        <p class="field-desc">Separate with commas. Example: go, cms, performance</p>
-      </div>
+    <section class="admin-section">
+      <div class="notice notice-info" style="margin-bottom:12px;">This content type stores structured data only. Rich content editor is disabled.</div>
+      <h2>Content</h2>
+      {{ if .Content.CustomFields }}
+        {{ range .Content.CustomFields }}{{ $field := . }}
+        <div class="form-group">
+          {{ if eq .Type "boolean" }}
+          <input type="hidden" name="field_{{ .Key }}_present" value="true">
+          <label class="check-row"><input type="checkbox" name="field_{{ .Key }}" value="true" {{ if .Checked }}checked{{ end }}> {{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+          {{ else if eq .Type "textarea" }}
+          <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+          <textarea class="form-control" id="field-{{ .Key }}" name="field_{{ .Key }}" rows="4" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>{{ .Value }}</textarea>
+          {{ else if eq .Type "select" }}
+          <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+          <select class="form-control" id="field-{{ .Key }}" name="field_{{ .Key }}" {{ if .Required }}required{{ end }}><option value="">Select…</option>{{ range .Options }}<option value="{{ . }}" {{ if eq $field.Selected . }}selected{{ end }}>{{ . }}</option>{{ end }}</select>
+          {{ else if eq .Type "media" }}
+          <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+          <input id="field-{{ .Key }}" type="hidden" name="field_{{ .Key }}" value="{{ .Value }}">
+          <div class="social-image-field"><div class="social-image-preview" id="field-{{ .Key }}-preview">{{ if .Value }}<img src="/media/{{ .Value }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="form-help">No media selected</span>{{ end }}</div><div class="social-image-actions"><button class="button button-small" type="button" data-custom-media-picker="field-{{ .Key }}">Choose media</button><button class="button button-small button-danger" type="button" data-custom-media-remove="field-{{ .Key }}" {{ if not .Value }}hidden{{ end }}>Remove</button></div></div>
+          {{ else }}
+          <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+          <input class="form-control" id="field-{{ .Key }}" type="{{ if eq .Type "number" }}number{{ else if eq .Type "date" }}date{{ else if eq .Type "datetime" }}datetime-local{{ else if eq .Type "url" }}url{{ else if eq .Type "email" }}email{{ else }}text{{ end }}" name="field_{{ .Key }}" value="{{ .Value }}" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
+          {{ end }}
+          {{ if .HelpText }}<p class="form-help">{{ .HelpText }}</p>{{ end }}
+        </div>
+        {{ end }}
+      {{ else }}
+        <p class="muted">This content type stores structured data only. No fields configured.</p>
+      {{ end }}
+    </section>
     {{ end }}
   </div>
-  {{ end }}
-  <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
-  {{ if .Content.IsPostsPage }}<div class="posts-page-badge"><span style="font-weight:600;color:#4338ca;">Posts Page</span><span>Public archive: {{ .Content.PostsPagePath }}</span><a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener" class="button" style="margin-left:auto;">View archive</a></div>{{ end }}
-  {{ if .Content.HasUnpublishedChanges }}<div class="unpublished-badge"><strong>Unpublished changes</strong><span> — Public archive is using the previously published revision.</span> {{ if .Content.PublicURL }}<a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a>{{ end }}</div>{{ end }}
-  {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert" class="notice notice-warning">{{ .Content.PostsPageWarning }}</p>{{ end }}
-	{{ if .Content.Revisions }}
-	<section class="card">
-	  <h3 style="margin:0 0 8px;">Revision History</h3>
-	  {{ range .Content.Revisions }}<div style="display:flex;gap:8px;align-items:center;margin:6px 0;"><span>Revision {{ .Number }}: {{ .Title }} ({{ .Slug }}){{ if .Published }} <strong>Published</strong>{{ end }}</span><a class="button" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a><button class="button" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button></div>{{ end }}
-	</section>
-	{{ end }}
-  {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
-  {{ if .Content.ShowContent }}
-  <div class="editor-workspace">
-    <aside class="editor-panel block-library" aria-label="Block library">
-      <h2>Library</h2>
-      <div class="library-tabs" role="tablist">
-        <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-tab="blocks">Blocks</button>
-        <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="patterns">Patterns</button>
-      </div>
-      <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
-      <div id="block-catalog" data-library="blocks"></div>
-      <div id="pattern-catalog" data-library="patterns" hidden></div>
-    </aside>
-    <section class="editor-panel document-canvas" aria-label="Document">
-      <div class="editor-panel-heading"><h2>Document</h2></div>
-      <div id="document-tree"></div>
-      <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
-    </section>
-    <aside class="editor-panel block-inspector" aria-label="Inspector">
-      <h2>Inspector</h2>
-      <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
-    </aside>
-  </div>
-  {{ else }}
-  <div class="notice notice-info" style="margin:16px 0;">This content type stores structured data only. Rich content editor is disabled.</div>
-  {{ end }}
-  <section class="editor-preview-panel">
-    <div class="editor-preview-toolbar">
-      <div class="editor-mode-group">
-        <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
-        <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
-      </div>
-      <div class="editor-device-group">
-        <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
-        <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>
-        <button class="editor-device-btn" type="button" data-width="375px">Mobile</button>
-      </div>
+
+  <div id="tab-settings" role="tabpanel" aria-labelledby="tab-btn-settings" hidden>
+    <div class="admin-section" style="display:grid; gap:24px; max-width:720px;">
+      <section>
+        <h3>Publishing</h3>
+        <div style="display:grid; gap:12px;">
+          <p><strong>Status:</strong> {{ .Content.Status }} {{ if .Content.HasScheduled }}· Scheduled: {{ .Content.ScheduledAt }} <button class="button button-small button-danger" type="submit" formaction="{{ .Content.Action }}/cancel-schedule" data-on:click__prevent="@post('{{ .Content.Action }}/cancel-schedule', {contentType: 'form'})">Cancel Schedule</button>{{ end }}</p>
+          {{ if .Content.ShowVisibility }}
+          <div class="form-group"><label class="form-label" for="entry-visibility">Visibility</label><select class="form-control" name="visibility" id="entry-visibility"><option value="public" {{ if eq .Content.Visibility "public" }}selected{{ end }}>Public</option><option value="private" {{ if eq .Content.Visibility "private" }}selected{{ end }}>Private</option><option value="password" {{ if eq .Content.Visibility "password" }}selected{{ end }}>Password Protected</option></select></div>
+          <div class="form-group" id="entry-password-field" {{ if ne .Content.Visibility "password" }}hidden{{ end }}><label class="form-label">Password</label><input class="form-control" type="password" name="password" placeholder="{{ if eq .Content.Visibility "password" }}Leave blank to keep{{ else }}Enter password{{ end }}"></div>
+          {{ else }}<input type="hidden" name="visibility" value="public">{{ end }}
+          {{ if .Content.SupportsSticky }}<label class="check-row"><input type="checkbox" name="sticky" value="1" {{ if .Content.Sticky }}checked{{ end }}> Sticky post (show first in lists)</label>{{ end }}
+          <div class="form-group"><label class="form-label">Publish date/time</label><input class="form-control" type="datetime-local" name="scheduled_at" value="{{ .Content.ScheduledAt }}"><p class="form-help">Leave empty to publish immediately. Time is in site timezone.</p></div>
+          <div class="admin-page-actions" style="flex-wrap:wrap;">
+            <button class="button" type="submit" name="review_state" value="pending" formaction="{{ .Content.Action }}/submit-review" data-on:click__prevent="@post('{{ .Content.Action }}/submit-review', {contentType: 'form'})">Submit for Review</button>
+            {{ if .Content.HasScheduled }}<button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Reschedule</button>{{ else }}<button class="button" type="submit" formaction="{{ .Content.Action }}/schedule" data-on:click__prevent="@post('{{ .Content.Action }}/schedule', {contentType: 'form'})">Schedule</button>{{ end }}
+            {{ if eq .Content.Status "Published" }}<button class="button button-danger" type="submit" formaction="{{ .Content.Action }}/unpublish" data-on:click__prevent="@post('{{ .Content.Action }}/unpublish', {contentType: 'form'})">Unpublish</button>{{ end }}
+          </div>
+        </div>
+      </section>
+      <hr style="border:0; border-top:1px solid var(--ui-border);">
+      <section>
+        <h3>URL / Structure</h3>
+        <div style="display:grid; gap:12px;">
+          {{ if .Content.ShowSlug }}
+          <div class="form-group"><label class="form-label" for="entry-slug">Slug</label><input class="form-control" id="entry-slug" name="slug" value="{{ .Content.Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required></div>
+          {{ else }}
+          <input type="hidden" name="slug" value="{{ .Content.Slug }}" id="entry-slug">
+          <p class="form-help">Slug is generated automatically.</p>
+          {{ end }}
+          {{ if .Content.ShowSlug }}<p class="form-help">Permalink: <code>{{ .Content.PublicPath }}</code></p>{{ end }}
+          {{ if .Content.Hierarchical }}
+          <div class="form-group"><label class="form-label" for="parent_entry_id">Parent</label><select class="form-control" name="parent_entry_id" id="parent_entry_id" {{ if .Content.IsPostsPage }}disabled{{ end }}><option value="">No parent</option>{{ range .Content.HierarchyParents }}<option value="{{ .ID }}" {{ if eq $.Content.ParentEntryID .ID }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select></div>
+          <div class="form-group"><label class="form-label" for="menu_order">Order</label><input class="form-control" type="number" id="menu_order" name="menu_order" min="0" step="1" value="{{ .Content.MenuOrder }}"></div>
+          {{ if .Content.HierarchyWarning }}<p class="form-warning" role="alert">{{ .Content.HierarchyWarning }}</p>{{ end }}
+          {{ end }}
+        </div>
+      </section>
+      <hr style="border:0; border-top:1px solid var(--ui-border);">
+      <section>
+        <h3>Presentation</h3>
+        <div style="display:grid; gap:12px;">
+          {{ if .Content.ShowTemplate }}
+          <div class="form-group"><label class="form-label" for="entry-layout-template">Template</label><select class="form-control" id="entry-layout-template" name="layout_template_id">{{ if .Content.HasDefaultTemplate }}<option value="" {{ if eq .Content.LayoutTemplateID "" }}selected{{ end }}>Use default — {{ .Content.DefaultTemplateName }}</option>{{ else }}<option value="" {{ if eq .Content.LayoutTemplateID "" }}selected{{ end }}>No template — direct content</option>{{ end }}{{ range .Content.LayoutTemplates }}<option value="{{ .ID }}" {{ if eq $.Content.LayoutTemplateID .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}</select>{{ if .Content.LayoutTemplateError }}<p class="form-error" role="alert">{{ .Content.LayoutTemplateError }}</p>{{ end }}</div>
+          {{ end }}
+          {{ if .Content.ShowFeatured }}
+          <div class="form-group"><span class="form-label">Featured Image</span><div class="social-image-field"><div class="social-image-preview" id="entry-featured-preview">{{ if .Content.FeaturedMediaID }}<img src="/media/{{ .Content.FeaturedMediaID }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="form-help">No Featured Image</span>{{ end }}</div><div class="admin-page-actions"><button type="button" class="button button-small" id="entry-featured-choose">Choose image</button><button type="button" class="button button-small button-danger" id="entry-featured-remove" {{ if not .Content.FeaturedMediaID }}hidden{{ end }}>Remove</button></div></div></div>
+          {{ end }}
+        </div>
+      </section>
+      <hr style="border:0; border-top:1px solid var(--ui-border);">
+      <section>
+        <h3>Classification</h3>
+        {{ range .Content.TaxonomyPanels }}
+        {{ $panel := . }}
+        <div style="margin-bottom:16px;">
+          <h4 style="margin:0 0 8px; font-size:14px;">{{ $panel.Taxonomy.PluralName }}</h4>
+          {{ if $panel.Taxonomy.Hierarchical }}
+            <div class="taxonomy-hierarchy">
+              {{ range $panel.Terms }}
+                <label class="check-row" style="--depth: {{ .Depth }}"><input type="checkbox" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ .ID }}" {{ if index $panel.AssignedIDs .ID }}checked{{ end }}> {{ .Name }} <small class="muted">({{ .Slug }})</small></label>
+              {{ end }}
+              {{ if eq (len $panel.Terms) 0 }}<p class="muted">No {{ $panel.Taxonomy.PluralName }} yet.</p>{{ end }}
+            </div>
+          {{ else }}
+            <div class="form-group"><label class="form-label" for="taxonomy-{{ $panel.Taxonomy.ID }}">Add {{ $panel.Taxonomy.PluralName }}</label><input class="form-control" type="text" id="taxonomy-{{ $panel.Taxonomy.ID }}" name="taxonomy_{{ $panel.Taxonomy.ID }}" value="{{ $panel.AssignedTagRaw }}" placeholder="comma separated"><p class="form-help">Separate with commas.</p></div>
+          {{ end }}
+        </div>
+        {{ end }}
+      </section>
+      {{ if .Content.SupportsComments }}
+      <hr style="border:0; border-top:1px solid var(--ui-border);">
+      <section>
+        <h3>Discussion</h3>
+        <label class="check-row"><input type="checkbox" name="comments_enabled" value="1" {{ if .Content.CommentsEnabled }}checked{{ end }}> Allow comments</label>
+        <p class="form-help">When enabled, visitors can post comments on the published version.</p>
+      </section>
+      {{ end }}
+      {{ if .Content.ShowExcerpt }}
+      <hr style="border:0; border-top:1px solid var(--ui-border);">
+      <section>
+        <h3>Excerpt</h3>
+        <div class="form-group"><textarea class="form-control" id="entry-excerpt" name="excerpt" rows="3">{{ .Content.Excerpt }}</textarea><p class="form-help">Brief summary for listings.</p></div>
+      </section>
+      {{ end }}
+      {{ if .Content.CustomFields }}
+        {{ if .Content.ShowContent }}
+        <hr style="border:0; border-top:1px solid var(--ui-border);">
+        <section>
+          <h3>Additional fields</h3>
+          {{ range .Content.CustomFields }}{{ $field := . }}
+          <div class="form-group">
+            {{ if eq .Type "boolean" }}
+            <input type="hidden" name="field_{{ .Key }}_present" value="true">
+            <label class="check-row"><input type="checkbox" name="field_{{ .Key }}" value="true" {{ if .Checked }}checked{{ end }}> {{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+            {{ else if eq .Type "textarea" }}
+            <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+            <textarea class="form-control" id="field-{{ .Key }}" name="field_{{ .Key }}" rows="4" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>{{ .Value }}</textarea>
+            {{ else if eq .Type "select" }}
+            <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+            <select class="form-control" id="field-{{ .Key }}" name="field_{{ .Key }}" {{ if .Required }}required{{ end }}><option value="">Select…</option>{{ range .Options }}<option value="{{ . }}" {{ if eq $field.Selected . }}selected{{ end }}>{{ . }}</option>{{ end }}</select>
+            {{ else if eq .Type "media" }}
+            <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+            <input id="field-{{ .Key }}" type="hidden" name="field_{{ .Key }}" value="{{ .Value }}">
+            <div class="social-image-field"><div class="social-image-preview" id="field-{{ .Key }}-preview">{{ if .Value }}<img src="/media/{{ .Value }}/original" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="form-help">No media selected</span>{{ end }}</div><div class="admin-page-actions"><button class="button button-small" type="button" data-custom-media-picker="field-{{ .Key }}">Choose media</button><button class="button button-small button-danger" type="button" data-custom-media-remove="field-{{ .Key }}" {{ if not .Value }}hidden{{ end }}>Remove</button></div></div>
+            {{ else }}
+            <label class="form-label" for="field-{{ .Key }}">{{ .Label }}{{ if .Required }} <span aria-hidden="true">*</span>{{ end }}</label>
+            <input class="form-control" id="field-{{ .Key }}" type="{{ if eq .Type "number" }}number{{ else if eq .Type "date" }}date{{ else if eq .Type "datetime" }}datetime-local{{ else if eq .Type "url" }}url{{ else if eq .Type "email" }}email{{ else }}text{{ end }}" name="field_{{ .Key }}" value="{{ .Value }}" placeholder="{{ .Placeholder }}" {{ if .Required }}required{{ end }}>
+            {{ end }}
+            {{ if .HelpText }}<p class="form-help">{{ .HelpText }}</p>{{ end }}
+          </div>
+          {{ end }}
+        </section>
+        {{ end }}
+      {{ end }}
+      <hr style="border:0; border-top:1px solid var(--ui-border);">
+      <section>
+        <h3>Revisions</h3>
+        {{ if .Content.Revisions }}
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Revision</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+              <tbody>
+                {{ range $idx, $rev := .Content.Revisions }}
+                  {{ if lt $idx 5 }}
+                  <tr>
+                    <td>Revision {{ .Number }}</td>
+                    <td>{{ if .Published }}<span class="status-badge status-badge--published">Published</span>{{ else }}<span class="muted">Draft</span>{{ end }}</td>
+                    <td class="muted" style="font-size:12.5px;">{{ .CreatedAt }}</td>
+                    <td><div class="admin-page-actions" style="gap:6px;"><a class="button button-small" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a>{{ if not .Published }}<button class="button button-small" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button>{{ end }}</div></td>
+                  </tr>
+                  {{ end }}
+                {{ end }}
+              </tbody>
+            </table>
+          </div>
+          {{ if gt (len .Content.Revisions) 5 }}<p style="margin:8px 0 0;"><a href="{{ .Content.Action }}/revisions" class="button button-small">View all {{ len .Content.Revisions }} revisions</a></p>{{ end }}
+        {{ else }}
+          <p class="muted">No revisions yet.</p>
+        {{ end }}
+      </section>
     </div>
-    <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
-  </section>
-  {{ if .Content.ShowSEO }}
-  <section class="editor-seo-panel" data-site-url="{{ .Content.SiteURL }}" data-public-path="{{ .Content.PublicPath }}">
-    <details class="editor-seo-details" {{ if or .Content.SEOTitle .Content.SEODescription .Content.CanonicalURL }}open{{ end }}>
-      <summary>SEO</summary>
-      <div class="editor-seo-fields">
-        <label class="editor-field">
-          <span class="editor-field-label">SEO Title</span>
-          <input id="entry-seo-title" name="seo_title" value="{{ .Content.SEOTitle }}" maxlength="120">
-          <span class="editor-field-meta"><span id="seo-title-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~50–60 characters.</span></span>
-        </label>
-        <label class="editor-field">
-          <span class="editor-field-label">Meta Description</span>
-          <textarea id="entry-seo-description" name="seo_description" rows="3" maxlength="320">{{ .Content.SEODescription }}</textarea>
-          <span class="editor-field-meta"><span id="seo-desc-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~150–160 characters.</span></span>
-        </label>
-        <label class="editor-field">
-          <span class="editor-field-label">Canonical URL</span>
-          <input id="entry-canonical-url" name="canonical_url" value="{{ .Content.CanonicalURL }}" placeholder="https://example.com/path or /path">
-          <span class="editor-field-meta"><span class="seo-hint">Optional. Absolute http(s) URL or a root-relative path.</span></span>
-        </label>
-        <p id="canonical-warning" class="form-warning" role="alert" hidden>This canonical URL points to a different domain. External canonicals are allowed (for example for syndicated content) — make sure this is intentional.</p>
-        <div class="editor-field editor-field-row">
-          <label class="editor-field">
-            <span class="editor-field-label">Indexing</span>
-            <select id="entry-seo-robots-index" name="seo_robots_index">
-              <option value="inherit" {{ if eq .Content.RobotsIndex "inherit" }}selected{{ end }}>Inherit</option>
-              <option value="1" {{ if eq .Content.RobotsIndex "1" }}selected{{ end }}>Index</option>
-              <option value="0" {{ if eq .Content.RobotsIndex "0" }}selected{{ end }}>Noindex</option>
-            </select>
-          </label>
-          <label class="editor-field">
-            <span class="editor-field-label">Links</span>
-            <select id="entry-seo-robots-follow" name="seo_robots_follow">
-              <option value="inherit" {{ if eq .Content.RobotsFollow "inherit" }}selected{{ end }}>Inherit</option>
-              <option value="1" {{ if eq .Content.RobotsFollow "1" }}selected{{ end }}>Follow</option>
-              <option value="0" {{ if eq .Content.RobotsFollow "0" }}selected{{ end }}>Nofollow</option>
-            </select>
-          </label>
-        </div>
-        <label class="editor-field">
-          <span class="editor-field-label">Structured Data</span>
-          <select id="entry-schema-mode" name="schema_mode">
-            <option value="" {{ if eq .Content.SchemaMode "" }}selected{{ end }}>Automatic</option>
-            <option value="disabled" {{ if eq .Content.SchemaMode "disabled" }}selected{{ end }}>Disabled</option>
-            <option value="webpage" {{ if eq .Content.SchemaMode "webpage" }}selected{{ end }}>WebPage</option>
-            <option value="aboutpage" {{ if eq .Content.SchemaMode "aboutpage" }}selected{{ end }}>AboutPage</option>
-            <option value="contactpage" {{ if eq .Content.SchemaMode "contactpage" }}selected{{ end }}>ContactPage</option>
-          </select>
-          <span class="editor-field-meta"><span class="seo-hint">Automatic: Page → WebPage, Post → BlogPosting.</span></span>
-        </label>
-        <div class="seo-serp" aria-label="Search result preview">
-          <div class="seo-serp-title" id="serp-title"></div>
-          <div class="seo-serp-url" id="serp-url"></div>
-          <div class="seo-serp-description" id="serp-description"></div>
-        </div>
-      </div>
-    </details>
-    <details class="editor-social-details" open>
-      <summary>Social</summary>
-      <div class="editor-social-fields">
-        <div class="form-field">
-          <span class="field-label">Social Image</span>
-          <div class="social-image-field">
-            <div class="social-image-preview" id="entry-social-preview">
-              {{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="field-desc">No Social Image selected</span>{{ end }}
-            </div>
-            <div class="social-image-actions">
-              <button type="button" class="button" id="entry-social-choose">Choose image</button>
-              <button type="button" class="button button-danger" id="entry-social-remove" {{ if not .Content.SocialMediaID }}hidden{{ end }}>Remove</button>
-            </div>
-          </div>
-          <p class="field-desc">Without selection the Featured Image is used, falling back to the global default social image. The image is cropped to 1200×630.</p>
-        </div>
+  </div>
 
+  <div id="tab-seo" role="tabpanel" aria-labelledby="tab-btn-seo" hidden>
+    {{ if .Content.ShowSEO }}
+    <section class="editor-seo-panel" data-site-url="{{ .Content.SiteURL }}" data-public-path="{{ .Content.PublicPath }}">
+      <details class="editor-seo-details" {{ if or .Content.SEOTitle .Content.SEODescription .Content.CanonicalURL }}open{{ end }}>
+        <summary>SEO</summary>
+        <div class="editor-seo-fields">
+          <label class="editor-field"><span class="editor-field-label">SEO Title</span><input class="form-control" id="entry-seo-title" name="seo_title" value="{{ .Content.SEOTitle }}" maxlength="120"><span class="editor-field-meta"><span id="seo-title-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~50–60 characters.</span></span></label>
+          <label class="editor-field"><span class="editor-field-label">Meta Description</span><textarea class="form-control" id="entry-seo-description" name="seo_description" rows="3" maxlength="320">{{ .Content.SEODescription }}</textarea><span class="editor-field-meta"><span id="seo-desc-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~150–160 characters.</span></span></label>
+          <label class="editor-field"><span class="editor-field-label">Canonical URL</span><input class="form-control" id="entry-canonical-url" name="canonical_url" value="{{ .Content.CanonicalURL }}" placeholder="https://example.com/path or /path"><span class="editor-field-meta"><span class="seo-hint">Optional. Absolute http(s) URL or a root-relative path.</span></span></label>
+          <p id="canonical-warning" class="form-warning" role="alert" hidden>This canonical URL points to a different domain.</p>
+          <div class="editor-field editor-field-row">
+            <label class="editor-field"><span class="editor-field-label">Indexing</span><select class="form-control" id="entry-seo-robots-index" name="seo_robots_index"><option value="inherit" {{ if eq .Content.RobotsIndex "inherit" }}selected{{ end }}>Inherit</option><option value="1" {{ if eq .Content.RobotsIndex "1" }}selected{{ end }}>Index</option><option value="0" {{ if eq .Content.RobotsIndex "0" }}selected{{ end }}>Noindex</option></select></label>
+            <label class="editor-field"><span class="editor-field-label">Links</span><select class="form-control" id="entry-seo-robots-follow" name="seo_robots_follow"><option value="inherit" {{ if eq .Content.RobotsFollow "inherit" }}selected{{ end }}>Inherit</option><option value="1" {{ if eq .Content.RobotsFollow "1" }}selected{{ end }}>Follow</option><option value="0" {{ if eq .Content.RobotsFollow "0" }}selected{{ end }}>Nofollow</option></select></label>
+          </div>
+          <label class="editor-field"><span class="editor-field-label">Structured Data</span><select class="form-control" id="entry-schema-mode" name="schema_mode"><option value="" {{ if eq .Content.SchemaMode "" }}selected{{ end }}>Automatic</option><option value="disabled" {{ if eq .Content.SchemaMode "disabled" }}selected{{ end }}>Disabled</option><option value="webpage" {{ if eq .Content.SchemaMode "webpage" }}selected{{ end }}>WebPage</option><option value="aboutpage" {{ if eq .Content.SchemaMode "aboutpage" }}selected{{ end }}>AboutPage</option><option value="contactpage" {{ if eq .Content.SchemaMode "contactpage" }}selected{{ end }}>ContactPage</option></select><span class="editor-field-meta"><span class="seo-hint">Automatic: Page → WebPage, Post → BlogPosting.</span></span></label>
+          <div class="seo-serp" aria-label="Search result preview"><div class="seo-serp-title" id="serp-title"></div><div class="seo-serp-url" id="serp-url"></div><div class="seo-serp-description" id="serp-description"></div></div>
+        </div>
+      </details>
+      <details class="editor-social-details" open><summary>Social</summary><div class="editor-social-fields">
+        <div class="form-group"><span class="form-label">Social Image</span><div class="social-image-field"><div class="social-image-preview" id="entry-social-preview">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="form-help">No Social Image selected</span>{{ end }}</div><div class="admin-page-actions"><button type="button" class="button button-small" id="entry-social-choose">Choose image</button><button type="button" class="button button-small button-danger" id="entry-social-remove" {{ if not .Content.SocialMediaID }}hidden{{ end }}>Remove</button></div></div><p class="form-help">Without selection the Featured Image is used.</p></div>
         <div class="social-previews" aria-label="Social previews">
-          <div class="social-preview social-preview--facebook">
-            <h4>Facebook / LinkedIn</h4>
-            <div class="social-card" style="border:1px solid #dadde1;border-radius:8px;overflow:hidden;max-width:500px;background:#fff;">
-              <div id="social-preview-fb-image" style="width:100%;aspect-ratio:1200/630;background:#f0f2f5;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-                {{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}
-              </div>
-              <div style="padding:10px 12px;background:#f0f2f5;">
-                <div id="social-preview-fb-url" class="social-card__url" style="font-size:12px;color:#606770;text-transform:uppercase;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-                <div id="social-preview-fb-title" class="social-card__title" style="font-size:16px;font-weight:600;color:#1d2129;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-                <div id="social-preview-fb-desc" class="social-card__desc" style="font-size:14px;color:#606770;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"></div>
-              </div>
-            </div>
-          </div>
-          <div class="social-preview social-preview--twitter" style="margin-top:16px;">
-            <h4>X (Twitter)</h4>
-            <div class="social-card social-card--twitter" style="border:1px solid #e1e8ed;border-radius:12px;overflow:hidden;max-width:500px;background:#fff;">
-              <div id="social-preview-tw-image" style="width:100%;aspect-ratio:1200/630;background:#f7f9f9;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-                {{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}
-              </div>
-              <div style="padding:12px;">
-                <div id="social-preview-tw-title" class="social-card__title" style="font-size:15px;font-weight:700;color:#0f1419;line-height:20px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-                <div id="social-preview-tw-desc" class="social-card__desc" style="font-size:14px;color:#536471;line-height:18px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"></div>
-                <div id="social-preview-tw-url" class="social-card__url" style="font-size:13px;color:#536471;margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
-              </div>
-            </div>
-          </div>
+          <div class="social-preview social-preview--facebook"><h4>Facebook / LinkedIn</h4><div class="social-card" style="border:1px solid #dadde1;border-radius:8px;overflow:hidden;max-width:500px;background:#fff;"><div id="social-preview-fb-image" style="width:100%;aspect-ratio:1200/630;background:#f0f2f5;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}</div><div style="padding:10px 12px;background:#f0f2f5;"><div id="social-preview-fb-url" class="social-card__url" style="font-size:12px;color:#606770;text-transform:uppercase;"></div><div id="social-preview-fb-title" class="social-card__title" style="font-size:16px;font-weight:600;color:#1d2129;"></div><div id="social-preview-fb-desc" class="social-card__desc" style="font-size:14px;color:#606770;"></div></div></div></div>
+          <div class="social-preview social-preview--twitter" style="margin-top:16px;"><h4>X (Twitter)</h4><div class="social-card social-card--twitter" style="border:1px solid #e1e8ed;border-radius:12px;overflow:hidden;max-width:500px;background:#fff;"><div id="social-preview-tw-image" style="width:100%;aspect-ratio:1200/630;background:#f7f9f9;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}</div><div style="padding:12px;"><div id="social-preview-tw-title" style="font-size:15px;font-weight:700;"></div><div id="social-preview-tw-desc" style="font-size:14px;"></div><div id="social-preview-tw-url" style="font-size:13px;"></div></div></div></div>
         </div>
-      </div>
-    </details>
-  </section>
+      </div></details>
+    </section>
+    {{ else }}
+    <p class="muted">SEO not available for this content type.</p>
+    {{ end }}
+  </div>
+
   <script>
-    (function () {
-      var panel = document.querySelector('.editor-seo-panel');
-      if (!panel) return;
-      var titleInput = document.getElementById('entry-seo-title');
-      var descInput = document.getElementById('entry-seo-description');
-      var canonicalInput = document.getElementById('entry-canonical-url');
-      var canonicalWarning = document.getElementById('canonical-warning');
-      var titleEntry = document.getElementById('entry-title');
-      var excerptEntry = document.getElementById('entry-excerpt');
-      var titleCount = document.getElementById('seo-title-count');
-      var descCount = document.getElementById('seo-desc-count');
-      var serpTitle = document.getElementById('serp-title');
-      var serpURL = document.getElementById('serp-url');
-      var serpDesc = document.getElementById('serp-description');
-      var siteURL = panel.getAttribute('data-site-url') || '';
-      var publicPath = panel.getAttribute('data-public-path') || '/';
-      var socialInput = document.getElementById('entry-social-media-id');
-      var featuredInput = document.getElementById('entry-featured-media-id');
-      var socialPreview = document.getElementById('entry-social-preview');
-      var socialChoose = document.getElementById('entry-social-choose');
-      var socialRemove = document.getElementById('entry-social-remove');
-      var fbImage = document.getElementById('social-preview-fb-image');
-      var fbTitle = document.getElementById('social-preview-fb-title');
-      var fbDesc = document.getElementById('social-preview-fb-desc');
-      var fbUrl = document.getElementById('social-preview-fb-url');
-      var twImage = document.getElementById('social-preview-tw-image');
-      var twTitle = document.getElementById('social-preview-tw-title');
-      var twDesc = document.getElementById('social-preview-tw-desc');
-      var twUrl = document.getElementById('social-preview-tw-url');
-
-      function stripTrailingSlash(value) { return value.replace(/\/+$/, ''); }
-
-      function resolvedTitle() {
-        return titleInput.value.trim() || (titleEntry ? titleEntry.value.trim() : '') || 'Untitled';
-      }
-      function resolvedDesc() {
-        return descInput.value.trim() || (excerptEntry ? excerptEntry.value.trim() : '') || 'No description yet.';
-      }
-      function resolvedUrl() {
-        var override = canonicalInput.value.trim();
-        if (override) {
-          if (/^https?:\/\//i.test(override)) return override;
-          if (override.charAt(0) === '/') return stripTrailingSlash(siteURL) + override;
-          return override;
-        }
-        return stripTrailingSlash(siteURL) + publicPath;
-      }
-      function updateCounts() {
-        if (titleCount) {
-          var n = titleInput.value.length;
-          titleCount.textContent = n + ' characters';
-          titleCount.classList.toggle('is-over', n > 60);
-        }
-        if (descCount) {
-          var m = descInput.value.length;
-          descCount.textContent = m + ' characters';
-          descCount.classList.toggle('is-over', m > 160);
+    (function(){
+      const tabs = document.querySelectorAll('[role="tab"]');
+      const panels = document.querySelectorAll('[role="tabpanel"]');
+      function activate(id, push){
+        tabs.forEach(t=>{
+          const sel = t.getAttribute('aria-controls')===id;
+          t.setAttribute('aria-selected', sel?'true':'false');
+          t.classList.toggle('is-active', sel);
+        });
+        panels.forEach(p=>{
+          const show = p.id===id;
+          p.hidden = !show;
+        });
+        if(push){
+          history.replaceState(null,'','#'+id.replace('tab-',''));
         }
       }
-
-      function updateCanonicalWarning() {
-        if (!canonicalWarning) return;
-        var value = canonicalInput.value.trim();
-        var external = false;
-        if (/^https?:\/\//i.test(value) && siteURL) {
-          try {
-            var siteHost = new URL(siteURL).hostname;
-            var canonicalHost = new URL(value).hostname;
-            external = !!siteHost && !!canonicalHost && siteHost !== canonicalHost;
-          } catch (e) { external = false; }
-        }
-        canonicalWarning.hidden = !external;
-      }
-
-      function updateSerp() {
-        var title = resolvedTitle();
-        serpTitle.textContent = title;
-        var desc = resolvedDesc();
-        serpDesc.textContent = desc;
-        serpURL.textContent = resolvedUrl();
-        updateCanonicalWarning();
-      }
-
-      function updateSocialPreview() {
-        var title = resolvedTitle();
-        var desc = resolvedDesc();
-        var url = resolvedUrl();
-        // URL display in previews (host only for FB)
-        var urlForDisplay = url.replace(/^https?:\/\//, '');
-        if (fbTitle) fbTitle.textContent = title;
-        if (fbDesc) fbDesc.textContent = desc;
-        if (fbUrl) fbUrl.textContent = urlForDisplay;
-        if (twTitle) twTitle.textContent = title;
-        if (twDesc) twDesc.textContent = desc;
-        if (twUrl) twUrl.textContent = urlForDisplay;
-        // Image handling: social → featured fallback is visual only; server decides final fallback.
-        var imageId = socialInput ? socialInput.value.trim() : '';
-        var fallbackId = featuredInput ? featuredInput.value.trim() : '';
-        var chosenId = imageId || fallbackId;
-        var imageSrc = chosenId ? '/media/' + chosenId + '/social' : '';
-        // Fallback to original if social variant missing: try social then original via onerror.
-        function setPreviewImage(container, src) {
-          if (!container) return;
-          if (!src) {
-            container.innerHTML = '<span style="color:#8a8d91;">No image</span>';
-            return;
-          }
-          // If social variant 404s, browser will show broken image but we keep placeholder text fallback via onerror.
-          container.innerHTML = '<img src="' + src + '" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.onerror=null;this.src=\'' + src.replace('/social', '/original') + '\';">';
-        }
-        setPreviewImage(fbImage, imageSrc);
-        setPreviewImage(twImage, imageSrc);
-        // Picker preview
-        if (socialPreview) {
-          if (imageId) {
-            socialPreview.innerHTML = '<img src="/media/' + imageId + '/social" alt="" style="max-width:100%;height:auto;" onerror="this.onerror=null;this.src=\'/media/' + imageId + '/original\';">';
-          } else {
-            socialPreview.innerHTML = '<span class="field-desc">No Social Image selected — Featured Image/global fallback will be used.</span>';
-          }
-        }
-        if (socialRemove) socialRemove.hidden = !imageId;
-      }
-
-      [titleInput, descInput, canonicalInput].forEach(function (el) {
-        if (el) el.addEventListener('input', function () { updateCounts(); updateSerp(); updateSocialPreview(); });
+      tabs.forEach(t=>{
+        t.addEventListener('click', ()=> activate(t.getAttribute('aria-controls'), true));
       });
-      if (titleEntry) titleEntry.addEventListener('input', function(){ updateSerp(); updateSocialPreview(); });
-      if (excerptEntry) excerptEntry.addEventListener('input', function(){ updateSerp(); updateSocialPreview(); });
-      if (socialChoose) {
-        socialChoose.addEventListener('click', function(){
-          if (!window.openMediaPicker) return;
-          window.openMediaPicker({ onSelect: function(asset){
-            if (socialInput) socialInput.value = asset.id;
-            updateSocialPreview();
-          }});
-        });
+      // Hash init
+      let initial = location.hash.replace('#','');
+      if(initial==='editor'||initial==='settings'||initial==='seo') activate('tab-'+initial, false);
+      else activate('tab-editor', false);
+      window.addEventListener('hashchange', ()=>{
+        let h=location.hash.replace('#','');
+        if(h==='editor'||h==='settings'||h==='seo') activate('tab-'+h,false);
+      });
+      // Validation: if error mentions slug/parent/order/template -> settings, canonical/robots -> seo
+      const errEl = document.getElementById('editor-error');
+      if(errEl && !errEl.hidden && errEl.textContent){
+        const txt = errEl.textContent.toLowerCase();
+        if(txt.includes('slug')||txt.includes('parent')||txt.includes('template')||txt.includes('order')){
+          activate('tab-settings', true);
+        } else if(txt.includes('canonical')||txt.includes('robots')||txt.includes('seo')){
+          activate('tab-seo', true);
+        }
       }
-      if (socialRemove) {
-        socialRemove.addEventListener('click', function(){
-          if (socialInput) socialInput.value = '';
-          updateSocialPreview();
-        });
-      }
-      updateCounts();
-      updateSerp();
-      updateSocialPreview();
+      // Visibility toggle
+      const vis=document.getElementById('entry-visibility'); const pwd=document.getElementById('entry-password-field');
+      if(vis&&pwd){ vis.addEventListener('change',()=>{pwd.hidden=vis.value!=='password';}); }
     })();
   </script>
-  {{ end }}
+
+  <script>
+    (function(){
+      var panel=document.querySelector('.editor-seo-panel'); if(!panel) return;
+      var titleInput=document.getElementById('entry-seo-title'); var descInput=document.getElementById('entry-seo-description'); var canonicalInput=document.getElementById('entry-canonical-url'); var canonicalWarning=document.getElementById('canonical-warning'); var titleEntry=document.getElementById('entry-title'); var excerptEntry=document.getElementById('entry-excerpt'); var titleCount=document.getElementById('seo-title-count'); var descCount=document.getElementById('seo-desc-count'); var serpTitle=document.getElementById('serp-title'); var serpURL=document.getElementById('serp-url'); var serpDesc=document.getElementById('serp-description'); var siteURL=panel.getAttribute('data-site-url')||''; var publicPath=panel.getAttribute('data-public-path')||'/'; var socialInput=document.getElementById('entry-social-media-id'); var featuredInput=document.getElementById('entry-featured-media-id'); var socialPreview=document.getElementById('entry-social-preview'); var socialChoose=document.getElementById('entry-social-choose'); var socialRemove=document.getElementById('entry-social-remove'); var fbImage=document.getElementById('social-preview-fb-image'); var fbTitle=document.getElementById('social-preview-fb-title'); var fbDesc=document.getElementById('social-preview-fb-desc'); var fbUrl=document.getElementById('social-preview-fb-url'); var twImage=document.getElementById('social-preview-tw-image'); var twTitle=document.getElementById('social-preview-tw-title'); var twDesc=document.getElementById('social-preview-tw-desc'); var twUrl=document.getElementById('social-preview-tw-url');
+      function stripTrailingSlash(v){return v.replace(/\/+$/,'');}
+      function resolvedTitle(){return titleInput.value.trim()||(titleEntry?titleEntry.value.trim():'')||'Untitled';}
+      function resolvedDesc(){return descInput.value.trim()||(excerptEntry?excerptEntry.value.trim():'')||'No description yet.';}
+      function resolvedUrl(){var o=canonicalInput.value.trim(); if(o){if(/^https?:\/\//i.test(o)) return o; if(o.charAt(0)==='/') return stripTrailingSlash(siteURL)+o; return o;} return stripTrailingSlash(siteURL)+publicPath;}
+      function updateCounts(){ if(titleCount){var n=titleInput.value.length; titleCount.textContent=n+' characters'; titleCount.classList.toggle('is-over',n>60);} if(descCount){var m=descInput.value.length; descCount.textContent=m+' characters'; descCount.classList.toggle('is-over',m>160);}}
+      function updateCanonicalWarning(){ if(!canonicalWarning) return; var v=canonicalInput.value.trim(); var ext=false; if(/^https?:\/\//i.test(v)&&siteURL){try{var sh=new URL(siteURL).hostname; var ch=new URL(v).hostname; ext=!!sh&&!!ch&&sh!==ch;}catch(e){ext=false;}} canonicalWarning.hidden=!ext;}
+      function updateSerp(){ var t=resolvedTitle(); serpTitle.textContent=t; var d=resolvedDesc(); serpDesc.textContent=d; serpURL.textContent=resolvedUrl(); updateCanonicalWarning();}
+      function updateSocialPreview(){ var t=resolvedTitle(); var d=resolvedDesc(); var u=resolvedUrl(); var ud=u.replace(/^https?:\/\//,''); if(fbTitle) fbTitle.textContent=t; if(fbDesc) fbDesc.textContent=d; if(fbUrl) fbUrl.textContent=ud; if(twTitle) twTitle.textContent=t; if(twDesc) twDesc.textContent=d; if(twUrl) twUrl.textContent=ud; var iid=socialInput?socialInput.value.trim():''; var fid=featuredInput?featuredInput.value.trim():''; var cid=iid||fid; var src=cid?'/media/'+cid+'/social':''; function setPreviewImage(c,s){ if(!c) return; if(!s){c.innerHTML='<span style="color:#8a8d91;">No image</span>'; return;} c.innerHTML='<img src="'+s+'" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.onerror=null;this.src=\''+s.replace('/social','/original')+'\';">';} setPreviewImage(fbImage,src); setPreviewImage(twImage,src); if(socialPreview){ if(iid){socialPreview.innerHTML='<img src="/media/'+iid+'/social" alt="" style="max-width:100%;height:auto;" onerror="this.onerror=null;this.src=\'/media/'+iid+'/original\';">';} else {socialPreview.innerHTML='<span class="form-help">No Social Image selected — Featured Image/global fallback will be used.</span>';}} if(socialRemove) socialRemove.hidden=!iid;}
+      [titleInput,descInput,canonicalInput].forEach(function(el){ if(el) el.addEventListener('input',function(){updateCounts(); updateSerp(); updateSocialPreview();});}); if(titleEntry) titleEntry.addEventListener('input',function(){updateSerp(); updateSocialPreview();}); if(excerptEntry) excerptEntry.addEventListener('input',function(){updateSerp(); updateSocialPreview();}); if(socialChoose){socialChoose.addEventListener('click',function(){ if(!window.openMediaPicker) return; window.openMediaPicker({onSelect:function(a){ if(socialInput) socialInput.value=a.id; updateSocialPreview();}});});} if(socialRemove){socialRemove.addEventListener('click',function(){ if(socialInput) socialInput.value=''; updateSocialPreview();});} updateCounts(); updateSerp(); updateSocialPreview();
+    })();
+  </script>
 </form>
 <script>
   document.querySelectorAll('[data-custom-media-picker]').forEach(function (button) {
@@ -497,7 +365,7 @@
       var input = document.getElementById(id);
       var preview = document.getElementById(id + '-preview');
       if (input) input.value = '';
-      if (preview) preview.innerHTML = '<span class="field-desc">No media selected</span>';
+      if (preview) preview.innerHTML = '<span class="form-help">No media selected</span>';
       button.hidden = true;
     });
   });

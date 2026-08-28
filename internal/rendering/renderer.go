@@ -146,6 +146,8 @@ type RenderContext struct {
 }
 
 type FormReader interface {
+	ResolveForm(context.Context, string) forms.FormResolution
+	// GetActiveForm is deprecated; prefer ResolveForm.
 	GetActiveForm(context.Context, string) (forms.FormView, bool)
 }
 
@@ -404,57 +406,73 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 
 var publicFormTemplate = template.Must(template.New("public-form").Parse(`<form id="form-{{ .InstanceID }}" method="post" action="/_stratum/forms/{{ .Form.ID }}" class="stratum-form"><input type="hidden" name="return_to" value="{{ .ReturnTo }}"><div class="stratum-form-honeypot" aria-hidden="true"><label for="form-{{ .InstanceID }}-website">Leave this field empty</label><input id="form-{{ .InstanceID }}-website" name="website_confirm" tabindex="-1" autocomplete="off"></div>{{ range .Form.Fields }}<div class="stratum-form-field stratum-form-field-{{ .Type }}">{{ if eq .Type "checkbox" }}<label for="form-{{ $.InstanceID }}-field-{{ .ID }}"><input id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}" type="checkbox" value="1"{{ if .Required }} required{{ end }}> {{ .Label }}</label>{{ else }}<label for="form-{{ $.InstanceID }}-field-{{ .ID }}">{{ .Label }}</label>{{ if eq .Type "textarea" }}<textarea id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}" placeholder="{{ .Placeholder }}" maxlength="10000"{{ if .Required }} required{{ end }}></textarea>{{ else if eq .Type "select" }}<select id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}"{{ if .Required }} required{{ end }}><option value="">Select…</option>{{ range .Options }}<option value="{{ . }}">{{ . }}</option>{{ end }}</select>{{ else }}<input id="form-{{ $.InstanceID }}-field-{{ .ID }}" name="{{ .Key }}" type="{{ .Type }}" placeholder="{{ .Placeholder }}" maxlength="{{ if eq .Type "email" }}320{{ else }}500{{ end }}"{{ if .Required }} required{{ end }}>{{ end }}{{ end }}</div>{{ end }}<button type="submit">{{ .Form.SubmitLabel }}</button></form>`))
 
-type formGetter interface {
-	Get(ctx context.Context, id string) (forms.Form, error)
-}
-
 type formRenderer struct{}
 
 func (f *formRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
 	formID, _ := node.Settings["formId"].(string)
-	if formID == "" || rc.FormReader == nil {
+	if rc.FormReader == nil {
 		if rc.IsPreview || rc.Mode == ModePreview {
 			return template.HTML(`<div class="block-placeholder">Form unavailable</div>`), nil
 		}
 		return "", nil
 	}
-	view, ok := rc.FormCache[formID]
-	if !ok {
-		view, ok = rc.FormReader.GetActiveForm(ctx, formID)
-		if ok && rc.FormCache != nil {
+	if formID == "" {
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<div class="block-placeholder">Form unavailable</div>`), nil
+		}
+		return "", nil
+	}
+	// Fast path via cache for active forms.
+	if cached, ok := rc.FormCache[formID]; ok {
+		view := cached
+		if rc.FormResult.SuccessFormID == formID {
+			var out bytes.Buffer
+			_ = template.Must(template.New("success").Parse(`<div id="form-{{ .ID }}" class="stratum-form-success" role="status">{{ .Message }}</div>`)).Execute(&out, map[string]string{"ID": safeDOMToken(node.ID), "Message": view.SuccessMessage})
+			return template.HTML(out.String()), nil
+		}
+		returnTo := rc.Route.Path
+		if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+			returnTo = "/"
+		}
+		var out bytes.Buffer
+		err := publicFormTemplate.Execute(&out, map[string]any{"InstanceID": safeDOMToken(node.ID), "Form": view, "ReturnTo": returnTo})
+		return template.HTML(out.String()), err
+	}
+	res := rc.FormReader.ResolveForm(ctx, formID)
+	switch res.State {
+	case forms.FormStateDisabled:
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<div class="block-placeholder">Form is disabled</div>`), nil
+		}
+		return template.HTML(`<div class="stratum-form stratum-form--disabled" role="status">This form is currently not accepting submissions.</div>`), nil
+	case forms.FormStateMissing:
+		if rc.IsPreview || rc.Mode == ModePreview {
+			return template.HTML(`<div class="block-placeholder">Form unavailable</div>`), nil
+		}
+		return "", nil
+	case forms.FormStateActive:
+		view := res.View
+		if rc.FormCache != nil {
 			rc.FormCache[formID] = view
 		}
-	}
-	if !ok {
-		// Distinguish "form does not exist" from "form exists but is disabled".
-		// Disabled forms should remain visible on the public site with an
-		// explanatory message instead of silently disappearing (otherwise the
-		// admin toggle "Accept submissions" would appear to delete the block).
-		if getter, ok := rc.FormReader.(formGetter); ok {
-			if form, err := getter.Get(ctx, formID); err == nil && !form.Active {
-				if rc.IsPreview || rc.Mode == ModePreview {
-					return template.HTML(`<div class="block-placeholder">Form is disabled</div>`), nil
-				}
-				return template.HTML(`<div class="stratum-form stratum-form--disabled" role="status">This form is currently not accepting submissions.</div>`), nil
-			}
+		if rc.FormResult.SuccessFormID == formID {
+			var out bytes.Buffer
+			_ = template.Must(template.New("success").Parse(`<div id="form-{{ .ID }}" class="stratum-form-success" role="status">{{ .Message }}</div>`)).Execute(&out, map[string]string{"ID": safeDOMToken(node.ID), "Message": view.SuccessMessage})
+			return template.HTML(out.String()), nil
 		}
+		returnTo := rc.Route.Path
+		if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+			returnTo = "/"
+		}
+		var out bytes.Buffer
+		err := publicFormTemplate.Execute(&out, map[string]any{"InstanceID": safeDOMToken(node.ID), "Form": view, "ReturnTo": returnTo})
+		return template.HTML(out.String()), err
+	default:
 		if rc.IsPreview || rc.Mode == ModePreview {
 			return template.HTML(`<div class="block-placeholder">Form unavailable</div>`), nil
 		}
 		return "", nil
 	}
-	if rc.FormResult.SuccessFormID == formID {
-		var out bytes.Buffer
-		_ = template.Must(template.New("success").Parse(`<div id="form-{{ .ID }}" class="stratum-form-success" role="status">{{ .Message }}</div>`)).Execute(&out, map[string]string{"ID": safeDOMToken(node.ID), "Message": view.SuccessMessage})
-		return template.HTML(out.String()), nil
-	}
-	returnTo := rc.Route.Path
-	if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
-		returnTo = "/"
-	}
-	var out bytes.Buffer
-	err := publicFormTemplate.Execute(&out, map[string]any{"InstanceID": safeDOMToken(node.ID), "Form": view, "ReturnTo": returnTo})
-	return template.HTML(out.String()), err
 }
 
 func safeDOMToken(value string) string {

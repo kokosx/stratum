@@ -5,19 +5,37 @@
 <div class="list-table-wrap">
 <table class="data-table">
   <thead>
-    <tr><th>Name</th><th>Content Type</th><th>Status</th><th>Default</th><th>Actions</th></tr>
+    <tr><th>Name</th><th>Type</th><th>Content type</th><th>Status</th><th>Default</th><th>Actions</th></tr>
   </thead>
   <tbody>
     {{ range .Content.Templates }}
     <tr>
       <td><a href="/admin/appearance/templates/{{ .ID }}/edit">{{ .Name }}</a></td>
-      <td>{{ if eq .Kind "archive" }}Archive{{ else }}Single{{ end }} · {{ .ContentTypeName }}</td>
+      <td>{{ if eq .Kind "archive" }}Archive{{ else }}Single{{ end }}</td>
+      <td>{{ .ContentTypeName }}</td>
       <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
-      <td>{{ if .IsDefault }}✓ Default{{ else if .IsDefaultArchive }}✓ Default Archive{{ end }}</td>
-      <td><a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a></td>
+      <td>{{ if .IsDefault }}<span class="status-badge status-badge--default">Default</span>{{ else if .IsDefaultArchive }}<span class="status-badge status-badge--default">Default</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+      <td>
+        <a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a>
+        {{ if eq .Kind "archive" }}
+          {{ if .IsDefaultArchive }}
+          {{ else if .IsPublished }}
+            <form method="post" action="/admin/appearance/templates/{{ .ID }}/default-archive" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="button">Make default archive for {{ .ContentTypeName }}</button></form>
+          {{ else }}
+            <span class="muted" title="Publish this template before setting it as the default.">Draft — publish to make default</span>
+          {{ end }}
+        {{ else }}
+          {{ if .IsDefault }}
+          {{ else if .IsPublished }}
+            <form method="post" action="/admin/appearance/templates/{{ .ID }}/default" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button type="submit" class="button">Make default for {{ .ContentTypeName }}</button></form>
+          {{ else }}
+            <span class="muted" title="Publish this template before setting it as the default.">Draft — publish to make default</span>
+          {{ end }}
+        {{ end }}
+      </td>
     </tr>
     {{ else }}
-    <tr><td colspan="5" class="muted">No templates yet. Create a reusable layout for Pages or Posts.</td></tr>
+    <tr><td colspan="6" class="muted">No templates yet. Create a reusable layout for Pages or Posts.</td></tr>
     {{ end }}
   </tbody>
 </table>

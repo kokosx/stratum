@@ -315,6 +315,15 @@
       settings: defaultValue(definition.schema.settings),
     };
     if (definition.schema.children.mode !== "none") node.children = [];
+    // Auto-select single active Form for core/form blocks to avoid invisible content.
+    if (definition.block === "core/form") {
+      const forms = bootstrap.forms || [];
+      const active = forms.filter((o) => !String(o.label).endsWith(" (Disabled)"));
+      const current = node.settings && node.settings.formId;
+      if ((!current || current === "") && active.length === 1) {
+        node.settings.formId = active[0].value;
+      }
+    }
     return node;
   }
 
@@ -1016,8 +1025,27 @@
   }
 
   function dynamicOptionControl(source, node, value, update) {
-    const select = document.createElement("select");
     const options = dynamicOptions(source, node);
+    // Empty forms state: no forms available.
+    if (source === "forms" && options.length === 0) {
+      const wrap = element("div", "inspector-empty-forms");
+      const p = element("p", "", "Create a form first.");
+      const a = element("a", "", "Go to Forms");
+      a.href = "/admin/forms";
+      a.style.textDecoration = "underline";
+      wrap.append(p);
+      wrap.append(a);
+      return wrap;
+    }
+    const container = element("div", "inspector-select-wrap");
+    const select = document.createElement("select");
+    // Placeholder for forms when value is empty and multiple options exist.
+    if (source === "forms" && (!value || value === "")) {
+      const ph = element("option", "", "Select a form…");
+      ph.value = "";
+      ph.selected = true;
+      select.append(ph);
+    }
     if (value && !options.some((option) => option.value === value)) {
       const missing = element("option", "", `${value} (unavailable)`);
       missing.value = value; missing.selected = true; select.append(missing);
@@ -1026,8 +1054,17 @@
       const item = element("option", "", option.label);
       item.value = option.value; item.selected = option.value === value; select.append(item);
     });
-    select.addEventListener("change", () => { update(select.value); if (node.block === "core/collection") renderInspector(); });
-    return select;
+    select.addEventListener("change", () => { update(select.value); if (node.block === "core/collection") renderInspector(); else { changed({ tree: false, inspector: false }); renderTree(); } });
+    container.append(select);
+    // Inline validation hint for required form selection (core/form@2).
+    if (source === "forms" && (!value || value === "")) {
+      const hint = element("p", "form-error", "Form configuration required. Choose a Form before publishing.");
+      hint.style.color = "#8a1c1c";
+      hint.style.fontSize = "0.85rem";
+      hint.style.marginTop = "0.35rem";
+      container.append(hint);
+    }
+    return container;
   }
 
   function buildRichTextControl(value, update) {
@@ -1648,6 +1685,33 @@
   }
 
   // Send title/excerpt/slug/seo in preview POST
+  function initArchivePreviewContext() {
+    const sel = document.getElementById("archive-preview-context");
+    if (!sel) return;
+    const ct = bootstrap.contentTypeId || "";
+    const catalogs = bootstrap.taxonomyCatalogs || {};
+    const list = catalogs[ct] || [];
+    // Preserve main archive option as first.
+    list.forEach(function(tax){
+      (tax.terms || []).forEach(function(term){
+        const opt = document.createElement("option");
+        opt.value = tax.id + ":" + term.id;
+        opt.textContent = (tax.label || tax.id) + ": " + term.label;
+        sel.appendChild(opt);
+      });
+    });
+    // Also support generic fallback if no taxonomyCatalogs: try bootstrap.taxonomyCatalogs may be keyed differently
+    if (sel.options.length === 1) {
+      // No terms found, keep just Main archive
+    }
+    sel.addEventListener("change", function(){ schedulePreview(); });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initArchivePreviewContext);
+  } else {
+    initArchivePreviewContext();
+  }
+
   async function updatePreview() {
     const titleEl = document.getElementById("entry-title");
     const excerptEl = document.getElementById("entry-excerpt");
@@ -1658,6 +1722,7 @@
     const layoutEl = document.getElementById("entry-layout-template");
     const ctEl = document.getElementById("entry-content-type");
 	const featuredEl = document.getElementById("entry-featured-media-id");
+    const archiveCtxEl = document.getElementById("archive-preview-context");
 
     const params = {
       csrf_token: form.elements.csrf_token.value,
@@ -1672,6 +1737,13 @@
       content_type_id: ctEl?.value || "",
 	  featured_media_id: featuredEl?.value || "",
     };
+    if (archiveCtxEl && archiveCtxEl.value) {
+      const parts = archiveCtxEl.value.split(":");
+      if (parts.length === 2) {
+        params.preview_taxonomy_id = parts[0];
+        params.preview_term_id = parts[1];
+      }
+    }
     try {
       const previewParams = new URLSearchParams(params);
       new FormData(form).forEach((value, key) => {

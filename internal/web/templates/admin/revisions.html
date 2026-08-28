@@ -1,12 +1,8 @@
 {{ define "content" }}
-<div class="page-heading">
-  <h1>Revision history</h1>
-  <p class="muted">{{ .Content.EntityKind }} — {{ .Content.EntityName }}</p>
-</div>
-<a class="button" href="{{ .Content.BackURL }}">Back to editor</a>
+<header class="admin-page-header"><div><h1>Revision history</h1><p class="muted">{{ .Content.EntityKind }} — {{ .Content.EntityName }}</p></div><div class="admin-page-actions"><a class="button" href="{{ .Content.BackURL }}">Back to editor</a></div></header>
 {{ if .Content.Flash }}<div class="flash-message" role="status">{{ .Content.Flash }}</div>{{ end }}
-<div class="admin-card">
-  <table class="data-table list-table">
+<div class="data-table-wrap">
+  <table class="data-table">
     <thead>
       <tr>
         <th>Revision</th>
@@ -20,16 +16,14 @@
       {{ range .Content.Revisions }}
       <tr>
         <td>Revision {{ .Number }}</td>
-        <td>{{ if eq .Status "Published" }}<span class="badge badge-success">Published</span>{{ else if eq .Status "Current draft" }}<span class="badge badge-info">Current draft</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td>{{ if eq .Status "Published" }}<span class="status-badge status-badge--published">Published</span>{{ else if eq .Status "Current draft" }}<span class="status-badge status-badge--draft">Current draft</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
         <td>{{ if .Author }}{{ .Author }}{{ else }}<span class="muted">—</span>{{ end }}</td>
         <td><time>{{ .CreatedAt }}</time></td>
-        <td>
-          <a class="button" href="{{ .PreviewURL }}" target="_blank" rel="noopener">Preview</a>
+        <td><div class="admin-page-actions"><a class="button button-small" href="{{ .PreviewURL }}" target="_blank" rel="noopener">Preview</a>
           <form method="post" action="{{ .RestoreURL }}" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
-            <button type="submit" class="button" title="Restore as new draft" {{ if not .CanRestore }}disabled{{ end }}>Restore</button>
-          </form>
-        </td>
+            <button type="submit" class="button button-small" title="Restore as new draft" {{ if not .CanRestore }}disabled{{ end }}>Restore</button>
+          </form></div></td>
       </tr>
       {{ else }}
       <tr><td colspan="5" class="muted">No revisions yet.</td></tr>

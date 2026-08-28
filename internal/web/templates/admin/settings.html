@@ -1,8 +1,6 @@
 {{ define "content" }}
 <section class="settings-shell">
-  <header class="page-heading">
-    <h1>Settings</h1>
-  </header>
+  <header class="admin-page-header"><div><h1>Settings</h1></div></header>
 
   <nav class="settings-nav" aria-label="Settings sections">
     <a href="/admin/settings/general" class="settings-nav__link {{ if eq .Content.Section "general" }}is-active{{ end }}" {{ if eq .Content.Section "general" }}aria-current="page"{{ end }}>General</a>
@@ -14,7 +12,7 @@
 
   <div id="settings-content" class="settings-content">
   {{ if eq .Content.Section "general" }}
-  <form id="settings-form-general" class="panel settings-section" method="post" action="/admin/settings/general" data-on:submit__prevent="@post('/admin/settings/general', {contentType:'form'})">
+  <form id="settings-form-general" class="settings-section" method="post" action="/admin/settings/general" data-on:submit__prevent="@post('/admin/settings/general', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>General</h2>
         <div class="form-field">
@@ -91,7 +89,7 @@
     </div>
   </form>
   {{ else if eq .Content.Section "reading" }}
-  <form id="settings-form-reading" class="panel settings-section" method="post" action="/admin/settings/reading" data-on:submit__prevent="@post('/admin/settings/reading', {contentType:'form'})">
+  <form id="settings-form-reading" class="settings-section" method="post" action="/admin/settings/reading" data-on:submit__prevent="@post('/admin/settings/reading', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>Reading</h2>
         <div class="form-field">
@@ -144,7 +142,7 @@
     </div>
   </form>
   {{ else if eq .Content.Section "seo" }}
-  <form id="settings-form-seo" class="panel settings-section" method="post" action="/admin/settings/seo" data-on:submit__prevent="@post('/admin/settings/seo', {contentType:'form'})">
+  <form id="settings-form-seo" class="settings-section" method="post" action="/admin/settings/seo" data-on:submit__prevent="@post('/admin/settings/seo', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>SEO &amp; Crawling</h2>
         <div class="form-field">
@@ -217,7 +215,7 @@
     </div>
   </form>
   {{ else if eq .Content.Section "performance" }}
-  <form id="settings-form-performance" class="panel settings-section" method="post" action="/admin/settings/performance" data-on:submit__prevent="@post('/admin/settings/performance', {contentType:'form'})">
+  <form id="settings-form-performance" class="settings-section" method="post" action="/admin/settings/performance" data-on:submit__prevent="@post('/admin/settings/performance', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>Performance</h2>
         <div class="form-field">
