@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,15 +19,19 @@ type formsListData struct {
 type formEditorData struct {
 	Form             forms.Form
 	CSRFToken, Error string
+	SMTPConfigured   bool
 }
 type submissionRowView struct {
 	Submission                   forms.Submission
 	Primary, Secondary, Received string
 }
 type submissionsData struct {
-	Form      forms.Form
-	Rows      []submissionRowView
-	CSRFToken string
+	Form           forms.Form
+	Rows           []submissionRowView
+	CSRFToken      string
+	Page, Pages    int
+	Total          int64
+	Previous, Next bool
 }
 type submissionValueView struct {
 	Label, Key, Value string
@@ -94,7 +99,7 @@ func (h *Handler) renderFormEditor(w http.ResponseWriter, r *http.Request, form 
 	token, _ := h.csrfToken(w, r)
 	data := h.layoutDataWithFlash(w, r, "Edit Form")
 	data.CSRFToken = token
-	data.Content = formEditorData{Form: form, CSRFToken: token, Error: errText}
+	data.Content = formEditorData{Form: form, CSRFToken: token, Error: errText, SMTPConfigured: h.forms.MailConfigured()}
 	if err := h.formEditorTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render form editor: %v", err)
 	}
@@ -199,7 +204,24 @@ func (h *Handler) listFormSubmissions(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	subs, err := h.forms.ListSubmissions(r.Context(), form.ID, 100, 0)
+	const pageSize int64 = 50
+	total, err := h.forms.CountSubmissions(r.Context(), form.ID)
+	if err != nil {
+		http.Error(w, "Internal Server Error", 500)
+		return
+	}
+	pages := int((total + pageSize - 1) / pageSize)
+	if pages < 1 {
+		pages = 1
+	}
+	page, err := strconv.Atoi(r.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	subs, err := h.forms.ListSubmissions(r.Context(), form.ID, pageSize, int64(page-1)*pageSize)
 	if err != nil {
 		http.Error(w, "Internal Server Error", 500)
 		return
@@ -212,7 +234,7 @@ func (h *Handler) listFormSubmissions(w http.ResponseWriter, r *http.Request) {
 	token, _ := h.csrfToken(w, r)
 	data := h.layoutDataWithFlash(w, r, "Submissions")
 	data.CSRFToken = token
-	data.Content = submissionsData{Form: form, Rows: rows, CSRFToken: token}
+	data.Content = submissionsData{Form: form, Rows: rows, CSRFToken: token, Page: page, Pages: pages, Total: total, Previous: page > 1, Next: page < pages}
 	if err := h.submissionsTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render submissions: %v", err)
 	}
@@ -248,7 +270,12 @@ func (h *Handler) updateFormSubmissionStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	status := forms.SubmissionStatus(r.FormValue("status"))
-	if err := h.forms.UpdateSubmissionStatus(r.Context(), r.PathValue("submissionID"), status); err != nil {
+	err := h.forms.UpdateSubmissionStatusForForm(r.Context(), r.PathValue("id"), r.PathValue("submissionID"), status)
+	if errors.Is(err, forms.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
 		http.Error(w, "Invalid status", 422)
 		return
 	}

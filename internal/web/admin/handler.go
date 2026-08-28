@@ -89,6 +89,10 @@ type LayoutData struct {
 	Content       any
 }
 
+func parseAdminTemplate(templateFS fs.FS, funcs template.FuncMap, name, page string) (*template.Template, error) {
+	return template.New(name).Funcs(funcs).ParseFS(templateFS, "layout.html", "admin_components.html", page)
+}
+
 func (h *Handler) navStateFor(r *http.Request) NavState { return ResolveNav(r.URL.Path) }
 
 func (h *Handler) layoutData(r *http.Request, title string) LayoutData {
@@ -226,23 +230,23 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	formsTemplate, err := template.New("forms").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "forms.html")
+	formsTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "forms", "forms.html")
 	if err != nil {
 		return nil, err
 	}
-	formNewTemplate, err := template.New("form_new").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_new.html")
+	formNewTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "form_new", "form_new.html")
 	if err != nil {
 		return nil, err
 	}
-	formEditorTemplate, err := template.New("form_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_editor.html")
+	formEditorTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "form_editor", "form_editor.html")
 	if err != nil {
 		return nil, err
 	}
-	submissionsTemplate, err := template.New("form_submissions").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_submissions.html")
+	submissionsTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "form_submissions", "form_submissions.html")
 	if err != nil {
 		return nil, err
 	}
-	submissionTemplate, err := template.New("form_submission").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "form_submission.html")
+	submissionTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "form_submission", "form_submission.html")
 	if err != nil {
 		return nil, err
 	}

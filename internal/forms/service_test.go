@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,12 +68,12 @@ func TestValidateValuesRequiredEmailSelectCheckboxAndLimits(t *testing.T) {
 }
 
 func TestReturnPathSafety(t *testing.T) {
-	for _, value := range []string{"/contact", "/products/a?from=quote"} {
+	for _, value := range []string{"/", "/contact", "/products/a?from=quote"} {
 		if !ValidateReturnPath(value) {
 			t.Errorf("safe path rejected: %q", value)
 		}
 	}
-	for _, value := range []string{"", "https://evil.test", "//evil.test", "contact", "/ok\r\nLocation: https://evil.test"} {
+	for _, value := range []string{"", "https://evil.test", "//evil.test", "contact", "javascript:alert(1)", "\\evil.test", "/\\evil.test", "/ok\r\nLocation: https://evil.test", "/%5cevil.test", "/ok?x=%0d%0aLocation"} {
 		if ValidateReturnPath(value) {
 			t.Errorf("unsafe path accepted: %q", value)
 		}
@@ -81,23 +84,67 @@ func TestRateLimiterHasMinuteAndHourWindows(t *testing.T) {
 	r := newRateLimiter()
 	now := time.Unix(10000, 0)
 	for i := 0; i < 5; i++ {
-		if !r.Allow("key", now) {
+		if !r.AllowAndRecord("key", now) {
 			t.Fatalf("request %d denied", i)
 		}
-		r.Record("key", now)
 	}
-	if r.Allow("key", now) {
+	if r.AllowAndRecord("key", now) {
 		t.Fatal("sixth minute request accepted")
 	}
-	if !r.Allow("key", now.Add(time.Minute+time.Second)) {
+	if !r.AllowAndRecord("key", now.Add(time.Minute+time.Second)) {
 		t.Fatal("minute window did not reset")
 	}
-	for i := 5; i < 30; i++ {
+
+	hourly := newRateLimiter()
+	for i := 0; i < 30; i++ {
 		at := now.Add(time.Duration(i) * 2 * time.Minute)
-		if !r.Allow("key", at) {
+		if !hourly.AllowAndRecord("key", at) {
 			t.Fatalf("hour request %d denied", i)
 		}
-		r.Record("key", at)
+	}
+	if hourly.AllowAndRecord("key", now.Add(59*time.Minute)) {
+		t.Fatal("31st hourly request accepted")
+	}
+	if !hourly.AllowAndRecord("key", now.Add(2*time.Hour)) {
+		t.Fatal("hour window did not reset")
+	}
+}
+
+func TestRateLimiterConcurrentRequestsAreAtomic(t *testing.T) {
+	r := newRateLimiter()
+	now := time.Unix(10000, 0)
+	var accepted atomic.Int64
+	var wait sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			if r.AllowAndRecord("same", now) {
+				accepted.Add(1)
+			}
+		}()
+	}
+	wait.Wait()
+	if got := accepted.Load(); got != 5 {
+		t.Fatalf("accepted=%d want 5", got)
+	}
+}
+
+func TestRateLimiterOpportunisticallyCleansStaleKeys(t *testing.T) {
+	r := newRateLimiter()
+	old := time.Unix(10000, 0)
+	for i := 0; i < 1000; i++ {
+		if !r.AllowAndRecord("old-"+strconv.Itoa(i), old) {
+			t.Fatal("unique key rejected")
+		}
+	}
+	for i := 0; i < 128; i++ {
+		r.AllowAndRecord("new-"+strconv.Itoa(i), old.Add(2*time.Hour))
+	}
+	for key := range r.events {
+		if strings.HasPrefix(key, "old-") {
+			t.Fatalf("stale key retained: %s", key)
+		}
 	}
 }
 
@@ -189,7 +236,7 @@ func TestHoneypotDoesNotPersistAndDisabledFormRejects(t *testing.T) {
 }
 
 func TestCSVFormulaInjectionEscaped(t *testing.T) {
-	for _, value := range []string{"=SUM(A1:A2)", "+cmd", "-1", "@x"} {
+	for _, value := range []string{"=SUM(A1:A2)", "+cmd", "-1", "@x", " =SUM(A1:A2)", "\t+cmd", "\r-1"} {
 		if got := safeCSVCell(value); got != "'"+value {
 			t.Errorf("safeCSVCell(%q)=%q", value, got)
 		}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Message struct {
@@ -27,7 +28,8 @@ type Mailer interface {
 
 type SMTP struct {
 	Host, Port, Username, Password, From string
-	TLS                                  bool
+	StartTLS                             bool
+	OperationTimeout                     time.Duration
 }
 
 func FromEnvironment() *SMTP {
@@ -35,8 +37,13 @@ func FromEnvironment() *SMTP {
 	if port == "" {
 		port = "587"
 	}
-	useTLS, _ := strconv.ParseBool(os.Getenv("STRATUM_SMTP_TLS"))
-	return &SMTP{Host: os.Getenv("STRATUM_SMTP_HOST"), Port: port, Username: os.Getenv("STRATUM_SMTP_USERNAME"), Password: os.Getenv("STRATUM_SMTP_PASSWORD"), From: os.Getenv("STRATUM_SMTP_FROM"), TLS: useTLS}
+	useStartTLS := port == "587"
+	if raw, ok := os.LookupEnv("STRATUM_SMTP_STARTTLS"); ok {
+		useStartTLS, _ = strconv.ParseBool(raw)
+	} else if raw, ok := os.LookupEnv("STRATUM_SMTP_TLS"); ok { // Legacy alias.
+		useStartTLS, _ = strconv.ParseBool(raw)
+	}
+	return &SMTP{Host: os.Getenv("STRATUM_SMTP_HOST"), Port: port, Username: os.Getenv("STRATUM_SMTP_USERNAME"), Password: os.Getenv("STRATUM_SMTP_PASSWORD"), From: os.Getenv("STRATUM_SMTP_FROM"), StartTLS: useStartTLS}
 }
 
 func (s *SMTP) Available() bool { return s != nil && s.Host != "" && s.From != "" }
@@ -76,12 +83,16 @@ func (s *SMTP) Send(ctx context.Context, m Message) error {
 		return err
 	}
 	defer conn.Close()
+	if err := conn.SetDeadline(operationDeadline(ctx, time.Now(), s.OperationTimeout)); err != nil {
+		return err
+	}
 	client, err := smtp.NewClient(conn, s.Host)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	if s.TLS {
+	// Port 465 implicit TLS is intentionally unsupported; use STARTTLS instead.
+	if s.StartTLS {
 		if err := client.StartTLS(&tls.Config{ServerName: s.Host, MinVersion: tls.VersionTLS12}); err != nil {
 			return err
 		}
@@ -108,4 +119,15 @@ func (s *SMTP) Send(ctx context.Context, m Message) error {
 		return err
 	}
 	return client.Quit()
+}
+
+func operationDeadline(ctx context.Context, now time.Time, timeout time.Duration) time.Time {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	deadline := now.Add(timeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		return contextDeadline
+	}
+	return deadline
 }

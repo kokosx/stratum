@@ -1,9 +1,9 @@
 {{ define "content" }}
-<div class="page-heading"><h1>Site Parts</h1><a class="button button-primary" href="/admin/appearance/site-parts/new">Create site part</a></div>
+<header class="admin-page-header"><div><h1>Site Parts</h1></div><div class="admin-page-actions"><a class="button button-primary" href="/admin/appearance/site-parts/new">Create site part</a></div></header>
 {{ if .Content.Flash }}<div class="flash-message" role="status">{{ .Content.Flash }}</div>{{ end }}
 {{ if .Content.Error }}<p class="form-error" role="alert">{{ .Content.Error }}</p>{{ end }}
 
-<div class="site-parts-layout" style="display:grid;gap:24px;">
+<div class="site-parts-layout">
   <section class="card">
     <h2>Site layout</h2>
     <div style="display:grid;gap:12px;">
@@ -33,13 +33,13 @@
   <section class="card">
     <h2>Reusable parts</h2>
     {{ if .Content.Parts }}
-    <table class="list-table">
+    <table class="data-table">
       <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
         {{ range .Content.Parts }}
         <tr>
           <td><a href="/admin/appearance/site-parts/{{ .ID }}/edit">{{ .Name }}</a></td>
-          <td>{{ .Status }}</td>
+          <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
           <td><a class="button" href="/admin/appearance/site-parts/{{ .ID }}/edit">Edit</a></td>
         </tr>
         {{ end }}

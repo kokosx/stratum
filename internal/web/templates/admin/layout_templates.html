@@ -1,9 +1,9 @@
 {{ define "content" }}
-<div class="page-heading"><h1>Templates</h1><a class="button button-primary" href="/admin/appearance/templates/new">Create template</a></div>
+<header class="admin-page-header"><div><h1>Templates</h1></div><div class="admin-page-actions"><a class="button button-primary" href="/admin/appearance/templates/new">Create template</a></div></header>
 {{ if .Content.Flash }}<div class="flash-message" role="status">{{ .Content.Flash }}</div>{{ end }}
 {{ if .Content.Error }}<p class="form-error" role="alert">{{ .Content.Error }}</p>{{ end }}
 <div class="list-table-wrap">
-<table class="list-table">
+<table class="data-table">
   <thead>
     <tr><th>Name</th><th>Content Type</th><th>Status</th><th>Default</th><th>Actions</th></tr>
   </thead>
@@ -12,7 +12,7 @@
     <tr>
       <td><a href="/admin/appearance/templates/{{ .ID }}/edit">{{ .Name }}</a></td>
       <td>{{ if eq .Kind "archive" }}Archive{{ else }}Single{{ end }} · {{ .ContentTypeName }}</td>
-      <td>{{ .Status }}</td>
+      <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
       <td>{{ if .IsDefault }}✓ Default{{ else if .IsDefaultArchive }}✓ Default Archive{{ end }}</td>
       <td><a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a></td>
     </tr>

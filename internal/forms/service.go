@@ -45,7 +45,6 @@ type Service struct {
 	invalidate func()
 	now        func() time.Time
 	id         func() (string, error)
-	mu         sync.Mutex
 }
 
 func NewService(database *sql.DB, queries *db.Queries, mailer mailer.Mailer, from string) *Service {
@@ -265,11 +264,28 @@ func (s *Service) ListActive(ctx context.Context) ([]Form, error) {
 }
 
 func ValidateReturnPath(value string) bool {
-	if value == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\r\n") {
+	if value == "" || value[0] != '/' || strings.HasPrefix(value, "//") || strings.Contains(value, "\\") || hasControl(value) {
 		return false
 	}
-	parsed, err := url.Parse(value)
-	return err == nil && parsed.IsAbs() == false && parsed.Host == ""
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Opaque != "" || !strings.HasPrefix(parsed.Path, "/") {
+		return false
+	}
+	decodedPath, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil || strings.Contains(decodedPath, "\\") || hasControl(decodedPath) {
+		return false
+	}
+	decodedQuery, err := url.QueryUnescape(parsed.RawQuery)
+	return err == nil && !strings.Contains(decodedQuery, "\\") && !hasControl(decodedQuery)
+}
+
+func hasControl(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func validateValues(fields []Field, submitted map[string][]string) (map[string]string, error) {
@@ -344,16 +360,18 @@ func (s *Service) Submit(ctx context.Context, formID string, input SubmitInput) 
 	if input.Now.IsZero() {
 		input.Now = s.now()
 	}
-	key := input.ClientIP + "\x00" + formID
-	if !s.limiter.Allow(key, input.Now) {
-		return Submission{}, ErrRateLimited
-	}
 	form, err := s.Get(ctx, formID)
 	if err != nil {
 		return Submission{}, err
 	}
 	if !form.Active {
 		return Submission{}, ErrDisabled
+	}
+	// Count all requests to a real, active form. This deliberately happens before
+	// validation so malformed traffic cannot bypass the inexpensive limiter.
+	key := input.ClientIP + "\x00" + formID
+	if !s.limiter.AllowAndRecord(key, input.Now) {
+		return Submission{}, ErrRateLimited
 	}
 	values, err := validateValues(form.Fields, input.Values)
 	if err != nil {
@@ -369,7 +387,6 @@ func (s *Service) Submit(ctx context.Context, formID string, input SubmitInput) 
 	if err := s.queries.CreateFormSubmission(ctx, db.CreateFormSubmissionParams{ID: id, FormID: form.ID, Status: string(StatusNew), ValuesJson: string(valuesJSON), SchemaSnapshotJson: string(snapshotJSON), CreatedAt: input.Now.Unix()}); err != nil {
 		return Submission{}, err
 	}
-	s.limiter.Record(key, input.Now)
 	sub := Submission{ID: id, FormID: form.ID, Status: StatusNew, Values: values, SchemaSnapshot: snapshot, CreatedAt: input.Now}
 	recipient := form.NotificationEmail
 	if recipient == "" {
@@ -443,6 +460,9 @@ func (s *Service) ListSubmissions(ctx context.Context, formID string, limit, off
 	}
 	return out, nil
 }
+func (s *Service) CountSubmissions(ctx context.Context, formID string) (int64, error) {
+	return s.queries.CountFormSubmissions(ctx, formID)
+}
 func (s *Service) GetSubmission(ctx context.Context, id string) (Submission, error) {
 	row, err := s.queries.GetFormSubmission(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -461,6 +481,29 @@ func (s *Service) UpdateSubmissionStatus(ctx context.Context, id string, status 
 		return ErrInvalid
 	}
 	return s.queries.UpdateFormSubmissionStatus(ctx, db.UpdateFormSubmissionStatusParams{Status: string(status), ID: id})
+}
+func (s *Service) UpdateSubmissionStatusForForm(ctx context.Context, formID, id string, status SubmissionStatus) error {
+	if !validStatus(status) {
+		return ErrInvalid
+	}
+	submission, err := s.GetSubmission(ctx, id)
+	if err != nil {
+		return err
+	}
+	if submission.FormID != formID {
+		return ErrNotFound
+	}
+	return s.queries.UpdateFormSubmissionStatus(ctx, db.UpdateFormSubmissionStatusParams{Status: string(status), ID: id})
+}
+
+func (s *Service) MailConfigured() bool {
+	if s.mailer == nil {
+		return false
+	}
+	if availability, ok := s.mailer.(interface{ Available() bool }); ok {
+		return availability.Available()
+	}
+	return true
 }
 func (s *Service) DeleteSubmission(ctx context.Context, id string) error {
 	return s.queries.DeleteFormSubmission(ctx, id)
@@ -521,7 +564,8 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 func safeCSVCell(value string) string {
-	if value != "" && strings.ContainsRune("=+-@", rune(value[0])) {
+	trimmed := strings.TrimLeft(value, " \t\r\n\v\f")
+	if trimmed != "" && strings.ContainsRune("=+-@", rune(trimmed[0])) {
 		return "'" + value
 	}
 	return value
@@ -566,14 +610,19 @@ func (s *Service) ExportCSV(ctx context.Context, formID string) ([]byte, error) 
 }
 
 type rateLimiter struct {
-	mu     sync.Mutex
-	events map[string][]time.Time
+	mu         sync.Mutex
+	events     map[string][]time.Time
+	operations uint64
 }
 
 func newRateLimiter() *rateLimiter { return &rateLimiter{events: map[string][]time.Time{}} }
-func (r *rateLimiter) Allow(key string, now time.Time) bool {
+func (r *rateLimiter) AllowAndRecord(key string, now time.Time) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.operations++
+	if r.operations%128 == 0 {
+		r.cleanupLocked(now)
+	}
 	events := r.events[key][:0]
 	hourAgo := now.Add(-time.Hour)
 	minuteAgo := now.Add(-time.Minute)
@@ -587,10 +636,26 @@ func (r *rateLimiter) Allow(key string, now time.Time) bool {
 		}
 	}
 	r.events[key] = events
-	return minute < 5 && len(events) < 30
-}
-func (r *rateLimiter) Record(key string, now time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	if minute >= 5 || len(events) >= 30 {
+		return false
+	}
 	r.events[key] = append(r.events[key], now)
+	return true
+}
+
+func (r *rateLimiter) cleanupLocked(now time.Time) {
+	hourAgo := now.Add(-time.Hour)
+	for key, stored := range r.events {
+		kept := stored[:0]
+		for _, event := range stored {
+			if event.After(hourAgo) {
+				kept = append(kept, event)
+			}
+		}
+		if len(kept) == 0 {
+			delete(r.events, key)
+		} else {
+			r.events[key] = kept
+		}
+	}
 }

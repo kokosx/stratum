@@ -1,5 +1,5 @@
 {{ define "content" }}
-<div class="page-heading"><h1>Comments</h1></div>
+<header class="admin-page-header"><div><h1>Comments</h1></div></header>
 
 {{ $cur := .Content.Status }}
 {{ $search := .Content.Search }}
@@ -53,7 +53,7 @@
   </div>
 
   <div class="list-table-wrap">
-  <table class="list-table">
+  <table class="data-table">
     <thead>
       <tr>
         <th class="check-column"><input type="checkbox" id="cb-select-all" aria-label="Select all"></th>
@@ -71,7 +71,7 @@
         <td class="comment-author column-author"><strong>{{ .AuthorName }}</strong><br><span class="muted">{{ .AuthorEmail }}</span>{{ if .AuthorURL }}<br><a href="{{ .AuthorURL }}" target="_blank">{{ .AuthorURL }}</a>{{ end }}</td>
         <td class="comment-body column-comment">{{ .Body }}</td>
         <td class="comment-entry column-response">{{ if .EntryURL }}<a href="{{ .EntryURL }}">{{ .EntryTitle }}</a>{{ else }}{{ .EntryTitle }}{{ end }}<br><span class="muted">{{ .EntryID }}</span></td>
-        <td>{{ .Status }}</td>
+        <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
         <td>{{ .CreatedAt }}</td>
       </tr>
       <tr class="row-actions-row">

@@ -1,7 +1,7 @@
 {{ define "content" }}
-<div class="page-heading"><div><h1>{{ .Content.Form.Name }} — Submissions</h1><a href="/admin/forms/{{ .Content.Form.ID }}/edit">Edit form</a></div><a class="button" href="/admin/forms/{{ .Content.Form.ID }}/export.csv">Export CSV</a></div>
-<div class="list-table-wrap"><table class="list-table"><thead><tr><th>Status</th><th>Submission</th><th>Received</th></tr></thead><tbody>
-{{ range .Content.Rows }}<tr><td>{{ .Submission.Status }}</td><td><strong><a href="/admin/forms/{{ $.Content.Form.ID }}/submissions/{{ .Submission.ID }}">{{ .Primary }}</a></strong>{{ if .Secondary }}<br><span class="muted">{{ .Secondary }}</span>{{ end }}</td><td>{{ .Received }}</td></tr>{{ else }}<tr><td colspan="3" class="muted">No submissions yet.</td></tr>{{ end }}
-</tbody></table></div>
+<header class="admin-page-header"><div><h1>{{ .Content.Form.Name }} submissions</h1><p>{{ .Content.Total }} responses stored on your site.</p></div><div class="admin-page-actions"><a class="button button-secondary" href="/admin/forms/{{ .Content.Form.ID }}/edit">Edit form</a><a class="button" href="/admin/forms/{{ .Content.Form.ID }}/export.csv">Export CSV</a></div></header>
+{{ if .Content.Rows }}<div class="list-table-wrap"><table class="data-table submissions-table"><thead><tr><th>Status</th><th>Submission</th><th>Received</th></tr></thead><tbody>
+{{ range .Content.Rows }}<tr><td>{{ template "submission-status-badge" .Submission.Status }}</td><td><div class="data-table__primary"><a href="/admin/forms/{{ $.Content.Form.ID }}/submissions/{{ .Submission.ID }}">{{ .Primary }}</a></div>{{ if .Secondary }}<div class="data-table__meta">{{ .Secondary }}</div>{{ end }}</td><td>{{ .Received }}</td></tr>{{ end }}
+</tbody></table></div>{{ else }}{{ template "submissions-empty-state" . }}{{ end }}
+{{ template "submission-pagination" .Content }}
 {{ end }}
-

@@ -1,8 +1,6 @@
 {{ define "content" }}
-<div class="page-heading"><h1>Forms</h1><a class="button button-primary" href="/admin/forms/new">Add new</a></div>
-<div class="list-table-wrap"><table class="list-table"><thead><tr><th>Name</th><th>Status</th><th>Submissions</th><th>New</th><th>Updated</th></tr></thead><tbody>
-{{ range .Content.Forms }}<tr><td><strong><a href="/admin/forms/{{ .ID }}/edit">{{ .Name }}</a></strong><div class="row-actions"><a href="/admin/forms/{{ .ID }}/edit">Edit</a> | <a href="/admin/forms/{{ .ID }}/submissions">Submissions</a> | <a href="/admin/forms/{{ .ID }}/export.csv">Export CSV</a></div></td><td>{{ if .Active }}Active{{ else }}Disabled{{ end }}</td><td>{{ .SubmissionCount }}</td><td>{{ .NewCount }}</td><td>{{ .UpdatedAt.Format "2 Jan 2006 15:04" }}</td></tr>
-{{ else }}<tr><td colspan="5" class="muted">No forms yet. Create a contact form to get started.</td></tr>{{ end }}
-</tbody></table></div>
+<header class="admin-page-header"><div><h1>Forms</h1><p>Build forms and review submissions stored on your site.</p></div><div class="admin-page-actions"><a class="button button-primary" href="/admin/forms/new">Add new</a></div></header>
+{{ if .Content.Forms }}<div class="list-table-wrap"><table class="data-table forms-table"><thead><tr><th>Name</th><th>Status</th><th>Submissions</th><th>New</th><th>Updated</th></tr></thead><tbody>
+{{ range .Content.Forms }}<tr><td><div class="data-table__primary"><a href="/admin/forms/{{ .ID }}/edit">{{ .Name }}</a></div><div class="row-actions"><a href="/admin/forms/{{ .ID }}/edit">Edit</a> · <a href="/admin/forms/{{ .ID }}/submissions">Submissions</a> · <a href="/admin/forms/{{ .ID }}/export.csv">Export CSV</a></div></td><td>{{ template "form-status-badge" .Active }}</td><td>{{ .SubmissionCount }}</td><td>{{ if .NewCount }}<span class="status-badge status-badge--new">{{ .NewCount }} new</span>{{ else }}0{{ end }}</td><td>{{ .UpdatedAt.Format "2 Jan 2006 15:04" }}</td></tr>{{ end }}
+</tbody></table></div>{{ else }}{{ template "forms-empty-state" . }}{{ end }}
 {{ end }}
-

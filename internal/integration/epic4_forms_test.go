@@ -3,16 +3,19 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kokosx/stratum/internal/blocks"
 	formdomain "github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/siteparts"
+	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
 
 func setupEpic4Admin(t *testing.T, client *http.Client, serverURL string, setupCode string) {
@@ -89,6 +92,11 @@ func TestEpic4ContactFormVerticalSliceAndSnapshotCacheInvalidation(t *testing.T)
 	if success.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("success cache=%q", success.Header.Get("Cache-Control"))
 	}
+	canonical := getPath(t, client, server.URL, "/contact")
+	canonicalBody := bodyString(t, canonical)
+	if !strings.Contains(canonicalBody, `<form id="form-contact-instance"`) || strings.Contains(canonicalBody, "Thanks! Your message has been sent.") {
+		t.Fatal("canonical page retained transient success state")
+	}
 	service := formdomain.NewService(database.DB, queries, nil, "")
 	form, err := service.Get(context.Background(), formID)
 	if err != nil {
@@ -124,6 +132,101 @@ func TestEpic4ContactFormVerticalSliceAndSnapshotCacheInvalidation(t *testing.T)
 	}
 	if stored.SchemaSnapshot.Fields[2].Label != "Message" {
 		t.Fatalf("old snapshot=%q", stored.SchemaSnapshot.Fields[2].Label)
+	}
+}
+
+func createEpic4Form(t *testing.T, client *http.Client, serverURL, name string) string {
+	t.Helper()
+	resp := postForm(t, client, serverURL, "/admin/forms", url.Values{"name": {name}, "csrf_token": {csrfToken(t, client, serverURL, "/admin/forms/new")}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create form %q=%d %s", name, resp.StatusCode, bodyString(t, resp))
+	}
+	location := resp.Header.Get("Location")
+	resp.Body.Close()
+	return strings.TrimSuffix(strings.TrimPrefix(location, "/admin/forms/"), "/edit")
+}
+
+func TestEpic4SubmissionStatusMutationEnforcesFormOwnership(t *testing.T) {
+	server, queries, _, authService, cleanup := newIntegrationServer(t)
+	defer cleanup()
+	client := newClient(t)
+	setupEpic4Admin(t, client, server.URL, authService.SetupCode())
+	formA := createEpic4Form(t, client, server.URL, "Form A")
+	formB := createEpic4Form(t, client, server.URL, "Form B")
+	snapshot := `{"name":"Form B","fields":[{"id":"field","key":"name","type":"text","label":"Name","required":true}]}`
+	if err := queries.CreateFormSubmission(context.Background(), db.CreateFormSubmissionParams{ID: "submission-b", FormID: formB, Status: "new", ValuesJson: `{"name":"Jane"}`, SchemaSnapshotJson: snapshot, CreatedAt: time.Now().Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	token := csrfToken(t, client, server.URL, "/admin/forms/"+formA+"/edit")
+	wrong := postForm(t, client, server.URL, "/admin/forms/"+formA+"/submissions/submission-b/status", url.Values{"status": {"read"}, "csrf_token": {token}})
+	if wrong.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-form mutation=%d %s", wrong.StatusCode, bodyString(t, wrong))
+	}
+	wrong.Body.Close()
+	row, err := queries.GetFormSubmission(context.Background(), "submission-b")
+	if err != nil || row.Status != "new" {
+		t.Fatalf("cross-form status=%q err=%v", row.Status, err)
+	}
+	valid := postForm(t, client, server.URL, "/admin/forms/"+formB+"/submissions/submission-b/status", url.Values{"status": {"read"}, "csrf_token": {token}})
+	if valid.StatusCode != http.StatusSeeOther {
+		t.Fatalf("valid mutation=%d %s", valid.StatusCode, bodyString(t, valid))
+	}
+	valid.Body.Close()
+	row, err = queries.GetFormSubmission(context.Background(), "submission-b")
+	if err != nil || row.Status != "read" {
+		t.Fatalf("valid status=%q err=%v", row.Status, err)
+	}
+}
+
+func TestEpic4SubmissionPaginationHasNoGapsOrDuplicates(t *testing.T) {
+	server, queries, _, authService, cleanup := newIntegrationServer(t)
+	defer cleanup()
+	client := newClient(t)
+	setupEpic4Admin(t, client, server.URL, authService.SetupCode())
+	formID := createEpic4Form(t, client, server.URL, "Busy Form")
+	snapshot := `{"name":"Busy Form","fields":[{"id":"field","key":"name","type":"text","label":"Name","required":true}]}`
+	for i := 0; i < 120; i++ {
+		if err := queries.CreateFormSubmission(context.Background(), db.CreateFormSubmissionParams{ID: fmt.Sprintf("submission-%03d", i), FormID: formID, Status: "new", ValuesJson: fmt.Sprintf(`{"name":"Person %03d"}`, i), SchemaSnapshotJson: snapshot, CreatedAt: int64(1000 + i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	combined := ""
+	for page, wantRows := range []int{50, 50, 20} {
+		resp := getPath(t, client, server.URL, fmt.Sprintf("/admin/forms/%s/submissions?page=%d", formID, page+1))
+		body := bodyString(t, resp)
+		if resp.StatusCode != http.StatusOK || strings.Count(body, `/submissions/submission-`) != wantRows {
+			t.Fatalf("page %d status=%d rows=%d want=%d", page+1, resp.StatusCode, strings.Count(body, `/submissions/submission-`), wantRows)
+		}
+		combined += body
+	}
+	for i := 0; i < 120; i++ {
+		marker := fmt.Sprintf("Person %03d", i)
+		if got := strings.Count(combined, marker); got != 1 {
+			t.Fatalf("%s appears %d times", marker, got)
+		}
+	}
+	clamped := getPath(t, client, server.URL, "/admin/forms/"+formID+"/submissions?page=999999999")
+	if body := bodyString(t, clamped); strings.Count(body, `/submissions/submission-`) != 20 {
+		t.Fatal("large page was not clamped to the final page")
+	}
+}
+
+func TestEpic4DuplicatedRequiredFieldsPersistRequiredFlags(t *testing.T) {
+	server, queries, database, authService, cleanup := newIntegrationServer(t)
+	defer cleanup()
+	client := newClient(t)
+	setupEpic4Admin(t, client, server.URL, authService.SetupCode())
+	formID := createEpic4Form(t, client, server.URL, "Duplicate Required")
+	values := url.Values{"name": {"Duplicate Required"}, "active": {"1"}, "submit_label": {"Send"}, "success_message": {"Thanks"}, "field_id": {"field-a", "field-b"}, "field_key": {"topic", "topic_copy"}, "field_type": {"text", "text"}, "field_label": {"Topic", "Topic copy"}, "field_placeholder": {"", ""}, "field_options": {"", ""}, "required_field-a": {"1"}, "required_field-b": {"1"}, "csrf_token": {csrfToken(t, client, server.URL, "/admin/forms/"+formID+"/edit")}}
+	resp := postForm(t, client, server.URL, "/admin/forms/"+formID, values)
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save=%d %s", resp.StatusCode, bodyString(t, resp))
+	}
+	resp.Body.Close()
+	service := formdomain.NewService(database.DB, queries, nil, "")
+	form, err := service.Get(context.Background(), formID)
+	if err != nil || len(form.Fields) != 2 || !form.Fields[0].Required || !form.Fields[1].Required {
+		t.Fatalf("fields=%#v err=%v", form.Fields, err)
 	}
 }
 
