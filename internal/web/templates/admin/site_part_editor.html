@@ -52,8 +52,8 @@
     </div>
     <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
   </section>
-  <div class="form-field" style="margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:6px;display:grid;gap:10px;">
-    <div style="display:flex;gap:8px;align-items:center;">
+  <div class="editor-meta-panel">
+    <div class="editor-meta-panel__row">
       <span><strong>Status:</strong> {{ .Content.Status }}</span>
       {{ if .Content.IsPublished }}<span style="padding:2px 6px;background:#dcfce7;border-radius:4px;font-size:12px;">Published</span>{{ end }}
       {{ if .Content.Location }}<span style="padding:2px 6px;background:#e0e7ff;border-radius:4px;font-size:12px;">Location: {{ .Content.Location }}</span>{{ end }}

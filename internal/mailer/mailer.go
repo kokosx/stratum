@@ -77,13 +77,16 @@ func (s *SMTP) Send(ctx context.Context, m Message) error {
 	}
 	payload := []byte(strings.Join(headers, "\r\n") + "\r\n\r\n" + strings.ReplaceAll(m.Body, "\n", "\r\n"))
 	address := net.JoinHostPort(s.Host, s.Port)
+	deadline := operationDeadline(ctx, time.Now(), s.OperationTimeout)
+	dialCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, "tcp", address)
+	conn, err := dialer.DialContext(dialCtx, "tcp", address)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(operationDeadline(ctx, time.Now(), s.OperationTimeout)); err != nil {
+	if err := conn.SetDeadline(deadline); err != nil {
 		return err
 	}
 	client, err := smtp.NewClient(conn, s.Host)

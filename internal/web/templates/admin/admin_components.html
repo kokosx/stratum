@@ -1,4 +1,4 @@
-{{ define "form-status-badge" }}{{ if . }}<span class="status-badge status-badge--published">Active</span>{{ else }}<span class="status-badge status-badge--draft">Disabled</span>{{ end }}{{ end }}
+{{ define "form-status-badge" }}{{ if . }}<span class="status-badge status-badge--active">Active</span>{{ else }}<span class="status-badge status-badge--disabled">Disabled</span>{{ end }}{{ end }}
 {{ define "submission-status-badge" }}<span class="status-badge status-badge--{{ . }}">{{ . }}</span>{{ end }}
 {{ define "forms-empty-state" }}<div class="empty-state"><h3>No forms yet</h3><p>Create a contact form to begin collecting first-party submissions.</p><a class="button button-primary" href="/admin/forms/new">Create form</a></div>{{ end }}
 {{ define "submissions-empty-state" }}<div class="empty-state"><h3>No submissions yet</h3><p>New responses will appear here as soon as this form is submitted.</p></div>{{ end }}

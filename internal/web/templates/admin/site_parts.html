@@ -5,50 +5,54 @@
 
 <div class="site-parts-layout">
   <section class="card">
-    <h2>Site layout</h2>
-    <div style="display:grid;gap:12px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid #e5e7eb;border-radius:6px;">
-        <div><strong>Header</strong><br><span class="muted">{{ if .Content.Header }}{{ .Content.Header.Name }}{{ else }}Using theme default{{ end }}</span></div>
-        <div>
-          {{ if .Content.Header }}<a class="button" href="/admin/appearance/site-parts/{{ .Content.Header.ID }}/edit">Edit</a>
-          <form method="post" action="/admin/appearance/site-parts/location/clear" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><input type="hidden" name="location" value="header"><button class="button" type="submit">Clear</button>
-          </form>
-          {{ else }}<a class="button" href="/admin/appearance/site-parts/new?location=header">Create editable header</a>{{ end }}
+    <div class="card-header"><h2>Site layout</h2></div>
+    <div class="card-body">
+      <div class="site-parts-list">
+        <div class="site-parts-row">
+          <div><strong>Header</strong><br><span class="muted">{{ if .Content.Header }}{{ .Content.Header.Name }}{{ else }}Using theme default{{ end }}</span></div>
+          <div class="site-parts-row__actions">
+            {{ if .Content.Header }}<a class="button" href="/admin/appearance/site-parts/{{ .Content.Header.ID }}/edit">Edit</a>
+            <form method="post" action="/admin/appearance/site-parts/location/clear" class="site-parts__inline-form">
+              <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><input type="hidden" name="location" value="header"><button class="button" type="submit">Clear</button>
+            </form>
+            {{ else }}<a class="button" href="/admin/appearance/site-parts/new?location=header">Create editable header</a>{{ end }}
+          </div>
         </div>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid #e5e7eb;border-radius:6px;">
-        <div><strong>Footer</strong><br><span class="muted">{{ if .Content.Footer }}{{ .Content.Footer.Name }}{{ else }}Using theme default{{ end }}</span></div>
-        <div>
-          {{ if .Content.Footer }}<a class="button" href="/admin/appearance/site-parts/{{ .Content.Footer.ID }}/edit">Edit</a>
-          <form method="post" action="/admin/appearance/site-parts/location/clear" style="display:inline;">
-            <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><input type="hidden" name="location" value="footer"><button class="button" type="submit">Clear</button>
-          </form>
-          {{ else }}<a class="button" href="/admin/appearance/site-parts/new?location=footer">Create editable footer</a>{{ end }}
+        <div class="site-parts-row">
+          <div><strong>Footer</strong><br><span class="muted">{{ if .Content.Footer }}{{ .Content.Footer.Name }}{{ else }}Using theme default{{ end }}</span></div>
+          <div class="site-parts-row__actions">
+            {{ if .Content.Footer }}<a class="button" href="/admin/appearance/site-parts/{{ .Content.Footer.ID }}/edit">Edit</a>
+            <form method="post" action="/admin/appearance/site-parts/location/clear" class="site-parts__inline-form">
+              <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><input type="hidden" name="location" value="footer"><button class="button" type="submit">Clear</button>
+            </form>
+            {{ else }}<a class="button" href="/admin/appearance/site-parts/new?location=footer">Create editable footer</a>{{ end }}
+          </div>
         </div>
       </div>
     </div>
   </section>
 
   <section class="card">
-    <h2>Reusable parts</h2>
-    {{ if .Content.Parts }}
-    <table class="data-table">
-      <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>
-        {{ range .Content.Parts }}
-        <tr>
-          <td><a href="/admin/appearance/site-parts/{{ .ID }}/edit">{{ .Name }}</a></td>
-          <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
-          <td><a class="button" href="/admin/appearance/site-parts/{{ .ID }}/edit">Edit</a></td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
-    {{ else }}
-    <p class="muted">No reusable site parts yet.</p>
-    {{ end }}
-    <a class="button" href="/admin/appearance/site-parts/new">Add site part</a>
+    <div class="card-header"><h2>Reusable parts</h2></div>
+    <div class="card-body">
+      {{ if .Content.Parts }}
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          {{ range .Content.Parts }}
+          <tr>
+            <td><a href="/admin/appearance/site-parts/{{ .ID }}/edit">{{ .Name }}</a></td>
+            <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
+            <td><a class="button" href="/admin/appearance/site-parts/{{ .ID }}/edit">Edit</a></td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      {{ else }}
+      <p class="muted">No reusable site parts yet.</p>
+      {{ end }}
+      <a class="button" href="/admin/appearance/site-parts/new">Add site part</a>
+    </div>
   </section>
 </div>
 <a class="button" href="/admin/appearance">Back to Appearance</a>
