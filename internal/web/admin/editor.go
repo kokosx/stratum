@@ -36,13 +36,17 @@ func (h *Handler) formOptions(ctx context.Context) []editorOption {
 	if h.forms == nil {
 		return nil
 	}
-	items, err := h.forms.ListActive(ctx)
+	items, err := h.forms.List(ctx)
 	if err != nil {
 		return nil
 	}
 	options := make([]editorOption, 0, len(items))
 	for _, item := range items {
-		options = append(options, editorOption{Value: item.ID, Label: item.Name})
+		label := item.Name
+		if !item.Active {
+			label += " (Disabled)"
+		}
+		options = append(options, editorOption{Value: item.ID, Label: label})
 	}
 	return options
 }
