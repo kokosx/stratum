@@ -117,8 +117,14 @@ func homepageTemplate(prefix string, preset PresetID, tagline, formID string) *d
 		if tagline != "" {
 			hero = append(hero, b.lead(tagline))
 		}
+		// Compact editorial hero: md when tagline exists, sm when title only.
+		// Avoids the previous lg whitespace bug around a single H1.
+		heroSpacing := "sm"
+		if tagline != "" {
+			heroSpacing = "md"
+		}
 		post := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
-		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "lg", "default", hero...), b.section("content", "md", "default", b.heading("Latest posts", 2), b.collection("post", "query", "list", 1, "lg", 5, post)), b.node("core/content-slot", 1, nil, nil)}}
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", heroSpacing, "default", hero...), b.section("content", "sm", "default", b.heading("Latest posts", 2), b.collection("post", "query", "list", 1, "lg", 5, post)), b.node("core/content-slot", 1, nil, nil)}}
 	case PresetPortfolio:
 		hero := []document.Node{b.entryTitle(1, "xl")}
 		if tagline != "" {
@@ -140,7 +146,7 @@ func homepageTemplate(prefix string, preset PresetID, tagline, formID string) *d
 			hero = append(hero, b.lead(tagline))
 		}
 		product := b.stack("vertical", "sm", "start", "start", b.entryMedia("(min-width: 1100px) 30vw, (min-width: 640px) 50vw, 100vw"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": "View product"}, nil))
-		return &document.Document{Version: 1, Nodes: []document.Node{b.section("wide", "lg", "muted", hero...), b.section("wide", "md", "default", b.heading("Featured Products", 2), b.collection("product", "query", "grid", 3, "lg", 6, product)), b.node("core/content-slot", 1, nil, nil)}}
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("wide", "md", "muted", hero...), b.section("wide", "md", "default", b.heading("Featured Products", 2), b.collection("product", "query", "grid", 3, "lg", 6, product)), b.node("core/content-slot", 1, nil, nil)}}
 	default:
 		hero := []document.Node{b.entryTitle(1, "xl")}
 		if tagline != "" {
@@ -148,7 +154,7 @@ func homepageTemplate(prefix string, preset PresetID, tagline, formID string) *d
 		}
 		hero = append(hero, b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Request a consultation", "/contact", "primary")))
 		service := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": "Learn more"}, nil))
-		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "lg", "muted", hero...), b.section("wide", "md", "default", b.heading("Services", 2), b.collection("service", "query", "grid", 3, "lg", 5, service)), b.section("content", "md", "primary", b.heading("Need a practical next step?", 2), b.text("Tell us what you need and we will explain how we can help."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Contact us", "/contact", "primary"))), b.node("core/content-slot", 1, nil, nil)}}
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "md", "muted", hero...), b.section("wide", "md", "default", b.heading("Services", 2), b.collection("service", "query", "grid", 3, "lg", 5, service)), b.section("content", "md", "primary", b.heading("Need a practical next step?", 2), b.text("Tell us what you need and we will explain how we can help."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Contact us", "/contact", "primary"))), b.node("core/content-slot", 1, nil, nil)}}
 	}
 }
 
@@ -187,9 +193,33 @@ func archiveTemplate(prefix string, preset PresetID) *document.Document {
 }
 
 func sitePartDocument(prefix, location string) *document.Document {
-	b := &docBuilder{prefix: prefix}
+	// Legacy entry point kept for tests that call it directly; uses minimal/split defaults.
 	if location == "header" {
-		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "md", "center", "between", b.node("core/site-name", 1, nil, map[string]any{"level": 2, "link": true}), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+		return sitePartDocumentForHeader(prefix, HeaderMinimal)
 	}
-	return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "lg", "center", "between", b.node("core/site-name", 1, nil, map[string]any{"level": 2, "link": true}), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
+	return sitePartDocumentForFooter(prefix, FooterSplit)
+}
+
+func sitePartDocumentForHeader(prefix string, style HeaderStyleID) *document.Document {
+	b := &docBuilder{prefix: prefix}
+	switch style {
+	case HeaderCentered:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "md", "center", "center", b.node("core/site-name", 1, nil, map[string]any{"align": "center"}), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+	case HeaderClassic:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "md", "center", "between", b.stack("vertical", "xs", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/site-tagline", 1, nil, nil)), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+	default: // minimal
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "md", "center", "between", b.node("core/site-name", 1, nil, nil), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+	}
+}
+
+func sitePartDocumentForFooter(prefix string, style FooterStyleID) *document.Document {
+	b := &docBuilder{prefix: prefix}
+	switch style {
+	case FooterSimple:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.node("core/site-name", 1, nil, nil)}}
+	case FooterCentered:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "md", "center", "center", b.node("core/site-name", 1, nil, map[string]any{"align": "center"}), b.node("core/site-tagline", 1, nil, map[string]any{"align": "center"}), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
+	default: // split
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "lg", "center", "between", b.stack("vertical", "xs", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/site-tagline", 1, nil, nil)), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
+	}
 }

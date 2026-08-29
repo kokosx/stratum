@@ -39,10 +39,101 @@
         <label><span>Site name</span><input type="text" name="site_name" maxlength="200" value="{{ .Content.SiteName }}" required></label>
         <label><span>Tagline <small>(optional)</small></span><input type="text" name="tagline" maxlength="300" value="{{ .Content.Tagline }}" placeholder="A short promise or description"></label>
       </div>
+      <fieldset class="creator-group creator-palettes">
+        <legend>Color palette</legend>
+        <p class="creator-group-hint">Curated colors. Adjust freely later in Site Styles.</p>
+        <div class="creator-palette-grid">
+        {{ range .Content.Palettes }}
+          <label class="creator-palette{{ if eq $.Content.SelectedPalette .ID }} is-selected{{ end }}">
+            <input type="radio" name="palette" value="{{ .ID }}" {{ if eq $.Content.SelectedPalette .ID }}checked{{ end }}>
+            <span class="creator-palette-card">
+              <span class="creator-swatches">{{ range .Swatches }}<span class="creator-swatch" style="background:{{ . }}"></span>{{ end }}</span>
+              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+            </span>
+          </label>
+        {{ end }}
+        </div>
+      </fieldset>
+      <fieldset class="creator-group creator-headers">
+        <legend>Header</legend>
+        <div class="creator-option-grid">
+        {{ range .Content.Headers }}
+          <label class="creator-option{{ if eq $.Content.SelectedHeader .ID }} is-selected{{ end }}">
+            <input type="radio" name="header_style" value="{{ .ID }}" {{ if eq $.Content.SelectedHeader .ID }}checked{{ end }}>
+            <span class="creator-option-card">
+              <span class="creator-preview creator-preview--header-{{ .ID }}">
+                {{ if eq .ID "minimal" }}<span class="creator-preview-bar"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
+                {{ if eq .ID "classic" }}<span class="creator-preview-bar"><span class="bar-stack"><span class="bar-brand"></span><span class="bar-tagline"></span></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
+                {{ if eq .ID "centered" }}<span class="creator-preview-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
+              </span>
+              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+            </span>
+          </label>
+        {{ end }}
+        </div>
+      </fieldset>
+      <fieldset class="creator-group creator-footers">
+        <legend>Footer</legend>
+        <div class="creator-option-grid">
+        {{ range .Content.Footers }}
+          <label class="creator-option{{ if eq $.Content.SelectedFooter .ID }} is-selected{{ end }}">
+            <input type="radio" name="footer_style" value="{{ .ID }}" {{ if eq $.Content.SelectedFooter .ID }}checked{{ end }}>
+            <span class="creator-option-card">
+              <span class="creator-preview creator-preview--footer-{{ .ID }}">
+                {{ if eq .ID "simple" }}<span class="creator-preview-footer-simple"><span class="bar-brand"></span><span class="bar-copy">©</span></span>{{ end }}
+                {{ if eq .ID "split" }}<span class="creator-preview-footer-split"><span class="f-top"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i></span></span><span class="f-line"></span><span class="bar-copy">©</span></span>{{ end }}
+                {{ if eq .ID "centered" }}<span class="creator-preview-footer-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i></span><span class="bar-copy">©</span></span>{{ end }}
+              </span>
+              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+            </span>
+          </label>
+        {{ end }}
+        </div>
+      </fieldset>
       <div class="creator-submit">
         <p class="muted">Creation can take a few seconds while starter images and the search index are prepared.</p>
         <button class="button button-primary" type="submit">Create my site</button>
       </div>
+      <script>
+      (function(){
+        var defaults = {"blog":{"palette":"clay","header":"classic","footer":"simple"},"portfolio":{"palette":"ink","header":"minimal","footer":"split"},"landing":{"palette":"indigo","header":"minimal","footer":"centered"},"products":{"palette":"ink","header":"classic","footer":"split"},"local-business":{"palette":"forest","header":"classic","footer":"split"}};
+        var presetInputs = document.querySelectorAll('input[name="preset"]');
+        var paletteInputs = document.querySelectorAll('input[name="palette"]');
+        var headerInputs = document.querySelectorAll('input[name="header_style"]');
+        var footerInputs = document.querySelectorAll('input[name="footer_style"]');
+        var touched = {palette:false, header:false, footer:false};
+        paletteInputs.forEach(function(el){ el.addEventListener('change', function(){ touched.palette=true; }); });
+        headerInputs.forEach(function(el){ el.addEventListener('change', function(){ touched.header=true; }); });
+        footerInputs.forEach(function(el){ el.addEventListener('change', function(){ touched.footer=true; }); });
+        function setChecked(name, value){
+          var inputs = document.querySelectorAll('input[name="'+name+'"]');
+          inputs.forEach(function(el){
+            el.checked = el.value === value;
+            var label = el.closest('label');
+            if(label){ label.classList.toggle('is-selected', el.checked); }
+          });
+        }
+        function syncRadios(){
+          document.querySelectorAll('.creator-palette, .creator-option').forEach(function(l){
+            var inp = l.querySelector('input');
+            if(inp){ l.classList.toggle('is-selected', inp.checked); }
+          });
+        }
+        paletteInputs.forEach(function(el){ el.addEventListener('change', syncRadios); });
+        headerInputs.forEach(function(el){ el.addEventListener('change', syncRadios); });
+        footerInputs.forEach(function(el){ el.addEventListener('change', syncRadios); });
+        presetInputs.forEach(function(el){
+          el.addEventListener('change', function(){
+            if(!el.checked) return;
+            var def = defaults[el.value];
+            if(!def) return;
+            if(!touched.palette) setChecked('palette', def.palette);
+            if(!touched.header) setChecked('header_style', def.header);
+            if(!touched.footer) setChecked('footer_style', def.footer);
+          });
+        });
+      })();
+      </script>
     </form>
     <form method="post" action="/admin/creator/skip" class="creator-skip">
       <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">

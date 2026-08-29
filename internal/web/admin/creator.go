@@ -10,12 +10,18 @@ import (
 )
 
 type creatorPageData struct {
-	Presets  []creator.Preset
-	Selected creator.PresetID
-	SiteName string
-	Tagline  string
-	Error    string
-	Result   *creator.Result
+	Presets         []creator.Preset
+	Selected        creator.PresetID
+	SiteName        string
+	Tagline         string
+	Error           string
+	Result          *creator.Result
+	Palettes        []creator.Palette
+	Headers         []creator.HeaderOption
+	Footers         []creator.FooterOption
+	SelectedPalette creator.PaletteID
+	SelectedHeader  creator.HeaderStyleID
+	SelectedFooter  creator.FooterStyleID
 }
 
 func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
@@ -33,16 +39,30 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	data := creatorPageData{Presets: creator.Presets(), Selected: creator.PresetBlog, SiteName: settings.SiteTitle, Tagline: settings.SiteTagline}
+	data := creatorPageData{
+		Presets:         creator.Presets(),
+		Palettes:        creator.Palettes(),
+		Headers:         creator.HeaderOptions(),
+		Footers:         creator.FooterOptions(),
+		Selected:        creator.PresetBlog,
+		SiteName:        settings.SiteTitle,
+		Tagline:         settings.SiteTagline,
+		SelectedPalette: creator.DefaultPaletteForPreset(creator.PresetBlog),
+		SelectedHeader:  creator.DefaultHeaderForPreset(creator.PresetBlog),
+		SelectedFooter:  creator.DefaultFooterForPreset(creator.PresetBlog),
+	}
 	if r.Method == http.MethodPost {
 		data.Selected = creator.PresetID(strings.TrimSpace(r.FormValue("preset")))
+		data.SelectedPalette = creator.PaletteID(strings.TrimSpace(r.FormValue("palette")))
+		data.SelectedHeader = creator.HeaderStyleID(strings.TrimSpace(r.FormValue("header_style")))
+		data.SelectedFooter = creator.FooterStyleID(strings.TrimSpace(r.FormValue("footer_style")))
 		data.SiteName = strings.TrimSpace(r.FormValue("site_name"))
 		data.Tagline = strings.TrimSpace(r.FormValue("tagline"))
 		if !h.validCSRF(r) {
 			http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 			return
 		}
-		plan, previewErr := h.creator.Preview(creator.Input{PresetID: data.Selected, SiteTitle: data.SiteName, Tagline: data.Tagline})
+		plan, previewErr := h.creator.Preview(creator.Input{PresetID: data.Selected, SiteTitle: data.SiteName, Tagline: data.Tagline, PaletteID: data.SelectedPalette, HeaderStyleID: data.SelectedHeader, FooterStyleID: data.SelectedFooter})
 		if previewErr == nil {
 			user, userErr := h.currentUser(r)
 			if userErr != nil {
@@ -63,6 +83,15 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("create starter site: %v", previewErr)
 		data.Error = previewErr.Error()
+		if data.SelectedPalette == "" {
+			data.SelectedPalette = creator.DefaultPaletteForPreset(data.Selected)
+		}
+		if data.SelectedHeader == "" {
+			data.SelectedHeader = creator.DefaultHeaderForPreset(data.Selected)
+		}
+		if data.SelectedFooter == "" {
+			data.SelectedFooter = creator.DefaultFooterForPreset(data.Selected)
+		}
 		h.renderCreator(w, r, data, http.StatusUnprocessableEntity)
 		return
 	}

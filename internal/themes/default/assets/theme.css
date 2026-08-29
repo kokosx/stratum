@@ -302,6 +302,31 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 .site-header--centered .primary-navigation,
 .site-header--stacked .primary-navigation,
 .site-header--logo-center .primary-navigation { margin-left: 0; }
+
+/* ----------------------------------------------------------------------------
+   Custom Header Site Part — themed scoping
+   The Site Part replaces the theme's hard-coded brand + primary navigation
+   but must inherit the same Header language (no default blue links, proper
+   gap, typography and current-state treatment). All rules are scoped to
+   .site-header__custom so a plain .stratum-navigation elsewhere stays generic.
+   ---------------------------------------------------------------------------- */
+.site-header__custom { width: 100%; min-width: 0; }
+.site-header__custom .stratum-site-name { font-family: var(--st-font-heading); font-size: 1.2rem; font-weight: 700; line-height: 1.1; letter-spacing: -0.015em; color: var(--st-color-heading); }
+.site-header__custom .stratum-site-name-link { color: inherit; text-decoration: none; }
+.site-header__custom .stratum-site-name-link:hover { color: var(--st-color-heading); text-decoration: none; }
+.site-header__custom .stratum-site-tagline { margin: 0; color: var(--st-color-text-muted); font-size: var(--st-small-size); font-weight: 400; line-height: 1.3; }
+.site-header__custom .stratum-navigation ul { display: flex; flex-wrap: wrap; align-items: center; gap: var(--st-nav-gap); margin: 0; padding: 0; list-style: none; }
+.site-header__custom .stratum-navigation--vertical ul { flex-direction: column; align-items: flex-start; }
+.site-header__custom .stratum-navigation a { display: inline-flex; align-items: center; min-height: 40px; padding-block: var(--st-space-sm); color: var(--st-color-text); font-size: var(--st-nav-font-size); font-weight: var(--st-nav-font-weight); letter-spacing: -0.01em; text-decoration: none; border-radius: var(--st-radius-sm); white-space: nowrap; transition: color 0.15s ease; }
+.site-header__custom .stratum-navigation a:hover { color: var(--st-color-primary); }
+.site-header__custom .stratum-navigation .is-current > a { color: var(--st-color-primary); font-weight: 650; box-shadow: inset 0 -2px 0 var(--st-color-primary); border-radius: 0; }
+.site-header__custom .stratum-navigation .is-ancestor > a { color: var(--st-color-text); }
+.site-header__custom .stratum-navigation .is-ancestor > a:hover { color: var(--st-color-primary); }
+.site-header__custom .stratum-navigation .is-current > a[aria-current="page"] { color: var(--st-color-primary); }
+
+/* Custom header inner vertical stack for centered variant */
+.site-header__custom > .stratum-stack-dir-vertical { width: 100%; }
+
 .mobile-menu-toggle {
   display: none;
   margin-left: auto;
@@ -474,6 +499,18 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 .footer-brand { display: grid; gap: var(--st-space-xs); }
 .footer-brand strong { font-size: 1rem; color: var(--st-footer-text); letter-spacing: -0.01em; }
 .footer-brand span { color: color-mix(in srgb, var(--st-footer-text) 65%, transparent); font-size: 0.9em; }
+
+/* Custom Footer Site Part — scoped Footer language, no Header bleed */
+.site-footer__main .stratum-site-name { font-size: 1rem; font-weight: 650; letter-spacing: -0.01em; color: var(--st-footer-text); }
+.site-footer__main .stratum-site-name-link { color: inherit; text-decoration: none; }
+.site-footer__main .stratum-site-name-link:hover { color: var(--st-footer-text); text-decoration: underline; text-underline-offset: 3px; }
+.site-footer__main .stratum-site-tagline { margin: 0; color: color-mix(in srgb, var(--st-footer-text) 65%, transparent); font-size: 0.85em; line-height: 1.4; }
+.site-footer__main .stratum-navigation ul { display: flex; flex-wrap: wrap; gap: var(--st-space-md); margin: 0; padding: 0; list-style: none; }
+.site-footer__main .stratum-navigation--vertical ul { flex-direction: column; }
+.site-footer__main .stratum-navigation a { display: inline-flex; align-items: center; padding: 3px 0; color: var(--st-footer-text); font-size: var(--st-small-size); font-weight: 450; letter-spacing: 0; text-decoration: none; border-radius: 0; transition: color 0.15s ease; }
+.site-footer__main .stratum-navigation a:hover { color: var(--st-footer-text); text-decoration: underline; text-underline-offset: 3px; }
+.site-footer__main .stratum-navigation .is-current > a { color: var(--st-footer-text); text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
+.site-footer__main .stratum-navigation .is-ancestor > a { color: var(--st-footer-text); }
 
 /* Footer menus never inherit header dropdown / pill treatment. */
 .footer-navigation ul, .legal-navigation ul {

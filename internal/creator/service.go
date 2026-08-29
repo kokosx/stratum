@@ -52,6 +52,24 @@ func (s *Service) Preview(input Input) (Plan, error) {
 	if !ok {
 		return Plan{}, errors.New("choose a starter site")
 	}
+	if input.PaletteID != "" && !IsValidPalette(input.PaletteID) {
+		return Plan{}, errors.New("choose a valid color palette")
+	}
+	if input.HeaderStyleID != "" && !IsValidHeader(input.HeaderStyleID) {
+		return Plan{}, errors.New("choose a valid header style")
+	}
+	if input.FooterStyleID != "" && !IsValidFooter(input.FooterStyleID) {
+		return Plan{}, errors.New("choose a valid footer style")
+	}
+	if input.PaletteID == "" {
+		input.PaletteID = DefaultPaletteForPreset(preset.ID)
+	}
+	if input.HeaderStyleID == "" {
+		input.HeaderStyleID = DefaultHeaderForPreset(preset.ID)
+	}
+	if input.FooterStyleID == "" {
+		input.FooterStyleID = DefaultFooterForPreset(preset.ID)
+	}
 	return Plan{Input: input, Preset: preset}, nil
 }
 
@@ -81,12 +99,12 @@ func (s *Service) Create(ctx context.Context, plan Plan, authorID string) (resul
 		return Result{}, err
 	}
 	plan = validated
-	spec := specFor(plan.Preset)
+	spec := specForPlan(plan)
 	artifacts, err := s.buildArtifacts(plan, spec)
 	if err != nil {
 		return Result{}, err
 	}
-	createdMedia, err := createStarterMedia(ctx, s.media, authorID, plan.Preset.ID, spec.images)
+	createdMedia, err := createStarterMedia(ctx, s.media, authorID, plan.Input.PaletteID, spec.images)
 	if err != nil {
 		cleanupStarterMedia(context.Background(), s.media, createdMedia)
 		return Result{}, fmt.Errorf("create starter media: %w", err)
@@ -314,7 +332,13 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 		}
 	}
 	for _, location := range []string{"header", "footer"} {
-		part := partArtifact{id: newID(), revisionID: newID(), location: location, name: strings.ToUpper(location[:1]) + location[1:], doc: sitePartDocument(newID(), location)}
+		var doc *document.Document
+		if location == "header" {
+			doc = sitePartDocumentForHeader(newID(), plan.Input.HeaderStyleID)
+		} else {
+			doc = sitePartDocumentForFooter(newID(), plan.Input.FooterStyleID)
+		}
+		part := partArtifact{id: newID(), revisionID: newID(), location: location, name: strings.ToUpper(location[:1]) + location[1:], doc: doc}
 		if err := siteparts.ValidateSitePartDocument(s.blocks, part.doc); err != nil {
 			return a, fmt.Errorf("validate %s: %w", location, err)
 		}

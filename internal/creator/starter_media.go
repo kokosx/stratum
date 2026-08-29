@@ -17,8 +17,8 @@ type starterMedia struct {
 	allIDs   []string
 }
 
-func createStarterMedia(ctx context.Context, service *media.Service, authorID string, preset PresetID, withImages bool) (starterMedia, error) {
-	palette := presetPalette(preset)
+func createStarterMedia(ctx context.Context, service *media.Service, authorID string, paletteID PaletteID, withImages bool) (starterMedia, error) {
+	palette := paletteForStyle(paletteID)
 	result := starterMedia{}
 	upload := func(filename, title, alt string, data []byte) (string, error) {
 		asset, err := service.Upload(ctx, filename, authorID, bytes.NewReader(data))
@@ -71,16 +71,20 @@ func geometricPNG(width, height int, palette [3]color.RGBA, variant int) []byte 
 }
 
 func presetPalette(id PresetID) [3]color.RGBA {
+	return paletteForStyle(DefaultPaletteForPreset(id))
+}
+
+func paletteForStyle(id PaletteID) [3]color.RGBA {
 	switch id {
-	case PresetBlog:
-		return [3]color.RGBA{{R: 247, G: 243, B: 238, A: 255}, {R: 139, G: 58, B: 58, A: 255}, {R: 38, G: 31, B: 28, A: 255}}
-	case PresetPortfolio:
+	case PaletteInk:
 		return [3]color.RGBA{{R: 245, G: 245, B: 244, A: 255}, {R: 17, G: 24, B: 39, A: 255}, {R: 196, G: 181, B: 253, A: 255}}
-	case PresetLanding:
-		return [3]color.RGBA{{R: 245, G: 243, B: 255, A: 255}, {R: 124, G: 58, B: 237, A: 255}, {R: 253, G: 224, B: 71, A: 255}}
-	case PresetProducts:
-		return [3]color.RGBA{{R: 241, G: 245, B: 249, A: 255}, {R: 51, G: 65, B: 85, A: 255}, {R: 148, G: 163, B: 184, A: 255}}
-	default:
+	case PaletteClay:
+		return [3]color.RGBA{{R: 247, G: 243, B: 238, A: 255}, {R: 139, G: 58, B: 58, A: 255}, {R: 38, G: 31, B: 28, A: 255}}
+	case PaletteForest:
 		return [3]color.RGBA{{R: 240, G: 253, B: 250, A: 255}, {R: 15, G: 118, B: 110, A: 255}, {R: 253, G: 186, B: 116, A: 255}}
+	case PaletteIndigo:
+		return [3]color.RGBA{{R: 245, G: 243, B: 255, A: 255}, {R: 124, G: 58, B: 237, A: 255}, {R: 253, G: 224, B: 71, A: 255}}
+	default:
+		return [3]color.RGBA{{R: 245, G: 245, B: 244, A: 255}, {R: 17, G: 24, B: 39, A: 255}, {R: 196, G: 181, B: 253, A: 255}}
 	}
 }
