@@ -1,5 +1,5 @@
 {{ define "content" }}
-<h1>Create Template</h1>
+<h1>Create template</h1>
 {{ if .Content.Error }}<p class="form-error" role="alert">{{ .Content.Error }}</p>{{ end }}
 <form method="post" action="{{ .Content.Action }}">
   <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">

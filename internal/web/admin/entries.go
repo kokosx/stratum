@@ -29,6 +29,7 @@ type EntriesData struct {
 	BasePath      string // e.g. /admin/posts
 	QueryString   string // e.g. search=x&status=draft for pagination links (without page)
 	CSRFToken     string
+	AddLabel      string
 }
 
 type EntryData struct {
@@ -146,6 +147,17 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	addLabel := ""
+	switch heading {
+	case "Pages":
+		addLabel = "Add page"
+	case "Posts":
+		addLabel = "Add post"
+	default:
+		if heading != "" {
+			addLabel = "Add " + heading
+		}
+	}
 	data := LayoutData{
 		Title:         heading,
 		ActiveMenu:    activeMenu,
@@ -169,6 +181,7 @@ func (h *Handler) listEntries(w http.ResponseWriter, r *http.Request, contentTyp
 			BasePath:      basePath,
 			QueryString:   qs,
 			CSRFToken:     token,
+			AddLabel:      addLabel,
 		},
 	}
 	if err := h.entriesTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {

@@ -132,11 +132,11 @@ func (h *Handler) newCustomEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := "/admin/content/" + string(definition.ID)
-	heading := "Add new"
+	heading := "Add item"
 	if definition.ItemLabel() != "" {
-		heading = "Add new " + definition.ItemLabel()
+		heading = "Add " + definition.ItemLabel()
 	} else {
-		heading = "Add new item"
+		heading = "Add item"
 	}
 	h.renderEntryForm(w, r, entryFormData{Heading: heading, Action: base, PublishAction: base, BackURL: base, DocumentJSON: `{"version":1,"nodes":[]}`, Dirty: "Saved", Status: "Draft", ContentTypeID: string(definition.ID), Hierarchical: definition.Capabilities.Hierarchical, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), string(definition.ID))}, "content/"+string(definition.ID))
 }
@@ -154,9 +154,9 @@ func (h *Handler) createCustomEntry(w http.ResponseWriter, r *http.Request) {
 	// custom type must use its DB-backed schema to capture revision fields.
 	input.fields = rawFieldValues(r, definition)
 	base := "/admin/content/" + string(definition.ID)
-	heading := "Add new item"
+	heading := "Add item"
 	if definition.ItemLabel() != "" {
-		heading = "Add new " + definition.ItemLabel()
+		heading = "Add " + definition.ItemLabel()
 	}
 	if err != nil {
 		h.renderEntryForm(w, r, entryFormData{Heading: heading, Action: base, PublishAction: base, BackURL: base, Title: r.FormValue("title"), Slug: r.FormValue("slug"), DocumentJSON: postedDocument(r), ContentTypeID: string(definition.ID), Error: err.Error()}, "content/"+string(definition.ID))

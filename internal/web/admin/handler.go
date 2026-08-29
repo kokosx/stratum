@@ -64,6 +64,10 @@ type Handler struct {
 	formEditorTemplate           *template.Template
 	submissionsTemplate          *template.Template
 	submissionTemplate           *template.Template
+	toolsRedirectsTemplate       *template.Template
+	toolsRedirectFormTemplate    *template.Template
+	toolsNotFoundTemplate        *template.Template
+	toolsHealthTemplate          *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -140,6 +144,19 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		"add":      func(a, b int) int { return a + b },
 		"subtract": func(a, b int) int { return a - b },
 		"multiply": func(a, b int) int { return a * b },
+		"lower":    strings.ToLower,
+		"plural": func(n int, singular, plural string) string {
+			if n == 1 {
+				return "1 " + singular
+			}
+			return fmt.Sprintf("%d %s", n, plural)
+		},
+		"plural64": func(n int64, singular, plural string) string {
+			if n == 1 {
+				return "1 " + singular
+			}
+			return fmt.Sprintf("%d %s", n, plural)
+		},
 	}
 
 	dashboardTemplate, err := template.New("dashboard").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "dashboard.html")
@@ -250,6 +267,22 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	toolsRedirectsTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_redirects", "tools_redirects.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsRedirectFormTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_redirect_form", "tools_redirect_form.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsNotFoundTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_notfound", "tools_notfound.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsHealthTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_health", "tools_health.html")
+	if err != nil {
+		return nil, err
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
@@ -291,6 +324,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		sitePartFormTemplate:         sitePartFormTemplate,
 		sitePartEditorTemplate:       sitePartEditorTemplate,
 		revisionsTemplate:            revisionsTemplate,
+		toolsRedirectsTemplate:       toolsRedirectsTemplate,
+		toolsRedirectFormTemplate:    toolsRedirectFormTemplate,
+		toolsNotFoundTemplate:        toolsNotFoundTemplate,
+		toolsHealthTemplate:          toolsHealthTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,
@@ -462,6 +499,16 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/media/{id}/json", h.requireAuth(h.mediaDetailJSON))
 	mux.HandleFunc("POST /admin/media/{id}", h.requireAuth(h.updateMedia))
 	mux.HandleFunc("POST /admin/media/{id}/delete", h.requireAuth(h.deleteMedia))
+	// Tools — Site Operations (EPIC 5)
+	mux.HandleFunc("GET /admin/tools/site-health", h.requireAuth(h.toolsSiteHealth))
+	mux.HandleFunc("GET /admin/tools/redirects", h.requireAuth(h.toolsRedirectsList))
+	mux.HandleFunc("GET /admin/tools/redirects/new", h.requireAuth(h.toolsRedirectsNew))
+	mux.HandleFunc("POST /admin/tools/redirects", h.requireAuth(h.toolsRedirectsCreate))
+	mux.HandleFunc("GET /admin/tools/redirects/{id}/edit", h.requireAuth(h.toolsRedirectsEdit))
+	mux.HandleFunc("POST /admin/tools/redirects/{id}", h.requireAuth(h.toolsRedirectsUpdate))
+	mux.HandleFunc("POST /admin/tools/redirects/{id}/delete", h.requireAuth(h.toolsRedirectsDelete))
+	mux.HandleFunc("GET /admin/tools/not-found", h.requireAuth(h.toolsNotFoundList))
+	mux.HandleFunc("POST /admin/tools/not-found/delete", h.requireAuth(h.toolsNotFoundDelete))
 	staticFS, err := fs.Sub(webassets.Assets, "static")
 	if err != nil {
 		panic(fmt.Sprintf("admin static files: %v", err))
@@ -681,7 +728,7 @@ func (h *Handler) authorized(r *http.Request, user auth.User) bool {
 		return authz.Allows(user.Role, authz.ManageUsers)
 	case strings.HasPrefix(path, "/admin/menus"):
 		return authz.Allows(user.Role, authz.ManageNavigation)
-	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"):
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/tools"):
 		return authz.Allows(user.Role, authz.ManageSite)
 	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
 		return authz.Allows(user.Role, authz.ManageTaxonomies)
@@ -752,7 +799,7 @@ func (h *Handler) navForUser(r *http.Request) []AdminNavItem {
 			}
 			path := "/admin/content/" + string(definition.ID)
 			label := definition.Label()
-			customNav = append(customNav, AdminNavItem{ID: "content-" + string(definition.ID), Label: label, Href: path, Icon: "pages", Children: []AdminNavItem{{ID: "content-" + string(definition.ID) + "-all", Label: "All items", Href: path}, {ID: "content-" + string(definition.ID) + "-new", Label: "Add new", Href: path + "/new"}}})
+			customNav = append(customNav, AdminNavItem{ID: "content-" + string(definition.ID), Label: label, Href: path, Icon: "pages", Children: []AdminNavItem{{ID: "content-" + string(definition.ID) + "-all", Label: "All items", Href: path}, {ID: "content-" + string(definition.ID) + "-new", Label: "Add " + definition.ItemLabel(), Href: path + "/new"}}})
 		}
 	}
 	if len(customNav) > 0 {

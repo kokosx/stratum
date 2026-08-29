@@ -26,7 +26,7 @@ func (h *Handler) newPage(w http.ResponseWriter, r *http.Request) {
 		defaultTpl = ct.DefaultLayoutTemplateID.String
 	}
 	h.renderEntryForm(w, r, entryFormData{
-		Heading:          "Add New Page",
+		Heading:          "Add page",
 		Action:           "/admin/pages",
 		PublishAction:    "/admin/pages",
 		BackURL:          "/admin/pages",
@@ -50,7 +50,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := readEntryInput(r, pageContentType)
 	if err != nil {
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: pageContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: err.Error(), ShowSEO: true, ShowFeatured: true, CommentsEnabled: input.commentsEnabled, SupportsComments: content.DefinitionFor(pageContentType).Capabilities.SupportsComments}, "pages")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: r.FormValue("title"), Slug: r.FormValue("slug"), SEOTitle: r.FormValue("seo_title"), SEODescription: r.FormValue("seo_description"), CanonicalURL: r.FormValue("canonical_url"), FeaturedMediaID: r.FormValue("featured_media_id"), SocialMediaID: r.FormValue("social_media_id"), RobotsIndex: r.FormValue("seo_robots_index"), RobotsFollow: r.FormValue("seo_robots_follow"), SchemaMode: r.FormValue("schema_mode"), DocumentJSON: postedDocument(r), ContentTypeID: pageContentType, LayoutTemplateID: r.FormValue("layout_template_id"), LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: err.Error(), ShowSEO: true, ShowFeatured: true, CommentsEnabled: input.commentsEnabled, SupportsComments: content.DefinitionFor(pageContentType).Capabilities.SupportsComments}, "pages")
 		return
 	}
 	user, err := h.currentUser(r)
@@ -64,7 +64,7 @@ func (h *Handler) createPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("create page: %v", err)
-		h.renderEntryForm(w, r, entryFormData{Heading: "Add New Page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: pageContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: entryWriteError(err), ShowSEO: true, ShowFeatured: true, CommentsEnabled: input.commentsEnabled, SupportsComments: content.DefinitionFor(pageContentType).Capabilities.SupportsComments}, "pages")
+		h.renderEntryForm(w, r, entryFormData{Heading: "Add page", Action: "/admin/pages", PublishAction: "/admin/pages", BackURL: "/admin/pages", Title: input.title, Slug: input.slug, SEOTitle: input.seoTitle, SEODescription: input.seoDescription, CanonicalURL: input.canonicalURL, FeaturedMediaID: input.featuredMediaID, SocialMediaID: input.socialMediaID, RobotsIndex: robotsInputFormValue(input.robotsIndex), RobotsFollow: robotsInputFormValue(input.robotsFollow), SchemaMode: input.schemaMode, DocumentJSON: input.documentJSON, ContentTypeID: pageContentType, LayoutTemplateID: input.layoutTemplateID, LayoutTemplates: h.loadLayoutTemplateOptions(r.Context(), pageContentType), Error: entryWriteError(err), ShowSEO: true, ShowFeatured: true, CommentsEnabled: input.commentsEnabled, SupportsComments: content.DefinitionFor(pageContentType).Capabilities.SupportsComments}, "pages")
 		return
 	}
 	if r.FormValue("publish") != "" && h.runtime != nil {
@@ -158,7 +158,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		scheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
 	}
 	h.renderEntryForm(w, r, entryFormData{
-		Heading:               "Edit Page",
+		Heading:               "Edit page",
 		Action:                "/admin/pages/" + entry.ID,
 		PublishAction:         "/admin/pages/" + entry.ID + "/publish",
 		BackURL:               "/admin/pages",

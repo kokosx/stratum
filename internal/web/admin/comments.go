@@ -12,7 +12,8 @@ import (
 
 type adminCommentView struct {
 	ID, AuthorName, AuthorEmail, AuthorURL, Body, Status string
-	CreatedAt                                            int64
+	CreatedAt, CreatedAtFormatted                        string
+	RawCreatedAt                                         int64
 	EntryID, EntryTitle, EntryURL                        string
 }
 
@@ -58,7 +59,7 @@ func (h *Handler) listComments(w http.ResponseWriter, r *http.Request) {
 	token, _ := h.csrfToken(w, r)
 	commentViews := make([]adminCommentView, 0, len(rows))
 	for _, c := range rows {
-		view := adminCommentView{ID: c.ID, AuthorName: c.AuthorName, AuthorEmail: c.AuthorEmail, AuthorURL: c.AuthorUrl, Body: c.Body, Status: c.Status, CreatedAt: c.CreatedAt, EntryID: c.EntryID, EntryTitle: c.EntryID}
+		view := adminCommentView{ID: c.ID, AuthorName: c.AuthorName, AuthorEmail: c.AuthorEmail, AuthorURL: c.AuthorUrl, Body: c.Body, Status: c.Status, CreatedAt: time.Unix(c.CreatedAt, 0).Format("2 Jan 2006, 15:04"), RawCreatedAt: c.CreatedAt, CreatedAtFormatted: time.Unix(c.CreatedAt, 0).Format("2 Jan 2006, 15:04"), EntryID: c.EntryID, EntryTitle: c.EntryID}
 		if entry, err := h.queries.GetEntry(r.Context(), c.EntryID); err == nil {
 			view.EntryTitle = entry.Slug
 			if rev, err := h.queries.GetLatestEntryRevision(r.Context(), entry.ID); err == nil && rev.Title != "" {

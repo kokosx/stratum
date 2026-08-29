@@ -27,6 +27,7 @@ import (
 	"github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/notfound"
 	"github.com/kokosx/stratum/internal/pagecache"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/rendering"
@@ -60,6 +61,7 @@ type Handler struct {
 	comments      *comments.Service
 	forms         *forms.Service
 	auth          *auth.Service
+	notFound      *notfound.Store
 }
 
 func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
@@ -99,6 +101,7 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		// Public comment submission accepts the same signed-in session as admin.
 		// Failure to initialize auth only leaves public comments anonymous.
 		h.auth, _ = auth.NewService(database, hub.Queries, !h.dev)
+		h.notFound = notfound.New(database)
 	}
 	testRouteRegistry.Store(hub.Queries, h)
 	// Targeted warmup: homepage and main archive page 1 if available.
@@ -297,6 +300,10 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			if h.notFound != nil {
+				// Only public 404, path only, no query
+				_ = h.notFound.Record(r.Context(), r.URL.Path)
+			}
 			http.NotFound(w, r)
 			return
 		}

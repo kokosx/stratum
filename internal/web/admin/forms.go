@@ -196,7 +196,7 @@ func primaryValues(sub forms.Submission) (string, string) {
 	}
 	return values[0], values[1]
 }
-func formatReceived(t time.Time) string { return t.Local().Format("2 Jan 2006 15:04") }
+func formatReceived(t time.Time) string { return t.Local().Format("2 Jan 2006, 15:04") }
 
 func (h *Handler) listFormSubmissions(w http.ResponseWriter, r *http.Request) {
 	form, err := h.forms.Get(r.Context(), r.PathValue("id"))

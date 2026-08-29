@@ -33,7 +33,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	data := usersData{CSRFToken: token, Users: make([]userData, 0, len(rows))}
 	for _, row := range rows {
-		data.Users = append(data.Users, userData{ID: row.ID, Email: row.Email, Role: row.Role, Status: row.Status, CreatedAt: time.Unix(row.CreatedAt, 0).Format("2 Jan 2006")})
+		data.Users = append(data.Users, userData{ID: row.ID, Email: row.Email, Role: row.Role, Status: row.Status, CreatedAt: time.Unix(row.CreatedAt, 0).Format("2 Jan 2006, 15:04")})
 	}
 	state := ResolveNav(r.URL.Path)
 	if err := h.usersTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Users", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}); err != nil {

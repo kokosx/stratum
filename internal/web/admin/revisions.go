@@ -48,7 +48,7 @@ func (h *Handler) renderRevisions(w http.ResponseWriter, r *http.Request, data r
 }
 
 func formatRevisionTime(unix int64) string {
-	return time.Unix(unix, 0).Format("Jan 02, 2006 15:04")
+	return time.Unix(unix, 0).Format("2 Jan 2006, 15:04")
 }
 
 var _ = template.HTMLEscapeString

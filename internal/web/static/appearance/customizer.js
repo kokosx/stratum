@@ -305,8 +305,7 @@
           }
         });
       } else {
-        const input = prompt('Enter media ID for logo:', current);
-        if (input !== null) update(key, input.trim());
+        window.stratumToast('error', 'Media picker is unavailable.');
       }
     });
     actions.append(chooseBtn);

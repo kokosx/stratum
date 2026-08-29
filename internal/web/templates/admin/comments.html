@@ -17,7 +17,8 @@
     {{ if ne $cur "all" }}<input type="hidden" name="status" value="{{ $cur }}">{{ end }}
     <label for="comment-search" class="screen-reader-text">Search comments</label>
     <input type="search" id="comment-search" name="q" value="{{ $search }}" placeholder="Search comments">
-    <button type="submit" class="button">Search Comments</button>
+    <button type="submit" class="button">Search</button>
+    {{ if or $search (ne $cur "all") }}<a href="/admin/comments" class="button" style="margin-left:8px;">Clear filters</a>{{ end }}
   </form>
 </div>
 
@@ -96,7 +97,7 @@
         </td>
       </tr>
       {{ else }}
-      <tr><td colspan="6" class="muted">No comments found.</td></tr>
+      <tr><td colspan="6" class="muted">{{ if $search }}No comments match “{{ $search }}”. <a href="/admin/comments{{ if ne $cur "all" }}?status={{ $cur }}{{ end }}">Clear search</a>{{ else }}No comments found.{{ end }}</td></tr>
       {{ end }}
     </tbody>
   </table>

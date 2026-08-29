@@ -113,7 +113,7 @@ func (h *Handler) newSitePart(w http.ResponseWriter, r *http.Request) {
 	if loc != "header" && loc != "footer" {
 		loc = ""
 	}
-	heading := "Create Site Part"
+	heading := "Create site part"
 	if loc == "header" {
 		heading = "Create Header"
 	} else if loc == "footer" {
@@ -158,7 +158,7 @@ func (h *Handler) createSitePart(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderSitePartCreateError(w http.ResponseWriter, r *http.Request, msg, name, loc string) {
 	token, _ := h.csrfToken(w, r)
 	data := sitePartFormData{
-		Heading:   "Create Site Part",
+		Heading:   "Create site part",
 		Action:    "/admin/appearance/site-parts/new",
 		BackURL:   "/admin/appearance/site-parts",
 		Name:      name,
@@ -166,7 +166,7 @@ func (h *Handler) renderSitePartCreateError(w http.ResponseWriter, r *http.Reque
 		CSRFToken: token,
 		Error:     msg,
 	}
-	if err := h.sitePartFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create Site Part", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
+	if err := h.sitePartFormTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Create site part", ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render create error: %v", err)
 	}
 }
@@ -230,7 +230,7 @@ func (h *Handler) renderSitePartEditor(w http.ResponseWriter, r *http.Request, p
 		locAction = "/admin/appearance/site-parts/location"
 	}
 	data := sitePartEditorData{
-		Heading:        "Edit Site Part",
+		Heading:        "Edit site part",
 		Action:         "/admin/appearance/site-parts/" + part.ID,
 		PublishAction:  "/admin/appearance/site-parts/" + part.ID + "/publish",
 		LocationAction: locAction,

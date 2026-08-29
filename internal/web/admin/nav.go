@@ -26,19 +26,19 @@ func AdminNav() []AdminNavItem {
 	return []AdminNavItem{
 		{ID: "dashboard", Label: "Dashboard", Href: "/admin", Icon: "dashboard"},
 		{ID: "posts", Label: "Posts", Href: "/admin/posts", Icon: "posts", Children: []AdminNavItem{
-			{ID: "posts-all", Label: "All Posts", Href: "/admin/posts"},
-			{ID: "posts-new", Label: "Add New", Href: "/admin/posts/new"},
+			{ID: "posts-all", Label: "All posts", Href: "/admin/posts"},
+			{ID: "posts-new", Label: "Add post", Href: "/admin/posts/new"},
 			{ID: "posts-categories", Label: "Categories", Href: "/admin/posts/categories"},
 			{ID: "posts-tags", Label: "Tags", Href: "/admin/posts/tags"},
 		}},
 		{ID: "pages", Label: "Pages", Href: "/admin/pages", Icon: "pages", Children: []AdminNavItem{
-			{ID: "pages-all", Label: "All Pages", Href: "/admin/pages"},
-			{ID: "pages-new", Label: "Add New", Href: "/admin/pages/new"},
+			{ID: "pages-all", Label: "All pages", Href: "/admin/pages"},
+			{ID: "pages-new", Label: "Add page", Href: "/admin/pages/new"},
 		}},
 		{ID: "comments", Label: "Comments", Href: "/admin/comments", Icon: "comments"},
 		{ID: "forms", Label: "Forms", Href: "/admin/forms", Icon: "forms", Children: []AdminNavItem{
-			{ID: "forms-all", Label: "All Forms", Href: "/admin/forms"},
-			{ID: "forms-new", Label: "Add New", Href: "/admin/forms/new"},
+			{ID: "forms-all", Label: "All forms", Href: "/admin/forms"},
+			{ID: "forms-new", Label: "Add form", Href: "/admin/forms/new"},
 		}},
 		{ID: "media", Label: "Media", Href: "/admin/media", Icon: "media", Children: []AdminNavItem{
 			{ID: "media-library", Label: "Library", Href: "/admin/media"},
@@ -55,6 +55,11 @@ func AdminNav() []AdminNavItem {
 			{ID: "settings-reading", Label: "Reading", Href: "/admin/settings/reading"},
 			{ID: "settings-seo", Label: "SEO & Crawling", Href: "/admin/settings/seo"},
 			{ID: "settings-performance", Label: "Performance", Href: "/admin/settings/performance"},
+		}},
+		{ID: "tools", Label: "Tools", Href: "/admin/tools/site-health", Icon: "settings", Children: []AdminNavItem{
+			{ID: "tools-site-health", Label: "Site Health", Href: "/admin/tools/site-health"},
+			{ID: "tools-redirects", Label: "Redirects", Href: "/admin/tools/redirects"},
+			{ID: "tools-not-found", Label: "Not Found", Href: "/admin/tools/not-found"},
 		}},
 		{ID: "users", Label: "Users", Href: "/admin/users", Icon: "users"},
 	}
@@ -86,7 +91,7 @@ func navPermission(path string) authz.Permission {
 		return authz.ManageUsers
 	case strings.HasPrefix(path, "/admin/menus"):
 		return authz.ManageNavigation
-	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"):
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/tools"):
 		return authz.ManageSite
 	case strings.HasPrefix(path, "/admin/media"):
 		return authz.ManageMedia
@@ -190,6 +195,14 @@ func ResolveNav(path string) NavState {
 			return NavState{ActiveSection: "settings", ActiveItem: "settings-performance"}
 		}
 		return NavState{ActiveSection: "settings", ActiveItem: "settings-general"}
+	case strings.HasPrefix(path, "/admin/tools"):
+		if strings.HasPrefix(path, "/admin/tools/redirects") {
+			return NavState{ActiveSection: "tools", ActiveItem: "tools-redirects"}
+		}
+		if strings.HasPrefix(path, "/admin/tools/not-found") {
+			return NavState{ActiveSection: "tools", ActiveItem: "tools-not-found"}
+		}
+		return NavState{ActiveSection: "tools", ActiveItem: "tools-site-health"}
 	case strings.HasPrefix(path, "/admin/users"):
 		return NavState{ActiveSection: "users", ActiveItem: "users"}
 	}

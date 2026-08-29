@@ -21,7 +21,7 @@
 
 <div class="taxonomy-layout">
   <div class="taxonomy-form admin-section" style="background:var(--ui-surface); border:1px solid var(--ui-border); border-radius:var(--ui-radius-md); padding:16px;">
-    <h2>Add New {{ .Content.TaxonomyName }}</h2>
+    <h2>Add {{ .Content.TaxonomyName }}</h2>
     <form method="post" action="{{ if eq .Content.TaxonomyID "category" }}/admin/posts/categories{{ else }}/admin/posts/tags{{ end }}">
       <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
       <div class="form-group">
@@ -50,7 +50,7 @@
         <textarea class="form-control" id="term-description" name="description" rows="3"></textarea>
         <p class="form-help">Not prominent by default; archive templates may show it.</p>
       </div>
-      <button type="submit" class="button button-primary">Add New {{ .Content.TaxonomyName }}</button>
+      <button type="submit" class="button button-primary">Add {{ .Content.TaxonomyName }}</button>
     </form>
   </div>
 
@@ -89,7 +89,7 @@
             <div class="row-actions">
               <span><button type="button" class="row-action-link" data-quick-edit="{{ .ID }}">Quick Edit</button> | </span>
               <span>
-                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/delete{{ else }}/admin/posts/tags/{{ .ID }}/delete{{ end }}" class="inline-form" onsubmit="return confirm('Delete this {{ $.Content.TaxonomyName }}?')">
+                <form method="post" action="{{ if eq $.Content.TaxonomyID "category" }}/admin/posts/categories/{{ .ID }}/delete{{ else }}/admin/posts/tags/{{ .ID }}/delete{{ end }}" class="inline-form" onsubmit="return confirm('Delete “{{ .Name }}”?')">
                   <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
                   <button type="submit" class="row-action-link row-action-delete">Delete</button>
                 </form>
@@ -146,22 +146,74 @@
 </div>
 <script>
 (function(){
+  let openId = null;
+  let openTrigger = null;
+  function isDirty(row){
+    const inputs = row.querySelectorAll('input, textarea, select');
+    for (const el of inputs) {
+      if (el.dataset.initial !== undefined) {
+        if (el.value !== el.dataset.initial) return true;
+      }
+    }
+    return false;
+  }
   document.querySelectorAll('[data-quick-edit]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var id = btn.getAttribute('data-quick-edit');
       var row = document.getElementById('edit-'+id);
-      if(row) row.hidden = !row.hidden;
-      if(row && !row.hidden) {
-        var inp = row.querySelector('input[name=name]');
-        if(inp) inp.focus();
+      if(!row) return;
+      // If same row toggled
+      if(!row.hidden && openId === id){
+        if(isDirty(row) && !confirm('Discard unsaved changes?')) return;
+        row.hidden = true;
+        openId = null;
+        if(openTrigger) openTrigger.focus();
+        openTrigger = null;
+        return;
       }
+      // Check previous unsaved
+      if(openId && openId !== id){
+        var prevRow = document.getElementById('edit-'+openId);
+        if(prevRow && !prevRow.hidden && isDirty(prevRow)){
+          if(!confirm('Discard unsaved changes?')) return;
+        }
+        if(prevRow) prevRow.hidden = true;
+      }
+      // Capture initial values if not yet
+      if(!row.dataset.initialized){
+        row.querySelectorAll('input, textarea, select').forEach(function(el){
+          el.dataset.initial = el.value;
+        });
+        row.dataset.initialized = "1";
+      }
+      // Close others
+      document.querySelectorAll('.quick-edit-row').forEach(function(r){ if(r.id !== 'edit-'+id) r.hidden = true; });
+      // Also for taxonomy rows with id edit-
+      document.querySelectorAll('[id^="edit-"]').forEach(function(r){ if(r.id !== 'edit-'+id) r.hidden = true; });
+      row.hidden = false;
+      openId = id;
+      openTrigger = btn;
+      // Focus first field
+      var inp = row.querySelector('input[name=name]');
+      if(inp){ inp.focus(); inp.select(); }
+      // Hide on Escape
+      row.addEventListener('keydown', function onKey(e){
+        if(e.key === 'Escape'){ e.preventDefault(); row.hidden = true; openId=null; if(openTrigger) openTrigger.focus(); row.removeEventListener('keydown', onKey); }
+      });
     });
   });
   document.querySelectorAll('[data-quick-cancel]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var id = btn.getAttribute('data-quick-cancel');
       var row = document.getElementById('edit-'+id);
-      if(row) row.hidden = true;
+      if(!row) return;
+      if(isDirty(row) && !confirm('Discard unsaved changes?')) return;
+      row.hidden = true;
+      openId = null;
+      if(openTrigger){ openTrigger.focus(); }
+      // Also find trigger for this id and focus
+      var trigger = document.querySelector('[data-quick-edit="'+id+'"]');
+      if(trigger) trigger.focus();
     });
   });
 })();

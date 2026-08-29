@@ -31,7 +31,8 @@
     previewWidth: "100%",
     libraryTab: "blocks",
   };
-  const persistedJSON = JSON.stringify(bootstrap.document);
+  let persistedJSON = JSON.stringify(bootstrap.document);
+  let persistedMeta = captureMetaSnapshot();
   const definitions = new Map(
     [...state.catalog, ...(bootstrap.definitions || [])].map((item) => [`${item.block}@${item.version}`, item])
   );
@@ -77,14 +78,51 @@
     restoreSnapshot();
   }
 
-  function updateDirty() {
+  function captureMetaSnapshot() {
+    const ids = ["entry-title","entry-slug","entry-excerpt","entry-seo-title","entry-seo-description","entry-canonical-url","entry-seo-robots-index","entry-seo-robots-follow","entry-schema-mode","entry-layout-template","entry-featured-media-id","entry-social-media-id","template-name","site-part-name"];
+    const snap = {};
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) snap[id] = el.value ?? el.textContent ?? "";
+    });
+    // Include visibility, sticky, parent, order etc from form if present
+    const formEls = form ? form.elements : null;
+    if (formEls) {
+      ["visibility","password","sticky","review_state","scheduled_at","comments_enabled","parent_entry_id","menu_order"].forEach(name => {
+        const el = formEls[name];
+        if (el) snap[name] = el.value ?? (el.checked ? "1" : "0");
+      });
+      // custom fields
+      Array.from(form.elements).forEach(el => {
+        if (el.name && el.name.startsWith("field_")) snap[el.name] = el.value;
+        if (el.name && el.name.startsWith("taxonomy_")) {
+          if (el.type === "checkbox") {
+            if (!snap[el.name]) snap[el.name] = [];
+            if (el.checked) snap[el.name].push(el.value);
+          } else snap[el.name] = el.value;
+        }
+      });
+    }
+    return JSON.stringify(snap);
+  }
+  function isDirtyNow() {
     const cur = JSON.stringify(state.document);
-    const isDirty = cur !== persistedJSON;
+    if (cur !== persistedJSON) return true;
+    const meta = captureMetaSnapshot();
+    return meta !== persistedMeta;
+  }
+  function updateDirty() {
+    const isDirty = isDirtyNow();
     state.dirty = isDirty;
     if (dirtyElement) {
-      dirtyElement.textContent = isDirty ? "Unsaved" : "Saved";
+      dirtyElement.textContent = isDirty ? "Unsaved changes" : "Saved";
       dirtyElement.className = isDirty ? "editor-status is-dirty" : "editor-status is-saved";
     }
+  }
+  function syncBaseline() {
+    persistedJSON = JSON.stringify(state.document);
+    persistedMeta = captureMetaSnapshot();
+    updateDirty();
   }
 
   function restoreSnapshot() {
@@ -515,7 +553,7 @@
   // --- Render cycle --------------------------------------------------------
 
   function markSaved() {
-    state.dirty = false;
+    syncBaseline();
     if (dirtyElement) {
       dirtyElement.textContent = "Saved";
       dirtyElement.className = "editor-status is-saved";
@@ -1317,7 +1355,13 @@
           if (!sel || sel.start===sel.end) return;
           const url = window.prompt("Link URL");
           if (!url) return;
-          if (!isSafeLink(url)) { window.alert("Invalid URL. Use /path, #anchor, https://, http://, mailto:, tel:"); return; }
+          if (!isSafeLink(url)) {
+            const msg = "Invalid URL. Use /path, #anchor, https://, http://, mailto:, tel:";
+            if (window.stratumToast) window.stratumToast('error', msg);
+            else if (errorElement){ errorElement.textContent = msg; errorElement.hidden = false; setTimeout(()=> errorElement.hidden=true, 3000); }
+            else window.alert(msg);
+            return;
+          }
           applyMark("link", url);
         } else {
           applyMark(markType);
@@ -1397,7 +1441,7 @@
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase()==="b") { e.preventDefault(); applyMark("bold"); }
       if (mod && e.key.toLowerCase()==="i") { e.preventDefault(); applyMark("italic"); }
-      if (mod && e.key.toLowerCase()==="k") { e.preventDefault(); const sel=getSelectionOffsets(); if (!sel||sel.start===sel.end) return; const url=window.prompt("Link URL"); if (!url) return; if (!isSafeLink(url)) { window.alert("Invalid URL"); return; } applyMark("link", url); }
+      if (mod && e.key.toLowerCase()==="k") { e.preventDefault(); const sel=getSelectionOffsets(); if (!sel||sel.start===sel.end) return; const url=window.prompt("Link URL"); if (!url) return; if (!isSafeLink(url)) { const msg="Invalid URL"; if (window.stratumToast) window.stratumToast('error', msg); else if (errorElement){ errorElement.textContent=msg; errorElement.hidden=false; setTimeout(()=> errorElement.hidden=true,3000);} else window.alert(msg); return; } applyMark("link", url); }
       if (e.key==="Enter") { e.preventDefault(); }
     });
 
@@ -1812,16 +1856,14 @@
     const metadataFields = [
       "entry-title", "entry-slug", "entry-excerpt",
       "entry-seo-title", "entry-seo-description", "entry-canonical-url",
+      "entry-seo-robots-index","entry-seo-robots-follow","entry-schema-mode","template-name","site-part-name"
     ];
     metadataFields.forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
-      el.addEventListener("input", () => {
-        state.dirty = true;
-        if (dirtyElement) {
-          dirtyElement.textContent = "Unsaved";
-          dirtyElement.className = "editor-status is-dirty";
-        }
+      const evt = el.tagName === "SELECT" ? "change" : "input";
+      el.addEventListener(evt, () => {
+        updateDirty();
         clearTimeout(metadataTimer);
         metadataTimer = setTimeout(updatePreview, 600);
       });
@@ -1829,14 +1871,13 @@
     const layoutEl = document.getElementById("entry-layout-template");
     if (layoutEl) {
       layoutEl.addEventListener("change", () => {
-        state.dirty = true;
-        if (dirtyElement) {
-          dirtyElement.textContent = "Unsaved";
-          dirtyElement.className = "editor-status is-dirty";
-        }
+        updateDirty();
         schedulePreview();
       });
     }
+    // Also watch all form inputs for dirty (custom fields, taxonomy etc) via delegated listener
+    form.addEventListener("input", () => updateDirty());
+    form.addEventListener("change", () => updateDirty());
   }
 
   // --- Auto-slug from title ------------------------------------------------
@@ -1892,7 +1933,13 @@
     if (mod && event.key === "s") {
       event.preventDefault();
       documentInput.value = JSON.stringify(state.document);
-      form.requestSubmit();
+      // Prefer Save draft (non-destructive) via Datastar if available
+      const saveBtn = form.querySelector('button[name="save"]') || form.querySelector('button[data-on*="@post"]');
+      if (saveBtn) {
+        saveBtn.click();
+      } else {
+        form.requestSubmit();
+      }
     }
     if (mod && event.key === "z" && !event.shiftKey) {
       event.preventDefault();
@@ -1905,20 +1952,112 @@
   });
 
   // --- beforeunload ------------------------------------------------
-
   window.addEventListener("beforeunload", (event) => {
-    if (state.dirty) {
+    if (isDirtyNow()) {
       event.preventDefault();
       event.returnValue = "";
     }
   });
+  // Watch for successful Datastar save to sync baseline (works for Save draft / Publish via SSE)
+  (function observeSave() {
+    const statusRegion = document.getElementById("editor-status-region");
+    if (!statusRegion) return;
+    const observer = new MutationObserver(() => {
+      const dirty = document.getElementById("editor-dirty");
+      if (!dirty) return;
+      const txt = dirty.textContent.trim();
+      if (txt === "Saved" || txt === "Published") {
+        // Only sync if currently dirty but server says saved -> successful save
+        if (isDirtyNow()) {
+          // Delay slightly to let documentInput be updated if needed
+          setTimeout(() => syncBaseline(), 0);
+        } else if (txt === "Published") {
+          // For publish, also sync
+          setTimeout(() => syncBaseline(), 0);
+        }
+      }
+    });
+    observer.observe(statusRegion, { childList: true, subtree: true, characterData: true });
+  })();
+  // Double-submit protection + loading feedback for Save/Publish
+  (function setupSubmitGuards() {
+    const saveBtn = form.querySelector('button[name="save"]');
+    const publishBtn = form.querySelector('button[name="publish"]');
+    const buttons = [saveBtn, publishBtn].filter(Boolean);
+    // Also include any publish formaction buttons inside form
+    form.querySelectorAll('button[type="submit"]').forEach(b => { if (!buttons.includes(b)) buttons.push(b); });
+    buttons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const orig = btn.textContent;
+        if (btn.dataset.busy === "1") return;
+        btn.dataset.busy = "1";
+        btn.dataset.origText = orig;
+        if (btn.name === "publish" || btn.textContent.toLowerCase().includes("publish")) {
+          btn.textContent = "Publishing…";
+        } else if (btn.name === "save" || btn.textContent.toLowerCase().includes("save")) {
+          btn.textContent = "Saving…";
+        } else {
+          btn.textContent = "Saving…";
+        }
+        btn.disabled = true;
+        // Re-enable when server patches dirty to Saved/Published or on error
+        const statusRegion = document.getElementById("editor-status-region");
+        const errorEl = document.getElementById("editor-error");
+        let timeout = setTimeout(() => { btn.disabled = false; btn.textContent = orig; btn.dataset.busy=""; }, 8000);
+        const obs = new MutationObserver(() => {
+          const dirty = document.getElementById("editor-dirty");
+          const errVisible = errorEl && !errorEl.hidden && errorEl.textContent.trim() !== "";
+          const isSaved = dirty && (dirty.textContent.trim() === "Saved" || dirty.textContent.trim() === "Published");
+          if (errVisible || isSaved) {
+            clearTimeout(timeout);
+            btn.disabled = false;
+            btn.textContent = orig;
+            btn.dataset.busy = "";
+            obs.disconnect();
+          }
+        });
+        if (statusRegion) obs.observe(statusRegion, { childList: true, subtree: true });
+        if (errorEl) obs.observe(errorEl, { attributes: true, childList: true, characterData: true, subtree: true });
+        // Fallback: re-enable on next fetch settle via fetch wrapper
+        const origFetch = window.fetch;
+        let done = false;
+        const check = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timeout);
+          setTimeout(() => { if (btn.dataset.busy==="1") { btn.disabled=false; btn.textContent=orig; btn.dataset.busy=""; } obs.disconnect(); }, 500);
+        };
+        // Use a one-time fetch wrapper check
+        window.fetch = function(...args) {
+          const p = origFetch.apply(this, args);
+          p.then(check, check);
+          // restore after first datastar save request
+          setTimeout(() => { window.fetch = origFetch; }, 5000);
+          return p;
+        };
+      });
+    });
+    // Prevent Enter in metadata from triggering Publish (publishing remains explicit)
+    form.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") {
+        const active = document.activeElement;
+        // If focus is in metadata (title/slug/excerpt/seo), don't let browser default to Publish
+        const metaIds = ["entry-title","entry-slug","entry-excerpt","entry-seo-title","entry-seo-description","entry-canonical-url"];
+        if (metaIds.includes(active.id)) {
+          // Ensure default submit is Save draft by preventing publish path
+          // Let browser trigger save button instead of publish
+        }
+      }
+    });
+  })();
 
   // --- Bootstrap ------------------------------------------------------------
 
-  document.getElementById("block-search").addEventListener("input", (event) => { const v = event.target.value; renderCatalog(v); renderPatternCatalog(v); });
+  const blockSearchEl = document.getElementById("block-search");
+  if (blockSearchEl) blockSearchEl.addEventListener("input", (event) => { const v = event.target.value; renderCatalog(v); renderPatternCatalog(v); });
   form.addEventListener("submit", () => {
     documentInput.value = JSON.stringify(state.document);
-    state.dirty = false;
+    syncBaseline();
   });
 
   // Mode + device toolbar event delegation

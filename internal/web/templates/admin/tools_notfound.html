@@ -1,0 +1,18 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Not Found</h1><p>Aggregated 404 paths. Create redirects to fix broken inbound links.</p></div><div class="admin-page-actions"><form method="post" action="/admin/tools/not-found/delete" class="inline-form" onsubmit="return confirm('Clear all not-found records?')"><input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}"><button type="submit" class="button">Clear all</button></form></div></header>
+{{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
+{{ if .Content.Records }}
+<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Path</th><th>Hits</th><th>Last seen</th><th>Actions</th></tr></thead><tbody>
+{{ range .Content.Records }}
+<tr>
+  <td><code>{{ .Path }}</code></td>
+  <td>{{ .Hits }}</td>
+  <td class="muted" style="font-size:12.5px;">{{ .Age }} <span class="muted">({{ .LastSeen }})</span></td>
+  <td><div class="admin-page-actions" style="gap:6px;"><a class="button button-small" href="/admin/tools/redirects/new?source={{ .Path }}">Create redirect</a><form method="post" action="/admin/tools/not-found/delete" class="inline-form" onsubmit="return confirm('Delete record {{ .Path }}?')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><input type="hidden" name="path" value="{{ .Path }}"><button type="submit" class="row-action-link row-action-delete">Delete</button></form></div></td>
+</tr>
+{{ end }}
+</tbody></table></div>
+{{ else }}
+<div class="empty-state"><p>No unresolved 404 paths recorded.</p><p class="form-help">404s are aggregated by path. Paths older than 30 days are automatically removed.</p></div>
+{{ end }}
+{{ end }}
