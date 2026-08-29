@@ -8,11 +8,7 @@ import (
 	"testing"
 )
 
-// Regression: after completing setup on a fresh install, the seeded starter
-// content creates routes. The public frontend treats a loaded route snapshot as
-// authoritative, so setup MUST reload routes; otherwise every public page 404s
-// until the server restarts.
-func TestSetupReloadsRouteSnapshot(t *testing.T) {
+func TestSetupStartsCreatorWithoutSeedingContent(t *testing.T) {
 	handler, service := newTestHandler(t)
 
 	// Boot on a fresh DB loads an empty-but-authoritative snapshot (same as serve).
@@ -45,8 +41,17 @@ func TestSetupReloadsRouteSnapshot(t *testing.T) {
 	if setupResponse.Code != http.StatusSeeOther {
 		t.Fatalf("setup status = %d, want %d", setupResponse.Code, http.StatusSeeOther)
 	}
-
-	if rt, ok := handler.runtime.Routes.Lookup("/"); !ok || rt.RouteType != "entry" {
-		t.Fatalf("seeded homepage route missing from route snapshot after setup: %+v ok=%v", rt, ok)
+	if location := setupResponse.Header().Get("Location"); location != "/admin/creator" {
+		t.Fatalf("setup redirect = %q, want /admin/creator", location)
+	}
+	if got := handler.runtime.Routes.Count(); got != 0 {
+		t.Fatalf("route snapshot has %d routes before Creator runs, want 0", got)
+	}
+	completed, err := handler.queries.GetOnboardingCompleted(setupRequest.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed != 0 {
+		t.Fatalf("onboarding_completed = %d, want 0", completed)
 	}
 }

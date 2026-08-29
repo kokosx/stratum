@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"log"
 	"net/http"
 	"strings"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/comments"
 	"github.com/kokosx/stratum/internal/content"
+	"github.com/kokosx/stratum/internal/creator"
 	"github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
@@ -27,7 +27,6 @@ import (
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/search"
 	"github.com/kokosx/stratum/internal/siteparts"
-	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
 	webassets "github.com/kokosx/stratum/internal/web"
@@ -60,6 +59,7 @@ type Handler struct {
 	commentsTemplate             *template.Template
 	contentTypesTemplate         *template.Template
 	formsTemplate                *template.Template
+	creatorTemplate              *template.Template
 	formNewTemplate              *template.Template
 	formEditorTemplate           *template.Template
 	submissionsTemplate          *template.Template
@@ -81,6 +81,7 @@ type Handler struct {
 	comments                     *comments.Service
 	forms                        *forms.Service
 	search                       *search.Service
+	creator                      *creator.Service
 }
 
 type LayoutData struct {
@@ -252,6 +253,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	creatorTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "creator", "creator.html")
+	if err != nil {
+		return nil, err
+	}
 	formNewTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "form_new", "form_new.html")
 	if err != nil {
 		return nil, err
@@ -314,6 +319,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		commentsTemplate:             commentsTemplate,
 		contentTypesTemplate:         contentTypesTemplate,
 		formsTemplate:                formsTemplate,
+		creatorTemplate:              creatorTemplate,
 		formNewTemplate:              formNewTemplate,
 		formEditorTemplate:           formEditorTemplate,
 		submissionsTemplate:          submissionsTemplate,
@@ -340,6 +346,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		comments:                     commentsService,
 		forms:                        runtime.Forms,
 		search:                       searchService,
+		creator:                      creator.NewService(database, queries, blockRegistry, mediaService, themeRuntime, runtime, searchService),
 	}, nil
 }
 
@@ -358,6 +365,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/login", h.login)
 	mux.HandleFunc("POST /admin/login", h.login)
 	mux.HandleFunc("POST /admin/logout", h.logout)
+	mux.HandleFunc("GET /admin/creator", h.requireAuth(h.siteCreator))
+	mux.HandleFunc("POST /admin/creator", h.requireAuth(h.siteCreator))
+	mux.HandleFunc("POST /admin/creator/skip", h.requireAuth(h.skipSiteCreator))
 	mux.HandleFunc("GET /admin/users", h.requireAuth(h.listUsers))
 	mux.HandleFunc("POST /admin/users", h.requireAuth(h.createUser))
 	mux.HandleFunc("POST /admin/users/{id}", h.requireAuth(h.updateUser))
@@ -633,23 +643,7 @@ func (h *Handler) setup(w http.ResponseWriter, r *http.Request) {
 		token, err := h.auth.Setup(r.Context(), r.FormValue("setup_code"), r.FormValue("site_title"), r.FormValue("email"), r.FormValue("password"))
 		if err == nil {
 			h.setSessionCookie(w, token)
-			// Seed starter content on a genuinely fresh installation only.
-			// Seed is transactional, idempotent during setup, and never overwrites user content.
-			func() {
-				d := &storage.Database{DB: h.database}
-				if err := d.Seed(r.Context()); err != nil {
-					log.Printf("seed starter content: %v", err)
-				} else if h.runtime != nil {
-					// New routes and settings need a runtime reload. Routes MUST be
-					// reloaded: on a fresh install the snapshot was loaded empty at
-					// boot and is authoritative, so public pages would 404 until restart.
-					_ = h.runtime.ReloadSite(r.Context())
-					_ = h.runtime.ReloadNavigation(r.Context())
-					_ = h.runtime.ReloadRoutes(r.Context())
-					_ = h.runtime.ReloadBlocks(r.Context())
-				}
-			}()
-			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			http.Redirect(w, r, "/admin/creator", http.StatusSeeOther)
 			return
 		}
 		if errors.Is(err, auth.ErrSetupUnavailable) {
@@ -732,7 +726,7 @@ func (h *Handler) authorized(r *http.Request, user auth.User) bool {
 		return authz.Allows(user.Role, authz.ManageUsers)
 	case strings.HasPrefix(path, "/admin/menus"):
 		return authz.Allows(user.Role, authz.ManageNavigation)
-	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/tools"):
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/tools"), strings.HasPrefix(path, "/admin/creator"):
 		return authz.Allows(user.Role, authz.ManageSite)
 	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
 		return authz.Allows(user.Role, authz.ManageTaxonomies)

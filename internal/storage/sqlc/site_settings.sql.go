@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const getOnboardingCompleted = `-- name: GetOnboardingCompleted :one
+SELECT onboarding_completed FROM site_settings WHERE id = 1
+`
+
+func (q *Queries) GetOnboardingCompleted(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getOnboardingCompleted)
+	var onboarding_completed int64
+	err := row.Scan(&onboarding_completed)
+	return onboarding_completed, err
+}
+
 const getSiteSettings = `-- name: GetSiteSettings :one
 SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, posts_base_path, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, site_social_media_id, twitter_site, site_represents, created_at, updated_at
 FROM site_settings
@@ -77,6 +88,22 @@ func (q *Queries) GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, erro
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const setOnboardingCompleted = `-- name: SetOnboardingCompleted :exec
+UPDATE site_settings
+SET onboarding_completed = ?, updated_at = ?
+WHERE id = 1
+`
+
+type SetOnboardingCompletedParams struct {
+	OnboardingCompleted int64 `json:"onboarding_completed"`
+	UpdatedAt           int64 `json:"updated_at"`
+}
+
+func (q *Queries) SetOnboardingCompleted(ctx context.Context, arg SetOnboardingCompletedParams) error {
+	_, err := q.db.ExecContext(ctx, setOnboardingCompleted, arg.OnboardingCompleted, arg.UpdatedAt)
+	return err
 }
 
 const updateGeneralSettings = `-- name: UpdateGeneralSettings :exec

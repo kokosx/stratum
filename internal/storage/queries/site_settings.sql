@@ -73,3 +73,11 @@ SET
     speculation_eagerness = ?,
     updated_at = ?
 WHERE id = 1;
+
+-- name: GetOnboardingCompleted :one
+SELECT onboarding_completed FROM site_settings WHERE id = 1;
+
+-- name: SetOnboardingCompleted :exec
+UPDATE site_settings
+SET onboarding_completed = ?, updated_at = ?
+WHERE id = 1;

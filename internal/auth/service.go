@@ -129,6 +129,10 @@ func (s *Service) Setup(ctx context.Context, code, siteTitle, email, password st
 		tx.Rollback()
 		return "", fmt.Errorf("set site title: %w", err)
 	}
+	if err := qtx.SetOnboardingCompleted(ctx, db.SetOnboardingCompletedParams{OnboardingCompleted: 0, UpdatedAt: now}); err != nil {
+		tx.Rollback()
+		return "", fmt.Errorf("start onboarding: %w", err)
+	}
 	if err := qtx.CreateSession(ctx, db.CreateSessionParams{TokenHash: tokenHash, UserID: userID, CreatedAt: now, ExpiresAt: time.Now().Add(sessionLifetime).Unix()}); err != nil {
 		tx.Rollback()
 		return "", fmt.Errorf("create session: %w", err)

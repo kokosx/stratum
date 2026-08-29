@@ -6,6 +6,10 @@ import (
 )
 
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
+	incomplete := false
+	if completed, err := h.queries.GetOnboardingCompleted(r.Context()); err == nil {
+		incomplete = completed == 0
+	}
 	state := ResolveNav(r.URL.Path)
 	data := LayoutData{
 		Title:         "Dashboard",
@@ -14,6 +18,7 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		ActiveItem:    state.ActiveItem,
 		Nav:           h.navForUser(r),
 		Flash:         h.consumeFlash(w, r),
+		Content:       struct{ OnboardingIncomplete bool }{incomplete},
 	}
 	token, err := h.csrfToken(w, r)
 	if err != nil {

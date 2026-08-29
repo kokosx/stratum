@@ -106,6 +106,7 @@ type Querier interface {
 	GetMediaVariant(ctx context.Context, arg GetMediaVariantParams) (MediaVariant, error)
 	GetNavigationMenu(ctx context.Context, id string) (NavigationMenu, error)
 	GetNavigationMenuBySlug(ctx context.Context, slug string) (NavigationMenu, error)
+	GetOnboardingCompleted(ctx context.Context) (int64, error)
 	GetPublicationJob(ctx context.Context, id string) (PublicationJob, error)
 	GetPublicationJobByEntryAndRevision(ctx context.Context, arg GetPublicationJobByEntryAndRevisionParams) (PublicationJob, error)
 	GetPublishedEntryByID(ctx context.Context, id string) (GetPublishedEntryByIDRow, error)
@@ -224,6 +225,7 @@ type Querier interface {
 	// Historical date preservation for imported published entries ONLY.
 	SetImportedPublishedDates(ctx context.Context, arg SetImportedPublishedDatesParams) error
 	SetLayoutTemplatePublishedRevision(ctx context.Context, arg SetLayoutTemplatePublishedRevisionParams) error
+	SetOnboardingCompleted(ctx context.Context, arg SetOnboardingCompletedParams) error
 	SetPublishedRevision(ctx context.Context, arg SetPublishedRevisionParams) error
 	SetSitePartLocation(ctx context.Context, arg SetSitePartLocationParams) error
 	SetSitePartPublishedRevision(ctx context.Context, arg SetSitePartPublishedRevisionParams) error

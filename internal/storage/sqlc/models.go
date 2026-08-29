@@ -215,6 +215,13 @@ type NavigationMenu struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
+type NotFoundPath struct {
+	Path        string `json:"path"`
+	HitCount    int64  `json:"hit_count"`
+	FirstSeenAt int64  `json:"first_seen_at"`
+	LastSeenAt  int64  `json:"last_seen_at"`
+}
+
 type PublicationJob struct {
 	ID          string         `json:"id"`
 	EntryID     string         `json:"entry_id"`
@@ -318,6 +325,7 @@ type SiteSetting struct {
 	TwitterSite          string         `json:"twitter_site"`
 	SiteRepresents       string         `json:"site_represents"`
 	PostsBasePath        string         `json:"posts_base_path"`
+	OnboardingCompleted  int64          `json:"onboarding_completed"`
 }
 
 type Taxonomy struct {

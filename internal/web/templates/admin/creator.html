@@ -1,0 +1,48 @@
+{{ define "content" }}
+<div class="creator-shell">
+  {{ if .Content.Result }}
+    <section class="creator-complete" aria-labelledby="creator-complete-title">
+      <p class="creator-eyebrow">Site ready</p>
+      <h1 id="creator-complete-title">Your starting point is live.</h1>
+      <p>We created {{ plural .Content.Result.Pages "page" "pages" }}, {{ plural .Content.Result.Entries "entry" "entries" }}, reusable layouts, navigation, styles and starter media.</p>
+      {{ range .Content.Result.Warnings }}<div class="notice notice-warning">{{ . }}</div>{{ end }}
+      <div class="admin-page-actions">
+        <a class="button button-primary" href="/" target="_blank" rel="noopener">View site</a>
+        <a class="button button-secondary" href="/admin/pages/{{ .Content.Result.HomepageID }}/edit">Edit homepage</a>
+        <a class="button button-secondary" href="/admin">Go to dashboard</a>
+      </div>
+    </section>
+  {{ else }}
+    <header class="creator-header">
+      <p class="creator-eyebrow">First-run Site Creator</p>
+      <h1>Choose a useful starting point.</h1>
+      <p>Everything created here remains ordinary Stratum content. Change, replace or delete any part later.</p>
+    </header>
+    {{ if .Content.Error }}<div class="notice notice-danger" role="alert">{{ .Content.Error }}</div>{{ end }}
+    <form method="post" action="/admin/creator" class="creator-form">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+      <fieldset class="creator-presets">
+        <legend>Starter site</legend>
+        {{ range .Content.Presets }}
+          <label class="creator-preset">
+            <input type="radio" name="preset" value="{{ .ID }}" {{ if eq $.Content.Selected .ID }}checked{{ end }} required>
+            <span class="creator-preset-copy"><strong>{{ .Name }}</strong><small>{{ .Description }}</small></span>
+          </label>
+        {{ end }}
+      </fieldset>
+      <div class="creator-details">
+        <label><span>Site name</span><input type="text" name="site_name" maxlength="200" value="{{ .Content.SiteName }}" required></label>
+        <label><span>Tagline <small>(optional)</small></span><input type="text" name="tagline" maxlength="300" value="{{ .Content.Tagline }}" placeholder="A short promise or description"></label>
+      </div>
+      <div class="creator-submit">
+        <p class="muted">Creation can take a few seconds while starter images and the search index are prepared.</p>
+        <button class="button button-primary" type="submit">Create my site</button>
+      </div>
+    </form>
+    <form method="post" action="/admin/creator/skip" class="creator-skip">
+      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+      <button class="button button-link" type="submit">Skip and start empty</button>
+    </form>
+  {{ end }}
+</div>
+{{ end }}
