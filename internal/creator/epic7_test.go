@@ -190,13 +190,14 @@ func containsBlock(node document.Node, block string) bool {
 }
 
 func TestBlogEmptyTaglineSpacing(t *testing.T) {
-	withTagline := homepageTemplate("p", PresetBlog, "hello", "")
-	without := homepageTemplate("p", PresetBlog, "", "")
-	// After EPIC 7 art-direction, Blog homepage uses ONE main content Section v2 (content/lg/default)
-	// containing editorial Stack (hero gap md + latest posts gap lg) via nested stacks.
-	// Both with and without tagline use lg for consistent top padding 56-80.
-	if len(withTagline.Nodes) < 2 || len(without.Nodes) < 2 {
-		t.Fatal("homepage nodes missing")
+	planWith := Plan{Input: Input{PresetID: PresetBlog, SiteTitle: "Example", Tagline: "hello", Language: "en", BlogLatestCount: 5}, Preset: Preset{ID: PresetBlog}}
+	planWithout := Plan{Input: Input{PresetID: PresetBlog, SiteTitle: "Example", Tagline: "", Language: "en", BlogLatestCount: 5}, Preset: Preset{ID: PresetBlog}}
+	withTagline := homepageEntryDocument("p", PresetBlog, "", planWith)
+	without := homepageEntryDocument("p", PresetBlog, "", planWithout)
+	// After EPIC 7.1, homepage Entry owns layout and uses dynamic site-tagline block.
+	// Both with and without tagline string use same SDT (site-tagline dynamic) and lg spacing.
+	if len(withTagline.Nodes) < 1 || len(without.Nodes) < 1 {
+		t.Fatal("homepage entry nodes missing")
 	}
 	heroWith := withTagline.Nodes[0]
 	heroWithout := without.Nodes[0]
@@ -214,6 +215,28 @@ func TestBlogEmptyTaglineSpacing(t *testing.T) {
 	}
 	if !containsSetting(heroWith.Settings, `"width":"content"`) {
 		t.Fatalf("blog section width should be content, got %s", string(heroWith.Settings))
+	}
+	// Both should contain dynamic site-tagline, not copied text
+	hasSiteTagline := func(doc *document.Document) bool {
+		var search func([]document.Node) bool
+		search = func(nodes []document.Node) bool {
+			for _, n := range nodes {
+				if n.Block == "core/site-tagline" {
+					return true
+				}
+				if len(n.Children) > 0 && search(n.Children) {
+					return true
+				}
+			}
+			return false
+		}
+		return search(doc.Nodes)
+	}
+	if !hasSiteTagline(withTagline) {
+		t.Fatal("blog homepage entry should contain dynamic site-tagline")
+	}
+	if !hasSiteTagline(without) {
+		t.Fatal("blog homepage entry without tagline should still contain site-tagline block")
 	}
 	// Find collection deeply (inside stack)
 	findCollection := func(doc *document.Document) document.Node {
@@ -243,6 +266,11 @@ func TestBlogEmptyTaglineSpacing(t *testing.T) {
 	if c.Version != 3 {
 		t.Fatalf("collection should be v3, got %d", c.Version)
 	}
+	// Homepage template shell should be minimal (only content-slot)
+	shell := homepageTemplate("t", PresetBlog, "hello", "")
+	if len(shell.Nodes) != 1 || shell.Nodes[0].Block != "core/content-slot" {
+		t.Fatalf("homepage template shell should be single content-slot, got %#v", shell.Nodes)
+	}
 }
 
 func containsSetting(raw []byte, substr string) bool {
@@ -255,9 +283,10 @@ func TestCollectionArchiveContext(t *testing.T) {
 }
 
 func TestSectionV2Usage(t *testing.T) {
-	// Creator must generate Section@2 after migration; historical v1 remains renderable is tested elsewhere.
+	// Creator must generate Section@2 in homepage Entry (not shell) after migration; historical v1 remains renderable is tested elsewhere.
 	for _, preset := range []PresetID{PresetBlog, PresetPortfolio, PresetLanding, PresetProducts, PresetLocalBusiness} {
-		doc := homepageTemplate("t", preset, "tagline", "form-id")
+		plan := Plan{Input: Input{PresetID: preset, Language: "en", BlogLatestCount: 5, PortfolioColumns: 2, ProductColumns: 3, LandingTestimonialsColumns: 2, ServiceColumns: 3}, Preset: Preset{ID: preset}}
+		doc := homepageEntryDocument("t", preset, "form-id", plan)
 		hasV2 := false
 		hasV1 := false
 		var visit func([]document.Node)
@@ -266,7 +295,6 @@ func TestSectionV2Usage(t *testing.T) {
 				if n.Block == "core/section" {
 					if n.Version == 2 {
 						hasV2 = true
-						// Verify inner wrapper expectation is encoded in template via settings still containing width/verticalSpacing etc
 						if !containsSetting(n.Settings, `"width"`) {
 							t.Errorf("%s section v2 missing width", preset)
 						}
@@ -285,22 +313,27 @@ func TestSectionV2Usage(t *testing.T) {
 		}
 		visit(doc.Nodes)
 		if !hasV2 {
-			t.Fatalf("%s homepage should contain section v2", preset)
+			t.Fatalf("%s homepage entry should contain section v2", preset)
 		}
 		if hasV1 {
-			t.Fatalf("%s homepage should not contain section v1 after art-direction", preset)
+			t.Fatalf("%s homepage entry should not contain section v1 after art-direction", preset)
+		}
+		// Homepage shell must be minimal content-slot only
+		shell := homepageTemplate("t", preset, "tagline", "form-id")
+		if len(shell.Nodes) != 1 || shell.Nodes[0].Block != "core/content-slot" {
+			t.Fatalf("%s homepage template shell should be single content-slot", preset)
 		}
 	}
 	// Portfolio grid 2, Product grid 3, Services grid 3, Testimonials grid 2, Blog list
 	checkGrid := func(preset PresetID, wantColumns int, wantLayout string) {
-		doc := homepageTemplate("t", preset, "tagline", "form-id")
+		plan := Plan{Input: Input{PresetID: preset, Language: "en", BlogLatestCount: 5, PortfolioColumns: 2, ProductColumns: 3, LandingTestimonialsColumns: 2, ServiceColumns: 3}, Preset: Preset{ID: preset}}
+		doc := homepageEntryDocument("t", preset, "form-id", plan)
 		var found bool
 		var visit func([]document.Node)
 		visit = func(nodes []document.Node) {
 			for _, n := range nodes {
 				if n.Block == "core/collection" {
 					if containsSetting(n.Settings, `"columns":`+string(rune('0'+wantColumns))) || containsSetting(n.Settings, `"columns":`+string(rune('0'+wantColumns))) {
-						// crude check, but we check both layout and columns via string contains
 					}
 					if containsSetting(n.Settings, `"layout":"`+wantLayout+`"`) && containsSetting(n.Settings, `"columns":`+func() string { return string([]byte{byte('0' + wantColumns)}) }()) {
 						found = true
@@ -321,7 +354,8 @@ func TestSectionV2Usage(t *testing.T) {
 	checkGrid(PresetLocalBusiness, 3, "grid")
 	checkGrid(PresetBlog, 1, "list")
 	// Landing testimonials grid 2
-	landingDoc := homepageTemplate("t", PresetLanding, "tagline", "form-id")
+	planLanding := Plan{Input: Input{PresetID: PresetLanding, Language: "en", LandingTestimonialsColumns: 2}, Preset: Preset{ID: PresetLanding}}
+	landingDoc := homepageEntryDocument("t", PresetLanding, "form-id", planLanding)
 	hasTestimonialGrid := false
 	var vt func([]document.Node)
 	vt = func(nodes []document.Node) {
@@ -354,7 +388,8 @@ func TestHeaderFooterChoices(t *testing.T) {
 func TestNoLegacyFormV1(t *testing.T) {
 	// Ensure no core/form@1 generation remains; all forms should be v2.
 	for _, preset := range []PresetID{PresetBlog, PresetPortfolio, PresetLanding, PresetProducts, PresetLocalBusiness} {
-		doc := homepageTemplate("t", preset, "tagline", "form-id")
+		plan := Plan{Input: Input{PresetID: preset, Language: "en", BlogLatestCount: 5, PortfolioColumns: 2, ProductColumns: 3, LandingTestimonialsColumns: 2, ServiceColumns: 3}, Preset: Preset{ID: preset}}
+		doc := homepageEntryDocument("t", preset, "form-id", plan)
 		var visit func([]document.Node)
 		visit = func(nodes []document.Node) {
 			for _, n := range nodes {
@@ -370,7 +405,8 @@ func TestNoLegacyFormV1(t *testing.T) {
 	}
 	// Also check single and archive templates
 	for _, preset := range []PresetID{PresetBlog, PresetPortfolio, PresetLanding, PresetProducts, PresetLocalBusiness} {
-		for _, doc := range []*document.Document{singleTemplate("t", preset), archiveTemplate("t", preset)} {
+		plan := Plan{Input: Input{PresetID: preset, Language: "en"}, Preset: Preset{ID: preset}}
+		for _, doc := range []*document.Document{singleTemplateForPlan("t", preset, plan), archiveTemplateForPlan("t", preset, plan)} {
 			var visit func([]document.Node)
 			visit = func(nodes []document.Node) {
 				for _, n := range nodes {

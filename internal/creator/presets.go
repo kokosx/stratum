@@ -72,6 +72,22 @@ type Input struct {
 	PaletteID     PaletteID
 	HeaderStyleID HeaderStyleID
 	FooterStyleID FooterStyleID
+
+	// J1 layout options (creation input only, not persisted as runtime coupling)
+	BlogLatestCount              int    // 5 or 8
+	BlogArchiveCount             int    // 10 or 20
+	PortfolioColumns             int    // 2 or 3
+	ProductColumns               int    // 3 or 4
+	ProductMediaPosition         string // "left" or "right"
+	LandingTestimonialsColumns   int    // 1 or 2
+	ServiceColumns               int    // 2 or 3
+
+	// K site details
+	Language       string // "en" or "pl" for Creator v1
+	Timezone       string // IANA
+	SiteRepresents string // "organization" or "person"
+	IndexingEnabled bool  // true = allow indexing, default false (discourage)
+	SiteURL        string
 }
 
 type Plan struct {
@@ -181,6 +197,26 @@ func DefaultFooterForPreset(p PresetID) FooterStyleID {
 		return FooterSplit
 	}
 }
+
+func DefaultRepresentsForPreset(p PresetID) string {
+	switch p {
+	case PresetBlog:
+		return "person"
+	default:
+		return "organization"
+	}
+}
+
+func DefaultLanguageForPreset(p PresetID) string {
+	_ = p
+	return "en"
+}
+
+func DefaultTimezoneForPreset() string { return "UTC" }
+
+func IsValidRepresents(v string) bool { return v == "organization" || v == "person" }
+func IsValidProductMediaPosition(v string) bool { return v == "left" || v == "right" }
+func IsValidCreatorLanguage(lang string) bool { return lang == "en" || lang == "pl" }
 
 type presetSpec struct {
 	preset      Preset
@@ -422,7 +458,73 @@ func specForWithStyles(preset Preset, styles map[string]any) presetSpec {
 
 func specForPlan(plan Plan) presetSpec {
 	styles := composedStyles(plan.Preset.ID, plan.Input.PaletteID, plan.Input.HeaderStyleID, plan.Input.FooterStyleID)
-	return specForWithStyles(plan.Preset, styles)
+	spec := specForWithStyles(plan.Preset, styles)
+	// Localize structural copy for Creator language catalog (EN/PL)
+	lang := plan.Input.Language
+	if lang == "" {
+		lang = "en"
+	}
+	spec.seedEntries = localizedSeedEntries(plan.Preset.ID, lang)
+	spec.pages = localizedPages(plan.Preset.ID, lang)
+	// Localize form name via catalog
+	if spec.form != nil {
+		switch spec.preset.ID {
+		case PresetPortfolio:
+			spec.form.Name = copyFor(lang, "form.project_enquiry")
+		case PresetLanding:
+			spec.form.Name = copyFor(lang, "form.request_info")
+		default:
+			if spec.form.Name == "Contact" {
+				spec.form.Name = copyFor(lang, "form.contact")
+			}
+		}
+	}
+	return spec
+}
+
+func localizedSeedEntries(preset PresetID, lang string) []entrySpec {
+	switch preset {
+	case PresetBlog:
+		return localizedBlogEntries(lang)
+	case PresetPortfolio:
+		return localizedProjectEntries(lang)
+	case PresetLanding:
+		return localizedTestimonialEntries(lang)
+	case PresetProducts:
+		return localizedProductEntries(lang)
+	default:
+		// Local Business
+		return localizedServiceEntries(lang)
+	}
+}
+
+func localizedPages(preset PresetID, lang string) []pageSpec {
+	baseBodyEn := "Use this page to introduce your work, values and approach."
+	baseBodyPl := copyFor(lang, "page.about.body")
+	if lang != "pl" {
+		baseBodyPl = baseBodyEn
+	}
+	switch preset {
+	case PresetBlog:
+		return []pageSpec{{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl}}
+	case PresetPortfolio:
+		return []pageSpec{
+			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Tell us what you are working on and what kind of help you need.", Form: true},
+		}
+	case PresetLanding:
+		return []pageSpec{}
+	case PresetProducts:
+		return []pageSpec{
+			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Ask about specifications, availability or a custom requirement."},
+		}
+	default:
+		return []pageSpec{
+			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Share a few details and we will respond with a practical next step.", Form: true},
+		}
+	}
 }
 
 func customType(id, singular, plural, base string, single, archive bool, fields []content.FieldDefinition) content.ContentTypeInput {

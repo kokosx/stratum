@@ -1076,13 +1076,12 @@ func (h *Handler) renderSettingsSection(w http.ResponseWriter, r *http.Request, 
 
 func (h *Handler) renderSettingsSectionFragment(w http.ResponseWriter, r *http.Request, data settingsData, notice string) {
 	var buf bytes.Buffer
-	state := ResolveNav(r.URL.Path)
-	if err := h.settingsTemplate.ExecuteTemplate(&buf, "content", LayoutData{Title: "Settings", ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Content: data}); err != nil {
+	if err := h.settingsTemplate.ExecuteTemplate(&buf, "settings-body", LayoutData{Title: "Settings", Content: data}); err != nil {
 		log.Printf("render settings fragment: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	events := []sseEvent{patchElementsEvent("outer", "#settings-content", buf.String())}
+	events := []sseEvent{patchElementsEvent("inner", "#settings-content", buf.String())}
 	if notice != "" {
 		events = append(events, toastEvent("success", notice))
 	} else if msg, ok := data.Errors["_"]; ok {
@@ -1400,10 +1399,20 @@ func boolToInt(v bool) int64 {
 	return 0
 }
 func languageOptions() []languageOption {
-	return []languageOption{{Value: "en", Label: "English"}, {Value: "en-US", Label: "English (United States)"}, {Value: "en-GB", Label: "English (United Kingdom)"}, {Value: "pl", Label: "Polski"}, {Value: "de", Label: "Deutsch"}, {Value: "fr", Label: "Français"}, {Value: "es", Label: "Español"}, {Value: "it", Label: "Italiano"}, {Value: "pt", Label: "Português"}, {Value: "nl", Label: "Nederlands"}, {Value: "ja", Label: "日本語"}, {Value: "zh", Label: "中文"}, {Value: "ru", Label: "Русский"}, {Value: "uk", Label: "Українська"}, {Value: "cs", Label: "Čeština"}}
+	opts := site.LanguageOptions()
+	out := make([]languageOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, languageOption{Value: o.Value, Label: o.Label})
+	}
+	return out
 }
 func timezoneOptions() []timezoneOption {
-	return []timezoneOption{{Value: "UTC", Label: "UTC — Coordinated Universal Time"}, {Value: "Europe/Warsaw", Label: "Europe/Warsaw — Warsaw"}, {Value: "Europe/Berlin", Label: "Europe/Berlin — Berlin"}, {Value: "Europe/Paris", Label: "Europe/Paris — Paris"}, {Value: "Europe/London", Label: "Europe/London — London"}, {Value: "Europe/Rome", Label: "Europe/Rome — Rome"}, {Value: "Europe/Madrid", Label: "Europe/Madrid — Madrid"}, {Value: "Europe/Prague", Label: "Europe/Prague — Prague"}, {Value: "America/New_York", Label: "America/New_York — New York"}, {Value: "America/Chicago", Label: "America/Chicago — Chicago"}, {Value: "America/Los_Angeles", Label: "America/Los_Angeles — Los Angeles"}, {Value: "America/Sao_Paulo", Label: "America/Sao_Paulo — São Paulo"}, {Value: "Asia/Tokyo", Label: "Asia/Tokyo — Tokyo"}, {Value: "Asia/Shanghai", Label: "Asia/Shanghai — Shanghai"}, {Value: "Asia/Dubai", Label: "Asia/Dubai — Dubai"}, {Value: "Australia/Sydney", Label: "Australia/Sydney — Sydney"}}
+	opts := site.TimezoneOptions()
+	out := make([]timezoneOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, timezoneOption{Value: o.Value, Label: o.Label})
+	}
+	return out
 }
 func isLanguageInOptions(val string, opts []languageOption) bool {
 	for _, o := range opts {

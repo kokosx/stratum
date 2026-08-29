@@ -368,6 +368,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /admin/creator", h.requireAuth(h.siteCreator))
 	mux.HandleFunc("POST /admin/creator", h.requireAuth(h.siteCreator))
 	mux.HandleFunc("POST /admin/creator/skip", h.requireAuth(h.skipSiteCreator))
+	mux.HandleFunc("GET /admin/creator/preview", h.requireAuth(h.creatorPreview))
+	mux.HandleFunc("POST /admin/creator/preview", h.requireAuth(h.creatorPreview))
 	mux.HandleFunc("GET /admin/users", h.requireAuth(h.listUsers))
 	mux.HandleFunc("POST /admin/users", h.requireAuth(h.createUser))
 	mux.HandleFunc("POST /admin/users/{id}", h.requireAuth(h.updateUser))

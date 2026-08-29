@@ -4,24 +4,40 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kokosx/stratum/internal/creator"
+	"github.com/kokosx/stratum/internal/site"
 )
 
 type creatorPageData struct {
-	Presets         []creator.Preset
-	Selected        creator.PresetID
-	SiteName        string
-	Tagline         string
-	Error           string
-	Result          *creator.Result
-	Palettes        []creator.Palette
-	Headers         []creator.HeaderOption
-	Footers         []creator.FooterOption
-	SelectedPalette creator.PaletteID
-	SelectedHeader  creator.HeaderStyleID
-	SelectedFooter  creator.FooterStyleID
+	Presets               []creator.Preset
+	Selected              creator.PresetID
+	SiteName              string
+	Tagline               string
+	Error                 string
+	Result                *creator.Result
+	Palettes              []creator.Palette
+	Headers               []creator.HeaderOption
+	Footers               []creator.FooterOption
+	SelectedPalette       creator.PaletteID
+	SelectedHeader        creator.HeaderStyleID
+	SelectedFooter        creator.FooterStyleID
+	Language              string
+	Timezone              string
+	SiteRepresents        string
+	IndexingEnabled       bool
+	SiteURL               string
+	LanguageOptions       []site.LanguageOption
+	TimezoneOptions       []site.TimezoneOption
+	BlogLatest            int
+	BlogArchive           int
+	PortfolioCols         int
+	ProductCols           int
+	ProductMedia          string
+	TestimonialsCols      int
+	ServiceCols           int
 }
 
 func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
@@ -39,17 +55,39 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// Determine defaults with safe fallbacks
+	defaultPreset := creator.PresetBlog
 	data := creatorPageData{
-		Presets:         creator.Presets(),
-		Palettes:        creator.Palettes(),
-		Headers:         creator.HeaderOptions(),
-		Footers:         creator.FooterOptions(),
-		Selected:        creator.PresetBlog,
-		SiteName:        settings.SiteTitle,
-		Tagline:         settings.SiteTagline,
-		SelectedPalette: creator.DefaultPaletteForPreset(creator.PresetBlog),
-		SelectedHeader:  creator.DefaultHeaderForPreset(creator.PresetBlog),
-		SelectedFooter:  creator.DefaultFooterForPreset(creator.PresetBlog),
+		Presets:          creator.Presets(),
+		Palettes:         creator.Palettes(),
+		Headers:          creator.HeaderOptions(),
+		Footers:          creator.FooterOptions(),
+		Selected:         defaultPreset,
+		SiteName:         settings.SiteTitle,
+		Tagline:          settings.SiteTagline,
+		SelectedPalette:  creator.DefaultPaletteForPreset(defaultPreset),
+		SelectedHeader:   creator.DefaultHeaderForPreset(defaultPreset),
+		SelectedFooter:   creator.DefaultFooterForPreset(defaultPreset),
+		Language:         "en",
+		Timezone:         settings.Timezone,
+		SiteRepresents:   creator.DefaultRepresentsForPreset(defaultPreset),
+		IndexingEnabled:  false,
+		SiteURL:          settings.SiteUrl,
+		LanguageOptions:  site.CreatorLanguageOptions(),
+		TimezoneOptions:  site.TimezoneOptions(),
+		BlogLatest:       5,
+		BlogArchive:      10,
+		PortfolioCols:    2,
+		ProductCols:      3,
+		ProductMedia:     "left",
+		TestimonialsCols: 2,
+		ServiceCols:      3,
+	}
+	if data.Timezone == "" {
+		data.Timezone = "UTC"
+	}
+	if strings.Contains(strings.ToLower(data.SiteURL), "localhost") || strings.Contains(data.SiteURL, "127.0.0.1") || strings.Contains(data.SiteURL, "192.168.") {
+		data.SiteURL = ""
 	}
 	if r.Method == http.MethodPost {
 		data.Selected = creator.PresetID(strings.TrimSpace(r.FormValue("preset")))
@@ -58,11 +96,73 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		data.SelectedFooter = creator.FooterStyleID(strings.TrimSpace(r.FormValue("footer_style")))
 		data.SiteName = strings.TrimSpace(r.FormValue("site_name"))
 		data.Tagline = strings.TrimSpace(r.FormValue("tagline"))
+		data.Language = strings.TrimSpace(r.FormValue("language"))
+		data.Timezone = strings.TrimSpace(r.FormValue("timezone"))
+		data.SiteRepresents = strings.TrimSpace(r.FormValue("site_represents"))
+		data.SiteURL = strings.TrimSpace(r.FormValue("site_url"))
+		if v := strings.TrimSpace(r.FormValue("indexing_enabled")); v == "on" || v == "1" || v == "true" {
+			data.IndexingEnabled = true
+		} else {
+			data.IndexingEnabled = false
+		}
+		if v := strings.TrimSpace(r.FormValue("blog_latest")); v != "" {
+			if iv, err := strconv.Atoi(v); err == nil {
+				data.BlogLatest = iv
+			}
+		}
+		if v := strings.TrimSpace(r.FormValue("blog_archive")); v != "" {
+			if iv, err := strconv.Atoi(v); err == nil {
+				data.BlogArchive = iv
+			}
+		}
+		if v := strings.TrimSpace(r.FormValue("portfolio_cols")); v != "" {
+			if iv, err := strconv.Atoi(v); err == nil {
+				data.PortfolioCols = iv
+			}
+		}
+		if v := strings.TrimSpace(r.FormValue("product_cols")); v != "" {
+			if iv, err := strconv.Atoi(v); err == nil {
+				data.ProductCols = iv
+			}
+		}
+		if v := strings.TrimSpace(r.FormValue("product_media")); v != "" {
+			data.ProductMedia = v
+		}
+		if v := strings.TrimSpace(r.FormValue("testimonials_cols")); v != "" {
+			if iv, err := strconv.Atoi(v); err == nil {
+				data.TestimonialsCols = iv
+			}
+		}
+		if v := strings.TrimSpace(r.FormValue("service_cols")); v != "" {
+			if iv, err := strconv.Atoi(v); err == nil {
+				data.ServiceCols = iv
+			}
+		}
 		if !h.validCSRF(r) {
 			http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 			return
 		}
-		plan, previewErr := h.creator.Preview(creator.Input{PresetID: data.Selected, SiteTitle: data.SiteName, Tagline: data.Tagline, PaletteID: data.SelectedPalette, HeaderStyleID: data.SelectedHeader, FooterStyleID: data.SelectedFooter})
+		input := creator.Input{
+			PresetID:      data.Selected,
+			SiteTitle:     data.SiteName,
+			Tagline:       data.Tagline,
+			PaletteID:     data.SelectedPalette,
+			HeaderStyleID: data.SelectedHeader,
+			FooterStyleID: data.SelectedFooter,
+			Language:      data.Language,
+			Timezone:      data.Timezone,
+			SiteRepresents: data.SiteRepresents,
+			IndexingEnabled: data.IndexingEnabled,
+			SiteURL:       data.SiteURL,
+			BlogLatestCount: data.BlogLatest,
+			BlogArchiveCount: data.BlogArchive,
+			PortfolioColumns: data.PortfolioCols,
+			ProductColumns: data.ProductCols,
+			ProductMediaPosition: data.ProductMedia,
+			LandingTestimonialsColumns: data.TestimonialsCols,
+			ServiceColumns: data.ServiceCols,
+		}
+		plan, previewErr := h.creator.Preview(input)
 		if previewErr == nil {
 			user, userErr := h.currentUser(r)
 			if userErr != nil {
@@ -91,6 +191,15 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		}
 		if data.SelectedFooter == "" {
 			data.SelectedFooter = creator.DefaultFooterForPreset(data.Selected)
+		}
+		if data.Language == "" {
+			data.Language = "en"
+		}
+		if data.Timezone == "" {
+			data.Timezone = "UTC"
+		}
+		if data.SiteRepresents == "" {
+			data.SiteRepresents = creator.DefaultRepresentsForPreset(data.Selected)
 		}
 		h.renderCreator(w, r, data, http.StatusUnprocessableEntity)
 		return

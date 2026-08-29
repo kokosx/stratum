@@ -112,22 +112,7 @@ h6 { font-size: 0.95rem; line-height: 1.35; font-weight: 600; text-transform: up
 small { font-size: var(--st-small-size); }
 p { margin: 0; line-height: var(--st-body-line-height); }
 
-/* Heading measure — large marketing H1 must not stretch 1200px */
-.stratum-entry-title.stratum-heading-size-xl,
-.stratum-entry-title.stratum-heading-size-lg,
-.stratum-heading-size-display,
-.stratum-heading-size-xl {
-  max-width: 18ch;
-}
-.stratum-section--v2 .stratum-entry-title {
-  max-width: 16ch;
-}
-/* Blog editorial title shorter */
-.stratum-section__inner.stratum-section-width-content .stratum-entry-title {
-  max-width: 14ch;
-}
-
-/* Paragraph measure */
+/* Paragraph measure — block maxWidth wins; no section/heading inference */
 .stratum-text { max-width: 68ch; }
 .stratum-text-size-lg { max-width: 60ch; }
 .stratum-entry-excerpt { max-width: 65ch; }
@@ -859,17 +844,9 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 }
 .stratum-collection .stratum-entry-link:hover { color: var(--st-link-hover-color); text-decoration: underline; }
 
-/* Portfolio grid — flat, no card */
+/* Collection media — explicit aspect via block settings, not column count */
 .stratum-collection--grid .stratum-entry-media img {
-  display: block;
-  width: 100%;
-  aspect-ratio: 3 / 2;
-  object-fit: cover;
-  background: var(--st-color-surface-muted);
   border-radius: var(--st-radius-md);
-}
-.stratum-collection--grid.stratum-collection--cols-3 .stratum-entry-media img {
-  aspect-ratio: 4 / 3;
 }
 .stratum-collection--grid .stratum-entry-field {
   font-size: 0.88rem;
@@ -908,6 +885,11 @@ p { margin: 0; line-height: var(--st-body-line-height); }
   background: var(--st-color-surface-muted);
 }
 .stratum-entry-media picture { display: block; }
+.stratum-entry-media-aspect-square img { aspect-ratio: 1 / 1; object-fit: cover; }
+.stratum-entry-media-aspect-landscape img { aspect-ratio: 3 / 2; object-fit: cover; }
+.stratum-entry-media-aspect-standard img { aspect-ratio: 4 / 3; object-fit: cover; }
+.stratum-entry-media-fit-contain img { object-fit: contain; }
+.site-main .stratum-site-tagline { font-size: 1.15rem; line-height: 1.6; color: var(--st-color-text-muted); max-width: 60ch; margin: 0; }
 
 /* Ensure consistent image presentation for product/portfolio */
 .stratum-section__inner .stratum-entry-media img {

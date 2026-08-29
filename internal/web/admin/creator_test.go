@@ -99,18 +99,31 @@ func TestCreatorBuildsEveryPreset(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(homeTemplate.DocumentJson, `"block":"core/collection","version":3`) {
-				t.Fatalf("homepage template does not reference core/collection@3: %s", homeTemplate.DocumentJson)
-			}
+			// Homepage template must be minimal shell (only content-slot)
 			if !strings.Contains(homeTemplate.DocumentJson, `"block":"core/content-slot"`) {
 				t.Fatalf("homepage template must preserve entry content via content-slot: %s", homeTemplate.DocumentJson)
 			}
-			if preset.ID == creator.PresetLanding {
-				if !strings.Contains(homeTemplate.DocumentJson, `"anchorID":"contact"`) {
-					t.Fatalf("landing homepage must anchor contact form: %s", homeTemplate.DocumentJson)
+			if strings.Contains(homeTemplate.DocumentJson, `"block":"core/collection"`) {
+				t.Fatalf("homepage template must be minimal shell without collection: %s", homeTemplate.DocumentJson)
+			}
+			// Homepage entry SDT must own the page-specific layout (collection, hero etc)
+			homeRev, err := handler.queries.GetLatestEntryRevision(t.Context(), home.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(homeRev.DocumentJson, `"block":"core/collection"`) {
+				t.Fatalf("homepage entry must contain collection: %s", homeRev.DocumentJson)
+			}
+			if !strings.Contains(homeRev.DocumentJson, `"block":"core/section"`) {
+				t.Fatalf("homepage entry must contain section: %s", homeRev.DocumentJson)
+			}
+			isLanding := preset.ID == creator.PresetLanding
+			if isLanding {
+				if !strings.Contains(homeRev.DocumentJson, `"anchorID":"contact"`) {
+					t.Fatalf("landing homepage entry must anchor contact form: %s", homeRev.DocumentJson)
 				}
-				if !strings.Contains(homeTemplate.DocumentJson, `"block":"core/form","version":2`) {
-					t.Fatalf("landing homepage must embed core/form@2: %s", homeTemplate.DocumentJson)
+				if !strings.Contains(homeRev.DocumentJson, `"block":"core/form","version":2`) {
+					t.Fatalf("landing homepage entry must embed core/form@2: %s", homeRev.DocumentJson)
 				}
 				if !strings.Contains(homepage, `id="contact"`) {
 					t.Fatalf("rendered landing homepage missing contact anchor: %s", homepage)

@@ -1,144 +1,430 @@
 {{ define "content" }}
-<div class="creator-shell">
-  {{ if .Content.Result }}
-    <section class="creator-complete" aria-labelledby="creator-complete-title">
-      <p class="creator-eyebrow">Site ready</p>
-      <h1 id="creator-complete-title">Your starting point is live.</h1>
-      <p>We created {{ plural .Content.Result.Pages "page" "pages" }}, {{ plural .Content.Result.Entries "entry" "entries" }}, reusable layouts, navigation, styles and starter media.</p>
-      {{ range .Content.Result.Warnings }}<div class="notice notice-warning">{{ . }}</div>{{ end }}
-      <div class="admin-page-actions">
-        <a class="button button-primary" href="/" target="_blank" rel="noopener">View site</a>
-        <a class="button button-secondary" href="/admin/pages/{{ .Content.Result.HomepageID }}/edit">Edit homepage</a>
-        <a class="button button-secondary" href="/admin">Go to dashboard</a>
-      </div>
+{{ if .Content.Result }}
+<section class="creator-complete" aria-labelledby="creator-complete-title">
+  <p class="creator-eyebrow">Site ready</p>
+  <h1 id="creator-complete-title">Your starting point is live.</h1>
+  <p>We created {{ plural .Content.Result.Pages "page" "pages" }}, {{ plural .Content.Result.Entries "entry" "entries" }}, reusable layouts, navigation, styles and starter media.</p>
+  {{ range .Content.Result.Warnings }}<div class="notice notice-warning">{{ . }}</div>{{ end }}
+  <div class="admin-page-actions">
+    <a class="button button-primary" href="/" target="_blank" rel="noopener">View site</a>
+    <a class="button button-secondary" href="/admin/pages/{{ .Content.Result.HomepageID }}/edit">Edit homepage</a>
+    <a class="button button-secondary" href="/admin">Go to dashboard</a>
+  </div>
+</section>
+{{ else }}
+<style>
+.creator-studio{display:flex;flex-direction:column;gap:18px;max-width:1440px;margin:0 auto}
+.creator-studio__header{padding:8px 0 12px;border-bottom:1px solid var(--ui-border)}
+.creator-studio__header h1{margin:4px 0 6px;font-size:20px;line-height:1.1;letter-spacing:-0.02em}
+.creator-studio__header p{margin:0;color:var(--ui-text-muted);font-size:13px;line-height:1.5;max-width:560px}
+.creator-stepper{display:flex;gap:8px;list-style:none;margin:14px 0 0;padding:0}
+.creator-stepper li{display:flex;align-items:center;gap:6px}
+.creator-stepper button{width:28px;height:28px;border-radius:999px;border:1px solid var(--ui-border);background:var(--ui-surface);color:var(--ui-text-muted);font-weight:700;font-size:12px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.creator-stepper li.is-active button{background:var(--ui-primary);color:#fff;border-color:var(--ui-primary)}
+.creator-stepper li.is-complete button{background:var(--ui-surface);color:var(--ui-primary);border-color:var(--ui-primary)}
+.creator-stepper span{font-size:12px;font-weight:600;color:var(--ui-text-muted)}
+.creator-stepper li.is-active span{color:var(--ui-text)}
+.creator-studio__body{display:flex;gap:20px;align-items:flex-start;min-height:560px}
+.creator-studio__controls{width:420px;flex:none;background:var(--ui-surface);border:1px solid var(--ui-border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:14px}
+.creator-studio__preview{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;position:sticky;top:12px;height:calc(100vh - 24px)}
+.creator-preview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--ui-border);border-radius:10px;background:var(--ui-surface)}
+.creator-preview-toolbar-left,.creator-preview-toolbar-right{display:flex;gap:6px;align-items:center}
+.creator-preview-toolbar button,.creator-preview-toolbar select{height:30px;padding:0 10px;border:1px solid var(--ui-border);border-radius:999px;background:var(--ui-surface);font-size:12px;font-weight:600;cursor:pointer}
+.creator-preview-toolbar button.is-active{background:var(--ui-primary);color:#fff;border-color:var(--ui-primary)}
+.creator-preview-frame{flex:1;min-height:520px;border:1px solid var(--ui-border);border-radius:12px;overflow:hidden;background:#f8f8f7;display:flex}
+.creator-preview-frame iframe{width:100%;height:100%;border:0;background:#fff}
+.creator-preview-frame.is-mobile{max-width:390px;margin:0 auto;width:100%;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+.creator-step{border:0;padding:0;margin:0;display:grid;gap:14px}
+.creator-step legend{font-weight:700;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--ui-text-muted);padding:0;margin-bottom:2px;width:100%}
+.creator-step .muted{color:var(--ui-text-muted);font-size:13px;line-height:1.5;margin:-6px 0 4px}
+.creator-nav{display:flex;gap:10px;justify-content:space-between;align-items:center;padding-top:8px;border-top:1px solid var(--ui-border);margin-top:4px}
+.creator-nav .button[disabled]{opacity:.5;pointer-events:none}
+.creator-details-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.creator-details-grid label{display:grid;gap:6px;font-weight:600;font-size:13px}
+.creator-details-grid input,.creator-details-grid select{height:36px;padding:0 10px;border:1px solid var(--ui-border);border-radius:8px;font:inherit;font-weight:400}
+.creator-checkbox{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4}
+.creator-checkbox input{margin-top:2px}
+.creator-step .creator-presets{grid-template-columns:1fr}
+.creator-step .creator-palette-grid{grid-template-columns:1fr 1fr}
+.creator-step .creator-option-grid{grid-template-columns:1fr}
+.creator-presentation{display:grid;gap:12px;padding:12px;border:1px solid var(--ui-border);border-radius:10px;background:var(--ui-surface-muted, #fafafa)}
+.creator-presentation h4{margin:0;font-size:13px;font-weight:700}
+.creator-presentation .field-row{display:grid;gap:6px}
+.creator-presentation label{font-size:13px;font-weight:600;display:grid;gap:6px}
+.creator-presentation select{height:36px;border:1px solid var(--ui-border);border-radius:8px;padding:0 10px}
+.creator-studio__preview{display:none}
+.has-js .creator-studio__preview{display:flex}
+.has-js .creator-studio__controls .creator-step{display:none}
+.has-js .creator-studio__controls .creator-step.is-active-step{display:grid}
+@media (max-width: 1024px){.creator-studio__body{flex-direction:column}.creator-studio__controls{width:100%}.creator-studio__preview{position:static;height:520px}.creator-stepper{overflow:auto}}
+@media (max-width: 640px){.creator-stepper span{display:none}}
+</style>
+<div class="creator-studio" data-creator-studio>
+  <header class="creator-studio__header">
+    <p class="creator-eyebrow">Create your site</p>
+    <h1>Guided setup — preview on the right</h1>
+    <p>Pick a starter, colours and chrome. Preview uses the real theme and block renderer. Nothing is saved until you create the site.</p>
+    <ol class="creator-stepper" role="list">
+      <li data-step="1" class="is-active"><button type="button" data-goto="1">1</button><span>Site</span></li>
+      <li data-step="2"><button type="button" data-goto="2">2</button><span>Color</span></li>
+      <li data-step="3"><button type="button" data-goto="3">3</button><span>Header</span></li>
+      <li data-step="4"><button type="button" data-goto="4">4</button><span>Footer</span></li>
+      <li data-step="5"><button type="button" data-goto="5">5</button><span>Details</span></li>
+    </ol>
+  </header>
+  {{ if .Content.Error }}<div class="notice notice-danger" role="alert">{{ .Content.Error }}</div>{{ end }}
+  <div class="creator-studio__body">
+    <section class="creator-studio__controls">
+      <form method="post" action="/admin/creator" id="creator-form" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <!-- Step 1 Site type -->
+        <fieldset class="creator-step is-active-step" data-step="1" aria-labelledby="step1-title">
+          <legend id="step1-title">1 — Site type</legend>
+          <p class="muted">Choose the structure that fits your goal. Colors and chrome can be changed afterwards.</p>
+          <div class="creator-presets" role="radiogroup">
+          {{ range .Content.Presets }}
+            <label class="creator-preset">
+              <input type="radio" name="preset" value="{{ .ID }}" {{ if eq $.Content.Selected .ID }}checked{{ end }} required>
+              <span class="creator-preset-copy">
+                <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+                <span class="creator-preset-meta"><b>Pages</b> {{ range $i, $page := .Pages }}{{ if $i }}, {{ end }}{{ $page }}{{ end }}</span>
+                <span class="creator-preset-meta"><b>Content</b> {{ .Dynamic }}</span>
+              </span>
+            </label>
+          {{ end }}
+          </div>
+        </fieldset>
+        <!-- Step 2 Color -->
+        <fieldset class="creator-step" data-step="2" aria-labelledby="step2-title">
+          <legend id="step2-title">2 — Color</legend>
+          <p class="muted">Curated palettes. Adjust freely later in Site Styles.</p>
+          <div class="creator-palette-grid">
+          {{ range .Content.Palettes }}
+            <label class="creator-palette">
+              <input type="radio" name="palette" value="{{ .ID }}" {{ if eq $.Content.SelectedPalette .ID }}checked{{ end }}>
+              <span class="creator-palette-card">
+                <span class="creator-swatches">{{ range .Swatches }}<span class="creator-swatch" style="background:{{ . }}"></span>{{ end }}</span>
+                <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+              </span>
+            </label>
+          {{ end }}
+          </div>
+        </fieldset>
+        <!-- Step 3 Header -->
+        <fieldset class="creator-step" data-step="3" aria-labelledby="step3-title">
+          <legend id="step3-title">3 — Header</legend>
+          <p class="muted">Header is judged in the real preview. Little illustrations are only hints.</p>
+          <div class="creator-option-grid">
+          {{ range .Content.Headers }}
+            <label class="creator-option">
+              <input type="radio" name="header_style" value="{{ .ID }}" {{ if eq $.Content.SelectedHeader .ID }}checked{{ end }}>
+              <span class="creator-option-card">
+                <span class="creator-preview creator-preview--header-{{ .ID }}">
+                  {{ if eq .ID "minimal" }}<span class="creator-preview-bar"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
+                  {{ if eq .ID "classic" }}<span class="creator-preview-bar"><span class="bar-stack"><span class="bar-brand"></span><span class="bar-tagline"></span></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
+                  {{ if eq .ID "centered" }}<span class="creator-preview-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
+                </span>
+                <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+              </span>
+            </label>
+          {{ end }}
+          </div>
+        </fieldset>
+        <!-- Step 4 Footer -->
+        <fieldset class="creator-step" data-step="4" aria-labelledby="step4-title">
+          <legend id="step4-title">4 — Footer</legend>
+          <p class="muted">Footer preview will scroll into view when you enter this step.</p>
+          <div class="creator-option-grid">
+          {{ range .Content.Footers }}
+            <label class="creator-option">
+              <input type="radio" name="footer_style" value="{{ .ID }}" {{ if eq $.Content.SelectedFooter .ID }}checked{{ end }}>
+              <span class="creator-option-card">
+                <span class="creator-preview creator-preview--footer-{{ .ID }}">
+                  {{ if eq .ID "simple" }}<span class="creator-preview-footer-simple"><span class="bar-brand"></span><span class="bar-copy">©</span></span>{{ end }}
+                  {{ if eq .ID "split" }}<span class="creator-preview-footer-split"><span class="f-top"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i></span></span><span class="f-line"></span><span class="bar-copy">©</span></span>{{ end }}
+                  {{ if eq .ID "centered" }}<span class="creator-preview-footer-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i></span><span class="bar-copy">©</span></span>{{ end }}
+                </span>
+                <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+              </span>
+            </label>
+          {{ end }}
+          </div>
+          <button type="button" class="button button-secondary" id="show-footer-btn">Show footer in preview</button>
+        </fieldset>
+        <!-- Step 5 Details -->
+        <fieldset class="creator-step" data-step="5" aria-labelledby="step5-title">
+          <legend id="step5-title">5 — Content &amp; site settings</legend>
+          <div class="creator-presentation">
+            <h4>Content presentation</h4>
+            <div class="field-row" data-preset="blog">
+              <label>Latest posts on homepage<select name="blog_latest"><option value="5" {{ if eq .Content.BlogLatest 5 }}selected{{ end }}>5</option><option value="8" {{ if eq .Content.BlogLatest 8 }}selected{{ end }}>8</option></select></label>
+              <label>Posts per archive page<select name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
+            </div>
+            <div class="field-row" data-preset="portfolio">
+              <label>Projects per row<select name="portfolio_cols"><option value="2" {{ if eq .Content.PortfolioCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.PortfolioCols 3 }}selected{{ end }}>3</option></select></label>
+            </div>
+            <div class="field-row" data-preset="products">
+              <label>Products per row<select name="product_cols"><option value="3" {{ if eq .Content.ProductCols 3 }}selected{{ end }}>3</option><option value="4" {{ if eq .Content.ProductCols 4 }}selected{{ end }}>4</option></select></label>
+              <label>Product detail<select name="product_media"><option value="left" {{ if eq .Content.ProductMedia "left" }}selected{{ end }}>Image left</option><option value="right" {{ if eq .Content.ProductMedia "right" }}selected{{ end }}>Image right</option></select></label>
+            </div>
+            <div class="field-row" data-preset="landing">
+              <label>Testimonials<select name="testimonials_cols"><option value="1" {{ if eq .Content.TestimonialsCols 1 }}selected{{ end }}>1 column</option><option value="2" {{ if eq .Content.TestimonialsCols 2 }}selected{{ end }}>2 columns</option></select></label>
+            </div>
+            <div class="field-row" data-preset="local-business">
+              <label>Services per row<select name="service_cols"><option value="2" {{ if eq .Content.ServiceCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.ServiceCols 3 }}selected{{ end }}>3</option></select></label>
+            </div>
+            <p class="muted" style="margin:4px 0 0">These become ordinary SDT. Edit layouts later without Creator.</p>
+          </div>
+          <div class="creator-details-grid">
+            <label>Site name<input type="text" name="site_name" maxlength="200" value="{{ .Content.SiteName }}" required></label>
+            <label>Tagline <small>optional</small><input type="text" name="tagline" maxlength="300" value="{{ .Content.Tagline }}" placeholder="A short promise"></label>
+            <label>Language<select name="language">{{ range .Content.LanguageOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Language }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>{{ end }}</select></label>
+            <label>Timezone<select name="timezone">{{ range .Content.TimezoneOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Timezone }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
+            <label>Represents<select name="site_represents"><option value="organization" {{ if eq .Content.SiteRepresents "organization" }}selected{{ end }}>Organization</option><option value="person" {{ if eq .Content.SiteRepresents "person" }}selected{{ end }}>Person</option></select></label>
+            <label>Site URL <small>optional</small><input type="url" name="site_url" value="{{ .Content.SiteURL }}" placeholder="https://example.com"></label>
+          </div>
+          <label class="creator-checkbox"><input type="checkbox" name="indexing_enabled" value="on" {{ if .Content.IndexingEnabled }}checked{{ end }}> Discourage search engines until the site is ready <small style="color:var(--ui-text-muted)">— sample content is not indexed by default</small></label>
+          <p class="muted">Sitemap enabled, robots managed, speculation off — safe defaults.</p>
+        </fieldset>
+        <nav class="creator-nav">
+          <button type="button" class="button button-secondary" id="creator-back" disabled>Back</button>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="button button-secondary" id="creator-continue">Continue</button>
+            <button type="submit" class="button button-primary" id="creator-submit" hidden>Create site</button>
+          </div>
+        </nav>
+        <p class="muted" style="font-size:12px">Creation can take a few seconds while starter images and search index are prepared.</p>
+      </form>
+      <form method="post" action="/admin/creator/skip" class="creator-skip" style="margin-top:6px;border-top:1px solid var(--ui-border);padding-top:10px">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <button class="button button-link" type="submit">Skip and start empty</button>
+      </form>
     </section>
-  {{ else }}
-    <header class="creator-header">
-      <p class="creator-eyebrow">First-run Site Creator</p>
-      <h1>Choose a useful starting point.</h1>
-      <p>Everything created here remains ordinary Stratum content. Change, replace or delete any part later.</p>
-    </header>
-    {{ if .Content.Error }}<div class="notice notice-danger" role="alert">{{ .Content.Error }}</div>{{ end }}
-    <form method="post" action="/admin/creator" class="creator-form">
-      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-      <fieldset class="creator-presets">
-        <legend>Starter site</legend>
-        {{ range .Content.Presets }}
-          <label class="creator-preset">
-            <input type="radio" name="preset" value="{{ .ID }}" {{ if eq $.Content.Selected .ID }}checked{{ end }} required>
-            <span class="creator-preset-copy">
-              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
-              <span class="creator-preset-meta"><b>Pages</b> {{ range $i, $page := .Pages }}{{ if $i }}, {{ end }}{{ $page }}{{ end }}</span>
-              <span class="creator-preset-meta"><b>Content</b> {{ .Dynamic }}</span>
-              <span class="creator-preset-meta"><b>Templates</b> {{ range $i, $name := .Templates }}{{ if $i }}, {{ end }}{{ $name }}{{ end }}</span>
-            </span>
-          </label>
-        {{ end }}
-      </fieldset>
-      <div class="creator-details">
-        <label><span>Site name</span><input type="text" name="site_name" maxlength="200" value="{{ .Content.SiteName }}" required></label>
-        <label><span>Tagline <small>(optional)</small></span><input type="text" name="tagline" maxlength="300" value="{{ .Content.Tagline }}" placeholder="A short promise or description"></label>
+    <section class="creator-studio__preview" aria-label="Preview">
+      <div class="creator-preview-toolbar">
+        <div class="creator-preview-toolbar-left">
+          <button type="button" data-viewport="desktop" class="is-active">Desktop</button>
+          <button type="button" data-viewport="mobile">Mobile</button>
+        </div>
+        <div class="creator-preview-toolbar-right">
+          <select id="preview-surface">
+            <option value="home">Home</option>
+            <option value="archive">Archive</option>
+            <option value="single">Example item</option>
+          </select>
+        </div>
       </div>
-      <fieldset class="creator-group creator-palettes">
-        <legend>Color palette</legend>
-        <p class="creator-group-hint">Curated colors. Adjust freely later in Site Styles.</p>
-        <div class="creator-palette-grid">
-        {{ range .Content.Palettes }}
-          <label class="creator-palette{{ if eq $.Content.SelectedPalette .ID }} is-selected{{ end }}">
-            <input type="radio" name="palette" value="{{ .ID }}" {{ if eq $.Content.SelectedPalette .ID }}checked{{ end }}>
-            <span class="creator-palette-card">
-              <span class="creator-swatches">{{ range .Swatches }}<span class="creator-swatch" style="background:{{ . }}"></span>{{ end }}</span>
-              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
-            </span>
-          </label>
-        {{ end }}
-        </div>
-      </fieldset>
-      <fieldset class="creator-group creator-headers">
-        <legend>Header</legend>
-        <div class="creator-option-grid">
-        {{ range .Content.Headers }}
-          <label class="creator-option{{ if eq $.Content.SelectedHeader .ID }} is-selected{{ end }}">
-            <input type="radio" name="header_style" value="{{ .ID }}" {{ if eq $.Content.SelectedHeader .ID }}checked{{ end }}>
-            <span class="creator-option-card">
-              <span class="creator-preview creator-preview--header-{{ .ID }}">
-                {{ if eq .ID "minimal" }}<span class="creator-preview-bar"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
-                {{ if eq .ID "classic" }}<span class="creator-preview-bar"><span class="bar-stack"><span class="bar-brand"></span><span class="bar-tagline"></span></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
-                {{ if eq .ID "centered" }}<span class="creator-preview-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
-              </span>
-              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
-            </span>
-          </label>
-        {{ end }}
-        </div>
-      </fieldset>
-      <fieldset class="creator-group creator-footers">
-        <legend>Footer</legend>
-        <div class="creator-option-grid">
-        {{ range .Content.Footers }}
-          <label class="creator-option{{ if eq $.Content.SelectedFooter .ID }} is-selected{{ end }}">
-            <input type="radio" name="footer_style" value="{{ .ID }}" {{ if eq $.Content.SelectedFooter .ID }}checked{{ end }}>
-            <span class="creator-option-card">
-              <span class="creator-preview creator-preview--footer-{{ .ID }}">
-                {{ if eq .ID "simple" }}<span class="creator-preview-footer-simple"><span class="bar-brand"></span><span class="bar-copy">©</span></span>{{ end }}
-                {{ if eq .ID "split" }}<span class="creator-preview-footer-split"><span class="f-top"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i></span></span><span class="f-line"></span><span class="bar-copy">©</span></span>{{ end }}
-                {{ if eq .ID "centered" }}<span class="creator-preview-footer-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i></span><span class="bar-copy">©</span></span>{{ end }}
-              </span>
-              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
-            </span>
-          </label>
-        {{ end }}
-        </div>
-      </fieldset>
-      <div class="creator-submit">
-        <p class="muted">Creation can take a few seconds while starter images and the search index are prepared.</p>
-        <button class="button button-primary" type="submit">Create my site</button>
+      <div class="creator-preview-frame" id="preview-frame">
+        <iframe id="creator-preview" title="Site preview" sandbox="allow-same-origin allow-scripts" loading="lazy"></iframe>
       </div>
-      <script>
-      (function(){
-        var defaults = {"blog":{"palette":"clay","header":"classic","footer":"simple"},"portfolio":{"palette":"ink","header":"minimal","footer":"split"},"landing":{"palette":"indigo","header":"minimal","footer":"centered"},"products":{"palette":"ink","header":"classic","footer":"split"},"local-business":{"palette":"forest","header":"classic","footer":"split"}};
-        var presetInputs = document.querySelectorAll('input[name="preset"]');
-        var paletteInputs = document.querySelectorAll('input[name="palette"]');
-        var headerInputs = document.querySelectorAll('input[name="header_style"]');
-        var footerInputs = document.querySelectorAll('input[name="footer_style"]');
-        var touched = {palette:false, header:false, footer:false};
-        paletteInputs.forEach(function(el){ el.addEventListener('change', function(){ touched.palette=true; }); });
-        headerInputs.forEach(function(el){ el.addEventListener('change', function(){ touched.header=true; }); });
-        footerInputs.forEach(function(el){ el.addEventListener('change', function(){ touched.footer=true; }); });
-        function setChecked(name, value){
-          var inputs = document.querySelectorAll('input[name="'+name+'"]');
-          inputs.forEach(function(el){
-            el.checked = el.value === value;
-            var label = el.closest('label');
-            if(label){ label.classList.toggle('is-selected', el.checked); }
-          });
-        }
-        function syncRadios(){
-          document.querySelectorAll('.creator-palette, .creator-option').forEach(function(l){
-            var inp = l.querySelector('input');
-            if(inp){ l.classList.toggle('is-selected', inp.checked); }
-          });
-        }
-        paletteInputs.forEach(function(el){ el.addEventListener('change', syncRadios); });
-        headerInputs.forEach(function(el){ el.addEventListener('change', syncRadios); });
-        footerInputs.forEach(function(el){ el.addEventListener('change', syncRadios); });
-        presetInputs.forEach(function(el){
-          el.addEventListener('change', function(){
-            if(!el.checked) return;
-            var def = defaults[el.value];
-            if(!def) return;
-            if(!touched.palette) setChecked('palette', def.palette);
-            if(!touched.header) setChecked('header_style', def.header);
-            if(!touched.footer) setChecked('footer_style', def.footer);
-          });
-        });
-      })();
-      </script>
-    </form>
-    <form method="post" action="/admin/creator/skip" class="creator-skip">
-      <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-      <button class="button button-link" type="submit">Skip and start empty</button>
-    </form>
-  {{ end }}
+      <p class="muted" style="font-size:12px;margin:0">Preview uses the real theme and block renderer. Forms cannot submit here.</p>
+    </section>
+  </div>
 </div>
+<script>
+(function(){
+  var form=document.getElementById('creator-form');
+  if(!form) return;
+  document.documentElement.classList.add('has-js');
+  var steps=[1,2,3,4,5].map(function(n){return form.querySelector('[data-step="'+n+'"]')});
+  var backBtn=document.getElementById('creator-back');
+  var contBtn=document.getElementById('creator-continue');
+  var submitBtn=document.getElementById('creator-submit');
+  var stepper=document.querySelectorAll('.creator-stepper li');
+  var presetInputs=form.querySelectorAll('input[name="preset"]');
+  var paletteInputs=form.querySelectorAll('input[name="palette"]');
+  var headerInputs=form.querySelectorAll('input[name="header_style"]');
+  var footerInputs=form.querySelectorAll('input[name="footer_style"]');
+  var current=1;
+  var completed=new Set([1]);
+  var defaults={"blog":{"palette":"clay","header":"classic","footer":"simple"},"portfolio":{"palette":"ink","header":"minimal","footer":"split"},"landing":{"palette":"indigo","header":"minimal","footer":"centered"},"products":{"palette":"ink","header":"classic","footer":"split"},"local-business":{"palette":"forest","header":"classic","footer":"split"}};
+  var touched={palette:false,header:false,footer:false};
+  paletteInputs.forEach(function(el){el.addEventListener('change',function(){touched.palette=true;})});
+  headerInputs.forEach(function(el){el.addEventListener('change',function(){touched.header=true;})});
+  footerInputs.forEach(function(el){el.addEventListener('change',function(){touched.footer=true;})});
+  function setChecked(name,val){
+    var ins=document.querySelectorAll('input[name="'+name+'"]');
+    ins.forEach(function(el){
+      el.checked=el.value===val;
+      var lab=el.closest('label');
+      if(lab){lab.classList.toggle('is-selected',el.checked)}
+    });
+  }
+  function syncSelected(){
+    document.querySelectorAll('.creator-palette,.creator-option,.creator-preset').forEach(function(l){
+      var inp=l.querySelector('input');
+      if(inp){l.classList.toggle('is-selected',inp.checked)}
+    });
+  }
+  paletteInputs.forEach(function(el){el.addEventListener('change',syncSelected)});
+  headerInputs.forEach(function(el){el.addEventListener('change',syncSelected)});
+  footerInputs.forEach(function(el){el.addEventListener('change',syncSelected)});
+  presetInputs.forEach(function(el){
+    el.addEventListener('change',function(){
+      if(!el.checked) return;
+      var d=defaults[el.value];
+      if(!d) return;
+      if(!touched.palette) setChecked('palette',d.palette);
+      if(!touched.header) setChecked('header_style',d.header);
+      if(!touched.footer) setChecked('footer_style',d.footer);
+      syncSelected();
+      filterPresentation();
+      schedulePreview();
+    });
+  });
+  function filterPresentation(){
+    var sel=form.querySelector('input[name="preset"]:checked');
+    var preset=sel?sel.value:'blog';
+    form.querySelectorAll('.creator-presentation .field-row').forEach(function(row){
+      var p=row.getAttribute('data-preset');
+      row.hidden = p!==preset;
+    });
+  }
+  function isStepValid(n){
+    var fs=steps[n-1];
+    if(!fs) return false;
+    var req=fs.querySelectorAll('[required]');
+    for(var i=0;i<req.length;i++){
+      if(req[i].type==='radio'){
+        var grp=fs.querySelectorAll('input[name="'+req[i].name+'"]');
+        var one=false;
+        for(var j=0;j<grp.length;j++){if(grp[j].checked)one=true}
+        if(!one) return false;
+      } else if(!req[i].value) return false;
+    }
+    // Step 1 requires preset, step5 requires site_name
+    if(n===1){ var sel=form.querySelector('input[name="preset"]:checked'); if(!sel) return false; }
+    if(n===5){
+      var sn=form.querySelector('input[name="site_name"]');
+      if(!sn||!sn.value.trim()) return false;
+    }
+    return true;
+  }
+  function showStep(n){
+    if(n<1||n>5) return;
+    // Do not allow jumping forward past invalid step
+    if(n>current){
+      for(var k=current;k<n;k++){ if(!isStepValid(k)) return; }
+    }
+    current=n;
+    steps.forEach(function(fs,i){
+      var idx=i+1;
+      var active=idx===current;
+      fs.hidden=!active;
+      fs.classList.toggle('is-active-step',active);
+    });
+    stepper.forEach(function(li){
+      var s=parseInt(li.getAttribute('data-step'),10);
+      li.classList.toggle('is-active',s===current);
+      li.classList.toggle('is-complete',completed.has(s)&&s!==current);
+      var btn=li.querySelector('button');
+      if(btn) btn.disabled = s>current && !completed.has(s-1);
+    });
+    backBtn.disabled=current===1;
+    if(current===5){
+      contBtn.hidden=true;
+      submitBtn.hidden=false;
+    } else {
+      contBtn.hidden=false;
+      submitBtn.hidden=true;
+      contBtn.disabled=!isStepValid(current);
+    }
+    if(current===4){
+      setTimeout(function(){
+        var ifr=document.getElementById('creator-preview');
+        try{var win=ifr.contentWindow; if(win) win.scrollTo(0, win.document.body.scrollHeight);}catch(e){}
+      },400);
+    }
+    filterPresentation();
+  }
+  backBtn.addEventListener('click',function(){ if(current>1) showStep(current-1); });
+  contBtn.addEventListener('click',function(){
+    if(!isStepValid(current)) return;
+    completed.add(current+1);
+    showStep(current+1);
+  });
+  stepper.forEach(function(li){
+    var btn=li.querySelector('button');
+    if(!btn) return;
+    btn.addEventListener('click',function(){
+      var target=parseInt(btn.getAttribute('data-goto'),10);
+      if(completed.has(target)||target<current) showStep(target);
+    });
+  });
+  // Preview
+  var iframe=document.getElementById('creator-preview');
+  var frame=document.getElementById('preview-frame');
+  var surfaceSel=document.getElementById('preview-surface');
+  var vpBtns=document.querySelectorAll('[data-viewport]');
+  var debounceTimer=null;
+  var lastSurface='home';
+  vpBtns.forEach(function(b){
+    b.addEventListener('click',function(){
+      vpBtns.forEach(function(x){x.classList.remove('is-active')});
+      b.classList.add('is-active');
+      if(b.getAttribute('data-viewport')==='mobile') frame.classList.add('is-mobile');
+      else frame.classList.remove('is-mobile');
+    });
+  });
+  surfaceSel.addEventListener('change',function(){ lastSurface=surfaceSel.value; schedulePreview(); });
+  document.getElementById('show-footer-btn')?.addEventListener('click',function(){
+    lastSurface='home';
+    surfaceSel.value='home';
+    var ifr=document.getElementById('creator-preview');
+    try{var win=ifr.contentWindow; if(win) win.scrollTo(0, win.document.body.scrollHeight);}catch(e){}
+    // Force scroll after preview reload
+    setTimeout(function(){ try{var w=ifr.contentWindow; if(w) w.scrollTo(0,w.document.body.scrollHeight);}catch(e){} },600);
+  });
+  function collectFormData(){
+    var fd=new FormData(form);
+    // Ensure surface and csrf not needed for preview
+    fd.set('surface', lastSurface);
+    return fd;
+  }
+  function schedulePreview(){
+    clearTimeout(debounceTimer);
+    debounceTimer=setTimeout(doPreview, 240);
+  }
+  function doPreviewImmediate(){ clearTimeout(debounceTimer); doPreview(); }
+  function doPreview(){
+    var fd=collectFormData();
+    var params=new URLSearchParams();
+    fd.forEach(function(v,k){ params.append(k,v); });
+    fetch('/admin/creator/preview?'+params.toString(),{method:'GET',credentials:'same-origin'})
+      .then(function(res){ if(!res.ok) throw new Error('preview '+res.status); return res.text(); })
+      .then(function(html){ iframe.srcdoc=html; })
+      .catch(function(){ /* keep old preview */ });
+  }
+  // Immediate refresh on radios/selects
+  form.addEventListener('change',function(e){
+    var t=e.target;
+    if(t.matches('input[type="radio"], select, input[type="checkbox"]')){ doPreviewImmediate(); syncSelected(); if(t.name==='preset') filterPresentation(); }
+    if(t.name==='preset'||t.name==='language') filterPresentation();
+    contBtn.disabled=!isStepValid(current);
+  });
+  // Debounced typing
+  var typingInputs=form.querySelectorAll('input[name="site_name"], input[name="tagline"], input[name="site_url"]');
+  typingInputs.forEach(function(inp){
+    inp.addEventListener('input',function(){ schedulePreview(); contBtn.disabled=!isStepValid(current); });
+  });
+  // Timezone browser suggestion
+  try{
+    var tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
+    var sel=form.querySelector('select[name="timezone"]');
+    if(sel && tz){
+      var opts=Array.from(sel.options).map(function(o){return o.value});
+      if(opts.indexOf(tz)!==-1 && !sel.value) sel.value=tz;
+    }
+  }catch(e){}
+  filterPresentation();
+  showStep(1);
+  syncSelected();
+  doPreviewImmediate();
+  // Also update preview on input
+  form.querySelectorAll('input,select,textarea').forEach(function(el){
+    el.addEventListener('change',function(){ contBtn.disabled=!isStepValid(current); });
+  });
+})();
+</script>
+{{ end }}
 {{ end }}

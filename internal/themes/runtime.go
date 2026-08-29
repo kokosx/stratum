@@ -177,6 +177,18 @@ func (r *Runtime) ValidateSettings(values map[string]any) (map[string]any, error
 	return nil, fmt.Errorf("theme runtime is not initialized")
 }
 
+func (r *Runtime) PreviewStyles(settings map[string]any) (string, error) {
+	snapshot := r.snapshot.Load()
+	if snapshot == nil {
+		return "", fmt.Errorf("theme runtime is not initialized")
+	}
+	validated, err := snapshot.definition.Schema.ValidateSettings(settings)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.definition.Styles(validated, snapshot.customCSS)
+}
+
 func (r *Runtime) Save(ctx context.Context, values map[string]any, customCSS string) error {
 	if len(customCSS) > MaxCustomCSSBytes {
 		return fmt.Errorf("custom CSS exceeds the %d byte limit", MaxCustomCSSBytes)

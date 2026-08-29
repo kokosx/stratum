@@ -21,6 +21,7 @@ import (
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/search"
+	"github.com/kokosx/stratum/internal/site"
 	"github.com/kokosx/stratum/internal/siteparts"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	"github.com/kokosx/stratum/internal/themes"
@@ -45,8 +46,16 @@ func NewService(database *sql.DB, queries *db.Queries, registry *blocks.Registry
 func (s *Service) Preview(input Input) (Plan, error) {
 	input.SiteTitle = strings.TrimSpace(input.SiteTitle)
 	input.Tagline = strings.TrimSpace(input.Tagline)
+	input.Language = strings.TrimSpace(input.Language)
+	input.Timezone = strings.TrimSpace(input.Timezone)
+	input.SiteRepresents = strings.TrimSpace(input.SiteRepresents)
+	input.SiteURL = strings.TrimSpace(input.SiteURL)
+	input.ProductMediaPosition = strings.TrimSpace(input.ProductMediaPosition)
 	if input.SiteTitle == "" || len(input.SiteTitle) > 200 {
 		return Plan{}, errors.New("site name is required and must be at most 200 characters")
+	}
+	if len(input.Tagline) > 300 {
+		return Plan{}, errors.New("tagline must be at most 300 characters")
 	}
 	preset, ok := presetByID(input.PresetID)
 	if !ok {
@@ -69,6 +78,76 @@ func (s *Service) Preview(input Input) (Plan, error) {
 	}
 	if input.FooterStyleID == "" {
 		input.FooterStyleID = DefaultFooterForPreset(preset.ID)
+	}
+	if input.Language == "" {
+		input.Language = DefaultLanguageForPreset(preset.ID)
+	}
+	if !IsValidCreatorLanguage(input.Language) {
+		return Plan{}, errors.New("choose a valid language")
+	}
+	if input.Timezone == "" {
+		input.Timezone = DefaultTimezoneForPreset()
+	}
+	if err := site.ValidateTimezone(input.Timezone); err != nil {
+		return Plan{}, err
+	}
+	if input.SiteRepresents == "" {
+		input.SiteRepresents = DefaultRepresentsForPreset(preset.ID)
+	}
+	if !IsValidRepresents(input.SiteRepresents) {
+		return Plan{}, errors.New("choose site representation")
+	}
+	if input.BlogLatestCount != 0 && input.BlogLatestCount != 5 && input.BlogLatestCount != 8 {
+		return Plan{}, errors.New("choose valid latest posts count")
+	}
+	if input.BlogLatestCount == 0 {
+		input.BlogLatestCount = 5
+	}
+	if input.BlogArchiveCount != 0 && input.BlogArchiveCount != 10 && input.BlogArchiveCount != 20 {
+		return Plan{}, errors.New("choose valid posts per archive")
+	}
+	if input.BlogArchiveCount == 0 {
+		input.BlogArchiveCount = 10
+	}
+	if input.PortfolioColumns != 0 && input.PortfolioColumns != 2 && input.PortfolioColumns != 3 {
+		return Plan{}, errors.New("choose valid portfolio columns")
+	}
+	if input.PortfolioColumns == 0 {
+		input.PortfolioColumns = 2
+	}
+	if input.ProductColumns != 0 && input.ProductColumns != 3 && input.ProductColumns != 4 {
+		return Plan{}, errors.New("choose valid product columns")
+	}
+	if input.ProductColumns == 0 {
+		input.ProductColumns = 3
+	}
+	if input.LandingTestimonialsColumns != 0 && input.LandingTestimonialsColumns != 1 && input.LandingTestimonialsColumns != 2 {
+		return Plan{}, errors.New("choose valid testimonials columns")
+	}
+	if input.LandingTestimonialsColumns == 0 {
+		input.LandingTestimonialsColumns = 2
+	}
+	if input.ServiceColumns != 0 && input.ServiceColumns != 2 && input.ServiceColumns != 3 {
+		return Plan{}, errors.New("choose valid service columns")
+	}
+	if input.ServiceColumns == 0 {
+		input.ServiceColumns = 3
+	}
+	if input.ProductMediaPosition == "" {
+		input.ProductMediaPosition = "left"
+	}
+	if !IsValidProductMediaPosition(input.ProductMediaPosition) {
+		return Plan{}, errors.New("choose valid product media position")
+	}
+	if input.SiteURL != "" {
+		if _, err := site.ValidateSiteURL(input.SiteURL); err != nil {
+			return Plan{}, err
+		}
+		// Do not persist localhost/private host as canonical URL
+		lower := strings.ToLower(input.SiteURL)
+		if strings.Contains(lower, "localhost") || strings.Contains(lower, "127.0.0.1") || strings.Contains(lower, "192.168.") || strings.Contains(lower, "10.0.") || strings.Contains(lower, "10.1.") {
+			input.SiteURL = ""
+		}
 	}
 	return Plan{Input: input, Preset: preset}, nil
 }
@@ -103,6 +182,17 @@ func (s *Service) Create(ctx context.Context, plan Plan, authorID string) (resul
 	artifacts, err := s.buildArtifacts(plan, spec)
 	if err != nil {
 		return Result{}, err
+	}
+	// Cheap preflight before expensive media generation (M)
+	if c, err := s.queries.GetOnboardingCompleted(ctx); err != nil {
+		return Result{}, err
+	} else if c != 0 {
+		return Result{}, ErrCompleted
+	}
+	if count, err := s.queries.CountEntries(ctx); err != nil {
+		return Result{}, err
+	} else if count != 0 {
+		return Result{}, errors.New("starter sites can only be created on an empty site")
 	}
 	createdMedia, err := createStarterMedia(ctx, s.media, authorID, plan.Input.PaletteID, spec.images)
 	if err != nil {
@@ -176,7 +266,11 @@ func (s *Service) Create(ctx context.Context, plan Plan, authorID string) (resul
 			break
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE site_settings SET site_title=?, site_tagline=?, homepage_mode='page', homepage_entry_id=?, posts_page_entry_id=NULL, posts_base_path='/blog', site_icon_media_id=?, updated_at=? WHERE id=1`, plan.Input.SiteTitle, plan.Input.Tagline, artifacts.homepageID, createdMedia.iconID, artifacts.now); err != nil {
+	postsPerPage := int64(plan.Input.BlogArchiveCount)
+	if postsPerPage == 0 {
+		postsPerPage = 10
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE site_settings SET site_title=?, site_tagline=?, homepage_mode='page', homepage_entry_id=?, posts_page_entry_id=NULL, posts_base_path='/blog', site_icon_media_id=?, site_social_media_id=?, language=?, timezone=?, site_represents=?, indexing_enabled=?, sitemap_enabled=1, robots_mode='managed', speculation_mode='off', speculation_eagerness='moderate', site_url=?, posts_per_page=?, updated_at=? WHERE id=1`, plan.Input.SiteTitle, plan.Input.Tagline, artifacts.homepageID, createdMedia.iconID, createdMedia.socialID, plan.Input.Language, plan.Input.Timezone, plan.Input.SiteRepresents, boolToInt(plan.Input.IndexingEnabled), plan.Input.SiteURL, postsPerPage, artifacts.now); err != nil {
 		return Result{}, fmt.Errorf("update site settings: %w", err)
 	}
 	for index, entry := range artifacts.entries {
@@ -283,17 +377,18 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 	}
 	a.dynamicContentType = dynamicType
 	pageDoc := pageTemplate(newID())
-	homeDoc := homepageTemplate(newID(), plan.Preset.ID, plan.Input.Tagline, landingFormID(plan.Preset.ID, a.formID))
-	a.templates = append(a.templates, templateArtifact{id: a.pageTemplateID, revisionID: newID(), name: "Page", contentType: "page", kind: "single", doc: pageDoc}, templateArtifact{id: a.homepageTemplateID, revisionID: newID(), name: "Homepage", contentType: "page", kind: "single", doc: homeDoc})
+	homeShellDoc := homepageTemplate(newID(), plan.Preset.ID, plan.Input.Tagline, landingFormID(plan.Preset.ID, a.formID))
+	homeEntryDoc := homepageEntryDocument(newID(), plan.Preset.ID, landingFormID(plan.Preset.ID, a.formID), plan)
+	a.templates = append(a.templates, templateArtifact{id: a.pageTemplateID, revisionID: newID(), name: "Page", contentType: "page", kind: "single", doc: pageDoc}, templateArtifact{id: a.homepageTemplateID, revisionID: newID(), name: "Homepage", contentType: "page", kind: "single", doc: homeShellDoc})
 	if spec.contentType == nil || spec.contentType.Config.Routing.Single {
 		a.dynamicTemplateID = newID()
-		single := singleTemplate(newID(), plan.Preset.ID)
+		single := singleTemplateForPlan(newID(), plan.Preset.ID, plan)
 		a.templates = append(a.templates, templateArtifact{id: a.dynamicTemplateID, revisionID: newID(), name: spec.preset.Name + " Single", contentType: dynamicType, kind: "single", doc: single})
 	}
 	if spec.archivePath != "" {
 		a.archiveContentType = dynamicType
 		a.archiveTemplateID = newID()
-		archive := archiveTemplate(newID(), plan.Preset.ID)
+		archive := archiveTemplateForPlan(newID(), plan.Preset.ID, plan)
 		a.templates = append(a.templates, templateArtifact{id: a.archiveTemplateID, revisionID: newID(), name: spec.preset.Name + " Archive", contentType: dynamicType, kind: "archive", doc: archive})
 	}
 	for _, tmpl := range a.templates {
@@ -308,7 +403,7 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 			return a, fmt.Errorf("validate %s template: %w", tmpl.name, err)
 		}
 	}
-	home := entryArtifact{id: a.homepageID, revisionID: newID(), contentType: "page", slug: "home", title: plan.Input.SiteTitle, excerpt: plan.Input.Tagline, fields: "{}", doc: emptyDocument(newID()), layoutID: a.homepageTemplateID}
+	home := entryArtifact{id: a.homepageID, revisionID: newID(), contentType: "page", slug: "home", title: plan.Input.SiteTitle, excerpt: plan.Input.Tagline, fields: "{}", doc: homeEntryDoc, layoutID: a.homepageTemplateID}
 	a.entries = append(a.entries, home)
 	a.pageCount++
 	for _, page := range spec.pages {
@@ -464,6 +559,12 @@ func landingFormID(id PresetID, formID string) string {
 func nullable(value string) sql.NullString { return sql.NullString{String: value, Valid: value != ""} }
 func boolCount(value bool) int {
 	if value {
+		return 1
+	}
+	return 0
+}
+func boolToInt(v bool) int64 {
+	if v {
 		return 1
 	}
 	return 0

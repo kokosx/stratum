@@ -10,8 +10,7 @@
     form.dataset.dirtyInit = "1";
     const saveButton = form.querySelector('button[type="submit"]');
     const saveState = form.querySelector(".editor-status") || form.querySelector("#settings-save-state") || document.getElementById("settings-save-state");
-    const initial = new FormData(form);
-    const initialStr = JSON.stringify(Array.from(initial.entries()));
+    let initialStr = JSON.stringify(Array.from(new FormData(form).entries()));
 
     function isDirty() {
       const cur = new FormData(form);
@@ -27,7 +26,8 @@
       if (saveButton) saveButton.disabled = !dirty;
     }
     function syncBaseline() {
-      // Reset baseline after successful save (called via observer)
+      initialStr = JSON.stringify(Array.from(new FormData(form).entries()));
+      markDirty();
     }
     form.addEventListener("input", markDirty);
     form.addEventListener("change", markDirty);
@@ -48,6 +48,7 @@
           const newState = region ? region.querySelector(".editor-status") : null;
           if (newState && newState.textContent.trim() === "Saved") {
             clearTimeout(timeout);
+            try { syncBaseline(); } catch(e) {}
             saveButton.textContent = orig;
             saveButton.disabled = true;
             saveButton.dataset.busy = "";

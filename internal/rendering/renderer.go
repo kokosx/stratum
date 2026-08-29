@@ -143,6 +143,11 @@ type RenderContext struct {
 	FormReader FormReader
 	FormCache  map[string]forms.FormView
 	FormResult FormResultContext
+
+	// MediaProvider is an optional per-request override for the renderer's media.
+	// When set, entry-media and other image blocks resolve via this provider
+	// instead of the registry's global one. Used by Creator preview's synthetic media.
+	MediaProvider MediaProvider
 }
 
 type FormReader interface {
@@ -861,13 +866,17 @@ func (e *entryMediaRenderer) Render(ctx context.Context, node PreparedNode, rc R
 	}
 	value, ok := content.ResolveEntryField(ref, rc.Entry.Title, rc.Entry.Excerpt, rc.Entry.Permalink, rc.Entry.PublishISO, rc.Entry.FeaturedImage, rc.Entry.Fields)
 	id, stringOK := value.(string)
-	if !ok || !stringOK || id == "" || r.mediaProvider == nil {
+	provider := r.mediaProvider
+	if rc.MediaProvider != nil {
+		provider = rc.MediaProvider
+	}
+	if !ok || !stringOK || id == "" || provider == nil {
 		if rc.IsPreview || rc.Mode == ModePreview {
 			return template.HTML(`<span class="stratum-placeholder">Entry media</span>`), nil
 		}
 		return "", nil
 	}
-	view, ok := r.mediaProvider.MediaView(ctx, id)
+	view, ok := provider.MediaView(ctx, id)
 	if !ok || view.Src == "" {
 		return "", nil
 	}
@@ -878,6 +887,14 @@ func (e *entryMediaRenderer) Render(ctx context.Context, node PreparedNode, rc R
 	sizes, _ := node.Settings["sizes"].(string)
 	if sizes == "" {
 		sizes = "100vw"
+	}
+	aspect, _ := node.Settings["aspect"].(string)
+	if aspect != "natural" && aspect != "square" && aspect != "landscape" && aspect != "standard" {
+		aspect = "natural"
+	}
+	fit, _ := node.Settings["fit"].(string)
+	if fit != "contain" && fit != "cover" {
+		fit = "cover"
 	}
 	attrs := ` src="` + template.HTMLEscapeString(view.Src) + `" alt="` + template.HTMLEscapeString(alt) + `" loading="lazy" decoding="async"`
 	if view.Width > 0 {
@@ -893,7 +910,12 @@ func (e *entryMediaRenderer) Render(ctx context.Context, node PreparedNode, rc R
 	if view.WebPSrcSet != "" {
 		img = `<picture><source type="image/webp" srcset="` + template.HTMLEscapeString(view.WebPSrcSet) + `" sizes="` + template.HTMLEscapeString(sizes) + `">` + img + `</picture>`
 	}
-	return template.HTML(`<figure class="stratum-entry-media">` + img + `</figure>`), nil
+	cls := "stratum-entry-media"
+	if aspect != "natural" {
+		cls += " stratum-entry-media-aspect-" + aspect
+	}
+	cls += " stratum-entry-media-fit-" + fit
+	return template.HTML(`<figure class="` + cls + `">` + img + `</figure>`), nil
 }
 
 func (c *collectionRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, r *Renderer) (template.HTML, error) {

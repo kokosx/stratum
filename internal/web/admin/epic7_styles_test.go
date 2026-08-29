@@ -347,13 +347,13 @@ func TestBlogEmptyTaglineCompact(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("blog empty tagline creation failed: %d %s", rec.Code, rec.Body.String())
 	}
-	// After EPIC 7 art-direction, Blog homepage is ONE editorial band (Section v2 content/lg/default)
+	// After EPIC 7.1, Blog homepage Entry owns the editorial band (Section v2 content/lg/default)
 	// containing hero Stack + Latest posts. Both with and without tagline use lg for consistent top padding 56-80.
 	home, err := handler.queries.GetPublishedEntryByPath(t.Context(), "/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev, err := handler.queries.GetPublishedLayoutTemplateRevision(t.Context(), home.LayoutTemplateID.String)
+	rev, err := handler.queries.GetLatestEntryRevision(t.Context(), home.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,9 +363,16 @@ func TestBlogEmptyTaglineCompact(t *testing.T) {
 	if !strings.Contains(rev.DocumentJson, `"width":"content"`) {
 		t.Fatalf("blog should use content width, got %s", rev.DocumentJson)
 	}
-	// Verify single main section + content-slot, not two separate sections with dead whitespace
+	// Homepage template shell must be minimal content-slot; entry owns the section
+	shell, err := handler.queries.GetPublishedLayoutTemplateRevision(t.Context(), home.LayoutTemplateID.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(shell.DocumentJson, `"block":"core/content-slot"`) {
+		t.Fatalf("homepage shell must contain content-slot, got %s", shell.DocumentJson)
+	}
 	if strings.Count(rev.DocumentJson, `"block":"core/section"`) != 1 {
-		t.Fatalf("blog homepage should have exactly one main section after art-direction, got %s", rev.DocumentJson)
+		t.Fatalf("blog homepage entry should have exactly one main section after art-direction, got %s", rev.DocumentJson)
 	}
 }
 
@@ -394,12 +401,12 @@ func TestCollectionPresentationAndPresetSpecifics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev, err := handler.queries.GetPublishedLayoutTemplateRevision(t.Context(), home.LayoutTemplateID.String)
+	rev, err := handler.queries.GetLatestEntryRevision(t.Context(), home.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rev.DocumentJson, `"layout":"grid"`) || !strings.Contains(rev.DocumentJson, `"columns":3`) {
-		t.Fatalf("product collection should be grid 3, got %s", rev.DocumentJson)
+		t.Fatalf("product collection should be grid 3 in homepage entry, got %s", rev.DocumentJson)
 	}
 	if !strings.Contains(rev.DocumentJson, `"contentType":"product"`) {
 		t.Fatalf("product collection contentType")
@@ -436,7 +443,7 @@ func TestLandingTestimonialsNoMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rev, err := handler.queries.GetPublishedLayoutTemplateRevision(t.Context(), home.LayoutTemplateID.String)
+	rev, err := handler.queries.GetLatestEntryRevision(t.Context(), home.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

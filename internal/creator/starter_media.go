@@ -13,6 +13,7 @@ import (
 
 type starterMedia struct {
 	iconID   string
+	socialID string
 	imageIDs []string
 	allIDs   []string
 }
@@ -39,6 +40,11 @@ func createStarterMedia(ctx context.Context, service *media.Service, authorID st
 	if err := service.GenerateFaviconVariants(ctx, icon); err != nil {
 		return result, err
 	}
+	social, err := upload("starter-social.png", "Starter social image", "Abstract social preview image", geometricPNG(1200, 630, palette, 7))
+	if err != nil {
+		return result, err
+	}
+	result.socialID = social
 	if withImages {
 		for i := 0; i < 6; i++ {
 			id, err := upload("starter-showcase-"+string(rune('1'+i))+".png", "Starter showcase image", "Abstract geometric placeholder image", geometricPNG(1200, 800, palette, i+1))
