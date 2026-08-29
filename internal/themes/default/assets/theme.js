@@ -2,7 +2,7 @@
 (() => {
   const header = document.querySelector('.site-header');
   const menuToggle = document.querySelector('.mobile-menu-toggle');
-  const primary = document.querySelector('.primary-navigation');
+  const primary = document.querySelector('[data-mobile-navigation], .primary-navigation');
   const breakpoint = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--st-mobile-breakpoint')) || 800;
   const mobileMedia = window.matchMedia(`(max-width: ${breakpoint}px)`);
   const applyBreakpoint = () => header?.classList.toggle('is-mobile', mobileMedia.matches);
@@ -39,7 +39,7 @@
   menuToggle?.addEventListener('click', () => {
     const open = menuToggle.getAttribute('aria-expanded') !== 'true';
     menuToggle.setAttribute('aria-expanded', String(open));
-    primary.classList.toggle('is-open', open);
+    primary?.classList.toggle('is-open', open);
     if (open && primary?.classList.contains('mobile--drawer')) {
       ensureBackdrop().hidden = false;
       document.body.style.overflow = 'hidden';

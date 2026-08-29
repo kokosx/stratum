@@ -33,15 +33,56 @@ func richText(text string) map[string]any {
 }
 
 func (b *docBuilder) text(text string) document.Node {
-	return b.node("core/text", 2, map[string]any{"text": richText(text)}, nil)
+	return b.node("core/text", 2, map[string]any{"text": richText(text)}, map[string]any{"align": "left", "tone": "default", "size": "md", "maxWidth": "normal"})
+}
+
+func (b *docBuilder) lead(text string) document.Node {
+	return b.node("core/text", 2, map[string]any{"text": richText(text)}, map[string]any{"align": "left", "tone": "muted", "size": "lg", "maxWidth": "narrow"})
 }
 
 func (b *docBuilder) heading(text string, level int) document.Node {
-	return b.node("core/heading", 2, map[string]any{"text": richText(text), "level": level}, nil)
+	return b.node("core/heading", 2, map[string]any{"text": richText(text), "level": level}, map[string]any{"align": "left", "visualSize": "auto", "tone": "default", "maxWidth": "none"})
 }
 
-func (b *docBuilder) section(children ...document.Node) document.Node {
-	return b.node("core/section", 1, nil, map[string]any{"width": "wide", "verticalSpacing": "md", "horizontalPadding": "md", "align": "left", "background": "default", "minHeight": "auto"}, children...)
+func (b *docBuilder) section(width, spacing, background string, children ...document.Node) document.Node {
+	return b.node("core/section", 1, nil, map[string]any{"width": width, "verticalSpacing": spacing, "horizontalPadding": "md", "align": "left", "background": background, "minHeight": "auto"}, children...)
+}
+
+func (b *docBuilder) sectionAnchor(width, spacing, background, anchor string, children ...document.Node) document.Node {
+	settings := map[string]any{"width": width, "verticalSpacing": spacing, "horizontalPadding": "md", "align": "left", "background": background, "minHeight": "auto", "anchorID": anchor}
+	if anchor != "" {
+		settings["anchorID"] = anchor
+	}
+	return b.node("core/section", 1, nil, settings, children...)
+}
+
+func (b *docBuilder) stack(direction, gap, align, justify string, children ...document.Node) document.Node {
+	return b.node("core/stack", 1, nil, map[string]any{"direction": direction, "gap": gap, "align": align, "justify": justify, "wrap": true, "fullWidth": true}, children...)
+}
+
+func (b *docBuilder) grid(columns int, gap string, children ...document.Node) document.Node {
+	return b.node("core/grid", 1, nil, map[string]any{"columns": columns, "gap": gap, "align": "stretch", "equalHeight": false}, children...)
+}
+
+func (b *docBuilder) entryTitle(level int, size string) document.Node {
+	return b.node("core/entry-title", 1, nil, map[string]any{"level": level, "visualSize": size, "align": "left", "tone": "default", "maxWidth": "none"})
+}
+
+func (b *docBuilder) entryField(source, tag string) document.Node {
+	return b.node("core/entry-field", 1, map[string]any{"source": source}, map[string]any{"tag": tag})
+}
+
+func (b *docBuilder) entryMedia(sizes string) document.Node {
+	return b.node("core/entry-media", 1, map[string]any{"source": "entry.featured_media"}, map[string]any{"sizes": sizes})
+}
+
+func (b *docBuilder) collection(contentType, source, layout string, columns int, gap string, limit int, children ...document.Node) document.Node {
+	settings := map[string]any{"source": source, "contentType": contentType, "limit": limit, "orderBy": "entry.published_at", "direction": "desc", "layout": layout, "columns": columns, "gap": gap}
+	return b.node("core/collection", 3, nil, settings, children...)
+}
+
+func (b *docBuilder) button(label, url, variant string) document.Node {
+	return b.node("core/button", 1, map[string]any{"label": label, "url": url}, map[string]any{"variant": variant, "size": "lg", "width": "auto", "align": "left", "openInNewTab": false})
 }
 
 func emptyDocument(prefix string) *document.Document {
@@ -52,10 +93,10 @@ func bodyDocument(prefix, body, formID string) *document.Document {
 	b := &docBuilder{prefix: prefix}
 	nodes := []document.Node{}
 	if body != "" {
-		nodes = append(nodes, b.section(b.text(body)))
+		nodes = append(nodes, b.section("content", "sm", "default", b.text(body)))
 	}
 	if formID != "" {
-		nodes = append(nodes, b.section(b.heading("Get in touch", 2), b.node("core/form", 1, nil, map[string]any{"formId": formID})))
+		nodes = append(nodes, b.section("content", "sm", "default", b.heading("Get in touch", 2), b.node("core/form", 2, nil, map[string]any{"formId": formID})))
 	}
 	return &document.Document{Version: 1, Nodes: nodes}
 }
@@ -63,72 +104,92 @@ func bodyDocument(prefix, body, formID string) *document.Document {
 func pageTemplate(prefix string) *document.Document {
 	b := &docBuilder{prefix: prefix}
 	return &document.Document{Version: 1, Nodes: []document.Node{
-		b.section(b.node("core/entry-title", 1, nil, map[string]any{"level": 1, "visualSize": "xl", "align": "left", "tone": "default", "maxWidth": "wide"})),
+		b.section("content", "md", "default", b.entryTitle(1, "xl"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "lg"})),
 		b.node("core/content-slot", 1, nil, nil),
 	}}
 }
 
-func homepageTemplate(prefix, tagline, contentType string, fields []string, formID string) *document.Document {
+func homepageTemplate(prefix string, preset PresetID, tagline, formID string) *document.Document {
 	b := &docBuilder{prefix: prefix}
-	hero := []document.Node{b.node("core/entry-title", 1, nil, map[string]any{"level": 1, "visualSize": "xl", "align": "left", "tone": "default", "maxWidth": "wide"})}
-	if tagline != "" {
-		hero = append(hero, b.text(tagline))
-	}
-	cardChildren := []document.Node{b.node("core/entry-media", 1, map[string]any{"source": "entry.featured_media"}, map[string]any{"sizes": "(min-width: 768px) 33vw, 100vw"}), b.node("core/entry-title", 1, nil, map[string]any{"level": 2, "visualSize": "md", "align": "left", "tone": "default", "maxWidth": "none"})}
-	for _, field := range fields {
-		cardChildren = append(cardChildren, b.node("core/entry-field", 1, map[string]any{"source": field}, map[string]any{"tag": "p"}))
-	}
-	if contentType != "testimonial" {
-		cardChildren = append(cardChildren, b.node("core/entry-link", 1, map[string]any{"text": "View details"}, nil))
-	}
-	collection := b.node("core/collection", 2, nil, map[string]any{"source": "query", "contentType": contentType, "limit": 6, "orderBy": "entry.published_at", "direction": "desc"}, b.node("core/card", 1, nil, map[string]any{"variant": "default", "padding": "md", "radius": "md", "align": "start"}, cardChildren...))
-	nodes := []document.Node{b.section(hero...), b.node("core/content-slot", 1, nil, nil), b.section(b.heading(collectionHeading(contentType), 2), collection)}
-	if formID != "" {
-		nodes = append(nodes, b.section(b.heading("Start a conversation", 2), b.node("core/form", 1, nil, map[string]any{"formId": formID})))
-	}
-	return &document.Document{Version: 1, Nodes: nodes}
-}
-
-func collectionHeading(contentType string) string {
-	switch contentType {
-	case "post":
-		return "Latest posts"
-	case "project":
-		return "Selected work"
-	case "product":
-		return "Featured products"
-	case "service":
-		return "Services"
+	switch preset {
+	case PresetBlog:
+		hero := []document.Node{b.entryTitle(1, "xl")}
+		if tagline != "" {
+			hero = append(hero, b.lead(tagline))
+		}
+		post := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "lg", "default", hero...), b.section("content", "md", "default", b.heading("Latest posts", 2), b.collection("post", "query", "list", 1, "lg", 5, post)), b.node("core/content-slot", 1, nil, nil)}}
+	case PresetPortfolio:
+		hero := []document.Node{b.entryTitle(1, "xl")}
+		if tagline != "" {
+			hero = append(hero, b.lead(tagline))
+		}
+		project := b.stack("vertical", "sm", "start", "start", b.entryMedia("(min-width: 900px) 45vw, 100vw"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": "View project"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("wide", "lg", "default", hero...), b.section("wide", "md", "default", b.heading("Selected Work", 2), b.collection("project", "query", "grid", 2, "xl", 6, project)), b.node("core/content-slot", 1, nil, nil)}}
+	case PresetLanding:
+		hero := []document.Node{b.entryTitle(1, "xl")}
+		if tagline != "" {
+			hero = append(hero, b.lead(tagline))
+		}
+		hero = append(hero, b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Start a conversation", "#contact", "primary")))
+		testimonial := b.stack("vertical", "sm", "start", "start", b.entryField("fields.quote", "p"), b.entryField("fields.person", "strong"), b.entryField("fields.role", "span"), b.entryField("fields.company", "span"))
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "lg", "default", hero...), b.section("wide", "md", "muted", b.heading("What clients say", 2), b.collection("testimonial", "query", "grid", 2, "lg", 4, testimonial)), b.sectionAnchor("content", "md", "default", "contact", b.heading("Make the next step clear", 2), b.lead("Share what you are trying to achieve. We will respond with a practical next step."), b.node("core/form", 2, nil, map[string]any{"formId": formID})), b.node("core/content-slot", 1, nil, nil)}}
+	case PresetProducts:
+		hero := []document.Node{b.entryTitle(1, "xl")}
+		if tagline != "" {
+			hero = append(hero, b.lead(tagline))
+		}
+		product := b.stack("vertical", "sm", "start", "start", b.entryMedia("(min-width: 1100px) 30vw, (min-width: 640px) 50vw, 100vw"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": "View product"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("wide", "lg", "muted", hero...), b.section("wide", "md", "default", b.heading("Featured Products", 2), b.collection("product", "query", "grid", 3, "lg", 6, product)), b.node("core/content-slot", 1, nil, nil)}}
 	default:
-		return "What people say"
+		hero := []document.Node{b.entryTitle(1, "xl")}
+		if tagline != "" {
+			hero = append(hero, b.lead(tagline))
+		}
+		hero = append(hero, b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Request a consultation", "/contact", "primary")))
+		service := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": "Learn more"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "lg", "muted", hero...), b.section("wide", "md", "default", b.heading("Services", 2), b.collection("service", "query", "grid", 3, "lg", 5, service)), b.section("content", "md", "primary", b.heading("Need a practical next step?", 2), b.text("Tell us what you need and we will explain how we can help."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Contact us", "/contact", "primary"))), b.node("core/content-slot", 1, nil, nil)}}
 	}
 }
 
-func singleTemplate(prefix string, fields []string) *document.Document {
+func singleTemplate(prefix string, preset PresetID) *document.Document {
 	b := &docBuilder{prefix: prefix}
-	meta := []document.Node{b.node("core/entry-media", 1, map[string]any{"source": "entry.featured_media"}, nil), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "lg"})}
-	for _, field := range fields {
-		meta = append(meta, b.node("core/entry-field", 1, map[string]any{"source": field}, map[string]any{"tag": "p"}))
+	switch preset {
+	case PresetBlog:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "md", "default", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(1, "xl"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "lg"})), b.node("core/content-slot", 1, nil, nil)}}
+	case PresetPortfolio:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("wide", "md", "default", b.entryTitle(1, "xl"), b.stack("horizontal", "lg", "center", "start", b.entryField("fields.client", "strong"), b.entryField("fields.year", "span"), b.entryField("fields.services", "span")), b.entryMedia("(min-width: 1200px) 80vw, 100vw")), b.node("core/content-slot", 1, nil, nil)}}
+	case PresetProducts:
+		details := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "xl"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.entryField("fields.sku", "span"))
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("wide", "md", "default", b.grid(2, "xl", b.entryMedia("(min-width: 900px) 50vw, 100vw"), details)), b.node("core/content-slot", 1, nil, nil)}}
+	default:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.section("content", "md", "default", b.entryTitle(1, "xl"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "strong")), b.node("core/content-slot", 1, nil, nil), b.section("content", "sm", "muted", b.heading("Ready to talk?", 2), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Contact us", "/contact", "primary")))}}
 	}
-	return &document.Document{Version: 1, Nodes: []document.Node{b.section(append([]document.Node{b.node("core/entry-title", 1, nil, map[string]any{"level": 1, "visualSize": "xl", "align": "left", "tone": "default", "maxWidth": "wide"})}, meta...)...), b.node("core/content-slot", 1, nil, nil)}}
 }
 
-func archiveTemplate(prefix string, fields []string) *document.Document {
+func archiveTemplate(prefix string, preset PresetID) *document.Document {
 	b := &docBuilder{prefix: prefix}
-	children := []document.Node{b.node("core/entry-media", 1, map[string]any{"source": "entry.featured_media"}, nil), b.node("core/entry-title", 1, nil, map[string]any{"level": 2, "visualSize": "md", "align": "left", "tone": "default", "maxWidth": "none"})}
-	for _, field := range fields {
-		children = append(children, b.node("core/entry-field", 1, map[string]any{"source": field}, map[string]any{"tag": "p"}))
+	header := b.section("content", "md", "default", b.node("core/archive-title", 1, nil, map[string]any{"level": 1, "align": "left"}), b.node("core/archive-description", 1, nil, map[string]any{"align": "left"}))
+	switch preset {
+	case PresetBlog:
+		item := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("content", "sm", "default", b.collection("post", "context", "list", 1, "lg", 20, item))}}
+	case PresetPortfolio:
+		item := b.stack("vertical", "sm", "start", "start", b.entryMedia("(min-width: 900px) 45vw, 100vw"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": "View project"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "sm", "default", b.collection("project", "context", "grid", 2, "xl", 20, item))}}
+	case PresetProducts:
+		item := b.stack("vertical", "sm", "start", "start", b.entryMedia("(min-width: 1100px) 30vw, 100vw"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": "View product"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "sm", "default", b.collection("product", "context", "grid", 3, "lg", 20, item))}}
+	default:
+		item := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": "Learn more"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "sm", "default", b.collection("service", "context", "grid", 3, "lg", 20, item))}}
 	}
-	children = append(children, b.node("core/entry-link", 1, map[string]any{"text": "View details"}, nil))
-	collection := b.node("core/collection", 2, nil, map[string]any{"source": "context", "limit": 20}, b.node("core/card", 1, nil, map[string]any{"variant": "default", "padding": "md", "radius": "md", "align": "start"}, children...))
-	return &document.Document{Version: 1, Nodes: []document.Node{b.section(b.node("core/archive-title", 1, nil, map[string]any{"level": 1, "align": "left"}), b.node("core/archive-description", 1, nil, map[string]any{"align": "left"})), b.section(collection)}}
 }
 
 func sitePartDocument(prefix, location string) *document.Document {
 	b := &docBuilder{prefix: prefix}
-	menu := "primary"
-	if location == "footer" {
-		menu = "footer"
+	if location == "header" {
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "md", "center", "between", b.node("core/site-name", 1, nil, map[string]any{"level": 2, "link": true}), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
 	}
-	return &document.Document{Version: 1, Nodes: []document.Node{b.section(b.node("core/stack", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "center", "justify": "between", "wrap": true, "fullWidth": true}, b.node("core/site-name", 1, nil, map[string]any{"level": 2, "link": true}), b.node("core/navigation", 1, nil, map[string]any{"location": menu, "style": "horizontal"})))}}
+	return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "lg", "center", "between", b.node("core/site-name", 1, nil, map[string]any{"level": 2, "link": true}), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
 }

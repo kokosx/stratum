@@ -111,6 +111,54 @@ func TestThemeTemplateUsesStructuralSettingsMenusAndEscaping(t *testing.T) {
 	}
 }
 
+func TestAssignedSitePartsRenderInsideThemeChrome(t *testing.T) {
+	definition := defaultDefinition(t)
+	settings, err := definition.Schema.ValidateSettings(map[string]any{"header.sticky": true, "header.border": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := definition.Render(PageView{
+		Site:    SiteView{Title: "Acme", Language: "en"},
+		Entry:   EntryView{Title: "Home"},
+		Theme:   ThemeView{ID: definition.ID, Version: definition.Version, Settings: settings},
+		Header:  template.HTML(`<div data-custom-header>Editable header</div>`),
+		Footer:  template.HTML(`<div data-custom-footer>Editable footer</div>`),
+		Content: template.HTML(`<p>Body</p>`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(output)
+	for _, want := range []string{`class="site-header`, "is-sticky", "has-border", "site-header__inner", "data-custom-header", `class="site-footer`, "site-footer__inner", "site-footer__legal", "data-custom-footer"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("assigned site parts must preserve theme chrome; missing %q in %s", want, html)
+		}
+	}
+	if strings.Index(html, "site-header__inner") > strings.Index(html, "data-custom-header") || strings.Index(html, "site-footer__main") > strings.Index(html, "data-custom-footer") {
+		t.Fatalf("custom site part content rendered outside its theme shell: %s", html)
+	}
+	if strings.Contains(html, `site-main st-container`) {
+		t.Fatalf("main shell must not constrain Section widths: %s", html)
+	}
+}
+
+func TestDefaultThemeWidthAndCollectionRules(t *testing.T) {
+	definition := defaultDefinition(t)
+	for _, want := range []string{".stratum-section-width-content { max-width: var(--st-content-width); }", ".stratum-section-width-wide { max-width: var(--st-wide-width); }"} {
+		if !strings.Contains(definition.css, want) {
+			t.Fatalf("theme CSS missing width ownership rule %q", want)
+		}
+	}
+	if strings.Contains(definition.css, ".site-main {\n  flex: 1 0 auto;\n  width: 100%;\n  min-width: 0;\n  margin-inline") {
+		t.Fatal("site-main still owns constrained container positioning")
+	}
+	for _, want := range []string{".site-main .stratum-collection:not(.stratum-collection--grid)", ".stratum-collection--grid.stratum-collection--cols-3", "grid-template-columns: repeat(3, minmax(0, 1fr))"} {
+		if !strings.Contains(definition.css, want) {
+			t.Fatalf("theme CSS missing Collection v3 rule %q", want)
+		}
+	}
+}
+
 func TestPresetValuesValidateAndResetUsesDefaults(t *testing.T) {
 	schema := defaultDefinition(t).Schema
 	draft := schema.Defaults()

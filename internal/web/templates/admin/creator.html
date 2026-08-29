@@ -26,7 +26,12 @@
         {{ range .Content.Presets }}
           <label class="creator-preset">
             <input type="radio" name="preset" value="{{ .ID }}" {{ if eq $.Content.Selected .ID }}checked{{ end }} required>
-            <span class="creator-preset-copy"><strong>{{ .Name }}</strong><small>{{ .Description }}</small></span>
+            <span class="creator-preset-copy">
+              <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
+              <span class="creator-preset-meta"><b>Pages</b> {{ range $i, $page := .Pages }}{{ if $i }}, {{ end }}{{ $page }}{{ end }}</span>
+              <span class="creator-preset-meta"><b>Content</b> {{ .Dynamic }}</span>
+              <span class="creator-preset-meta"><b>Templates</b> {{ range $i, $name := .Templates }}{{ if $i }}, {{ end }}{{ $name }}{{ end }}</span>
+            </span>
           </label>
         {{ end }}
       </fieldset>

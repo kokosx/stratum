@@ -182,7 +182,8 @@ func (s *Service) Create(ctx context.Context, plan Plan, authorID string) (resul
 	if err != nil {
 		return Result{}, err
 	}
-	if err := qtx.UpsertThemeCustomization(ctx, db.UpsertThemeCustomizationParams{ThemeID: "stratum/default", ThemeVersion: 1, SettingsJson: string(styleJSON), CustomCss: ""}); err != nil {
+	activeTheme := s.themes.Current()
+	if err := qtx.UpsertThemeCustomization(ctx, db.UpsertThemeCustomizationParams{ThemeID: activeTheme.ThemeID, ThemeVersion: int64(activeTheme.Version), SettingsJson: string(styleJSON), CustomCss: ""}); err != nil {
 		return Result{}, fmt.Errorf("save site styles: %w", err)
 	}
 	if err := qtx.SetOnboardingCompleted(ctx, db.SetOnboardingCompletedParams{OnboardingCompleted: 1, UpdatedAt: artifacts.now}); err != nil {
@@ -259,24 +260,22 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 		a.formJSON = string(encoded)
 	}
 	dynamicType := "post"
-	fields := []string{"entry.excerpt"}
 	if spec.contentType != nil {
 		dynamicType = string(spec.contentType.ID)
-		fields = cardFields(dynamicType)
 	}
 	a.dynamicContentType = dynamicType
 	pageDoc := pageTemplate(newID())
-	homeDoc := homepageTemplate(newID(), plan.Input.Tagline, dynamicType, fields, landingFormID(plan.Preset.ID, a.formID))
+	homeDoc := homepageTemplate(newID(), plan.Preset.ID, plan.Input.Tagline, landingFormID(plan.Preset.ID, a.formID))
 	a.templates = append(a.templates, templateArtifact{id: a.pageTemplateID, revisionID: newID(), name: "Page", contentType: "page", kind: "single", doc: pageDoc}, templateArtifact{id: a.homepageTemplateID, revisionID: newID(), name: "Homepage", contentType: "page", kind: "single", doc: homeDoc})
 	if spec.contentType == nil || spec.contentType.Config.Routing.Single {
 		a.dynamicTemplateID = newID()
-		single := singleTemplate(newID(), singleFields(dynamicType))
+		single := singleTemplate(newID(), plan.Preset.ID)
 		a.templates = append(a.templates, templateArtifact{id: a.dynamicTemplateID, revisionID: newID(), name: spec.preset.Name + " Single", contentType: dynamicType, kind: "single", doc: single})
 	}
 	if spec.archivePath != "" {
 		a.archiveContentType = dynamicType
 		a.archiveTemplateID = newID()
-		archive := archiveTemplate(newID(), fields)
+		archive := archiveTemplate(newID(), plan.Preset.ID)
 		a.templates = append(a.templates, templateArtifact{id: a.archiveTemplateID, revisionID: newID(), name: spec.preset.Name + " Archive", contentType: dynamicType, kind: "archive", doc: archive})
 	}
 	for _, tmpl := range a.templates {
@@ -291,11 +290,7 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 			return a, fmt.Errorf("validate %s template: %w", tmpl.name, err)
 		}
 	}
-	homeBodyForm := ""
-	if plan.Preset.ID != PresetLanding {
-		homeBodyForm = ""
-	}
-	home := entryArtifact{id: a.homepageID, revisionID: newID(), contentType: "page", slug: "home", title: plan.Input.SiteTitle, excerpt: plan.Input.Tagline, fields: "{}", doc: bodyDocument(newID(), homepageBody(plan.Preset.ID), homeBodyForm), layoutID: a.homepageTemplateID}
+	home := entryArtifact{id: a.homepageID, revisionID: newID(), contentType: "page", slug: "home", title: plan.Input.SiteTitle, excerpt: plan.Input.Tagline, fields: "{}", doc: emptyDocument(newID()), layoutID: a.homepageTemplateID}
 	a.entries = append(a.entries, home)
 	a.pageCount++
 	for _, page := range spec.pages {
@@ -391,24 +386,28 @@ func createMenu(ctx context.Context, q *db.Queries, a creationArtifacts, now int
 	if err := q.CreateNavigationMenu(ctx, db.CreateNavigationMenuParams{ID: a.menuID, Name: "Primary Menu", Slug: "primary-menu", CreatedAt: now, UpdatedAt: now}); err != nil {
 		return err
 	}
-	position := int64(0)
+	type menuItem struct {
+		label, targetType, entryID, url string
+	}
+	items := make([]menuItem, 0, 4)
 	for _, entry := range a.entries {
-		if entry.contentType != "page" {
-			continue
-		}
-		label := entry.title
 		if entry.id == a.homepageID {
-			label = "Home"
+			items = append(items, menuItem{label: "Home", targetType: "entry", entryID: entry.id})
+			break
 		}
-		if err := q.CreateNavigationItem(ctx, db.CreateNavigationItemParams{ID: newID(), MenuID: a.menuID, Position: position, Label: label, TargetType: "entry", EntryID: nullable(entry.id), CreatedAt: now, UpdatedAt: now}); err != nil {
-			return err
-		}
-		position++
 	}
 	if a.archiveContentType != "" {
 		label := map[string]string{"post": "Blog", "project": "Work", "product": "Products", "service": "Services"}[a.archiveContentType]
 		path := map[string]string{"post": "/blog", "project": "/work", "product": "/products", "service": "/services"}[a.archiveContentType]
-		if err := q.CreateNavigationItem(ctx, db.CreateNavigationItemParams{ID: newID(), MenuID: a.menuID, Position: 1, Label: label, TargetType: "url", Url: nullable(path), CreatedAt: now, UpdatedAt: now}); err != nil {
+		items = append(items, menuItem{label: label, targetType: "url", url: path})
+	}
+	for _, entry := range a.entries {
+		if entry.contentType == "page" && entry.id != a.homepageID {
+			items = append(items, menuItem{label: entry.title, targetType: "entry", entryID: entry.id})
+		}
+	}
+	for position, item := range items {
+		if err := q.CreateNavigationItem(ctx, db.CreateNavigationItemParams{ID: newID(), MenuID: a.menuID, Position: int64(position), Label: item.label, TargetType: item.targetType, EntryID: nullable(item.entryID), Url: nullable(item.url), CreatedAt: now, UpdatedAt: now}); err != nil {
 			return err
 		}
 	}
@@ -432,46 +431,6 @@ func createSitePart(ctx context.Context, q *db.Queries, part partArtifact, autho
 	return q.SetSitePartLocation(ctx, db.SetSitePartLocationParams{Location: part.location, SitePartID: nullable(part.id), UpdatedAt: now})
 }
 
-func cardFields(contentType string) []string {
-	switch contentType {
-	case "project":
-		return []string{"fields.client", "fields.year"}
-	case "product":
-		return []string{"fields.price_display", "fields.short_description"}
-	case "service":
-		return []string{"fields.short_summary"}
-	case "testimonial":
-		return []string{"fields.quote", "fields.person", "fields.role", "fields.company"}
-	default:
-		return []string{"entry.excerpt"}
-	}
-}
-func singleFields(contentType string) []string {
-	switch contentType {
-	case "project":
-		return []string{"fields.client", "fields.year", "fields.services", "fields.project_url"}
-	case "product":
-		return []string{"fields.price_display", "fields.short_description", "fields.sku"}
-	case "service":
-		return []string{"fields.short_summary", "fields.service_area"}
-	default:
-		return nil
-	}
-}
-func homepageBody(id PresetID) string {
-	switch id {
-	case PresetBlog:
-		return "Notes, guides and updates from our work."
-	case PresetPortfolio:
-		return "A selection of projects, ideas and collaborations."
-	case PresetLanding:
-		return "A clear offer, useful details and an easy way to start a conversation."
-	case PresetProducts:
-		return "A considered collection presented with clarity."
-	default:
-		return "Practical local help, explained clearly."
-	}
-}
 func landingFormID(id PresetID, formID string) string {
 	if id == PresetLanding {
 		return formID

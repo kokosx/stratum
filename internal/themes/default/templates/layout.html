@@ -37,8 +37,8 @@
 <body class="st-links--{{ setting .Theme.Settings "links.style" }} st-buttons-primary--{{ setting .Theme.Settings "buttons.primaryStyle" }} st-buttons-secondary--{{ setting .Theme.Settings "buttons.secondaryStyle" }} st-dropdown-indicator--{{ setting .Theme.Settings "navigation.showDropdownIndicator" }}">
   <a class="skip-link" href="#content">Skip to content</a>
   {{ template "topbar" . }}
-  {{ if .Header }}{{ .Header }}{{ else }}{{ template "header" . }}{{ end }}
-  <main id="content" class="site-main st-container st-container--content">{{ .Content }}</main>
-  {{ if .Footer }}{{ .Footer }}{{ else }}{{ template "footer" . }}{{ end }}
+  {{ template "header" . }}
+  <main id="content" class="site-main">{{ .Content }}</main>
+  {{ template "footer" . }}
 </body>
 </html>{{ end }}

@@ -5,6 +5,10 @@
 {{ define "header" }}
 <header class="site-header site-header--{{ setting .Theme.Settings "header.layout" }} site-header--width-{{ setting .Theme.Settings "header.width" }} site-header--logo-{{ setting .Theme.Settings "header.logoPosition" }}{{ if setting .Theme.Settings "header.sticky" }} is-sticky{{ end }}{{ if setting .Theme.Settings "header.border" }} has-border{{ end }} shadow--{{ setting .Theme.Settings "header.shadow" }}">
   <div class="site-header__inner st-container st-container--{{ setting .Theme.Settings "header.width" }}">
+    {{ if .Header }}
+      <div id="primary-navigation" class="site-header__custom mobile--{{ setting .Theme.Settings "navigation.mobileStyle" }}" data-mobile-navigation>{{ .Header }}</div>
+      <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="primary-navigation"><span class="sr-only">Toggle navigation</span><span aria-hidden="true">☰</span></button>
+    {{ else }}
     {{ $showTitle := and (setting .Theme.Settings "header.showSiteTitle") .Site.Title }}
     {{ $showTagline := and (setting .Theme.Settings "header.showTagline") .Site.Tagline }}
     {{ $hasBrand := or .Site.LogoURL $showTitle $showTagline }}
@@ -18,6 +22,7 @@
       <div id="primary-navigation" class="primary-navigation mobile--{{ setting .Theme.Settings "navigation.mobileStyle" }}">
         <nav class="site-navigation site-navigation--{{ setting .Theme.Settings "navigation.style" }} site-navigation--{{ setting .Theme.Settings "navigation.layout" }} site-navigation--align-{{ setting .Theme.Settings "navigation.align" }} dropdown--{{ setting .Theme.Settings "navigation.dropdownStyle" }}" aria-label="Primary navigation"><ul>{{ template "menu-items" $primary.Items }}</ul></nav>
       </div>
+    {{ end }}
     {{ end }}
   </div>
 </header>
