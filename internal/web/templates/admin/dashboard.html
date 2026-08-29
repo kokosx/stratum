@@ -1,7 +1,12 @@
 {{ define "content" }}
 <header class="admin-page-header"><div><h1>Dashboard</h1></div></header>
-<section class="admin-section" style="max-width:720px;">
+<section class="admin-section">
   <h2>Welcome to Stratum</h2>
-  <p class="muted" style="margin:4px 0 0;">Manage your site content from the Pages and Posts sections.</p>
+  <p class="muted">Manage your site content from the Pages and Posts sections.</p>
+  <div class="admin-page-actions">
+    <a class="button button-primary" href="/admin/pages/new">Create Page</a>
+    <a class="button button-secondary" href="/admin/posts/new">Create Post</a>
+    <a class="button button-secondary" href="/admin/media">Upload Media</a>
+  </div>
 </section>
 {{ end }}

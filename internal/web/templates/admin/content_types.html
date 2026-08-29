@@ -44,8 +44,6 @@
 
   {{ if eq .Content.Mode "list" }}
     {{ if .Content.Rows }}
-    <div class="card">
-      <div class="card-body">
         <table class="data-table">
           <thead>
             <tr><th>Content type</th><th>Key</th><th>Routing</th><th>URL base</th><th></th></tr>
@@ -54,8 +52,8 @@
             {{ range .Content.Rows }}
             <tr>
               <td>
-                <div class="data-table__primary"><a href="/admin/settings/content-types/{{ .ID }}">{{ .Label }}</a> {{ if .Builtin }}<span class="status-badge status-badge--core">Core</span>{{ end }}</div>
-                <div class="data-table__meta">{{ if .ItemLabel }}{{ .ItemLabel }} · {{ end }}{{ if .Single }}Single{{ else }}Data only{{ end }} {{ if .Archive }}· Archive{{ end }} {{ if .HasContent }}· Rich content{{ end }}</div>
+                <div class="data-table__primary"><a href="/admin/settings/content-types/{{ .ID }}">{{ .Label }}</a></div>
+                <div class="data-table__meta">{{ if .Builtin }}Core content type · {{ end }}{{ if .ItemLabel }}{{ .ItemLabel }} · {{ end }}{{ if .Single }}Single{{ else }}Data only{{ end }} {{ if .Archive }}· Archive{{ end }} {{ if .HasContent }}· Rich content{{ end }}</div>
               </td>
               <td><code>{{ .ID }}</code></td>
               <td>
@@ -63,29 +61,25 @@
                 {{ if .Archive }} · Archive{{ end }}
               </td>
               <td><code>{{ if .BasePath }}{{ .BasePath }}{{ else }}—{{ end }}</code></td>
-              <td style="text-align:right;"><a class="button button-secondary button-small" href="/admin/settings/content-types/{{ .ID }}">Manage</a></td>
+              <td><a class="button button-secondary button-small" href="/admin/settings/content-types/{{ .ID }}">Manage</a></td>
             </tr>
             {{ end }}
           </tbody>
         </table>
-      </div>
-    </div>
     {{ else }}
-    <div class="card">
-      <div class="empty-state">
-        <h3>No custom content types yet.</h3>
-        <p>Create Product, Service, Case Study or another structured type. They behave like Posts but with your own fields and URLs.</p>
-        <a class="button button-primary" href="/admin/settings/content-types/new">Add content type</a>
-      </div>
+    <div class="empty-state">
+      <h3>No custom content types yet.</h3>
+      <p>Create Product, Service, Case Study or another structured type. They behave like Posts but with your own fields and URLs.</p>
+      <a class="button button-primary" href="/admin/settings/content-types/new">Add content type</a>
     </div>
     {{ end }}
   {{ else if eq .Content.Mode "new" }}
   <form class="settings-content" method="post" action="/admin/settings/content-types">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
 
-    <div class="card">
-      <div class="card-header"><h2>Create content type</h2></div>
-      <div class="card-body field-grid">
+    <section class="admin-section">
+      <h2>Create content type</h2>
+      <div class="field-grid">
         <div class="form-group">
           <label class="form-label" for="ct-label">Name</label>
           <input class="form-control" id="ct-label" name="plural_name" value="{{ .Content.Form.PluralName }}" required maxlength="100" placeholder="Technologies">
@@ -109,10 +103,10 @@
           <p class="form-help">You can change routing and capabilities after creation.</p>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div class="card-footer">
-      <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
+    <div class="admin-page-actions">
+      <a class="button button-secondary" href="/admin/settings/content-types">Cancel</a>
       <button class="button button-primary" type="submit">Create</button>
     </div>
   </form>
@@ -121,9 +115,9 @@
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <input type="hidden" name="field_key_action" value="">
 
-    <div class="card">
-      <div class="card-header"><h2>General</h2></div>
-      <div class="card-body field-grid">
+    <section class="admin-section">
+      <h2>General</h2>
+      <div class="field-grid">
         <div class="field-grid">
           <div class="form-group">
             <label class="form-label" for="ct-label">Name</label>
@@ -141,26 +135,16 @@
           <input class="form-control" id="ct-key" name="id" value="{{ .Content.Form.ID }}" readonly required pattern="[a-z][a-z0-9_]*">
           <p class="form-help">Stable machine key. Cannot be changed.</p>
         </div>
+        {{ if .Content.Form.IsBuiltin }}<p class="form-help muted">Core content type</p>{{ end }}
       </div>
-    </div>
+    </section>
 
-    <div class="card">
-      <div class="card-header"><h2>Content</h2></div>
-      <div class="card-body field-grid">
+    <section class="admin-section">
+      <h2>Content</h2>
+      <div class="field-grid">
         {{ if .Content.Form.IsBuiltin }}
           <p class="form-help">Features for core types are managed by Stratum and cannot be disabled here. Custom fields can still be added below.</p>
-          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
-            <span>Rich content editor</span><input type="checkbox" checked disabled>
-          </div>
-          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
-            <span>Excerpt</span><input type="checkbox" {{ if .Content.Form.Excerpt }}checked{{ end }} disabled>
-          </div>
-          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
-            <span>Featured image</span><input type="checkbox" {{ if .Content.Form.Featured }}checked{{ end }} disabled>
-          </div>
-          <div class="toggle-row" style="opacity:.6;pointer-events:none;">
-            <span>SEO</span><input type="checkbox" {{ if .Content.Form.SEO }}checked{{ end }} disabled>
-          </div>
+          <p class="muted">Rich content editor · Excerpt · Featured image · SEO are managed by core.</p>
         {{ else }}
           <label class="toggle-row"><span><strong>Rich content editor</strong><br><span class="form-help">Allow blocks (SDT) as main content.</span></span><input type="checkbox" name="has_content" {{ if .Content.Form.HasContent }}checked{{ end }}></label>
           <label class="toggle-row"><span>Excerpt</span><input type="checkbox" name="excerpt" {{ if .Content.Form.Excerpt }}checked{{ end }}></label>
@@ -168,11 +152,12 @@
           <label class="toggle-row"><span>SEO</span><input type="checkbox" name="seo" {{ if .Content.Form.SEO }}checked{{ end }}></label>
         {{ end }}
       </div>
-    </div>
+    </section>
 
-    <div class="card">
-      <div class="card-header"><h2>Routing</h2><span class="form-help">Individual pages and archive are independent. Publish is live data, not necessarily a URL.</span></div>
-      <div class="card-body field-grid">
+    <section class="admin-section">
+      <h2>Routing</h2>
+      <p class="form-help">Individual pages and archive are independent. Publish is live data, not necessarily a URL.</p>
+      <div class="field-grid">
         {{ if .Content.Form.IsBuiltin }}
           <div class="notice notice-info">Routing for <strong>{{ .Content.Form.ID }}</strong> is core-owned. URL base is managed in <a href="/admin/settings/reading">Reading → Posts URL base</a> for Posts, and Page URLs are always <code>/slug</code>.</div>
         {{ else }}
@@ -196,7 +181,7 @@
               var baseGroup = document.getElementById('ct-base-group');
               function sync(){
                 var show = single.checked || archive.checked;
-                baseGroup.style.display = show ? '' : 'none';
+                baseGroup.hidden = !show;
                 if (!show) {
                   document.getElementById('ct-base').value = '';
                 }
@@ -210,11 +195,11 @@
           </script>
         {{ end }}
       </div>
-    </div>
+    </section>
 
-    <div class="card">
-      <div class="card-header"><h2>Structure</h2></div>
-      <div class="card-body field-grid">
+    <section class="admin-section">
+      <h2>Structure</h2>
+      <div class="field-grid">
         {{ if .Content.Form.IsBuiltin }}
           <p class="form-help">Hierarchical is core-owned for Pages/Posts.</p>
         {{ else }}
@@ -224,14 +209,11 @@
           </label>
         {{ end }}
       </div>
-    </div>
+    </section>
 
-    <div class="card">
-      <div class="card-header">
-        <h2>Custom fields</h2>
-        <span class="form-help">Fields stored in revision snapshots.</span>
-      </div>
-      <div class="card-body">
+    <section class="admin-section">
+      <h2>Custom fields</h2>
+      <p class="form-help">Fields stored in revision snapshots.</p>
         {{ if .Content.Fields }}
         <div class="fields-builder">
           {{ range .Content.Fields }}
@@ -269,8 +251,8 @@
         </div>
         {{ end }}
 
-        <fieldset class="card">
-          <legend style="font-weight:600;">Add field</legend>
+        <fieldset class="admin-section">
+          <legend class="form-label">Add field</legend>
           <div class="field-grid">
             <div class="form-group"><label class="form-label" for="fld-label">Label</label><input class="form-control" id="fld-label" name="field_label" placeholder="Price"></div>
             <div class="form-group"><label class="form-label" for="fld-key">Key</label><input class="form-control" id="fld-key" name="field_key" pattern="[a-z][a-z0-9_]*" placeholder="price"></div>
@@ -310,7 +292,7 @@
             typeSel.addEventListener('change', sync); sync();
             window.addOption = function(val){
               const row = document.createElement('div');
-              row.style.display='flex'; row.style.gap='8px';
+              row.className = 'admin-page-actions';
               const inp = document.createElement('input');
               inp.className='form-control'; inp.placeholder='Option';
               if(val) inp.value=val;
@@ -326,11 +308,10 @@
             }
           })();
         </script>
-      </div>
-    </div>
+    </section>
 
-    <div class="card-footer">
-      <a class="button button-ghost" href="/admin/settings/content-types">Cancel</a>
+    <div class="admin-page-actions">
+      <a class="button button-secondary" href="/admin/settings/content-types">Cancel</a>
       <button class="button button-primary" type="submit">Save changes</button>
       <button class="button button-danger" type="submit" formaction="/admin/settings/content-types/{{ .Content.Form.ID }}/delete" formmethod="post" onclick="return confirm('Delete content type {{ .Content.Form.ID }}? This cannot be undone.')">Delete</button>
     </div>

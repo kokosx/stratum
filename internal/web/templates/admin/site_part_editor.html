@@ -6,12 +6,12 @@
   {{ if .Content.Location }}<input type="hidden" name="location" value="{{ .Content.Location }}">{{ end }}
   <header class="editor-topbar">
     <div class="editor-metadata">
-      <label>Site Part Name<input id="site-part-name" name="name" value="{{ .Content.Name }}" required></label>
+      <label class="form-label">Site Part Name<input class="form-control" id="site-part-name" name="name" value="{{ .Content.Name }}" required></label>
     </div>
-    <div class="form-actions">
-      <a class="button" href="{{ .Content.BackURL }}">Back</a>
-      <a class="button" href="{{ .Content.RevisionsURL }}">Revision history</a>
-      <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
+    <div class="admin-page-actions">
+      <a class="button button-secondary" href="{{ .Content.BackURL }}">Back</a>
+      <a class="button button-secondary" href="{{ .Content.RevisionsURL }}">Revision history</a>
+      <button class="button button-secondary" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save Draft</button>
       <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
     </div>
   </header>
@@ -55,12 +55,12 @@
   <div class="editor-meta-panel">
     <div class="editor-meta-panel__row">
       <span><strong>Status:</strong> {{ .Content.Status }}</span>
-      {{ if .Content.IsPublished }}<span style="padding:2px 6px;background:#dcfce7;border-radius:4px;font-size:12px;">Published</span>{{ end }}
-      {{ if .Content.Location }}<span style="padding:2px 6px;background:#e0e7ff;border-radius:4px;font-size:12px;">Location: {{ .Content.Location }}</span>{{ end }}
-      {{ if .Content.Location }}{{ if .Content.IsPublished }}<button class="button" type="submit" formaction="{{ .Content.LocationAction }}" data-on:click__prevent="@post('{{ .Content.LocationAction }}', {contentType: 'form'})">Assign as {{ .Content.Location }}</button>{{ else }}<span class="muted">Publish this Site Part before assigning it as {{ .Content.Location }}.</span>{{ end }}{{ end }}
-      <button class="button" type="submit" formaction="{{ .Content.DeleteAction }}">Delete</button>
+      {{ if .Content.IsPublished }}<span class="muted">Published</span>{{ end }}
+      {{ if .Content.Location }}<span class="muted">Location: {{ .Content.Location }}</span>{{ end }}
+      {{ if .Content.Location }}{{ if .Content.IsPublished }}<button class="button button-secondary" type="submit" formaction="{{ .Content.LocationAction }}" data-on:click__prevent="@post('{{ .Content.LocationAction }}', {contentType: 'form'})">Assign as {{ .Content.Location }}</button>{{ else }}<span class="muted">Publish this Site Part before assigning it as {{ .Content.Location }}.</span>{{ end }}{{ end }}
+      <button class="button button-danger button-small" type="submit" formaction="{{ .Content.DeleteAction }}">Delete</button>
     </div>
-    <p class="field-desc">Draft changes are private until Publish. Publishing updates all pages using this part.</p>
+    <p class="form-help">Draft changes are private until Publish. Publishing updates all pages using this part.</p>
   </div>
 </form>
 <script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
