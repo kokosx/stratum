@@ -1,0 +1,139 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>{{ .Content.Heading }}</h1><p class="muted">{{ .Content.EntityKind }} — {{ .Content.EntityName }}</p></div><div class="admin-page-actions"><a class="button" href="{{ .Content.BackURL }}">Back to editor</a></div></header>
+{{ if .Content.Flash }}<div class="flash-message" role="status">{{ .Content.Flash }}</div>{{ end }}
+
+<div style="display:grid; grid-template-columns: 280px 1fr; gap:24px; align-items:start;">
+  <aside class="admin-section" aria-label="Revisions">
+    <h3>Revisions</h3>
+    <form method="get" action="" style="display:grid; gap:12px;">
+      <label>Revision A
+        <select name="a" class="form-control">
+          {{ range .Content.Revisions }}
+          <option value="{{ .ID }}" {{ if eq .ID $.Content.CompareA }}selected{{ end }}>{{ .Number }} — {{ .CreatedAt }} {{ if .Status }}({{ .Status }}){{ end }}</option>
+          {{ end }}
+        </select>
+      </label>
+      <label>Revision B
+        <select name="b" class="form-control">
+          {{ range .Content.Revisions }}
+          <option value="{{ .ID }}" {{ if eq .ID $.Content.CompareB }}selected{{ end }}>{{ .Number }} — {{ .CreatedAt }} {{ if .Status }}({{ .Status }}){{ end }}</option>
+          {{ end }}
+        </select>
+      </label>
+      <button type="submit" class="button button-primary">Compare</button>
+    </form>
+    <hr style="margin:16px 0;">
+    <ul style="list-style:none; padding:0; display:grid; gap:8px;">
+      {{ range .Content.Revisions }}
+      <li style="padding:8px; border:1px solid var(--ui-border);">
+        <div style="font-size:13px;"><strong>Revision {{ .Number }}</strong> {{ if .Status }}<span class="status-badge">{{ .Status }}</span>{{ end }}</div>
+        <div style="font-size:12px; color:var(--text-muted);">{{ .CreatedAt }} {{ if .Author }}· {{ .Author }}{{ end }}</div>
+      </li>
+      {{ end }}
+    </ul>
+  </aside>
+
+  <main class="admin-section">
+    {{ if .Content.Diff }}
+    <h3>Summary</h3>
+    <p class="muted">{{ .Content.Diff.Summary.TotalChanges }} changes — {{ .Content.Diff.Summary.Added }} added, {{ .Content.Diff.Summary.Removed }} removed, {{ .Content.Diff.Summary.Moved }} moved, {{ .Content.Diff.Summary.Modified }} modified</p>
+    {{ if .Content.Warnings }}
+    <div class="notice notice-warning" style="padding:8px 12px; margin:12px 0;">
+      {{ range .Content.Warnings }}<p>{{ . }}</p>{{ end }}
+    </div>
+    {{ end }}
+
+    {{ with .Content.Diff.Metadata }}
+    <section aria-label="Metadata">
+      <h4>Metadata</h4>
+      <dl style="display:grid; gap:8px;">
+        {{ if .Title }}<div><dt style="font-weight:600;">Title</dt><dd><span style="color:#b00; text-decoration:line-through;">{{ .Title.Old }}</span> → <span style="color:#0a0;">{{ .Title.New }}</span></dd></div>{{ end }}
+        {{ if .Slug }}<div><dt style="font-weight:600;">Slug</dt><dd><span style="color:#b00;">{{ .Slug.Old }}</span> → <span style="color:#0a0;">{{ .Slug.New }}</span></dd></div>{{ end }}
+        {{ if .Excerpt }}<div><dt style="font-weight:600;">Excerpt</dt><dd><span style="color:#b00;">{{ .Excerpt.Old }}</span> → <span style="color:#0a0;">{{ .Excerpt.New }}</span></dd></div>{{ end }}
+        {{ if .FeaturedMedia }}<div><dt style="font-weight:600;">Featured Media</dt><dd>{{ .FeaturedMedia.Old }} → {{ .FeaturedMedia.New }}</dd></div>{{ end }}
+        {{ if .LayoutTemplate }}<div><dt style="font-weight:600;">Template</dt><dd>{{ .LayoutTemplate.Old }} → {{ .LayoutTemplate.New }}</dd></div>{{ end }}
+      </dl>
+    </section>
+    {{ end }}
+
+    {{ if .Content.Diff.Fields }}
+    <section aria-label="Fields">
+      <h4>Fields</h4>
+      <table class="data-table">
+        <thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+        {{ range .Content.Diff.Fields }}
+          {{ if .Changed }}
+          <tr>
+            <td>{{ .Label }} <small class="muted">({{ .Key }})</small></td>
+            <td style="background:#ffeef0;">{{ .Old }}</td>
+            <td style="background:#e6ffec;">{{ .New }}</td>
+          </tr>
+          {{ end }}
+        {{ end }}
+        </tbody>
+      </table>
+    </section>
+    {{ end }}
+
+    <section aria-label="Content">
+      <h4>Content</h4>
+      {{ if .Content.Diff.Content.Added }}
+      <h5 style="color:#0a0;">+ Added</h5>
+      <ul>
+        {{ range .Content.Diff.Content.Added }}
+        <li style="padding:4px; background:#e6ffec; margin:4px 0;">{{ .Summary }} <small class="muted">({{ .Block }} {{ .ID }})</small></li>
+        {{ end }}
+      </ul>
+      {{ end }}
+      {{ if .Content.Diff.Content.Removed }}
+      <h5 style="color:#b00;">- Removed</h5>
+      <ul>
+        {{ range .Content.Diff.Content.Removed }}
+        <li style="padding:4px; background:#ffeef0; margin:4px 0;">{{ .Summary }} <small class="muted">({{ .Block }} {{ .ID }})</small></li>
+        {{ end }}
+      </ul>
+      {{ end }}
+      {{ if .Content.Diff.Content.Moved }}
+      <h5>Moved</h5>
+      <ul>
+        {{ range .Content.Diff.Content.Moved }}
+        <li style="padding:4px; background:#fff8c4; margin:4px 0;">{{ .Summary }} <small class="muted">({{ .Block }} {{ .ParentA }}→{{ .ParentB }})</small></li>
+        {{ end }}
+      </ul>
+      {{ end }}
+      {{ if .Content.Diff.Content.Modified }}
+      <h5>Changed</h5>
+      <ul>
+        {{ range .Content.Diff.Content.Modified }}
+        <li style="padding:4px; border:1px solid var(--ui-border); margin:8px 0;">
+          <div><strong>{{ .Summary }}</strong> <small class="muted">({{ .Block }} {{ .ID }})</small></div>
+          {{ if .PropDiffs }}
+          <dl style="margin:8px 0; display:grid; gap:4px;">
+            {{ range .PropDiffs }}
+            <div><dt style="font-weight:600;">{{ .Label }} ({{ .Key }})</dt><dd><span style="background:#ffeef0;">{{ .Old }}</span> → <span style="background:#e6ffec;">{{ .New }}</span></dd></div>
+            {{ end }}
+          </dl>
+          {{ end }}
+          {{ if .SettingDiffs }}
+          <dl style="margin:8px 0; display:grid; gap:4px;">
+            {{ range .SettingDiffs }}
+            <div><dt style="font-weight:600;">Setting {{ .Label }}</dt><dd><span style="background:#ffeef0;">{{ .Old }}</span> → <span style="background:#e6ffec;">{{ .New }}</span></dd></div>
+            {{ end }}
+          </dl>
+          {{ end }}
+          {{ if .TypeChanged }}<p class="muted">Block type changed</p>{{ end }}
+        </li>
+        {{ end }}
+      </ul>
+      {{ end }}
+      {{ if and (not .Content.Diff.Content.Added) (not .Content.Diff.Content.Removed) (not .Content.Diff.Content.Moved) (not .Content.Diff.Content.Modified) }}
+      <p class="muted">No content changes</p>
+      {{ end }}
+    </section>
+    {{ else }}
+    <p class="muted">Select two revisions to compare.</p>
+    {{ end }}
+  </main>
+</div>
+{{ end }}

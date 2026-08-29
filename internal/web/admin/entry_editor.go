@@ -22,6 +22,7 @@ import (
 	"github.com/kokosx/stratum/internal/document"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
+	"github.com/kokosx/stratum/internal/preview"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/richtext"
@@ -73,6 +74,13 @@ type taxonomyPanelTaxonomy struct {
 	PluralName   string
 	SingularName string
 	Hierarchical bool
+}
+
+type previewLinkItem struct {
+	ID         string
+	ExpiresAt  string
+	CreatedAt  string
+	ExpiresRaw int64
 }
 
 type entryFormData struct {
@@ -139,6 +147,7 @@ type entryFormData struct {
 	PublishError        string
 	CommentsEnabled     bool
 	SupportsComments    bool
+	PreviewLinks        []previewLinkItem
 }
 
 type revisionHistoryItem struct {
@@ -419,6 +428,21 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	}
 	if data.SupportsSticky == false && data.ContentTypeID != "" {
 		data.SupportsSticky = content.DefinitionFor(data.ContentTypeID).Capabilities.SupportsSticky
+	}
+	// Load active preview links for this entry
+	if data.EntryID != "" {
+		if svc := preview.NewService(h.database, h.queries); svc != nil {
+			if links, err := svc.ListActiveByEntry(r.Context(), data.EntryID); err == nil {
+				for _, l := range links {
+					data.PreviewLinks = append(data.PreviewLinks, previewLinkItem{
+						ID:         l.ID,
+						ExpiresAt:  time.Unix(l.ExpiresAt, 0).Format("02 Jan, 15:04"),
+						CreatedAt:  time.Unix(l.CreatedAt, 0).Format("02 Jan, 15:04"),
+						ExpiresRaw: l.ExpiresAt,
+					})
+				}
+			}
+		}
 	}
 	doc, err := document.Decode([]byte(data.DocumentJSON))
 	if err != nil {

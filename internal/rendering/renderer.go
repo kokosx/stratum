@@ -92,9 +92,10 @@ type RenderContext struct {
 	LCPNodeID   string
 	// LCP is the unified request-scoped state for the current render. When
 	// non-nil it is shared across all scoped copies (Collection per-entry).
-	LCP       *LCPState
-	IsPreview bool   // true in editor preview; public renders are false
-	EntryID   string // current entry ID for current-post exclusion in latest blocks
+	LCP            *LCPState
+	IsPreview      bool   // true in editor preview; public renders are false
+	IsSharePreview bool   // true for share preview links (inert forms, no custom JS)
+	EntryID        string // current entry ID for current-post exclusion in latest blocks
 
 	// Route is the generic route scope for the current render. Archive blocks
 	// and Collection(source=context) read from Route.Archive when present.
@@ -415,6 +416,43 @@ var publicFormTemplate = template.Must(template.New("public-form").Parse(`<form 
 type formRenderer struct{}
 
 func (f *formRenderer) Render(ctx context.Context, node PreparedNode, rc RenderContext, _ *Renderer) (template.HTML, error) {
+	// Share preview: forms are inert - visible but not submittable, no real submission
+	if rc.IsSharePreview {
+		if rc.FormReader == nil {
+			return template.HTML(`<div class="stratum-form stratum-form--preview" role="status">Form preview — submissions disabled in preview.</div>`), nil
+		}
+		formID, _ := node.Settings["formId"].(string)
+		if formID == "" {
+			return template.HTML(`<div class="stratum-form stratum-form--preview" role="status">Form preview — submissions disabled in preview.</div>`), nil
+		}
+		var view forms.FormView
+		var ok bool
+		if cached, exists := rc.FormCache[formID]; exists {
+			view = cached
+			ok = true
+		} else {
+			res := rc.FormReader.ResolveForm(ctx, formID)
+			if res.State != forms.FormStateActive {
+				return template.HTML(`<div class="stratum-form stratum-form--preview" role="status">Form preview — submissions disabled in preview.</div>`), nil
+			}
+			view = res.View
+			ok = true
+			if rc.FormCache != nil {
+				rc.FormCache[formID] = view
+			}
+		}
+		if !ok {
+			return template.HTML(`<div class="stratum-form stratum-form--preview" role="status">Form preview — submissions disabled in preview.</div>`), nil
+		}
+		var out bytes.Buffer
+		out.WriteString(`<div class="stratum-form stratum-form--preview" role="status">Preview — submissions disabled</div>`)
+		inertTemplate := template.Must(template.New("preview-form").Parse(`<form class="stratum-form stratum-form--preview" aria-disabled="true" onsubmit="return false;"><div class="stratum-form-honeypot" aria-hidden="true" style="display:none"></div>{{ range .Form.Fields }}<div class="stratum-form-field stratum-form-field-{{ .Type }}">{{ if eq .Type "checkbox" }}<label><input type="checkbox" disabled> {{ .Label }}</label>{{ else }}<label>{{ .Label }}</label>{{ if eq .Type "textarea" }}<textarea placeholder="{{ .Placeholder }}" disabled></textarea>{{ else if eq .Type "select" }}<select disabled><option>{{ .Label }}</option></select>{{ else }}<input type="{{ .Type }}" placeholder="{{ .Placeholder }}" disabled>{{ end }}{{ end }}</div>{{ end }}<button type="button" disabled>Preview — submit disabled</button></form>`))
+		var formOut bytes.Buffer
+		if err := inertTemplate.Execute(&formOut, map[string]any{"Form": view}); err == nil {
+			out.Write(formOut.Bytes())
+		}
+		return template.HTML(out.String()), nil
+	}
 	formID, _ := node.Settings["formId"].(string)
 	if rc.FormReader == nil {
 		if rc.IsPreview || rc.Mode == ModePreview {

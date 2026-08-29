@@ -245,6 +245,7 @@
             </table>
           </div>
           {{ if gt (len .Content.Revisions) 5 }}<p style="margin:8px 0 0;"><a href="{{ .Content.Action }}/revisions" class="button button-small">View all {{ len .Content.Revisions }} revisions</a></p>{{ end }}
+          <p style="margin:8px 0 0;"><a href="{{ .Content.Action }}/revisions/compare" class="button button-small">Compare revisions</a></p>
         {{ else }}
           <p class="muted">No revisions yet.</p>
         {{ end }}
@@ -344,6 +345,37 @@
     })();
   </script>
 </form>
+<div class="admin-section" id="share-preview-section" style="margin-top:24px; padding:16px; border:1px solid var(--ui-border);">
+  <h3>Share draft preview</h3>
+  <p class="form-help">Create a temporary public link to share this draft without login. The link shows the exact saved revision.</p>
+  {{ if .Content.EntryID }}
+  <form method="post" action="/admin/preview-links" data-on:submit__prevent="@post('/admin/preview-links', {contentType: 'form'})" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin:12px 0;">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <input type="hidden" name="entry_id" value="{{ .Content.EntryID }}">
+    <label>Expires <select name="expires" class="form-control" style="width:auto;"><option value="1h">1 hour</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label>
+    <button type="submit" class="button">Create link</button>
+  </form>
+  <div id="preview-share-result"></div>
+  {{ if .Content.PreviewLinks }}
+  <h4>Active links</h4>
+  <ul style="list-style:none; padding:0; display:grid; gap:8px;">
+  {{ range .Content.PreviewLinks }}
+    <li id="preview-link-{{ .ID }}" style="display:flex; gap:8px; align-items:center; justify-content:space-between; padding:8px; border:1px solid var(--ui-border);">
+      <span style="font-size:13px;">Created {{ .CreatedAt }} · Expires {{ .ExpiresAt }}</span>
+      <form method="post" action="/admin/preview-links/{{ .ID }}/revoke" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+        <button class="button button-small button-danger" type="submit" data-on:click__prevent="@post('/admin/preview-links/{{ .ID }}/revoke', {contentType: 'form'})">Revoke</button>
+      </form>
+    </li>
+  {{ end }}
+  </ul>
+  {{ else }}
+  <p class="muted" style="font-size:13px;">No active preview links.</p>
+  {{ end }}
+  {{ else }}
+  <p class="muted">Save the entry first to create a share preview link.</p>
+  {{ end }}
+</div>
 <script>
   document.querySelectorAll('[data-custom-media-picker]').forEach(function (button) {
     button.addEventListener('click', function () {

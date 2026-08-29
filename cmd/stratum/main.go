@@ -24,11 +24,19 @@ import (
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
+	"github.com/kokosx/stratum/internal/web/canonicalredirect"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
 )
 
 func main() {
 	ctx := context.Background()
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		if err := runDoctor(ctx, os.Args[2:]); err != nil {
+			// runDoctor already handles exit codes; this is fallback
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "backup" {
 		if err := runBackup(ctx, os.Args[2:]); err != nil {
 			log.Fatal(err)
@@ -56,11 +64,22 @@ func main() {
 		command = os.Args[1]
 	}
 	if command != "serve" && command != "migrate" && command != "seed" {
-		fmt.Fprintln(os.Stderr, "usage: stratum [serve|migrate|seed|backup|search|import]")
+		fmt.Fprintln(os.Stderr, "usage: stratum [serve|migrate|seed|backup|search|import|doctor]")
 		fmt.Fprintln(os.Stderr, "  backup create [--output path]")
 		fmt.Fprintln(os.Stderr, "  backup verify <archive>")
 		fmt.Fprintln(os.Stderr, "  backup restore <archive>")
+		fmt.Fprintln(os.Stderr, "  doctor [--production] [--json]")
 		os.Exit(2)
+	}
+
+	var serveCfg ServeConfig
+	if command == "serve" {
+		var parseErr error
+		serveCfg, parseErr = parseServeOptions(os.Args[2:])
+		if parseErr != nil {
+			fmt.Fprintln(os.Stderr, parseErr)
+			os.Exit(2)
+		}
 	}
 
 	dataDir := os.Getenv("STRATUM_DATA_DIR")
@@ -96,7 +115,7 @@ func main() {
 		}
 		log.Println("Development seed data is ready")
 	case "serve":
-		if err := serve(application); err != nil && err != http.ErrServerClosed {
+		if err := serve(application, serveCfg); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}
@@ -166,7 +185,7 @@ func runImport(ctx context.Context, args []string) error {
 	return nil
 }
 
-func serve(application *app.App) error {
+func serve(application *app.App, serveCfg ServeConfig) error {
 	authService, err := auth.NewService(application.Database.DB, application.Queries, os.Getenv("STRATUM_ENV") == "production")
 	if err != nil {
 		return fmt.Errorf("auth service: %w", err)
@@ -211,6 +230,15 @@ func serve(application *app.App) error {
 	go scheduler.Start(schedCtx)
 	defer schedCancel()
 
+	siteURL := ""
+	if snap := hub.Site.Current(); snap != nil {
+		siteURL = snap.SiteURL
+	}
+	canonicalCfg, err := canonicalredirect.NewConfig(serveCfg.RedirectScheme, serveCfg.RedirectWWW, serveCfg.TrustProxy, siteURL)
+	if err != nil {
+		return err
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := application.Database.Ping(r.Context()); err != nil {
@@ -225,14 +253,14 @@ func serve(application *app.App) error {
 	mux.Handle("/admin/", adminHandler.Routes())
 	mux.Handle("/", publicHandler)
 
-	addr := os.Getenv("STRATUM_ADDR")
-	if addr == "" {
-		addr = ":8080"
-	}
+	// Apply canonical redirect middleware (health bypass inside middleware)
+	handler := canonicalredirect.Middleware(mux, canonicalCfg)
+
+	addr := serveCfg.Addr
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -252,12 +280,49 @@ func serve(application *app.App) error {
 		}
 	}()
 
-	log.Printf("Stratum running on http://%s", addr)
+	logStartup(addr, canonicalCfg)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	log.Println("Stopped")
 	return nil
+}
+
+func logStartup(addr string, cfg canonicalredirect.Config) {
+	log.Printf("Stratum listening on %s", addr)
+	if cfg.Scheme == canonicalredirect.SchemeOff && cfg.WWW == canonicalredirect.WWWOff {
+		log.Printf("Canonical redirects: disabled")
+		return
+	}
+	schemeStr := "off"
+	switch cfg.Scheme {
+	case canonicalredirect.SchemeHTTPS:
+		schemeStr = "https"
+	case canonicalredirect.SchemeHTTP:
+		schemeStr = "http"
+	}
+	log.Printf("Canonical scheme: %s", schemeStr)
+	if cfg.WWW != canonicalredirect.WWWOff {
+		wwwDesc := ""
+		switch cfg.WWW {
+		case canonicalredirect.WWWForbidden:
+			wwwDesc = "non-www"
+		case canonicalredirect.WWWRequired:
+			wwwDesc = "www"
+		}
+		if cfg.CanonicalHost != "" {
+			log.Printf("Canonical host: %s (%s)", wwwDesc, cfg.CanonicalHost)
+		} else {
+			log.Printf("Canonical host: %s", wwwDesc)
+		}
+	} else {
+		log.Printf("Canonical host: off")
+	}
+	trust := "no"
+	if cfg.TrustProxy {
+		trust = "yes"
+	}
+	log.Printf("Trusted proxy headers: %s", trust)
 }
 
 func runBackup(ctx context.Context, args []string) error {

@@ -29,6 +29,7 @@ import (
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/notfound"
 	"github.com/kokosx/stratum/internal/pagecache"
+	"github.com/kokosx/stratum/internal/preview"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/routing"
@@ -62,6 +63,7 @@ type Handler struct {
 	forms         *forms.Service
 	auth          *auth.Service
 	notFound      *notfound.Store
+	preview       *preview.Service
 }
 
 func NewHandler(queries *db.Queries, blocksReg *blocks.Registry, runtime *themes.Runtime, mediaService *media.Service) (*Handler, error) {
@@ -102,6 +104,10 @@ func NewHandlerWithHub(hub *runtimehub.Runtime) (*Handler, error) {
 		// Failure to initialize auth only leaves public comments anonymous.
 		h.auth, _ = auth.NewService(database, hub.Queries, !h.dev)
 		h.notFound = notfound.New(database)
+		h.preview = preview.NewService(database, hub.Queries)
+	} else {
+		// No DB, still create preview with nil DB for tests
+		h.preview = preview.NewService(nil, hub.Queries)
 	}
 	testRouteRegistry.Store(hub.Queries, h)
 	// Targeted warmup: homepage and main archive page 1 if available.
@@ -146,6 +152,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/_stratum/preview/") {
+		h.servePreview(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/media/") {

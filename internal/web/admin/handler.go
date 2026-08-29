@@ -55,6 +55,7 @@ type Handler struct {
 	sitePartFormTemplate         *template.Template
 	sitePartEditorTemplate       *template.Template
 	revisionsTemplate            *template.Template
+	revisionsCompareTemplate     *template.Template
 	taxonomyTemplate             *template.Template
 	usersTemplate                *template.Template
 	commentsTemplate             *template.Template
@@ -234,6 +235,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		revisionsTemplate = template.New("revisions")
 	}
+	revisionsCompareTemplate, err := template.ParseFS(templateFS, "layout.html", "revisions_compare.html")
+	if err != nil {
+		revisionsCompareTemplate = template.New("revisions_compare")
+	}
 
 	taxonomyTemplate, err := template.New("taxonomy").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "taxonomy.html")
 	if err != nil {
@@ -339,6 +344,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		sitePartFormTemplate:         sitePartFormTemplate,
 		sitePartEditorTemplate:       sitePartEditorTemplate,
 		revisionsTemplate:            revisionsTemplate,
+		revisionsCompareTemplate:     revisionsCompareTemplate,
 		toolsRedirectsTemplate:       toolsRedirectsTemplate,
 		toolsRedirectFormTemplate:    toolsRedirectFormTemplate,
 		toolsNotFoundTemplate:        toolsNotFoundTemplate,
@@ -544,6 +550,18 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/tools/redirects/{id}/delete", h.requireAuth(h.toolsRedirectsDelete))
 	mux.HandleFunc("GET /admin/tools/not-found", h.requireAuth(h.toolsNotFoundList))
 	mux.HandleFunc("POST /admin/tools/not-found/delete", h.requireAuth(h.toolsNotFoundDelete))
+	mux.HandleFunc("POST /admin/preview-links", h.requireAuth(h.handleCreatePreviewLink))
+	mux.HandleFunc("POST /admin/preview-links/{id}/revoke", h.requireAuth(h.handleRevokePreviewLink))
+	mux.HandleFunc("GET /admin/preview-links", h.requireAuth(h.handleListPreviewLinks))
+	mux.HandleFunc("GET /admin/pages/{id}/revisions/compare", h.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		h.handleCompareRevisions(w, r, "page", r.PathValue("id"))
+	}))
+	mux.HandleFunc("GET /admin/posts/{id}/revisions/compare", h.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		h.handleCompareRevisions(w, r, "post", r.PathValue("id"))
+	}))
+	mux.HandleFunc("GET /admin/content/{type}/{id}/revisions/compare", h.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		h.handleCompareRevisions(w, r, r.PathValue("type"), r.PathValue("id"))
+	}))
 	staticFS, err := fs.Sub(webassets.Assets, "static")
 	if err != nil {
 		panic(fmt.Sprintf("admin static files: %v", err))
