@@ -6,6 +6,10 @@
   document.addEventListener('click', function(e){
     const btn = e.target.closest('button[type="submit"], input[type="submit"]');
     if(!btn) return;
+    // Skip buttons that have dedicated handlers (editor, settings, form editor) — they manage their own busy/dirty lifecycle.
+    if (btn.closest('#stratum-editor-form') || btn.closest('[id^="settings-form-"]') || btn.closest('#form-editor')) {
+      return;
+    }
     // Don't block if already busy
     if(btn.dataset.busy === '1') { e.preventDefault(); e.stopPropagation(); return; }
     const form = btn.closest('form');

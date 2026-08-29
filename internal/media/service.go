@@ -39,12 +39,13 @@ type faviconViewCache struct {
 // Service is the media domain entry point. It validates uploads, stores blobs in
 // the Storage backend, persists metadata, and resolves assets for rendering.
 type Service struct {
-	db      *sql.DB
-	queries *db.Queries
-	store   Storage
-	views   *mediaViewCache
-	favicon *faviconViewCache
-	serve   *serveCache
+	db               *sql.DB
+	queries          *db.Queries
+	store            Storage
+	views            *mediaViewCache
+	favicon          *faviconViewCache
+	serve            *serveCache
+	usageIndexBuilds int64
 }
 
 func NewService(queries *db.Queries, store Storage) *Service {
@@ -383,8 +384,8 @@ func (s *Service) ServeMeta(ctx context.Context, id, kind string) (storageKey, m
 	return "", "", "", 0, false
 }
 
-// GenerateFaviconVariants (re)builds the square favicon sizes from the asset. It
-// is safe to call whenever the Site Icon changes.
+// GenerateFaviconVariants (re)builds the square favicon sizes from the asset.
+// It is failure-safe: old favicon variants remain valid until new set is committed.
 func (s *Service) GenerateFaviconVariants(ctx context.Context, id string) error {
 	m, err := s.queries.GetMedia(ctx, id)
 	if err != nil {
@@ -395,40 +396,118 @@ func (s *Service) GenerateFaviconVariants(ctx context.Context, id string) error 
 		return err
 	}
 
-	existing, _ := s.queries.ListMediaVariants(ctx, id)
-	for _, v := range existing {
-		if strings.HasPrefix(v.Kind, "favicon-") {
-			_ = s.store.Delete(ctx, v.StorageKey)
-			_ = s.queries.DeleteMediaVariant(ctx, v.ID)
-		}
+	// Generate ALL favicon bytes in memory first
+	type pendingFav struct {
+		size int
+		data []byte
+		mime string
 	}
-
-	now := time.Now().Unix()
+	var pending []pendingFav
 	for _, size := range faviconSizes {
-		bytes, mime, err := FaviconVariant(data, size)
+		b, mime, err := FaviconVariant(data, size)
 		if err != nil {
 			return err
 		}
-		key := "generated/" + id + "-favicon-" + strconv.Itoa(size) + extForMime(mime)
-		if err := s.store.Put(ctx, key, bytes); err != nil {
-			return err
-		}
-		if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
-			ID:          id + "-fav-" + strconv.Itoa(size),
-			MediaID:     id,
-			Kind:        "favicon-" + strconv.Itoa(size),
-			StorageKey:  key,
-			MimeType:    mime,
-			Width:       sql.NullInt64{Int64: int64(size), Valid: true},
-			Height:      sql.NullInt64{Int64: int64(size), Valid: true},
-			FileSize:    int64(len(bytes)),
-			ContentHash: contentHash(bytes),
-			CreatedAt:   now,
-		}); err != nil {
-			return err
+		pending = append(pending, pendingFav{size: size, data: b, mime: mime})
+	}
+
+	// Load existing favicon variants (fail-safe: abort if cannot load)
+	existing, err := s.queries.ListMediaVariants(ctx, id)
+	if err != nil {
+		return fmt.Errorf("list variants: %w", err)
+	}
+	var oldFavIDs []string
+	var oldFavKeys []string
+	for _, v := range existing {
+		if strings.HasPrefix(v.Kind, "favicon-") {
+			oldFavIDs = append(oldFavIDs, v.ID)
+			oldFavKeys = append(oldFavKeys, v.StorageKey)
 		}
 	}
+
+	// Write ALL new variants to fresh storage keys
+	token, err := randomToken(6)
+	if err != nil {
+		return err
+	}
+	type pendingStore struct {
+		id, kind, key, mime string
+		width, height       int
+		data                []byte
+		hash                string
+	}
+	var stores []pendingStore
+	var newKeys []string
+	cleanupNew := func() {
+		for _, k := range newKeys {
+			_ = s.store.Delete(ctx, k)
+		}
+	}
+	for _, p := range pending {
+		key := "generated/" + id + "-favicon-" + strconv.Itoa(p.size) + "-" + token + extForMime(p.mime)
+		if err := s.store.Put(ctx, key, p.data); err != nil {
+			cleanupNew()
+			return fmt.Errorf("store favicon %d: %w", p.size, err)
+		}
+		newKeys = append(newKeys, key)
+		stores = append(stores, pendingStore{
+			id:   id + "-fav-" + strconv.Itoa(p.size),
+			kind: "favicon-" + strconv.Itoa(p.size),
+			key:  key, mime: p.mime, width: p.size, height: p.size,
+			data: p.data, hash: contentHash(p.data),
+		})
+	}
+
+	// Transactionally swap metadata
+	now := time.Now().Unix()
+	if s.db != nil {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			cleanupNew()
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		for _, vid := range oldFavIDs {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM media_variants WHERE id = ?`, vid); err != nil {
+				cleanupNew()
+				return fmt.Errorf("delete old favicon: %w", err)
+			}
+		}
+		for _, ps := range stores {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO media_variants (id, media_id, kind, storage_key, mime_type, width, height, file_size, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				ps.id, id, ps.kind, ps.key, ps.mime, sql.NullInt64{Int64: int64(ps.width), Valid: true}, sql.NullInt64{Int64: int64(ps.height), Valid: true}, int64(len(ps.data)), ps.hash, now); err != nil {
+				cleanupNew()
+				return fmt.Errorf("create favicon %s: %w", ps.kind, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			cleanupNew()
+			return fmt.Errorf("commit favicon: %w", err)
+		}
+	} else {
+		// Fallback for callers without DB handle (tests): non-transactional but still fresh keys
+		for _, vid := range oldFavIDs {
+			_ = s.queries.DeleteMediaVariant(ctx, vid)
+		}
+		for _, ps := range stores {
+			if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
+				ID: ps.id, MediaID: id, Kind: ps.kind, StorageKey: ps.key, MimeType: ps.mime,
+				Width: sql.NullInt64{Int64: int64(ps.width), Valid: true}, Height: sql.NullInt64{Int64: int64(ps.height), Valid: true},
+				FileSize: int64(len(ps.data)), ContentHash: ps.hash, CreatedAt: now,
+			}); err != nil {
+				cleanupNew()
+				return err
+			}
+		}
+	}
+
 	s.favicon.invalidate(id)
+	s.InvalidateView(id)
+
+	// Delete old blobs best-effort after commit
+	for _, k := range oldFavKeys {
+		_ = s.store.Delete(ctx, k)
+	}
 	return nil
 }
 
@@ -696,9 +775,8 @@ func (s *Service) SocialView(ctx context.Context, id string) (SocialImage, bool)
 }
 
 // GenerateSocialVariant (re)builds the 1200x630 social preview from the stored
-// original. It is used for backfilling older assets or after a focal-point
-// change. The focal point is accepted now so a future UI can persist it without
-// changing the storage contract.
+// original. It uses a fresh key and transactional swap so the existing social
+// variant remains readable until the new one is committed.
 func (s *Service) GenerateSocialVariant(ctx context.Context, id string, focal FocalPoint) error {
 	m, err := s.queries.GetMedia(ctx, id)
 	if err != nil {
@@ -712,32 +790,65 @@ func (s *Service) GenerateSocialVariant(ctx context.Context, id string, focal Fo
 	if err != nil {
 		return err
 	}
-	// Remove any existing social variant first.
-	if existing, err := s.queries.GetMediaVariant(ctx, db.GetMediaVariantParams{MediaID: id, Kind: socialKind}); err == nil {
-		_ = s.store.Delete(ctx, existing.StorageKey)
-		_ = s.queries.DeleteMediaVariant(ctx, existing.ID)
+	existing, err := s.queries.GetMediaVariant(ctx, db.GetMediaVariantParams{MediaID: id, Kind: socialKind})
+	hasExisting := err == nil
+	var oldKey, oldID string
+	if hasExisting {
+		oldKey = existing.StorageKey
+		oldID = existing.ID
+	} else if err != sql.ErrNoRows {
+		return fmt.Errorf("get social variant: %w", err)
 	}
-	key := "generated/" + id + "-" + socialKind + extForMime(mime)
+	token, err := randomToken(6)
+	if err != nil {
+		return err
+	}
+	key := "generated/" + id + "-" + socialKind + "-" + token + extForMime(mime)
 	if err := s.store.Put(ctx, key, bytes); err != nil {
 		return err
 	}
+	cleanupNew := func() { _ = s.store.Delete(ctx, key) }
 	now := time.Now().Unix()
-	if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
-		ID:          id + "-social",
-		MediaID:     id,
-		Kind:        socialKind,
-		StorageKey:  key,
-		MimeType:    mime,
-		Width:       sql.NullInt64{Int64: socialWidth, Valid: true},
-		Height:      sql.NullInt64{Int64: socialHeight, Valid: true},
-		FileSize:    int64(len(bytes)),
-		ContentHash: contentHash(bytes),
-		CreatedAt:   now,
-	}); err != nil {
-		_ = s.store.Delete(ctx, key)
-		return err
+	if s.db != nil {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			cleanupNew()
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		defer tx.Rollback()
+		if hasExisting {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM media_variants WHERE id = ?`, oldID); err != nil {
+				cleanupNew()
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_variants (id, media_id, kind, storage_key, mime_type, width, height, file_size, content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id+"-social", id, socialKind, key, mime, sql.NullInt64{Int64: socialWidth, Valid: true}, sql.NullInt64{Int64: socialHeight, Valid: true}, int64(len(bytes)), contentHash(bytes), now); err != nil {
+			cleanupNew()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			cleanupNew()
+			return err
+		}
+	} else {
+		// No DB handle – fallback to direct (old behavior) but clean up on failure
+		if hasExisting {
+			_ = s.queries.DeleteMediaVariant(ctx, oldID)
+		}
+		if _, err := s.queries.CreateMediaVariant(ctx, db.CreateMediaVariantParams{
+			ID: id + "-social", MediaID: id, Kind: socialKind, StorageKey: key, MimeType: mime,
+			Width: sql.NullInt64{Int64: socialWidth, Valid: true}, Height: sql.NullInt64{Int64: socialHeight, Valid: true},
+			FileSize: int64(len(bytes)), ContentHash: contentHash(bytes), CreatedAt: now,
+		}); err != nil {
+			cleanupNew()
+			return err
+		}
 	}
 	s.InvalidateView(id)
+	if hasExisting {
+		_ = s.store.Delete(ctx, oldKey)
+	}
 	return nil
 }
 

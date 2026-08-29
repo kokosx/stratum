@@ -5,9 +5,9 @@ package search
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"html/template"
-	"log"
 	"sort"
 	"strings"
 	"unicode"
@@ -36,6 +36,9 @@ type Service struct {
 	blocks  *blocks.Registry
 	queries *db.Queries
 	catalog ContentTypeReader
+	// rebuildHook is a test seam to force BuildDocument failure for a specific entry.
+	// If non-nil, Rebuild uses it instead of BuildDocument.
+	rebuildHook func(ctx context.Context, entryID string) (Document, error)
 }
 
 type Document struct {
@@ -75,6 +78,12 @@ func NewWithCatalog(database *sql.DB, registry *blocks.Registry, catalog Content
 }
 
 func (s *Service) SetCatalog(catalog ContentTypeReader) { s.catalog = catalog }
+
+// SetRebuildHook installs a test-only hook for Rebuild to force BuildDocument failures.
+// Passing nil clears the hook.
+func (s *Service) SetRebuildHook(fn func(ctx context.Context, entryID string) (Document, error)) {
+	s.rebuildHook = fn
+}
 
 // BuildDocument reads precisely the current public published revision. Drafts,
 // private/password revisions, trashed entries, and historical revisions cannot
@@ -175,16 +184,22 @@ func (s *Service) Rebuild(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	// Build all valid documents before touching the projection.
+	// Any unexpected BuildDocument error aborts the rebuild to preserve the previous
+	// valid projection. Only sql.ErrNoRows (entry no longer qualifies) is safely skipped.
 	var docs []Document
 	for _, id := range ids {
-		doc, err := s.BuildDocument(ctx, id)
+		var doc Document
+		var err error
+		if s.rebuildHook != nil {
+			doc, err = s.rebuildHook(ctx, id)
+		} else {
+			doc, err = s.BuildDocument(ctx, id)
+		}
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
-			// Log and skip invalid documents but continue rebuilding others.
-			log.Printf("search rebuild: skip entry %s: %v", id, err)
-			continue
+			return 0, fmt.Errorf("build search document %s: %w", id, err)
 		}
 		docs = append(docs, doc)
 	}

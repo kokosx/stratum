@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -10,6 +11,15 @@ import (
 	"strings"
 
 	"github.com/kokosx/stratum/internal/media"
+)
+
+// Upload bounds: per-file and aggregate. Aggregate must accommodate multiple files
+// each up to per-file limit plus multipart overhead.
+const (
+	maxMediaImageBytes       = 10 << 20 // per file, mirrors media.maxImageBytes
+	maxMediaFilesPerUpload   = 20
+	maxMediaMultiUploadBytes = maxMediaImageBytes*maxMediaFilesPerUpload + (5 << 20)
+	maxMediaParseMemory      = 32 << 20
 )
 
 // mediaJSON is the compact shape the Media Picker and Library grid consume.
@@ -38,10 +48,11 @@ type variantJSON struct {
 }
 
 type mediaDetailJSON struct {
-	Asset     mediaJSON        `json:"asset"`
-	Variants  []variantJSON    `json:"variants"`
-	Usage     int64            `json:"usage"`
-	UsageRefs []media.UsageRef `json:"usageRefs"`
+	Asset      mediaJSON        `json:"asset"`
+	Variants   []variantJSON    `json:"variants"`
+	Usage      int64            `json:"usage"`
+	UsageRefs  []media.UsageRef `json:"usageRefs"`
+	UsageError string           `json:"usageError,omitempty"`
 }
 
 func toMediaJSON(a *media.Asset) mediaJSON {
@@ -178,13 +189,26 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusForbidden, errors.New("invalid security token"))
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		writeJSONError(w, http.StatusBadRequest, errors.New("upload too large or malformed: ensure the file is under 10 MB"))
+	r.Body = http.MaxBytesReader(w, r.Body, maxMediaMultiUploadBytes)
+	if err := r.ParseMultipartForm(maxMediaParseMemory); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errors.New("upload too large or malformed: ensure each file is under 10 MB and total request is within limits"))
 		return
 	}
 	mf := r.MultipartForm
 	if mf == nil || len(mf.File) == 0 {
+		writeJSONError(w, http.StatusBadRequest, errors.New("no file provided"))
+		return
+	}
+	// Enforce file-count bound to prevent 1000-file abuse even if Content-Length lies
+	totalFiles := 0
+	for _, hs := range mf.File {
+		totalFiles += len(hs)
+	}
+	if totalFiles > maxMediaFilesPerUpload {
+		writeJSONError(w, http.StatusBadRequest, fmt.Errorf("too many files: maximum %d per upload", maxMediaFilesPerUpload))
+		return
+	}
+	if totalFiles == 0 {
 		writeJSONError(w, http.StatusBadRequest, errors.New("no file provided"))
 		return
 	}
@@ -248,7 +272,26 @@ func (h *Handler) mediaDetailJSON(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, errors.New("media not found"))
 		return
 	}
-	usageRefs, _ := h.media.UsageRefs(r.Context(), id)
+	usageRefs, err := h.media.UsageRefs(r.Context(), id)
+	if err != nil {
+		log.Printf("media usageRefs %s: %v", id, err)
+		// Fail-safe: do not claim 0 usages when we could not determine them.
+		// Delete remains unavailable until usage can be confirmed.
+		detail := mediaDetailJSON{
+			Asset:      toMediaJSON(asset),
+			Usage:      -1,
+			UsageRefs:  nil,
+			UsageError: "Could not load usage information.",
+		}
+		for _, v := range asset.Variants {
+			detail.Variants = append(detail.Variants, variantJSON{
+				Kind: v.Kind, URL: "/media/" + id + "/" + v.Kind, Width: v.Width, Height: v.Height, Size: v.FileSize,
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(detail)
+		return
+	}
 	usage := int64(len(usageRefs))
 	detail := mediaDetailJSON{Asset: toMediaJSON(asset), Usage: usage, UsageRefs: usageRefs}
 	for _, v := range asset.Variants {
@@ -321,13 +364,19 @@ func (h *Handler) deleteMedia(w http.ResponseWriter, r *http.Request) {
 	// Use domain-safe delete
 	if err := h.media.DeleteIfUnused(r.Context(), id); err != nil {
 		if errors.Is(err, media.ErrInUse) {
-			// Gather usage refs for detailed message
-			refs, _ := h.media.UsageRefs(r.Context(), id)
+			refs, rerr := h.media.UsageRefs(r.Context(), id)
+			if rerr != nil {
+				log.Printf("usage refs after ErrInUse %s: %v", id, rerr)
+				refs = nil
+			}
 			var msg string
 			if len(refs) > 0 {
 				msg = "This image is used in " + strconv.Itoa(len(refs)) + " places and cannot be deleted. Remove references first or use Replace."
 			} else {
 				msg = "This media is still in use and cannot be deleted."
+				if rerr != nil {
+					msg = "Could not determine usage; deletion blocked for safety."
+				}
 			}
 			if isDatastarRequest(r) {
 				// Build usage list HTML
@@ -389,8 +438,8 @@ func (h *Handler) replaceMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxMediaImageBytes+(1<<20))
+	if err := r.ParseMultipartForm(maxMediaParseMemory); err != nil {
 		if isDatastarRequest(r) {
 			writeSSE(w, toastEvent("error", "Upload too large or malformed"))
 			return

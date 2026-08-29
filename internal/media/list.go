@@ -59,10 +59,12 @@ func (s *Service) listFilteredWithDB(ctx context.Context, search, filter string,
 		whereSQL = "WHERE " + strings.Join(where, " AND ")
 	}
 
-	// For unused, we need to compute unused IDs separately and filter in Go after fetching.
-	// We'll fetch candidates without pagination first if unused, then filter.
+	// For unused, build a single UsageIndex snapshot then filter via cheap lookups.
 	if filter == "unused" {
-		// Fetch all candidates matching search (and missing_alt not applicable together? If both, missing_alt not relevant)
+		idx, err := s.BuildUsageIndex(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
 		query := fmt.Sprintf("SELECT id, original_filename, storage_key, mime_type, asset_type, file_size, width, height, alt_text, title, caption, description, author_id, created_at, updated_at FROM media %s ORDER BY created_at DESC", whereSQL)
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
@@ -101,7 +103,6 @@ func (s *Service) listFilteredWithDB(ctx context.Context, search, filter string,
 			if author.Valid {
 				a.AuthorID = author.String
 			}
-			// created/updated not needed for Asset but keep
 			_ = created
 			_ = updated
 			all = append(all, a)
@@ -109,19 +110,13 @@ func (s *Service) listFilteredWithDB(ctx context.Context, search, filter string,
 		if err := rows.Err(); err != nil {
 			return nil, 0, err
 		}
-		// Filter unused via usage scan
 		unused := make([]Asset, 0)
 		for _, a := range all {
-			used, err := s.isUsed(ctx, a.ID)
-			if err != nil {
-				return nil, 0, err
-			}
-			if !used {
+			if !idx.IsUsed(a.ID) {
 				unused = append(unused, a)
 			}
 		}
 		total := int64(len(unused))
-		// Paginate in memory
 		if offset >= len(unused) {
 			return []Asset{}, total, nil
 		}
@@ -186,10 +181,16 @@ func (s *Service) listFilteredWithDB(ctx context.Context, search, filter string,
 }
 
 func (s *Service) listFilteredFallback(ctx context.Context, search, filter string, limit, offset int) ([]Asset, int64, error) {
-	// Load via existing List with large limit then filter in Go
 	all, err := s.List(ctx, 10000, 0)
 	if err != nil {
 		return nil, 0, err
+	}
+	var idx *UsageIndex
+	if filter == "unused" {
+		idx, err = s.BuildUsageIndex(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 	var filtered []Asset
 	lowerSearch := strings.ToLower(search)
@@ -208,11 +209,7 @@ func (s *Service) listFilteredFallback(ctx context.Context, search, filter strin
 			}
 		}
 		if filter == "unused" {
-			used, err := s.isUsed(ctx, a.ID)
-			if err != nil {
-				return nil, 0, err
-			}
-			if used {
+			if idx.IsUsed(a.ID) {
 				continue
 			}
 		}
