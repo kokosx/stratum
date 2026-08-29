@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -25,12 +26,26 @@ var (
 )
 
 type LifecycleService struct {
-	db      *sql.DB
-	queries *db.Queries
+	db            *sql.DB
+	queries       *db.Queries
+	searchRefresh func(context.Context, string) error
 }
 
 func NewLifecycleService(database *sql.DB, queries *db.Queries) *LifecycleService {
 	return &LifecycleService{db: database, queries: queries}
+}
+
+func (s *LifecycleService) SetSearchRefresh(fn func(context.Context, string) error) {
+	s.searchRefresh = fn
+}
+
+func (s *LifecycleService) refreshSearch(entryID string) {
+	if s.searchRefresh == nil {
+		return
+	}
+	if err := s.searchRefresh(context.Background(), entryID); err != nil {
+		log.Printf("search refresh after lifecycle entry %s: %v", entryID, err)
+	}
 }
 
 func (s *LifecycleService) MoveToTrash(ctx context.Context, entryID string) error {
@@ -74,6 +89,7 @@ func (s *LifecycleService) MoveToTrash(ctx context.Context, entryID string) erro
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	s.refreshSearch(entryID)
 	return nil
 }
 
@@ -139,7 +155,11 @@ func (s *LifecycleService) Restore(ctx context.Context, entryID string) error {
 			return fmt.Errorf("recreate route: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.refreshSearch(entryID)
+	return nil
 }
 
 func (s *LifecycleService) DeletePermanently(ctx context.Context, entryID string) error {
@@ -159,7 +179,11 @@ func (s *LifecycleService) DeletePermanently(ctx context.Context, entryID string
 	if err := s.assertNoLatestDescendants(ctx, entry); err != nil {
 		return err
 	}
-	return s.queries.DeleteEntry(ctx, entryID)
+	if err := s.queries.DeleteEntry(ctx, entryID); err != nil {
+		return err
+	}
+	s.refreshSearch(entryID)
+	return nil
 }
 
 func (s *LifecycleService) assertNotProtected(ctx context.Context, entryID string) error {
@@ -300,7 +324,11 @@ func (s *LifecycleService) Unpublish(ctx context.Context, entryID string) error 
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.refreshSearch(entryID)
+	return nil
 }
 
 func (s *LifecycleService) BulkTrash(ctx context.Context, contentTypeID string, ids []string) error {
@@ -350,7 +378,13 @@ func (s *LifecycleService) BulkTrash(ctx context.Context, contentTypeID string, 
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.refreshSearch(id)
+	}
+	return nil
 }
 
 func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string, ids []string) error {
@@ -433,7 +467,13 @@ func (s *LifecycleService) BulkRestore(ctx context.Context, contentTypeID string
 			}
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.refreshSearch(id)
+	}
+	return nil
 }
 
 func needsPublicRoute(entry db.Entry) bool {
@@ -493,7 +533,13 @@ func (s *LifecycleService) BulkDeletePermanently(ctx context.Context, contentTyp
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.refreshSearch(id)
+	}
+	return nil
 }
 
 func entryPublicPath(contentTypeID, slug, postsBase string) string {

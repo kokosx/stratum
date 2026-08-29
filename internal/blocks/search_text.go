@@ -40,6 +40,21 @@ func blockSearchText(block string, props map[string]any) []string {
 		return stringProp(props, "label", "text")
 	case "core/image":
 		return stringProp(props, "alt", "caption")
+	case "core/quote":
+		return stringProp(props, "text", "citation")
+	case "core/accordion-item":
+		return stringProp(props, "title")
+	case "core/card", "core/section", "core/stack", "core/grid", "core/columns", "core/divider":
+		return nil
+	case "core/collection", "core/posts", "core/entry-field", "core/entry-media", "core/entry-title", "core/entry-content", "core/site-part", "core/navigation", "core/site-logo", "core/archive-title", "core/archive-description", "core/embed":
+		return nil
+	}
+	// Generic fallback for textual blocks that expose a "text" string: avoid indexing CSS/variant/IDs.
+	// Only index explicit textual props known to be safe.
+	if text, ok := props["text"].(string); ok && text != "" {
+		// For unknown blocks, conservatively treat "text" as searchable if not obviously an ID/class.
+		// Still allow generic "text" without indexing variant/settings which are separate.
+		return []string{text}
 	}
 	return nil
 }

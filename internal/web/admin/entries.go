@@ -302,6 +302,9 @@ func (h *Handler) trashEntry(w http.ResponseWriter, r *http.Request, contentType
 		return
 	}
 	svc := content.NewLifecycleService(h.database, h.queries)
+	if h.search != nil {
+		svc.SetSearchRefresh(h.search.RefreshEntry)
+	}
 	err := svc.MoveToTrash(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, content.ErrProtectedPage) {
@@ -335,6 +338,9 @@ func (h *Handler) restoreEntry(w http.ResponseWriter, r *http.Request, contentTy
 		return
 	}
 	svc := content.NewLifecycleService(h.database, h.queries)
+	if h.search != nil {
+		svc.SetSearchRefresh(h.search.RefreshEntry)
+	}
 	err := svc.Restore(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, content.ErrNotTrashed) || errors.Is(err, content.ErrRouteOccupied) {
@@ -364,6 +370,9 @@ func (h *Handler) deleteEntryPermanently(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	svc := content.NewLifecycleService(h.database, h.queries)
+	if h.search != nil {
+		svc.SetSearchRefresh(h.search.RefreshEntry)
+	}
 	err := svc.DeletePermanently(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, content.ErrProtectedPage) || errors.Is(err, content.ErrPermanentDeleteOnlyTrash) {
@@ -417,6 +426,9 @@ func (h *Handler) bulkEntries(w http.ResponseWriter, r *http.Request, contentTyp
 		}
 	}
 	svc := content.NewLifecycleService(h.database, h.queries)
+	if h.search != nil {
+		svc.SetSearchRefresh(h.search.RefreshEntry)
+	}
 	switch action {
 	case "trash":
 		err = svc.BulkTrash(r.Context(), contentType, ids)

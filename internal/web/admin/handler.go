@@ -80,6 +80,7 @@ type Handler struct {
 	scheduler                    *publishing.Scheduler
 	comments                     *comments.Service
 	forms                        *forms.Service
+	search                       *search.Service
 }
 
 type LayoutData struct {
@@ -192,7 +193,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	mediaTemplate, err := template.ParseFS(templateFS, "layout.html", "media.html")
+	mediaTemplate, err := template.New("media").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "admin_components.html", "media.html")
 	if err != nil {
 		return nil, err
 	}
@@ -338,6 +339,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		scheduler:                    scheduler,
 		comments:                     commentsService,
 		forms:                        runtime.Forms,
+		search:                       searchService,
 	}, nil
 }
 
@@ -498,6 +500,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/media/upload", h.requireAuth(h.uploadMedia))
 	mux.HandleFunc("GET /admin/media/{id}/json", h.requireAuth(h.mediaDetailJSON))
 	mux.HandleFunc("POST /admin/media/{id}", h.requireAuth(h.updateMedia))
+	mux.HandleFunc("POST /admin/media/{id}/replace", h.requireAuth(h.replaceMedia))
+	mux.HandleFunc("POST /admin/media/{id}/regenerate", h.requireAuth(h.regenerateMedia))
 	mux.HandleFunc("POST /admin/media/{id}/delete", h.requireAuth(h.deleteMedia))
 	// Tools — Site Operations (EPIC 5)
 	mux.HandleFunc("GET /admin/tools/site-health", h.requireAuth(h.toolsSiteHealth))
@@ -520,9 +524,9 @@ func (h *Handler) Routes() http.Handler {
 		// indexing guarantee, so every admin response also sends the header.
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 		w.Header().Set("Cache-Control", "no-store")
-		// The media upload endpoint carries large multipart bodies (~12 MB),
-		// so it must not inherit the small global admin POST body limit.
-		if r.Method == http.MethodPost && r.URL.Path != "/admin/media/upload" {
+		// The media upload/replace endpoints carry large multipart bodies (~12 MB),
+		// so they must not inherit the small global admin POST body limit.
+		if r.Method == http.MethodPost && r.URL.Path != "/admin/media/upload" && !strings.HasSuffix(r.URL.Path, "/replace") && !strings.HasSuffix(r.URL.Path, "/regenerate") {
 			r.Body = http.MaxBytesReader(w, r.Body, maxAdminRequestBody)
 		}
 		mux.ServeHTTP(w, r)

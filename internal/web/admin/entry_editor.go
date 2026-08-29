@@ -829,6 +829,15 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit entry write: %w", err)
 	}
+	if publish && h.search != nil {
+		if err := h.search.RefreshEntry(context.Background(), entryID); err != nil {
+			log.Printf("search refresh after publishing entry %s: %v (publication remains committed)", entryID, err)
+		}
+	} else if !publish && h.search != nil {
+		// Save draft does not affect public projection; ensure no stale searchable content from draft-only title changes.
+		// No removal needed because BuildDocument only indexes published revision.
+		// However if entry was previously published and draft saved, nothing changes; search remains correct.
+	}
 	// Ensure dedicated 1200x630 derivatives exist for chosen SEO images so the
 	// public OG tag can always serve the /social variant. Failures are non-fatal
 	// (the original can still be served, and the public fallback handles it).
