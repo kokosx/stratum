@@ -139,9 +139,9 @@ func TestQuickEditPreservesDraftPublicSemantics(t *testing.T) {
 	csTok, _ := h.csrfToken(csrfRec, csrfReq)
 	// Build quick edit POST form
 	form := url.Values{
-		"title":       {"Edited Draft"},
-		"slug":        {"original"},
-		"csrf_token":  {csTok},
+		"title":        {"Edited Draft"},
+		"slug":         {"original"},
+		"csrf_token":   {csTok},
 		"quick_action": {"save"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/pages/"+entryID+"/quick-edit", strings.NewReader(form.Encode()))

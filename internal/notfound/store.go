@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/kokosx/stratum/internal/routing"
@@ -44,8 +45,11 @@ func shouldIgnore(path string) bool {
 // Store aggregates 404 hits by normalized path.
 type Store struct {
 	db      *sql.DB
-	counter int64 // for opportunistic cleanup
+	counter atomic.Uint64 // for opportunistic cleanup
 }
+
+// nowFunc is overridable in tests for deterministic retention checks.
+var nowFunc = time.Now
 
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
@@ -65,7 +69,7 @@ func (s *Store) Record(ctx context.Context, rawPath string) error {
 		// Still optionally store but spec says suppress from default view; we choose to not store noise
 		return nil
 	}
-	now := time.Now().Unix()
+	now := nowFunc().Unix()
 	// Upsert
 	// Use INSERT ... ON CONFLICT to aggregate
 	_, err := s.db.ExecContext(ctx, `
@@ -76,9 +80,8 @@ func (s *Store) Record(ctx context.Context, rawPath string) error {
 	if err != nil {
 		return err
 	}
-	s.counter++
-	if s.counter%10 == 0 {
-		// opportunistic cleanup async-ish
+	if s.counter.Add(1)%256 == 0 {
+		// opportunistic cleanup, less aggressive to avoid DELETE bursts on 404 floods
 		_ = s.Cleanup(ctx)
 	}
 	return nil
@@ -131,7 +134,7 @@ func (s *Store) ClearAll(ctx context.Context) error {
 
 // Cleanup applies retention and max size bounds.
 func (s *Store) Cleanup(ctx context.Context) error {
-	cutoff := time.Now().AddDate(0, 0, -RetentionDays).Unix()
+	cutoff := nowFunc().AddDate(0, 0, -RetentionDays).Unix()
 	// Delete old
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM not_found_paths WHERE last_seen_at < ?`, cutoff); err != nil {
 		return err

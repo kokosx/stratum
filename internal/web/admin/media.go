@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/kokosx/stratum/internal/media"
 )
@@ -37,9 +38,10 @@ type variantJSON struct {
 }
 
 type mediaDetailJSON struct {
-	Asset    mediaJSON     `json:"asset"`
-	Variants []variantJSON `json:"variants"`
-	Usage    int64         `json:"usage"`
+	Asset     mediaJSON        `json:"asset"`
+	Variants  []variantJSON    `json:"variants"`
+	Usage     int64            `json:"usage"`
+	UsageRefs []media.UsageRef `json:"usageRefs"`
 }
 
 func toMediaJSON(a *media.Asset) mediaJSON {
@@ -60,14 +62,27 @@ func toMediaJSON(a *media.Asset) mediaJSON {
 	}
 }
 
-// mediaLibrary renders the central Media Library page.
+// mediaLibrary renders the central Media Library page with search, filters, pagination.
 func (h *Handler) mediaLibrary(w http.ResponseWriter, r *http.Request) {
 	token, err := h.csrfToken(w, r)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	assets, err := h.media.List(r.Context(), 60, 0)
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
+	if filter == "" {
+		filter = "all"
+	}
+	pageStr := r.URL.Query().Get("page")
+	page := 1
+	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+		page = p
+	}
+	const perPage = 40
+	offset := (page - 1) * perPage
+
+	assets, total, err := h.media.ListFiltered(r.Context(), media.ListParams{Search: search, Filter: filter, Limit: perPage, Offset: offset})
 	if err != nil {
 		log.Printf("list media: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -77,7 +92,24 @@ func (h *Handler) mediaLibrary(w http.ResponseWriter, r *http.Request) {
 	for i := range assets {
 		cards = append(cards, toMediaJSON(&assets[i]))
 	}
-	data := mediaLibraryData{Cards: cards, CSRFToken: token}
+	totalPages := int((total + perPage - 1) / perPage)
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	data := mediaLibraryData{
+		Cards:      cards,
+		CSRFToken:  token,
+		Search:     search,
+		Filter:     filter,
+		Page:       page,
+		TotalPages: totalPages,
+		Total:      total,
+		HasPrev:    page > 1,
+		HasNext:    page < totalPages,
+	}
 	state := ResolveNav(r.URL.Path)
 	layout := LayoutData{Title: "Media", ActiveMenu: state.ActiveSection, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), Flash: h.consumeFlash(w, r), CSRFToken: token, Content: data}
 	if err := h.mediaTemplate.ExecuteTemplate(w, "layout.html", layout); err != nil {
@@ -86,13 +118,46 @@ func (h *Handler) mediaLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 type mediaLibraryData struct {
-	Cards     []mediaJSON
-	CSRFToken string
+	Cards      []mediaJSON
+	CSRFToken  string
+	Search     string
+	Filter     string
+	Page       int
+	TotalPages int
+	Total      int64
+	HasPrev    bool
+	HasNext    bool
 }
 
 // mediaListJSON returns the assets for the Media Picker without a full page load.
+// It shares the same query semantics as the library (search + pagination).
 func (h *Handler) mediaListJSON(w http.ResponseWriter, r *http.Request) {
-	assets, err := h.media.List(r.Context(), 100, 0)
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	if search == "" {
+		search = strings.TrimSpace(r.URL.Query().Get("q"))
+	}
+	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
+	// Picker does not expose "unused" filter; ignore if passed
+	if filter == "unused" {
+		filter = "all"
+	}
+	pageStr := r.URL.Query().Get("page")
+	page := 1
+	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+		page = p
+	}
+	const perPage = 40
+	offset := (page - 1) * perPage
+	limit := perPage
+	// Allow picker to request larger limit via query param? Keep 40.
+	if lStr := r.URL.Query().Get("limit"); lStr != "" {
+		if l, err := strconv.Atoi(lStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+			// recalc offset if needed
+			offset = (page - 1) * limit
+		}
+	}
+	assets, total, err := h.media.ListFiltered(r.Context(), media.ListParams{Search: search, Filter: filter, Limit: limit, Offset: offset})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err)
 		return
@@ -102,11 +167,11 @@ func (h *Handler) mediaListJSON(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, toMediaJSON(&assets[i]))
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"items": cards})
+	_ = json.NewEncoder(w).Encode(map[string]any{"items": cards, "total": total, "page": page, "perPage": limit})
 }
 
 // uploadMedia handles a multipart image upload and returns JSON for the picker or
-// library. It is CSRF-protected. Both the Media Library and picker share this
+// library. It supports multiple files. Both the Media Library and picker share this
 // single validation pipeline so errors are consistent.
 func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	if !h.validCSRF(r) {
@@ -118,41 +183,64 @@ func (h *Handler) uploadMedia(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errors.New("upload too large or malformed: ensure the file is under 10 MB"))
 		return
 	}
-	file, header, err := r.FormFile("file")
-	if err != nil {
+	mf := r.MultipartForm
+	if mf == nil || len(mf.File) == 0 {
 		writeJSONError(w, http.StatusBadRequest, errors.New("no file provided"))
 		return
 	}
-	defer file.Close()
-
 	user, _ := h.currentUser(r)
-	asset, err := h.media.Upload(r.Context(), header.Filename, user.ID, file)
-	if err != nil {
-		status := http.StatusBadRequest
-		// All known domain errors are user-actionable (400); only storage failures are 500.
-		if errors.Is(err, media.ErrTooLarge) ||
-			errors.Is(err, media.ErrUnsupportedFormat) ||
-			errors.Is(err, media.ErrMalformed) ||
-			errors.Is(err, media.ErrInvalidImage) ||
-			errors.Is(err, media.ErrDimensionsTooLarge) ||
-			errors.Is(err, media.ErrTooManyPixels) ||
-			errors.Is(err, media.ErrDerivativeFailed) {
-			status = http.StatusBadRequest
-		} else {
-			log.Printf("upload media: %v", err)
-			status = http.StatusInternalServerError
+	var successes []mediaJSON
+	var failures []map[string]string
+	for _, hs := range mf.File {
+		for _, header := range hs {
+			if header.Filename == "" {
+				continue
+			}
+			f, err := header.Open()
+			if err != nil {
+				failures = append(failures, map[string]string{"filename": header.Filename, "error": err.Error()})
+				continue
+			}
+			asset, err := h.media.Upload(r.Context(), header.Filename, user.ID, f)
+			f.Close()
+			if err != nil {
+				msg := err.Error()
+				if errors.Is(err, media.ErrTooLarge) || errors.Is(err, media.ErrUnsupportedFormat) || errors.Is(err, media.ErrMalformed) || errors.Is(err, media.ErrInvalidImage) || errors.Is(err, media.ErrDimensionsTooLarge) || errors.Is(err, media.ErrTooManyPixels) {
+					// keep msg as is
+				} else {
+					log.Printf("upload media %s: %v", header.Filename, err)
+				}
+				failures = append(failures, map[string]string{"filename": header.Filename, "error": msg})
+				continue
+			}
+			if h.runtime != nil {
+				h.runtime.InvalidateMedia(asset.ID)
+			}
+			successes = append(successes, toMediaJSON(asset))
 		}
-		writeJSONError(w, status, err)
+	}
+	if len(successes) == 0 && len(failures) == 0 {
+		writeJSONError(w, http.StatusBadRequest, errors.New("no file provided"))
 		return
 	}
-	if h.runtime != nil {
-		h.runtime.InvalidateMedia(asset.ID)
-	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "asset": toMediaJSON(asset)})
+	if len(failures) > 0 && len(successes) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "errors": failures})
+		return
+	}
+	if len(failures) > 0 {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "assets": successes, "uploaded": len(successes), "failed": len(failures), "errors": failures})
+		return
+	}
+	if len(successes) == 1 {
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "asset": successes[0], "assets": successes})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "assets": successes, "uploaded": len(successes)})
 }
 
-// mediaDetailJSON returns one asset with its variants and usage count.
+// mediaDetailJSON returns one asset with its variants and usage refs.
 func (h *Handler) mediaDetailJSON(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	asset, err := h.media.Get(r.Context(), id)
@@ -160,11 +248,9 @@ func (h *Handler) mediaDetailJSON(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, errors.New("media not found"))
 		return
 	}
-	usage, err := h.media.CountUsage(r.Context(), id)
-	if err != nil {
-		usage = 0
-	}
-	detail := mediaDetailJSON{Asset: toMediaJSON(asset)}
+	usageRefs, _ := h.media.UsageRefs(r.Context(), id)
+	usage := int64(len(usageRefs))
+	detail := mediaDetailJSON{Asset: toMediaJSON(asset), Usage: usage, UsageRefs: usageRefs}
 	for _, v := range asset.Variants {
 		detail.Variants = append(detail.Variants, variantJSON{
 			Kind:   v.Kind,
@@ -174,7 +260,6 @@ func (h *Handler) mediaDetailJSON(w http.ResponseWriter, r *http.Request) {
 			Size:   v.FileSize,
 		})
 	}
-	detail.Usage = usage
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(detail)
 }
@@ -208,6 +293,7 @@ func (h *Handler) updateMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.runtime != nil {
 		h.runtime.InvalidateMedia(id)
+		h.runtime.InvalidateContent()
 	}
 	if isDatastarRequest(r) {
 		writeSSE(w,
@@ -221,7 +307,7 @@ func (h *Handler) updateMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteMedia removes an asset. If it is still referenced by content the delete is
-// blocked unless force=1 is supplied.
+// blocked (no force delete in normal UI). It shows usage refs.
 func (h *Handler) deleteMedia(w http.ResponseWriter, r *http.Request) {
 	if !h.validCSRF(r) {
 		if isDatastarRequest(r) {
@@ -232,20 +318,44 @@ func (h *Handler) deleteMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	usage, _ := h.media.CountUsage(r.Context(), id)
-	if usage > 0 && r.FormValue("force") != "1" {
-		msg := "This media is used by " + strconv.FormatInt(usage, 10) + " piece(s) of content. Force delete to remove it everywhere."
-		if isDatastarRequest(r) {
-			writeSSE(w,
-				patchElementsEvent("inner", "#media-delete-warning", `<p class="form-warning" id="media-delete-warning" role="alert">`+template.HTMLEscapeString(msg)+`</p>`),
-				toastEvent("error", "Media is still in use"),
-			)
+	// Use domain-safe delete
+	if err := h.media.DeleteIfUnused(r.Context(), id); err != nil {
+		if errors.Is(err, media.ErrInUse) {
+			// Gather usage refs for detailed message
+			refs, _ := h.media.UsageRefs(r.Context(), id)
+			var msg string
+			if len(refs) > 0 {
+				msg = "This image is used in " + strconv.Itoa(len(refs)) + " places and cannot be deleted. Remove references first or use Replace."
+			} else {
+				msg = "This media is still in use and cannot be deleted."
+			}
+			if isDatastarRequest(r) {
+				// Build usage list HTML
+				var b strings.Builder
+				b.WriteString(`<div id="media-delete-warning" role="alert"><p class="form-warning">` + template.HTMLEscapeString(msg) + `</p>`)
+				if len(refs) > 0 {
+					b.WriteString(`<ul class="media-usage-list">`)
+					for _, ref := range refs {
+						b.WriteString(`<li><a href="` + template.HTMLEscapeString(ref.EditURL) + `">` + template.HTMLEscapeString(ref.SourceLabel) + `</a> — ` + template.HTMLEscapeString(ref.Context))
+						if ref.Public {
+							b.WriteString(` (published)`)
+						} else {
+							b.WriteString(` (draft)`)
+						}
+						b.WriteString(`</li>`)
+					}
+					b.WriteString(`</ul>`)
+				}
+				b.WriteString(`</div>`)
+				writeSSE(w,
+					patchElementsEvent("inner", "#media-delete-warning", b.String()),
+					toastEvent("error", "Media is still in use"),
+				)
+				return
+			}
+			writeJSONError(w, http.StatusConflict, errors.New(msg))
 			return
 		}
-		writeJSONError(w, http.StatusConflict, errors.New(msg))
-		return
-	}
-	if err := h.media.Delete(r.Context(), id); err != nil {
 		log.Printf("delete media: %v", err)
 		if isDatastarRequest(r) {
 			writeSSE(w, toastEvent("error", "Could not delete media"))
@@ -262,6 +372,111 @@ func (h *Handler) deleteMedia(w http.ResponseWriter, r *http.Request) {
 			patchElementsEvent("remove", "[data-media-card=\""+id+"\"]", ""),
 			toastEvent("success", "Media deleted"),
 		)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// replaceMedia handles safe replacement of an asset's bytes while preserving its ID.
+func (h *Handler) replaceMedia(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		if isDatastarRequest(r) {
+			writeSSE(w, toastEvent("error", "Invalid security token"))
+			return
+		}
+		writeJSONError(w, http.StatusForbidden, errors.New("invalid security token"))
+		return
+	}
+	id := r.PathValue("id")
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		if isDatastarRequest(r) {
+			writeSSE(w, toastEvent("error", "Upload too large or malformed"))
+			return
+		}
+		writeJSONError(w, http.StatusBadRequest, errors.New("upload too large or malformed"))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		// Try alternative field name
+		file, header, err = r.FormFile("image")
+		if err != nil {
+			if isDatastarRequest(r) {
+				writeSSE(w, toastEvent("error", "No file provided"))
+				return
+			}
+			writeJSONError(w, http.StatusBadRequest, errors.New("no file provided"))
+			return
+		}
+	}
+	defer file.Close()
+	asset, err := h.media.Replace(r.Context(), id, header.Filename, file)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, media.ErrTooLarge) || errors.Is(err, media.ErrUnsupportedFormat) || errors.Is(err, media.ErrMalformed) || errors.Is(err, media.ErrInvalidImage) || errors.Is(err, media.ErrDimensionsTooLarge) || errors.Is(err, media.ErrTooManyPixels) {
+			status = http.StatusBadRequest
+		} else {
+			log.Printf("replace media %s: %v", id, err)
+			status = http.StatusInternalServerError
+		}
+		msg := "Could not replace image. The existing image was not changed."
+		if err.Error() != "" {
+			if status == http.StatusBadRequest {
+				msg = err.Error()
+			} else {
+				msg = "Could not replace image. The existing image was not changed."
+			}
+		}
+		if isDatastarRequest(r) {
+			writeSSE(w, toastEvent("error", msg))
+			return
+		}
+		writeJSONError(w, status, errors.New(msg))
+		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateMedia(id)
+		h.runtime.InvalidateContent()
+	}
+	if isDatastarRequest(r) {
+		writeSSE(w,
+			toastEvent("success", "Image replaced."),
+			patchElementsEvent("outer", "#media-detail-preview", `<div id="media-detail-preview"><img src="/media/`+template.HTMLEscapeString(asset.ID)+`/original" alt=""></div>`),
+		)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "asset": toMediaJSON(asset)})
+}
+
+// regenerateMedia rebuilds responsive variants from the original.
+func (h *Handler) regenerateMedia(w http.ResponseWriter, r *http.Request) {
+	if !h.validCSRF(r) {
+		if isDatastarRequest(r) {
+			writeSSE(w, toastEvent("error", "Invalid security token"))
+			return
+		}
+		writeJSONError(w, http.StatusForbidden, errors.New("invalid security token"))
+		return
+	}
+	id := r.PathValue("id")
+	if err := h.media.RegenerateVariants(r.Context(), id); err != nil {
+		log.Printf("regenerate media %s: %v", id, err)
+		if isDatastarRequest(r) {
+			writeSSE(w, toastEvent("error", "Could not regenerate variants"))
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if h.runtime != nil {
+		h.runtime.InvalidateMedia(id)
+		h.runtime.InvalidateContent()
+	}
+	if isDatastarRequest(r) {
+		writeSSE(w, toastEvent("success", "Variants regenerated."))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

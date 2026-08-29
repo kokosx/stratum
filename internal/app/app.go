@@ -45,7 +45,7 @@ func New(ctx context.Context) (*App, error) {
 		database.Close()
 		return nil, fmt.Errorf("init media storage: %w", err)
 	}
-	mediaService := media.NewService(queries, mediaStore)
+	mediaService := media.NewServiceWithDB(database.DB, queries, mediaStore)
 
 	registry, err := blocks.NewRegistry(ctx, queries, mediaService)
 	if err != nil {

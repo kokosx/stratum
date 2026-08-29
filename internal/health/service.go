@@ -47,6 +47,20 @@ func New(database *sql.DB, queries *db.Queries) *Service {
 	return &Service{db: database, queries: queries}
 }
 
+// entryEditURL resolves the canonical admin edit path for an entry using its content type.
+func entryEditURL(contentTypeID, entryID string) string {
+	switch contentTypeID {
+	case "page":
+		return "/admin/pages/" + entryID + "/edit"
+	case "post":
+		return "/admin/posts/" + entryID + "/edit"
+	case "":
+		return "/admin/pages/" + entryID + "/edit"
+	default:
+		return "/admin/content/" + contentTypeID + "/" + entryID + "/edit"
+	}
+}
+
 // Run executes all health checks synchronously. It loads lookup maps once.
 func (s *Service) Run(ctx context.Context) ([]CheckResult, []IntegrityIssue, error) {
 	var results []CheckResult
@@ -56,8 +70,11 @@ func (s *Service) Run(ctx context.Context) ([]CheckResult, []IntegrityIssue, err
 	if err != nil {
 		return nil, nil, err
 	}
-	// Build lookup maps
-	routes, _ := s.queries.ListRoutes(ctx)
+	// Build lookup maps — any DB failure here must not masquerade as missing content.
+	routes, err := s.queries.ListRoutes(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load routes: %w", err)
+	}
 	routesByPath := make(map[string]db.Route, len(routes))
 	redirectTargets := make(map[string]string)
 	for _, r := range routes {
@@ -66,16 +83,32 @@ func (s *Service) Run(ctx context.Context) ([]CheckResult, []IntegrityIssue, err
 			redirectTargets[r.Path] = r.RedirectTo.String
 		}
 	}
+	_ = redirectTargets
 	// Redirect diagnostics via internal/redirects logic (inline to avoid import cycle)
 	redirectLoopIssues := detectLoops(routes)
 	redirectChainIssues := detectChains(routes)
 
-	// Load media, forms, templates, site parts lookup
-	mediaMap := s.loadMediaMap(ctx)
-	formMap := s.loadFormMap(ctx)
-	sitePartMap := s.loadSitePartMap(ctx)
-	templateMap := s.loadTemplateMap(ctx)
-	entryPublishedMap := s.loadPublishedEntryMap(ctx)
+	// Load media, forms, templates, site parts lookup — fail cleanly on DB error
+	mediaMap, err := s.loadMediaMap(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load media: %w", err)
+	}
+	formMap, err := s.loadFormMap(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load forms: %w", err)
+	}
+	sitePartMap, err := s.loadSitePartMap(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load site parts: %w", err)
+	}
+	templateMap, err := s.loadTemplateMap(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load templates: %w", err)
+	}
+	entryPublishedMap, err := s.loadPublishedEntryMap(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load entries: %w", err)
+	}
 
 	// 1: Site URL
 	if strings.TrimSpace(settings.SiteUrl) == "" {
@@ -128,7 +161,10 @@ func (s *Service) Run(ctx context.Context) ([]CheckResult, []IntegrityIssue, err
 		}
 	}
 	// 6: Default templates dangling
-	cts, _ := s.queries.ListContentTypes(ctx)
+	cts, err := s.queries.ListContentTypes(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load content types: %w", err)
+	}
 	for _, ct := range cts {
 		if ct.DefaultLayoutTemplateID.Valid && ct.DefaultLayoutTemplateID.String != "" {
 			if _, ok := templateMap[ct.DefaultLayoutTemplateID.String]; !ok {
@@ -159,7 +195,22 @@ func (s *Service) Run(ctx context.Context) ([]CheckResult, []IntegrityIssue, err
 		if !strings.HasPrefix(target, "/") {
 			continue // external is syntactically valid
 		}
-		if _, ok := routesByPath[target]; ok {
+		// For internal target with query, check the PATH only
+		targetPath := target
+		if idx := strings.Index(target, "?"); idx != -1 {
+			targetPath = target[:idx]
+		}
+		if idx := strings.Index(targetPath, "#"); idx != -1 {
+			targetPath = targetPath[:idx]
+		}
+		targetPath = strings.TrimSpace(targetPath)
+		if targetPath == "" {
+			targetPath = target
+		}
+		// Normalize path for lookup like routes are stored normalized
+		// Use simple NormalizePath via routing if available, otherwise direct compare
+		// We use targetPath as stored; routes are already normalized.
+		if _, ok := routesByPath[targetPath]; ok {
 			continue
 		}
 		// Also check if target is a redirect itself? Already counted as route, so internal redirect target exists via redirect route, which is valid (second hop)
@@ -195,84 +246,99 @@ func (s *Service) Run(ctx context.Context) ([]CheckResult, []IntegrityIssue, err
 	return ordered, issues, nil
 }
 
-func (s *Service) loadMediaMap(ctx context.Context) map[string]bool {
-	m := make(map[string]bool)
+func (s *Service) loadMediaMap(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM media`)
 	if err != nil {
-		return m
+		return nil, err
 	}
 	defer rows.Close()
+	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err == nil {
 			m[id] = true
 		}
 	}
-	return m
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
-func (s *Service) loadFormMap(ctx context.Context) map[string]bool {
-	m := make(map[string]bool)
+func (s *Service) loadFormMap(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM forms`)
 	if err != nil {
-		return m
+		return nil, err
 	}
 	defer rows.Close()
+	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err == nil {
 			m[id] = true
 		}
 	}
-	return m
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
-func (s *Service) loadSitePartMap(ctx context.Context) map[string]bool {
-	m := make(map[string]bool)
+func (s *Service) loadSitePartMap(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM site_parts`)
 	if err != nil {
-		return m
+		return nil, err
 	}
 	defer rows.Close()
+	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err == nil {
 			m[id] = true
 		}
 	}
-	return m
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
-func (s *Service) loadTemplateMap(ctx context.Context) map[string]bool {
-	m := make(map[string]bool)
+func (s *Service) loadTemplateMap(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM layout_templates`)
 	if err != nil {
-		return m
+		return nil, err
 	}
 	defer rows.Close()
+	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err == nil {
 			m[id] = true
 		}
 	}
-	return m
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
-func (s *Service) loadPublishedEntryMap(ctx context.Context) map[string]bool {
-	m := make(map[string]bool)
+func (s *Service) loadPublishedEntryMap(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM entries WHERE status='active' AND published_revision_id IS NOT NULL`)
 	if err != nil {
-		return m
+		return nil, err
 	}
 	defer rows.Close()
+	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err == nil {
 			m[id] = true
 		}
 	}
-	return m
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (s *Service) checkMenus(ctx context.Context, publishedEntryMap map[string]bool, routesByPath map[string]db.Route) []IntegrityIssue {
@@ -342,13 +408,13 @@ func (s *Service) scanSDT(ctx context.Context, mediaMap, formMap, sitePartMap, t
 			}
 			// Check featured/social/template refs
 			if featS != "" && !mediaMap[featS] {
-				issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: featS, Message: "Featured image references missing media.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+				issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: featS, Message: "Featured image references missing media.", EditURL: entryEditURL(ct.String, eid.String)})
 			}
 			if socialS != "" && !mediaMap[socialS] {
-				issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: socialS, Message: "Social image references missing media.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+				issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: socialS, Message: "Social image references missing media.", EditURL: entryEditURL(ct.String, eid.String)})
 			}
 			if tmplS != "" && !templateMap[tmplS] {
-				issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "template", Target: tmplS, Message: "Entry references missing template.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+				issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "template", Target: tmplS, Message: "Entry references missing template.", EditURL: entryEditURL(ct.String, eid.String)})
 			}
 			// SDT refs
 			if docJSON.Valid && docJSON.String != "" {
@@ -368,7 +434,7 @@ func (s *Service) scanSDT(ctx context.Context, mediaMap, formMap, sitePartMap, t
 						case "core/image":
 							if props != nil {
 								if mid, ok := props["mediaId"].(string); ok && mid != "" && !mediaMap[mid] {
-									issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: mid, Message: "Image block references missing media.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+									issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: mid, Message: "Image block references missing media.", EditURL: entryEditURL(ct.String, eid.String)})
 								}
 							}
 						case "core/gallery":
@@ -376,7 +442,7 @@ func (s *Service) scanSDT(ctx context.Context, mediaMap, formMap, sitePartMap, t
 								if ids, ok := props["mediaIds"].([]any); ok {
 									for _, v := range ids {
 										if mid, ok := v.(string); ok && mid != "" && !mediaMap[mid] {
-											issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: mid, Message: "Gallery references missing media.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+											issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "media", Target: mid, Message: "Gallery references missing media.", EditURL: entryEditURL(ct.String, eid.String)})
 										}
 									}
 								}
@@ -384,13 +450,13 @@ func (s *Service) scanSDT(ctx context.Context, mediaMap, formMap, sitePartMap, t
 						case "core/form":
 							if settings != nil {
 								if fid, ok := settings["formId"].(string); ok && fid != "" && !formMap[fid] {
-									issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "form", Target: fid, Message: "Form block references missing form.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+									issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "form", Target: fid, Message: "Form block references missing form.", EditURL: entryEditURL(ct.String, eid.String)})
 								}
 							}
 						case "core/site-part":
 							if settings != nil {
 								if sid, ok := settings["sitePartId"].(string); ok && sid != "" && !sitePartMap[sid] {
-									issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "sitePart", Target: sid, Message: "Site part block references missing site part.", EditURL: "/admin/pages/" + eid.String + "/edit"})
+									issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "sitePart", Target: sid, Message: "Site part block references missing site part.", EditURL: entryEditURL(ct.String, eid.String)})
 								}
 							}
 						case "core/button":
@@ -398,7 +464,7 @@ func (s *Service) scanSDT(ctx context.Context, mediaMap, formMap, sitePartMap, t
 								if href, ok := props["href"].(string); ok && strings.HasPrefix(href, "/") {
 									if _, ok := routesByPath[href]; !ok {
 										// Also allow redirect
-										issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "internal_link", Target: href, Message: "Button links to missing path " + href, EditURL: "/admin/pages/" + eid.String + "/edit"})
+										issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "internal_link", Target: href, Message: "Button links to missing path " + href, EditURL: entryEditURL(ct.String, eid.String)})
 									}
 								}
 							}
@@ -423,7 +489,7 @@ func (s *Service) scanSDT(ctx context.Context, mediaMap, formMap, sitePartMap, t
 										for _, mk := range run.Marks {
 											if mk.Type == "link" && strings.HasPrefix(mk.Href, "/") {
 												if _, ok := routesByPath[mk.Href]; !ok {
-													issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "internal_link", Target: mk.Href, Message: "Text link to missing path " + mk.Href, EditURL: "/admin/pages/" + eid.String + "/edit"})
+													issues = append(issues, IntegrityIssue{SourceType: "entry", SourceID: eid.String, SourceLabel: title.String, ReferenceType: "internal_link", Target: mk.Href, Message: "Text link to missing path " + mk.Href, EditURL: entryEditURL(ct.String, eid.String)})
 												}
 											}
 										}

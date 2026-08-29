@@ -2016,25 +2016,16 @@
             obs.disconnect();
           }
         });
-        if (statusRegion) obs.observe(statusRegion, { childList: true, subtree: true });
+        if (statusRegion) obs.observe(statusRegion, { childList: true, subtree: true, characterData:true });
         if (errorEl) obs.observe(errorEl, { attributes: true, childList: true, characterData: true, subtree: true });
-        // Fallback: re-enable on next fetch settle via fetch wrapper
-        const origFetch = window.fetch;
-        let done = false;
-        const check = () => {
-          if (done) return;
-          done = true;
+        // Also re-enable on Datastar patch completion via explicit event, without global fetch monkeypatch
+        const onDatastar = () => {
           clearTimeout(timeout);
-          setTimeout(() => { if (btn.dataset.busy==="1") { btn.disabled=false; btn.textContent=orig; btn.dataset.busy=""; } obs.disconnect(); }, 500);
+          setTimeout(() => { if (btn.dataset.busy==="1") { btn.disabled=false; btn.textContent=orig; btn.dataset.busy=""; } obs.disconnect(); document.removeEventListener('datastar-patch', onDatastar); }, 400);
         };
-        // Use a one-time fetch wrapper check
-        window.fetch = function(...args) {
-          const p = origFetch.apply(this, args);
-          p.then(check, check);
-          // restore after first datastar save request
-          setTimeout(() => { window.fetch = origFetch; }, 5000);
-          return p;
-        };
+        document.addEventListener('datastar-patch', onDatastar, {once:true});
+        // Ensure observer disconnects on timeout as well
+        setTimeout(() => { document.removeEventListener('datastar-patch', onDatastar); }, 8000);
       });
     });
     // Prevent Enter in metadata from triggering Publish (publishing remains explicit)

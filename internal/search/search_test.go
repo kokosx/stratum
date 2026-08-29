@@ -46,9 +46,9 @@ func createContentTypeForTest(t *testing.T, queries *db.Queries, id string, fiel
 		Config: content.ContentTypeConfig{
 			Fields: fields,
 			Features: content.ContentTypeFeatures{
-				Content:  true,
-				SEO:      true,
-				Excerpt:  true,
+				Content:       true,
+				SEO:           true,
+				Excerpt:       true,
 				FeaturedMedia: true,
 			},
 			Routing: content.ContentTypeRouting{

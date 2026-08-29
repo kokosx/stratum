@@ -1,12 +1,32 @@
 {{ define "content" }}
 <section class="media-shell">
   <header class="admin-page-header">
-    <div><h1>Media Library</h1></div>
-    <div class="admin-page-actions"><button type="button" class="button button-primary" id="media-upload">Upload</button></div>
+    <div>
+      <h1>Media Library</h1>
+      {{ if .Content.Total }}<p class="description">{{ .Content.Total }} images</p>{{ end }}
+    </div>
+    <div class="admin-page-actions">
+      <input type="file" id="media-upload-input" accept="image/*" multiple hidden>
+      <button type="button" class="button button-primary" id="media-upload">Upload</button>
+    </div>
   </header>
   <div class="notice notice-info">
     <strong>Accepted:</strong> JPEG, PNG, GIF, WebP. <strong>Max:</strong> 10 MB, 20,000 px per side, 100 MP total.
   </div>
+
+  <form method="get" action="/admin/media" class="search-box" role="search" style="margin:12px 0;">
+    {{ if ne .Content.Filter "all" }}<input type="hidden" name="filter" value="{{ .Content.Filter }}">{{ end }}
+    <label for="media-search" class="screen-reader-text">Search media</label>
+    <input type="search" id="media-search" name="search" value="{{ .Content.Search }}" placeholder="Search filename, title, alt, caption">
+    <button type="submit" class="button">Search</button>
+    {{ if .Content.Search }}<a href="/admin/media?filter={{ .Content.Filter }}" class="button" style="margin-left:8px;">Clear</a>{{ end }}
+  </form>
+
+  <ul class="subsubsub" aria-label="Media filters">
+    <li><a href="/admin/media?search={{ .Content.Search }}" {{ if eq .Content.Filter "all" }}class="current" aria-current="page"{{ end }}>All</a> |</li>
+    <li><a href="/admin/media?filter=missing_alt{{ if .Content.Search }}&search={{ .Content.Search }}{{ end }}" {{ if eq .Content.Filter "missing_alt" }}class="current" aria-current="page"{{ end }}>Missing alt</a> |</li>
+    <li><a href="/admin/media?filter=unused{{ if .Content.Search }}&search={{ .Content.Search }}{{ end }}" {{ if eq .Content.Filter "unused" }}class="current" aria-current="page"{{ end }}>Unused</a></li>
+  </ul>
 
   <div class="media-layout">
     <div class="media-grid" id="media-grid">
@@ -16,10 +36,10 @@
           <img src="{{ .URL }}" alt="" loading="lazy" onerror="this.onerror=null;this.src='{{ .Original }}'">
         </span>
         <span class="media-card__name" title="{{ .Filename }}">{{ .Filename }}</span>
-        {{ if .Alt }}<span class="media-card__alt" title="Alt: {{ .Alt }}">Alt set</span>{{ end }}
+        <span class="media-card__meta">{{ .Width }} × {{ .Height }}</span>
       </button>
       {{ else }}
-      <p class="editor-empty">No media yet. Upload your first image.</p>
+      <p class="editor-empty">No media found. {{ if .Content.Search }}Try a different search.{{ else }}Upload your first image.{{ end }}</p>
       {{ end }}
     </div>
 
@@ -27,6 +47,19 @@
       <p class="editor-empty">Select an asset to view details.</p>
     </aside>
   </div>
+
+  {{ if gt .Content.TotalPages 1 }}
+  <div class="tablenav">
+    <div class="tablenav-pages">
+      <span class="displaying-num">{{ .Content.Total }} items</span>
+      <span class="pagination-links">
+        {{ if .Content.HasPrev }}<a class="button" href="/admin/media?search={{ .Content.Search }}&filter={{ .Content.Filter }}&page={{ subtract .Content.Page 1 }}">‹ Prev</a>{{ end }}
+        <span class="paging-input">Page {{ .Content.Page }} of {{ .Content.TotalPages }}</span>
+        {{ if .Content.HasNext }}<a class="button" href="/admin/media?search={{ .Content.Search }}&filter={{ .Content.Filter }}&page={{ add .Content.Page 1 }}">Next ›</a>{{ end }}
+      </span>
+    </div>
+  </div>
+  {{ end }}
 </section>
 <script src="/admin/static/admin/media-picker.js" defer></script>
 <script src="/admin/static/admin/media.js" defer></script>

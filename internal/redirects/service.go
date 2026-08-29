@@ -44,8 +44,16 @@ func NormalizeSource(raw string) (string, error) {
 	if strings.Contains(raw, "\\") {
 		return "", ErrInvalidSource
 	}
+	if strings.Contains(raw, "?") || strings.Contains(raw, "#") {
+		return "", ErrInvalidSource
+	}
 	if strings.Contains(raw, "\n") || strings.Contains(raw, "\r") || strings.Contains(raw, "\x00") {
 		return "", ErrInvalidSource
+	}
+	for _, ch := range raw {
+		if ch < 0x20 || ch == 0x7f {
+			return "", ErrInvalidSource
+		}
 	}
 	// Must be local absolute path
 	if !strings.HasPrefix(raw, "/") {
@@ -54,18 +62,17 @@ func NormalizeSource(raw string) (string, error) {
 	if strings.HasPrefix(raw, "//") {
 		return "", ErrInvalidSource
 	}
+	if strings.HasPrefix(raw, "/\\") {
+		return "", ErrInvalidSource
+	}
 	if strings.HasPrefix(strings.ToLower(raw), "javascript:") || strings.HasPrefix(strings.ToLower(raw), "data:") || strings.HasPrefix(strings.ToLower(raw), "vbscript:") {
 		return "", ErrInvalidSource
 	}
 	// Use routing policy normalization (trailing slash)
 	norm := routing.NormalizePath(raw)
-	// Additional checks after normalization
-	if norm != raw && raw != "/" {
-		// Allow normalization; caller will store normalized
-	}
-	// Reject control chars
+	// Reject control chars after normalization (defense in depth)
 	for _, ch := range norm {
-		if ch < 0x20 {
+		if ch < 0x20 || ch == 0x7f {
 			return "", ErrInvalidSource
 		}
 	}
@@ -95,6 +102,11 @@ func NormalizeTarget(raw string) (string, error) {
 	if strings.Contains(raw, "\n") || strings.Contains(raw, "\r") || strings.Contains(raw, "\x00") {
 		return "", ErrInvalidTarget
 	}
+	for _, ch := range raw {
+		if ch < 0x20 || ch == 0x7f {
+			return "", ErrInvalidTarget
+		}
+	}
 	lower := strings.ToLower(raw)
 	if strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "vbscript:") {
 		return "", ErrInvalidTarget
@@ -102,12 +114,58 @@ func NormalizeTarget(raw string) (string, error) {
 	if strings.HasPrefix(raw, "//") {
 		return "", ErrInvalidTarget
 	}
+	if strings.HasPrefix(raw, "/\\") {
+		return "", ErrInvalidTarget
+	}
+	if strings.Contains(raw, "\\") {
+		return "", ErrInvalidTarget
+	}
 	if strings.HasPrefix(raw, "/") {
-		// internal path
+		// internal path — may contain query string, but not fragment or backslash
 		if strings.HasPrefix(raw, "//") {
 			return "", ErrInvalidTarget
 		}
-		norm := routing.NormalizePath(raw)
+		if strings.Contains(raw, "\\") {
+			return "", ErrInvalidTarget
+		}
+		if strings.Contains(raw, "#") {
+			return "", ErrInvalidTarget
+		}
+		// Split path and query so NormalizePath only touches the path
+		pathPart := raw
+		queryPart := ""
+		if idx := strings.Index(raw, "?"); idx != -1 {
+			pathPart = raw[:idx]
+			queryPart = raw[idx+1:]
+			// query must not contain control chars or backslash (already checked) and not contain "#"
+			if strings.Contains(queryPart, "#") {
+				return "", ErrInvalidTarget
+			}
+		}
+		if pathPart == "" {
+			return "", ErrInvalidTarget
+		}
+		// Validate and normalize the path component only
+		for _, ch := range pathPart {
+			if ch < 0x20 || ch == 0x7f {
+				return "", ErrInvalidTarget
+			}
+		}
+		norm := routing.NormalizePath(pathPart)
+		// Re-check normalized path for control etc.
+		for _, ch := range norm {
+			if ch < 0x20 || ch == 0x7f {
+				return "", ErrInvalidTarget
+			}
+		}
+		// Reserved is allowed for target? We keep it permissive — target may point anywhere internal that's not a source reserved conflict? For now allow.
+		if queryPart != "" {
+			// Validate query string parses as URL query (basic)
+			if _, err := url.ParseQuery(queryPart); err != nil {
+				return "", ErrInvalidTarget
+			}
+			return norm + "?" + queryPart, nil
+		}
 		return norm, nil
 	}
 	// external URL
@@ -119,6 +177,9 @@ func NormalizeTarget(raw string) (string, error) {
 		return "", ErrInvalidTarget
 	}
 	if u.Host == "" {
+		return "", ErrInvalidTarget
+	}
+	if strings.Contains(u.Host, "\\") {
 		return "", ErrInvalidTarget
 	}
 	// Reject CRLF in URL

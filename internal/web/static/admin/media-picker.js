@@ -4,6 +4,11 @@
 (function () {
   let modal = null;
   let active = null;
+  let currentSearch = "";
+  let currentPage = 1;
+  let hasMore = false;
+  let loading = false;
+  let debounceTimer = null;
 
   function getCSRFToken() {
     const meta = document.querySelector('meta[name="csrf-token"]');
@@ -40,7 +45,11 @@
     active = opts || {};
     if (!modal) buildModal(ensureRoot());
     modal.hidden = false;
-    loadLibrary();
+    currentSearch = "";
+    currentPage = 1;
+    const searchInput = modal.querySelector(".media-picker__search");
+    if (searchInput) searchInput.value = "";
+    loadLibrary("", 1, false);
     document.addEventListener("keydown", onKey);
   }
 
@@ -66,8 +75,9 @@
         </header>
         <div class="media-picker__body">
           <div class="media-picker__panel" data-panel="library">
-            <input type="search" class="media-picker__search" placeholder="Search…">
+            <input type="search" class="media-picker__search" placeholder="Search filename, title, alt, caption…">
             <div class="media-picker__grid" id="picker-grid"></div>
+            <div class="media-picker__pagination"><button type="button" class="button" id="picker-load-more" hidden>Load more</button></div>
           </div>
           <div class="media-picker__panel" data-panel="upload" hidden>
             <div class="media-dropzone" id="picker-dropzone">
@@ -91,7 +101,22 @@
       e.preventDefault(); dz.classList.remove("is-drag");
       if (e.dataTransfer.files[0]) uploadFile(e.dataTransfer.files[0]);
     });
-    modal.querySelector(".media-picker__search").addEventListener("input", (e) => loadLibrary(e.target.value));
+    const searchEl = modal.querySelector(".media-picker__search");
+    searchEl.addEventListener("input", (e) => {
+      const val = e.target.value;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        currentSearch = val;
+        currentPage = 1;
+        loadLibrary(val, 1, false);
+      }, 300);
+    });
+    const loadMore = modal.querySelector("#picker-load-more");
+    loadMore.addEventListener("click", () => {
+      if (hasMore && !loading) {
+        loadLibrary(currentSearch, currentPage + 1, true);
+      }
+    });
   }
 
   function switchTab(tab) {
@@ -99,32 +124,64 @@
     modal.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== tab));
   }
 
-  async function loadLibrary(query) {
+  async function loadLibrary(query, page, append) {
     const grid = modal.querySelector("#picker-grid");
-    grid.innerHTML = '<p class="editor-empty">Loading…</p>';
+    const loadMore = modal.querySelector("#picker-load-more");
+    if (loading) return;
+    loading = true;
+    if (!append) {
+      grid.innerHTML = '<p class="editor-empty">Loading…</p>';
+      loadMore.hidden = true;
+    } else {
+      loadMore.textContent = "Loading…";
+      loadMore.disabled = true;
+    }
     try {
-      const data = await api("/admin/media.json");
-      const items = (data.items || []).filter((it) => !query || it.filename.toLowerCase().includes(query.toLowerCase()));
-      if (!items.length) { grid.innerHTML = '<p class="editor-empty">No media found.</p>'; return; }
-      grid.innerHTML = "";
+      const params = new URLSearchParams();
+      if (query) params.set("search", query);
+      params.set("page", String(page));
+      params.set("limit", "40");
+      const data = await api("/admin/media.json?" + params.toString());
+      const items = data.items || [];
+      const total = data.total || items.length;
+      const perPage = data.perPage || 40;
+      hasMore = (page * perPage) < total;
+      currentPage = page;
+      if (!append) grid.innerHTML = "";
+      if (!items.length && !append) { grid.innerHTML = '<p class="editor-empty">No media found.</p>'; loadMore.hidden = true; return; }
       items.forEach((it) => {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "media-card";
+        const altHint = it.alt ? `<small class="media-card__alt-hint">${escapeHtml(it.alt.slice(0,60))}</small>` : `<small class="muted">Alt text not set</small>`;
         btn.innerHTML =
-          `<span class="media-thumb"><img src="${it.url}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${it.original}'"></span>` +
-          `<span class="media-card__name">${escapeHtml(it.filename)}</span>`;
+          `<span class="media-thumb"><img src="${escapeHtml(it.url)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${escapeHtml(it.original)}'"></span>` +
+          `<span class="media-card__name">${escapeHtml(it.filename)}</span>` +
+          altHint;
         btn.addEventListener("click", () => selectAsset(it));
         grid.appendChild(btn);
       });
+      loadMore.hidden = !hasMore;
+      loadMore.textContent = "Load more";
+      loadMore.disabled = false;
     } catch (err) {
-      grid.innerHTML = `<p class="form-error">${escapeHtml(err.message)}</p>`;
+      if (!append) grid.innerHTML = `<p class="form-error">${escapeHtml(err.message)}</p>`;
+      else {
+        const errP = document.createElement("p");
+        errP.className = "form-error";
+        errP.textContent = err.message;
+        grid.appendChild(errP);
+      }
+    } finally {
+      loading = false;
     }
   }
 
   function selectAsset(asset) {
     if (active && active.onSelect) active.onSelect(asset);
-    close();
+    // For gallery incremental add, keep picker open? Specification says preserve order; we close per selection for simplicity.
+    // If active expects multi-select without closing, it could set active.keepOpen.
+    if (!active || !active.keepOpen) close();
   }
 
   async function uploadFile(file) {
@@ -133,9 +190,11 @@
     try {
       const data = await api("/admin/media/upload", { method: "POST", body: fd });
       if (!data.ok) throw new Error("Upload failed");
-      if (active && active.onUploaded) active.onUploaded(data.asset);
+      const asset = data.asset || (data.assets && data.assets[0]);
+      if (!asset) throw new Error("Upload failed");
+      if (active && active.onUploaded) active.onUploaded(asset);
       if (active && active.mode === "upload") { close(); return; }
-      selectAsset(data.asset);
+      selectAsset(asset);
     } catch (err) {
       window.stratumToast("error", err.message);
     }

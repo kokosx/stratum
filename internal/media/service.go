@@ -39,6 +39,7 @@ type faviconViewCache struct {
 // Service is the media domain entry point. It validates uploads, stores blobs in
 // the Storage backend, persists metadata, and resolves assets for rendering.
 type Service struct {
+	db      *sql.DB
 	queries *db.Queries
 	store   Storage
 	views   *mediaViewCache
@@ -49,6 +50,14 @@ type Service struct {
 func NewService(queries *db.Queries, store Storage) *Service {
 	return &Service{queries: queries, store: store, views: &mediaViewCache{views: make(map[string]rendering.MediaView)}, favicon: &faviconViewCache{views: make(map[string]rendering.FaviconView)}, serve: newServeCache()}
 }
+
+// NewServiceWithDB is the full constructor that wires the DB for transactional replace/regenerate.
+func NewServiceWithDB(database *sql.DB, queries *db.Queries, store Storage) *Service {
+	return &Service{db: database, queries: queries, store: store, views: &mediaViewCache{views: make(map[string]rendering.MediaView)}, favicon: &faviconViewCache{views: make(map[string]rendering.FaviconView)}, serve: newServeCache()}
+}
+
+// SetDB wires the DB after construction (for callers that already created via NewService).
+func (s *Service) SetDB(database *sql.DB) { s.db = database }
 
 // InvalidateView drops the cached rendering view for one asset. Called after
 // metadata updates, variant regeneration, favicon rebuilds, or deletes.

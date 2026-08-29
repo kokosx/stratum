@@ -41,7 +41,7 @@
         btn.disabled = false;
         btn.dataset.busy = '';
       };
-      // Listen for Datastar toast or flash to know completion
+      // Listen for Datastar toast or flash to know completion — explicit DOM observation, no global fetch patch
       const region = document.getElementById('admin-toast-region');
       let obs;
       if(region){
@@ -50,19 +50,13 @@
           reenable();
           setTimeout(function(){ if(obs) obs.disconnect(); }, 500);
         });
-        obs.observe(region, {childList:true});
+        obs.observe(region, {childList:true, subtree:true});
       }
+      // Also re-enable on Datastar SSE completion via document event if available
+      const datastarDone = function(){ setTimeout(reenable, 400); };
+      document.addEventListener('datastar-patch', datastarDone, {once:true});
       // Fallback timeout 8s
-      setTimeout(reenable, 8000);
-      // Also re-enable on fetch error completion via fetch wrapper once
-      const origFetch = window.fetch;
-      let fetched = false;
-      window.fetch = function(...args){
-        const p = origFetch.apply(this, args);
-        p.then(function(){ if(!fetched){ fetched=true; setTimeout(reenable, 400); } }, function(){ if(!fetched){ fetched=true; setTimeout(reenable, 400);} });
-        setTimeout(function(){ window.fetch = origFetch; }, 6000);
-        return p;
-      };
+      setTimeout(function(){ reenable(); if(obs) obs.disconnect(); document.removeEventListener('datastar-patch', datastarDone); }, 8000);
     }, 0);
   }, true);
 
@@ -104,13 +98,36 @@
     };
   }
 
-  // Form editor: add Ctrl+S and dirty guard
+  // Form editor: add Ctrl+S and dirty guard with explicit baseline update after save
   const formEditor = document.getElementById('form-editor');
   if(formEditor){
     const saveBtn = document.querySelector('button[form="form-editor"]') || formEditor.querySelector('button[type="submit"]');
-    const initial = JSON.stringify(Array.from(new FormData(formEditor).entries()));
+    const snapshot = function(){ return JSON.stringify(Array.from(new FormData(formEditor).entries())); };
+    let baselineSnapshot = snapshot();
     function isFormDirty(){
-      return JSON.stringify(Array.from(new FormData(formEditor).entries())) !== initial;
+      return snapshot() !== baselineSnapshot;
+    }
+    function markClean(){
+      baselineSnapshot = snapshot();
+    }
+    // Expose explicit API for editors/datastar success handlers to mark clean without reload
+    window.stratumFormEditorMarkClean = markClean;
+    // Also update baseline when a success toast appears (Datastar fragment saves)
+    const toastRegion = document.getElementById('admin-toast-region');
+    if(toastRegion){
+      const toastObs = new MutationObserver(function(mutations){
+        for(const m of mutations){
+          for(const node of m.addedNodes){
+            if(node.nodeType===1 && (node.textContent.toLowerCase().includes('saved') || node.textContent.toLowerCase().includes('success'))){
+              // Only mark clean if server indicated success and form is still present
+              setTimeout(markClean, 50);
+            }
+          }
+        }
+      });
+      toastObs.observe(toastRegion, {childList:true, subtree:true});
+      // Also listen for explicit datastar success events if present
+      document.addEventListener('stratum:form-saved', markClean);
     }
     window.addEventListener('beforeunload', function(e){ if(isFormDirty()){ e.preventDefault(); e.returnValue=''; } });
     document.addEventListener('keydown', function(e){
@@ -119,6 +136,9 @@
         if(saveBtn) saveBtn.click();
       }
     });
+    // When form is submitted via standard POST and succeeds, the page will reload — baseline resets naturally.
+    // For JS-driven saves (Datastar), listen to submit and update baseline on success via the observer above.
+    formEditor.addEventListener('stratum:save-success', markClean);
     // Focus first field after Add field
     // hook into existing addField already focuses label, but ensure
   }
