@@ -40,7 +40,7 @@ func createStarterMedia(ctx context.Context, service *media.Service, authorID st
 		return result, err
 	}
 	if withImages {
-		for i := 0; i < 3; i++ {
+		for i := 0; i < 6; i++ {
 			id, err := upload("starter-showcase-"+string(rune('1'+i))+".png", "Starter showcase image", "Abstract geometric placeholder image", geometricPNG(1200, 800, palette, i+1))
 			if err != nil {
 				return result, err
@@ -60,11 +60,28 @@ func cleanupStarterMedia(ctx context.Context, service *media.Service, created st
 func geometricPNG(width, height int, palette [3]color.RGBA, variant int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(img, img.Bounds(), &image.Uniform{C: palette[0]}, image.Point{}, draw.Src)
-	margin := width / 6
-	offset := variant * width / 30
-	draw.Draw(img, image.Rect(margin+offset, height/5, width-margin, height*4/5-offset), &image.Uniform{C: palette[1]}, image.Point{}, draw.Src)
-	size := width / 4
-	draw.Draw(img, image.Rect(width/2-size/2-offset, height/2-size/2+offset, width/2+size/2-offset, height/2+size/2+offset), &image.Uniform{C: palette[2]}, image.Point{}, draw.Src)
+	// Coherent but varied compositions: shift rectangle and accent square per variant.
+	// Variant is 1..6; produce deterministic subtle variation so 6 images don't look identical.
+	switch variant % 3 {
+	case 1:
+		margin := width / 6
+		offset := variant * width / 36
+		draw.Draw(img, image.Rect(margin+offset, height/6, width-margin-offset/2, height*5/6-offset), &image.Uniform{C: palette[1]}, image.Point{}, draw.Src)
+		size := width / 5
+		draw.Draw(img, image.Rect(width/2-size/2-offset/2, height/2-size/2+offset, width/2+size/2-offset/2, height/2+size/2+offset), &image.Uniform{C: palette[2]}, image.Point{}, draw.Src)
+	case 2:
+		margin := width / 8
+		offset := variant * width / 40
+		draw.Draw(img, image.Rect(margin, height/4-offset, width-margin*2, height*3/4+offset/2), &image.Uniform{C: palette[1]}, image.Point{}, draw.Src)
+		size := width / 6
+		draw.Draw(img, image.Rect(width*3/4-size/2-offset, height/2-size/2, width*3/4+size/2-offset, height/2+size/2), &image.Uniform{C: palette[2]}, image.Point{}, draw.Src)
+	default:
+		margin := width / 5
+		offset := variant * width / 32
+		draw.Draw(img, image.Rect(width/2-(width-margin)/2+offset/2, height/5, width/2+(width-margin)/2+offset/2, height*4/5), &image.Uniform{C: palette[1]}, image.Point{}, draw.Src)
+		size := width / 4
+		draw.Draw(img, image.Rect(width/3-size/2, height/2-size/2-offset, width/3+size/2, height/2+size/2-offset), &image.Uniform{C: palette[2]}, image.Point{}, draw.Src)
+	}
 	var buffer bytes.Buffer
 	_ = png.Encode(&buffer, img)
 	return buffer.Bytes()

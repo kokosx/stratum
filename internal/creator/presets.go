@@ -125,7 +125,7 @@ var footerOptions = []FooterOption{
 	{ID: FooterCentered, Name: "Centered", Description: "Centered stack with navigation."},
 }
 
-func Palettes() []Palette { return append([]Palette(nil), palettes...) }
+func Palettes() []Palette           { return append([]Palette(nil), palettes...) }
 func HeaderOptions() []HeaderOption { return append([]HeaderOption(nil), headerOptions...) }
 func FooterOptions() []FooterOption { return append([]FooterOption(nil), footerOptions...) }
 
@@ -133,7 +133,7 @@ var paletteSet = map[PaletteID]bool{PaletteInk: true, PaletteClay: true, Palette
 var headerSet = map[HeaderStyleID]bool{HeaderMinimal: true, HeaderClassic: true, HeaderCentered: true}
 var footerSet = map[FooterStyleID]bool{FooterSimple: true, FooterSplit: true, FooterCentered: true}
 
-func IsValidPalette(id PaletteID) bool { return paletteSet[id] }
+func IsValidPalette(id PaletteID) bool    { return paletteSet[id] }
 func IsValidHeader(id HeaderStyleID) bool { return headerSet[id] }
 func IsValidFooter(id FooterStyleID) bool { return footerSet[id] }
 
@@ -218,7 +218,7 @@ type formSpec struct {
 // by paletteStyles / headerStyles / footerStyles.
 func structuralStarterStyles(preset PresetID) map[string]any {
 	base := map[string]any{
-		"typography.fontBody": "systemSans", "typography.fontHeading": "systemSans", "typography.bodySize": 17, "typography.headingWeight": 700, "typography.h1Size": 56,
+		"typography.fontBody": "systemSans", "typography.fontHeading": "systemSans", "typography.bodySize": 17, "typography.bodyLineHeight": 1.65, "typography.headingWeight": 700, "typography.h1Size": 56, "typography.h2Size": 36, "typography.h3Size": 26,
 		"layout.contentWidth": 1040, "layout.wideWidth": 1440, "layout.pagePadding": 24,
 		"buttons.primaryStyle": "solid", "buttons.secondaryStyle": "outline", "buttons.radius": "sm",
 		"radius.sm": 3, "radius.md": 6, "radius.lg": 10, "shadow.sm": "none", "shadow.md": "none", "shadow.lg": "none",
@@ -228,8 +228,11 @@ func structuralStarterStyles(preset PresetID) map[string]any {
 		base["typography.fontBody"] = "systemSans"
 		base["typography.fontHeading"] = "editorialSerif"
 		base["typography.bodySize"] = 17
+		base["typography.bodyLineHeight"] = 1.65
 		base["typography.headingWeight"] = 600
 		base["typography.h1Size"] = 56
+		base["typography.h2Size"] = 32
+		base["typography.h3Size"] = 24
 		base["layout.contentWidth"] = 760
 		base["layout.wideWidth"] = 1280
 		base["layout.pagePadding"] = 24
@@ -239,10 +242,13 @@ func structuralStarterStyles(preset PresetID) map[string]any {
 		base["typography.fontBody"] = "modernSans"
 		base["typography.fontHeading"] = "modernSans"
 		base["typography.bodySize"] = 17
+		base["typography.bodyLineHeight"] = 1.6
 		base["typography.headingWeight"] = 600
-		base["typography.h1Size"] = 72
+		base["typography.h1Size"] = 74
+		base["typography.h2Size"] = 32
+		base["typography.h3Size"] = 24
 		base["layout.contentWidth"] = 1120
-		base["layout.wideWidth"] = 1560
+		base["layout.wideWidth"] = 1440
 		base["layout.pagePadding"] = 32
 		base["radius.sm"] = 0
 		base["radius.md"] = 0
@@ -252,8 +258,11 @@ func structuralStarterStyles(preset PresetID) map[string]any {
 		base["typography.fontBody"] = "humanistSans"
 		base["typography.fontHeading"] = "humanistSans"
 		base["typography.bodySize"] = 18
+		base["typography.bodyLineHeight"] = 1.6
 		base["typography.headingWeight"] = 750
 		base["typography.h1Size"] = 66
+		base["typography.h2Size"] = 36
+		base["typography.h3Size"] = 26
 		base["layout.contentWidth"] = 940
 		base["layout.wideWidth"] = 1280
 		base["layout.pagePadding"] = 24
@@ -263,10 +272,13 @@ func structuralStarterStyles(preset PresetID) map[string]any {
 		base["typography.fontBody"] = "humanistSans"
 		base["typography.fontHeading"] = "humanistSans"
 		base["typography.bodySize"] = 17
+		base["typography.bodyLineHeight"] = 1.65
 		base["typography.headingWeight"] = 650
 		base["typography.h1Size"] = 62
+		base["typography.h2Size"] = 32
+		base["typography.h3Size"] = 22
 		base["layout.contentWidth"] = 1120
-		base["layout.wideWidth"] = 1500
+		base["layout.wideWidth"] = 1440
 		base["layout.pagePadding"] = 28
 		base["radius.md"] = 6
 		base["radius.lg"] = 8
@@ -275,8 +287,11 @@ func structuralStarterStyles(preset PresetID) map[string]any {
 		base["typography.fontBody"] = "humanistSans"
 		base["typography.fontHeading"] = "humanistSans"
 		base["typography.bodySize"] = 17
+		base["typography.bodyLineHeight"] = 1.65
 		base["typography.headingWeight"] = 700
 		base["typography.h1Size"] = 58
+		base["typography.h2Size"] = 30
+		base["typography.h3Size"] = 22
 		base["layout.contentWidth"] = 980
 		base["layout.wideWidth"] = 1320
 		base["layout.pagePadding"] = 24
@@ -291,16 +306,16 @@ func paletteStyles(id PaletteID) map[string]any {
 	var headerBG, footerBG, footerText string
 	switch id {
 	case PaletteInk:
-		palette = map[string]string{"background": "#f7f7f5", "surface": "#ffffff", "surfaceMuted": "#ececea", "text": "#242424", "textMuted": "#686868", "heading": "#0c0c0c", "primary": "#111111", "primaryHover": "#383838", "primaryContrast": "#ffffff", "secondary": "#6b6b6b", "secondaryHover": "#444444", "secondaryContrast": "#ffffff", "border": "#cececa", "focus": "#777777"}
+		palette = map[string]string{"background": "#f7f7f5", "surface": "#ffffff", "surfaceMuted": "#ececea", "text": "#242424", "textMuted": "#686868", "heading": "#0c0c0c", "primary": "#111111", "primaryHover": "#383838", "primaryContrast": "#ffffff", "secondary": "#6b6b6b", "secondaryHover": "#444444", "secondaryContrast": "#ffffff", "border": "#cececa", "focus": "#6b6b6b"}
 		headerBG, footerBG, footerText = "#f7f7f5", "#111111", "#f2f2f0"
 	case PaletteClay:
-		palette = map[string]string{"background": "#fbf8f4", "surface": "#fffdf9", "surfaceMuted": "#f1e9e1", "text": "#382f2b", "textMuted": "#75645d", "heading": "#241c19", "primary": "#8b3a3a", "primaryHover": "#6f2d2d", "primaryContrast": "#ffffff", "secondary": "#5f514b", "secondaryHover": "#453a35", "secondaryContrast": "#ffffff", "border": "#d8ccc3", "focus": "#c78484"}
+		palette = map[string]string{"background": "#fbf8f4", "surface": "#fffdf9", "surfaceMuted": "#f1e9e1", "text": "#382f2b", "textMuted": "#75645d", "heading": "#241c19", "primary": "#8b3a3a", "primaryHover": "#6f2d2d", "primaryContrast": "#ffffff", "secondary": "#5f514b", "secondaryHover": "#453a35", "secondaryContrast": "#ffffff", "border": "#d8ccc3", "focus": "#9a5a5a"}
 		headerBG, footerBG, footerText = "#fbf8f4", "#2f2521", "#f5eee8"
 	case PaletteForest:
-		palette = map[string]string{"background": "#fbfaf6", "surface": "#ffffff", "surfaceMuted": "#f1eee4", "text": "#33413c", "textMuted": "#6b756f", "heading": "#1e302a", "primary": "#356859", "primaryHover": "#285044", "primaryContrast": "#ffffff", "secondary": "#a4693b", "secondaryHover": "#82522e", "secondaryContrast": "#ffffff", "border": "#d7d5c9", "focus": "#78a99a"}
+		palette = map[string]string{"background": "#fbfaf6", "surface": "#ffffff", "surfaceMuted": "#f1eee4", "text": "#33413c", "textMuted": "#6b756f", "heading": "#1e302a", "primary": "#356859", "primaryHover": "#285044", "primaryContrast": "#ffffff", "secondary": "#a4693b", "secondaryHover": "#82522e", "secondaryContrast": "#ffffff", "border": "#d7d5c9", "focus": "#3a6b5e"}
 		headerBG, footerBG, footerText = "#fbfaf6", "#263b34", "#f4f1e8"
 	case PaletteIndigo:
-		palette = map[string]string{"background": "#faf8ff", "surface": "#ffffff", "surfaceMuted": "#f0ebfa", "text": "#302a3a", "textMuted": "#6d6479", "heading": "#211a2d", "primary": "#6842a8", "primaryHover": "#533287", "primaryContrast": "#ffffff", "secondary": "#cf9b32", "secondaryHover": "#ab7c22", "secondaryContrast": "#211a2d", "border": "#d8cfe5", "focus": "#a98bd2"}
+		palette = map[string]string{"background": "#faf8ff", "surface": "#ffffff", "surfaceMuted": "#f0ebfa", "text": "#302a3a", "textMuted": "#6d6479", "heading": "#211a2d", "primary": "#6842a8", "primaryHover": "#533287", "primaryContrast": "#ffffff", "secondary": "#cf9b32", "secondaryHover": "#ab7c22", "secondaryContrast": "#211a2d", "border": "#d8cfe5", "focus": "#7a4fb5"}
 		headerBG, footerBG, footerText = "#faf8ff", "#211a2d", "#f7f1ff"
 	default:
 		palette = map[string]string{"background": "#ffffff", "surface": "#ffffff", "surfaceMuted": "#f4f6f8", "text": "#17212b", "textMuted": "#667085", "heading": "#101828", "primary": "#2563eb", "primaryHover": "#1d4ed8", "primaryContrast": "#ffffff", "secondary": "#475467", "secondaryHover": "#344054", "secondaryContrast": "#ffffff", "border": "#d0d5dd", "focus": "#84adff"}
@@ -326,20 +341,20 @@ func headerStyles(id HeaderStyleID) map[string]any {
 	case HeaderMinimal:
 		return map[string]any{"header.layout": "minimal", "header.width": "wide", "header.height": 68, "header.border": false, "header.shadow": "none", "header.showSiteTitle": true, "header.showTagline": false, "navigation.layout": "horizontal", "navigation.style": "plain", "navigation.align": "right", "navigation.gap": 28, "navigation.fontSize": 15, "navigation.fontWeight": 600}
 	case HeaderCentered:
-		return map[string]any{"header.layout": "centered", "header.width": "wide", "header.height": 96, "header.border": true, "header.shadow": "none", "header.showSiteTitle": true, "header.showTagline": false, "navigation.layout": "horizontal", "navigation.style": "plain", "navigation.align": "center", "navigation.gap": 24, "navigation.fontSize": 15, "navigation.fontWeight": 600}
+		return map[string]any{"header.layout": "centered", "header.width": "wide", "header.height": 104, "header.border": false, "header.shadow": "none", "header.showSiteTitle": true, "header.showTagline": false, "navigation.layout": "horizontal", "navigation.style": "plain", "navigation.align": "center", "navigation.gap": 26, "navigation.fontSize": 15, "navigation.fontWeight": 600}
 	default: // classic
-		return map[string]any{"header.layout": "left", "header.width": "wide", "header.height": 74, "header.border": true, "header.shadow": "none", "header.showSiteTitle": true, "header.showTagline": false, "navigation.layout": "horizontal", "navigation.style": "plain", "navigation.align": "right", "navigation.gap": 24, "navigation.fontSize": 15, "navigation.fontWeight": 600}
+		return map[string]any{"header.layout": "left", "header.width": "wide", "header.height": 82, "header.border": true, "header.shadow": "none", "header.showSiteTitle": true, "header.showTagline": true, "navigation.layout": "horizontal", "navigation.style": "plain", "navigation.align": "right", "navigation.gap": 26, "navigation.fontSize": 15, "navigation.fontWeight": 600}
 	}
 }
 
 func footerStyles(id FooterStyleID) map[string]any {
 	switch id {
 	case FooterSimple:
-		return map[string]any{"footer.layout": "simple", "footer.width": "wide", "footer.spacing": 34, "footer.showSiteTitle": true, "footer.showCopyright": true, "footer.menuLayout": "inline"}
+		return map[string]any{"footer.layout": "simple", "footer.width": "wide", "footer.spacing": 56, "footer.showSiteTitle": true, "footer.showCopyright": true, "footer.menuLayout": "inline"}
 	case FooterCentered:
-		return map[string]any{"footer.layout": "centered", "footer.width": "wide", "footer.spacing": 40, "footer.showSiteTitle": true, "footer.showCopyright": true, "footer.menuLayout": "inline"}
+		return map[string]any{"footer.layout": "centered", "footer.width": "wide", "footer.spacing": 72, "footer.showSiteTitle": true, "footer.showCopyright": true, "footer.menuLayout": "inline"}
 	default: // split
-		return map[string]any{"footer.layout": "split", "footer.width": "wide", "footer.spacing": 40, "footer.showSiteTitle": true, "footer.showCopyright": true, "footer.menuLayout": "inline"}
+		return map[string]any{"footer.layout": "split", "footer.width": "wide", "footer.spacing": 80, "footer.showSiteTitle": true, "footer.showCopyright": true, "footer.menuLayout": "inline"}
 	}
 }
 

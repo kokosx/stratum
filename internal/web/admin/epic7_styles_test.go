@@ -330,11 +330,11 @@ func TestBlogEmptyTaglineCompact(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{
-		"csrf_token": {"test-csrf"},
-		"preset":     {string(creator.PresetBlog)},
-		"site_name":  {"Roksa"},
-		"tagline":    {""},
-		"palette":    {string(creator.PaletteClay)},
+		"csrf_token":   {"test-csrf"},
+		"preset":       {string(creator.PresetBlog)},
+		"site_name":    {"Roksa"},
+		"tagline":      {""},
+		"palette":      {string(creator.PaletteClay)},
 		"header_style": {string(creator.HeaderClassic)},
 		"footer_style": {string(creator.FooterSimple)},
 	}
@@ -347,7 +347,8 @@ func TestBlogEmptyTaglineCompact(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("blog empty tagline creation failed: %d %s", rec.Code, rec.Body.String())
 	}
-	// Fetch homepage template and verify hero spacing is sm (compact)
+	// After EPIC 7 art-direction, Blog homepage is ONE editorial band (Section v2 content/lg/default)
+	// containing hero Stack + Latest posts. Both with and without tagline use lg for consistent top padding 56-80.
 	home, err := handler.queries.GetPublishedEntryByPath(t.Context(), "/")
 	if err != nil {
 		t.Fatal(err)
@@ -356,11 +357,15 @@ func TestBlogEmptyTaglineCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rev.DocumentJson, `"verticalSpacing":"sm"`) {
-		t.Fatalf("blog without tagline should have sm hero spacing, got %s", rev.DocumentJson)
+	if !strings.Contains(rev.DocumentJson, `"verticalSpacing":"lg"`) {
+		t.Fatalf("blog without tagline should have lg editorial band, got %s", rev.DocumentJson)
 	}
-	if strings.Contains(rev.DocumentJson, `"verticalSpacing":"lg"`) {
-		t.Fatalf("blog without tagline should not have lg spacing")
+	if !strings.Contains(rev.DocumentJson, `"width":"content"`) {
+		t.Fatalf("blog should use content width, got %s", rev.DocumentJson)
+	}
+	// Verify single main section + content-slot, not two separate sections with dead whitespace
+	if strings.Count(rev.DocumentJson, `"block":"core/section"`) != 1 {
+		t.Fatalf("blog homepage should have exactly one main section after art-direction, got %s", rev.DocumentJson)
 	}
 }
 
