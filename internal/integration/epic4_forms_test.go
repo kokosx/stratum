@@ -86,7 +86,7 @@ func TestEpic4ContactFormVerticalSliceAndSnapshotCacheInvalidation(t *testing.T)
 	}
 	success := getPath(t, client, server.URL, location)
 	successBody := bodyString(t, success)
-	if !strings.Contains(successBody, "Thanks! Your message has been sent.") || strings.Contains(successBody, `<form id="form-contact-instance"`) {
+	if !strings.Contains(successBody, "Thanks! Your message has been sent.") || !strings.Contains(successBody, `<form id="form-contact-instance"`) {
 		t.Fatal(successBody)
 	}
 	if success.Header.Get("Cache-Control") != "no-store" {

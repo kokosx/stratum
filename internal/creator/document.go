@@ -171,8 +171,6 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 	if lang == "" {
 		lang = "en"
 	}
-	// Use dynamic site-tagline block instead of duplicating tagline string.
-	// This keeps Settings → Site tagline as single source of truth.
 	siteTaglineLeft := b.node("core/site-tagline", 1, nil, map[string]any{"align": "left"})
 	siteTaglineCenter := b.node("core/site-tagline", 1, nil, map[string]any{"align": "center"})
 	switch preset {
@@ -191,6 +189,23 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 		editorial := b.stack("vertical", "2xl", "stretch", "start", heroStack, latestStack)
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("content", "lg", "default", editorial),
+		}}
+	case PresetMagazine:
+		latestLimit := 8
+		if plan.Input.BlogLatestCount == 5 {
+			latestLimit = 5
+		}
+		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft)
+		linkText := "Read article"
+		if lang == "pl" {
+			linkText = "Czytaj artykuł"
+		}
+		postCard := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 50vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "sm"}), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
+		latestListItem := b.stack("vertical", "xs", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("wide", "lg", "muted", heroStack),
+			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading("Featured", 2), b.collection("post", "query", "grid", 2, "lg", 2, postCard))),
+			b.section("content", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.latest_posts"), 2), b.collection("post", "query", "list", 1, "lg", latestLimit, latestListItem))),
 		}}
 	case PresetPortfolio:
 		cols := 2
@@ -225,7 +240,6 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 		if plan.Input.ProductColumns == 4 {
 			cols = 4
 		}
-		// Use standard aspect by default; Product Showcase prefers standard/square image presentation.
 		heroStack := b.stack("vertical", "sm", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft)
 		linkText := "View product"
 		if lang == "pl" {
@@ -235,6 +249,32 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("wide", "md", "muted", heroStack),
 			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.featured"), 2), b.collection("product", "query", "grid", cols, "lg", 6, product))),
+		}}
+	case PresetSimpleSite:
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "xl", "muted", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text("A practical starting point you can shape into anything."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Get in touch", "/contact", "primary")))),
+			b.section("content", "lg", "default", b.stack("vertical", "md", "start", "start", b.heading("What we do", 2), b.text("Share a concise overview of your work, values and the outcomes you create for clients."))),
+			b.sectionAnchor("content", "lg", "default", "contact", b.stack("vertical", "md", "start", "start", b.heading("Contact", 2), b.node("core/form", 2, nil, map[string]any{"formId": formID}))),
+		}}
+	case PresetAgency:
+		cta := copyFor(lang, "cta.start_conversation")
+		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text("A focused agency that ships useful work — calmly and on time."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(cta, "/contact", "primary")))
+		linkText := "Read case study"
+		if lang == "pl" {
+			linkText = "Zobacz case study"
+		}
+		caseCard := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("wide", "lg", "muted", heroStack),
+			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading("Selected cases", 2), b.collection("case_study", "query", "grid", 2, "xl", 6, caseCard))),
+			b.section("content", "md", "default", b.stack("vertical", "md", "start", "start", b.heading("Services at a glance", 2), b.text("Strategy, identity and site builds — delivered as one practical sequence. Details live on the Services page."))),
+		}}
+	case PresetKnowledgeBase:
+		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text("Quick answers and in-depth guides for everyday work. Search or browse by topic."), b.heading("Browse articles", 2))
+		articleCard := b.stack("vertical", "xs", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "lg", "muted", heroStack),
+			b.section("content", "md", "default", b.collection("article", "query", "list", 1, "md", 6, articleCard)),
 		}}
 	default:
 		svcCols := 3
@@ -248,9 +288,9 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 		}
 		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(cta, "/contact", "primary")))
 		serviceInner := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
-		service := b.node("core/card", 1, nil, map[string]any{"variant": "default", "padding": "md", "radius": "md", "align": "start"}, serviceInner)
+		service := b.node("core/card", 1, nil, map[string]any{"variant": "default", "padding": "sm", "radius": "md", "align": "start"}, serviceInner)
 		return &document.Document{Version: 1, Nodes: []document.Node{
-			b.section("content", "lg", "muted", heroStack),
+			b.section("content", "md", "muted", heroStack),
 			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.services"), 2), b.collection("service", "query", "grid", svcCols, "lg", 5, service))),
 			b.section("content", "lg", "primary", b.stack("vertical", "md", "start", "start", b.heading(copyFor(lang, "cta.need_next_step"), 2), b.text(copyFor(lang, "lead.local_next")), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.node("core/button", 1, map[string]any{"label": copyFor(lang, "cta.contact_us"), "url": "/contact"}, map[string]any{"variant": "primary", "size": "md", "width": "auto", "align": "left", "openInNewTab": false})))),
 		}}
@@ -264,7 +304,7 @@ func singleTemplate(prefix string, preset PresetID) *document.Document {
 func singleTemplateForPlan(prefix string, preset PresetID, plan Plan) *document.Document {
 	b := &docBuilder{prefix: prefix}
 	switch preset {
-	case PresetBlog:
+	case PresetBlog, PresetMagazine:
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("content", "lg", "default",
 				b.stack("vertical", "md", "start", "start",
@@ -299,6 +339,21 @@ func singleTemplateForPlan(prefix string, preset PresetID, plan Plan) *document.
 			b.section("wide", "lg", "default", gridNode),
 			b.node("core/content-slot", 1, nil, nil),
 		}}
+	case PresetSimpleSite:
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "md", "default", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"))),
+			b.node("core/content-slot", 1, nil, nil),
+		}}
+	case PresetAgency:
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("wide", "lg", "default", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "strong"), b.entryField("fields.year", "span"), b.entryField("fields.services", "span")), b.entryMediaAspect("(min-width: 1200px) 80vw, 100vw", "landscape", "cover"), b.entryField("fields.summary", "p"))),
+			b.node("core/content-slot", 1, nil, nil),
+		}}
+	case PresetKnowledgeBase:
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "lg", "default", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), b.entryField("fields.summary", "p"), b.entryField("fields.category", "span"))),
+			b.node("core/content-slot", 1, nil, nil),
+		}}
 	default:
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("content", "lg", "default", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "strong"))),
@@ -316,20 +371,31 @@ func archiveTemplateForPlan(prefix string, preset PresetID, plan Plan) *document
 	b := &docBuilder{prefix: prefix}
 	header := b.section("content", "lg", "default", b.stack("vertical", "sm", "start", "start", b.node("core/archive-title", 1, nil, map[string]any{"level": 1, "align": "left"}), b.node("core/archive-description", 1, nil, map[string]any{"align": "left"})))
 	switch preset {
-	case PresetBlog:
+	case PresetBlog, PresetMagazine:
 		limit := 20
 		if plan.Input.BlogArchiveCount == 10 {
 			limit = 10
 		}
 		item := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("content", "md", "default", b.collection("post", "context", "list", 1, "lg", limit, item))}}
-	case PresetPortfolio:
+	case PresetPortfolio, PresetAgency:
+		ct := "project"
+		if preset == PresetAgency {
+			ct = "case_study"
+		}
 		cols := 2
-		if plan.Input.PortfolioColumns == 3 {
+		if preset == PresetAgency {
+			cols = 2
+		} else if plan.Input.PortfolioColumns == 3 {
 			cols = 3
 		}
-		item := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": "View project"}, nil))
-		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "md", "default", b.collection("project", "context", "grid", cols, "xl", 20, item))}}
+		var item document.Node
+		if preset == PresetAgency {
+			item = b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": "Read case study"}, nil))
+		} else {
+			item = b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": "View project"}, nil))
+		}
+		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "md", "default", b.collection(ct, "context", "grid", cols, "xl", 20, item))}}
 	case PresetProducts:
 		cols := 3
 		if plan.Input.ProductColumns == 4 {
@@ -337,6 +403,9 @@ func archiveTemplateForPlan(prefix string, preset PresetID, plan Plan) *document
 		}
 		item := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 1100px) 30vw, 100vw", "standard", "cover"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": "View product"}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "md", "default", b.collection("product", "context", "grid", cols, "lg", 20, item))}}
+	case PresetKnowledgeBase:
+		item := b.stack("vertical", "xs", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("content", "md", "default", b.collection("article", "context", "list", 1, "lg", 20, item))}}
 	default:
 		cols := 3
 		if plan.Input.ServiceColumns == 2 {
@@ -361,7 +430,13 @@ func sitePartDocumentForHeader(prefix string, style HeaderStyleID) *document.Doc
 		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "md", "center", "center", b.node("core/site-name", 1, nil, map[string]any{"align": "center"}), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
 	case HeaderClassic:
 		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "md", "center", "between", b.stack("vertical", "xs", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/site-tagline", 1, nil, nil)), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
-	default:
+	case HeaderStacked:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "sm", "start", "start", b.stack("vertical", "xs", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/site-tagline", 1, nil, nil)), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+	case HeaderBold:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "lg", "center", "between", b.node("core/site-name", 1, nil, map[string]any{"align": "left"}), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+	case HeaderEditorial:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "sm", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
+	default: // minimal
 		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "md", "center", "between", b.node("core/site-name", 1, nil, nil), b.node("core/navigation", 1, nil, map[string]any{"location": "primary", "style": "horizontal"}))}}
 	}
 }
@@ -372,8 +447,12 @@ func sitePartDocumentForFooter(prefix string, style FooterStyleID) *document.Doc
 	case FooterSimple:
 		return &document.Document{Version: 1, Nodes: []document.Node{b.node("core/site-name", 1, nil, nil)}}
 	case FooterCentered:
-		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "md", "center", "center", b.node("core/site-name", 1, nil, map[string]any{"align": "center"}), b.node("core/site-tagline", 1, nil, map[string]any{"align": "center"}), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
-	default:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "md", "center", "center", b.node("core/site-name", 1, nil, map[string]any{"align": "center"}), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
+	case FooterStacked:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "md", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/site-tagline", 1, nil, nil), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
+	case FooterEditorial:
+		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("vertical", "lg", "start", "start", b.node("core/site-name", 1, nil, map[string]any{"align": "left"}), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
+	default: // split
 		return &document.Document{Version: 1, Nodes: []document.Node{b.stack("horizontal", "lg", "center", "between", b.stack("vertical", "xs", "start", "start", b.node("core/site-name", 1, nil, nil), b.node("core/site-tagline", 1, nil, nil)), b.node("core/navigation", 1, nil, map[string]any{"location": "footer", "style": "horizontal"}))}}
 	}
 }

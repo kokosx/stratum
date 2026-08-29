@@ -107,6 +107,14 @@ func paletteForStyle(id PaletteID) [3]color.RGBA {
 		return [3]color.RGBA{{R: 240, G: 253, B: 250, A: 255}, {R: 15, G: 118, B: 110, A: 255}, {R: 253, G: 186, B: 116, A: 255}}
 	case PaletteIndigo:
 		return [3]color.RGBA{{R: 245, G: 243, B: 255, A: 255}, {R: 124, G: 58, B: 237, A: 255}, {R: 253, G: 224, B: 71, A: 255}}
+	case PaletteOcean:
+		return [3]color.RGBA{{R: 240, G: 247, B: 251, A: 255}, {R: 15, G: 76, B: 117, A: 255}, {R: 50, G: 130, B: 184, A: 255}}
+	case PaletteSand:
+		return [3]color.RGBA{{R: 253, G: 248, B: 243, A: 255}, {R: 160, G: 90, B: 44, A: 255}, {R: 230, G: 210, B: 191, A: 255}}
+	case PaletteBerry:
+		return [3]color.RGBA{{R: 253, G: 242, B: 245, A: 255}, {R: 139, G: 30, B: 63, A: 255}, {R: 232, G: 184, B: 195, A: 255}}
+	case PaletteMidnight:
+		return [3]color.RGBA{{R: 14, G: 26, B: 43, A: 255}, {R: 22, G: 35, B: 61, A: 255}, {R: 94, G: 169, B: 255, A: 255}}
 	default:
 		return [3]color.RGBA{{R: 245, G: 245, B: 244, A: 255}, {R: 17, G: 24, B: 39, A: 255}, {R: 196, G: 181, B: 253, A: 255}}
 	}

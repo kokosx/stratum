@@ -1,3 +1,4 @@
 stratum
 stratum-freebsd-*
 data
+.tmp-qa/

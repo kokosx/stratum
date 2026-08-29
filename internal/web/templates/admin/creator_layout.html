@@ -1,0 +1,35 @@
+{{ define "creator_layout.html" }}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Title }} · Stratum</title>
+  <meta name="csrf-token" content="{{ .CSRFToken }}">
+  <link rel="stylesheet" href="/admin/static/admin.css">
+  <link rel="stylesheet" href="/admin/static/admin/creator.css">
+  <script type="module" src="/admin/static/admin/datastar.js"></script>
+</head>
+<body class="creator-body">
+  <div class="creator-app">
+    <header class="creator-topbar">
+      <a class="creator-topbar__brand" href="/admin">Stratum</a>
+      <span class="creator-topbar__title">Create your site</span>
+      <div class="creator-topbar__actions">
+        <a class="creator-topbar__link" href="/admin">Exit setup</a>
+        <form method="post" action="/admin/creator/skip" class="creator-topbar__skip">
+          <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+          <button type="submit" class="creator-topbar__link creator-topbar__link--button">Skip and start empty</button>
+        </form>
+      </div>
+    </header>
+    <main class="creator-main">
+      {{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
+      {{ template "content" . }}
+      <div id="admin-toast-region" class="toast-region" aria-live="polite"></div>
+    </main>
+  </div>
+  <script src="/admin/static/admin/creator.js" defer></script>
+</body>
+</html>
+{{ end }}

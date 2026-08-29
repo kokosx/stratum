@@ -58,11 +58,11 @@
         <div class="form-group">
           <span class="form-label">Site Icon (favicon)</span>
           <input type="hidden" name="site_icon_media_id" id="site_icon_media_id" value="{{ .Content.Form.SiteIconMediaID }}">
-          <div class="site-icon-field">
-            <div class="site-icon-preview" id="site-icon-preview">
+          <div class="settings-media">
+            <div class="settings-media__preview settings-media__preview--favicon" id="site-icon-preview">
               {{ if .Content.SiteIconPreview }}<img src="{{ .Content.SiteIconPreview }}" alt="">{{ end }}
             </div>
-            <div class="site-icon-actions admin-page-actions">
+            <div class="settings-media__actions">
               <button type="button" class="button button-secondary" id="site-icon-choose">Choose image</button>
               <button type="button" class="button button-secondary" id="site-icon-remove" {{ if not .Content.Form.SiteIconMediaID }}hidden{{ end }}>Remove</button>
             </div>
@@ -178,11 +178,11 @@
         <div class="form-group">
           <span class="form-label">Default social image</span>
           <input type="hidden" name="site_social_media_id" id="site_social_media_id" value="{{ .Content.Form.SiteSocialMediaID }}">
-          <div class="site-icon-field">
-            <div class="site-icon-preview" id="site-social-preview">
+          <div class="settings-media">
+            <div class="settings-media__preview" id="site-social-preview">
               {{ if .Content.SiteSocialPreview }}<img src="{{ .Content.SiteSocialPreview }}" alt="">{{ end }}
             </div>
-            <div class="site-icon-actions admin-page-actions">
+            <div class="settings-media__actions">
               <button type="button" class="button button-secondary" id="site-social-choose">Choose image</button>
               <button type="button" class="button button-secondary" id="site-social-remove" {{ if not .Content.Form.SiteSocialMediaID }}hidden{{ end }}>Remove</button>
             </div>
@@ -244,10 +244,11 @@
 
   <nav class="settings-nav" aria-label="Settings sections">
     <a href="/admin/settings/general" class="settings-nav__link {{ if eq .Content.Section "general" }}is-active{{ end }}" {{ if eq .Content.Section "general" }}aria-current="page"{{ end }}>General</a>
-	<a href="/admin/settings/content-types" class="settings-nav__link">Content Types</a>
+	<a href="/admin/settings/content-types" class="settings-nav__link {{ if eq .Content.Section "content-types" }}is-active{{ end }}" {{ if eq .Content.Section "content-types" }}aria-current="page"{{ end }}>Content Types</a>
     <a href="/admin/settings/reading" class="settings-nav__link {{ if eq .Content.Section "reading" }}is-active{{ end }}" {{ if eq .Content.Section "reading" }}aria-current="page"{{ end }}>Reading</a>
     <a href="/admin/settings/seo" class="settings-nav__link {{ if eq .Content.Section "seo" }}is-active{{ end }}" {{ if eq .Content.Section "seo" }}aria-current="page"{{ end }}>SEO &amp; Crawling</a>
     <a href="/admin/settings/performance" class="settings-nav__link {{ if eq .Content.Section "performance" }}is-active{{ end }}" {{ if eq .Content.Section "performance" }}aria-current="page"{{ end }}>Performance</a>
+    <a href="/admin/settings/custom-code" class="settings-nav__link {{ if eq .Content.Section "custom-code" }}is-active{{ end }}" {{ if eq .Content.Section "custom-code" }}aria-current="page"{{ end }}>Custom Code</a>
   </nav>
 
   <div id="settings-content" class="settings-content">

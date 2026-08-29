@@ -175,3 +175,45 @@ func localizedTestimonialEntries(lang string) []entrySpec {
 		{Title: "Jordan Lee", Slug: "jordan-lee", Fields: map[string]any{"quote": "A practical partner from the first conversation to launch.", "person": "Jordan Lee", "role": "Team lead", "company": "Fieldwork"}},
 	}
 }
+
+func localizedAgencyEntries(lang string) []entrySpec {
+	if lang == "pl" {
+		return []entrySpec{
+			{Title: "Start Northline", Slug: "start-northline", Excerpt: "Marka i strona dla nowej platformy.", Body: "Stworzyliśmy historię i stronę na start.", Fields: map[string]any{"client": "Northline", "year": "2026", "services": "Marka, strona", "summary": "Skupiony start nowej platformy."}},
+			{Title: "Tożsamość Field Notes", Slug: "tozsamosc-field-notes", Excerpt: "Tożsamość i strona editorial.", Body: "Powściągliwy system dla studia badawczego.", Fields: map[string]any{"client": "Field Notes", "year": "2026", "services": "Tożsamość, editorial", "summary": "Tożsamość oparta na badaniach."}},
+			{Title: "Platforma Common Ground", Slug: "common-ground-pl", Excerpt: "Wspólna przestrzeń dla zespołów.", Body: "Spokojne narzędzie dla współdzielonej własności.", Fields: map[string]any{"client": "Common Ground", "year": "2025", "services": "Produkt, strona", "summary": "Spokojna platforma do wspólnej pracy."}},
+			{Title: "Rebrand Atlas", Slug: "atlas-rebrand-pl", Excerpt: "Szersza tożsamość dla marki.", Body: "Zachowaliśmy to co działało.", Fields: map[string]any{"client": "Atlas", "year": "2025", "services": "Rebrand", "summary": "Jaśniejsza tożsamość."}},
+			{Title: "Strona Studio One", Slug: "studio-one-pl", Excerpt: "Strona portfolio.", Body: "Strona gdzie praca prowadzi.", Fields: map[string]any{"client": "Studio One", "year": "2025", "services": "Strona", "summary": "Najpierw praca."}},
+			{Title: "Kampania Signal", Slug: "kampania-signal", Excerpt: "Kampania startowa.", Body: "Kampania która pozostała praktyczna.", Fields: map[string]any{"client": "Signal", "year": "2026", "services": "Kampania, strona", "summary": "Kampania na czas."}},
+		}
+	}
+	return []entrySpec{
+		{Title: "Northline launch", Slug: "northline-launch", Excerpt: "Brand and site for a new operations platform.", Body: "We shaped the story, system and site for launch.", Fields: map[string]any{"client": "Northline", "year": "2026", "services": "Brand, site", "summary": "A focused launch for a new platform."}},
+		{Title: "Field Notes identity", Slug: "field-notes-identity", Excerpt: "Identity and editorial site for a research studio.", Body: "A restrained system for a research-driven studio.", Fields: map[string]any{"client": "Field Notes", "year": "2026", "services": "Identity, editorial", "summary": "Identity shaped by research."}},
+		{Title: "Common Ground platform", Slug: "common-ground", Excerpt: "A shared workspace for distributed teams.", Body: "A calm tool for shared ownership.", Fields: map[string]any{"client": "Common Ground", "year": "2025", "services": "Product, site", "summary": "A calm platform for shared work."}},
+		{Title: "Atlas rebrand", Slug: "atlas-rebrand", Excerpt: "A broader identity for an established maker.", Body: "We kept what worked and clarified the rest.", Fields: map[string]any{"client": "Atlas", "year": "2025", "services": "Rebrand", "summary": "A clearer identity, kept familiar."}},
+		{Title: "Studio One site", Slug: "studio-one-site", Excerpt: "Portfolio site for a creative studio.", Body: "A site that lets the work lead.", Fields: map[string]any{"client": "Studio One", "year": "2025", "services": "Site", "summary": "Work first, ornament last."}},
+		{Title: "Signal campaign", Slug: "signal-campaign", Excerpt: "Launch campaign for a focused product.", Body: "A campaign that stayed practical.", Fields: map[string]any{"client": "Signal", "year": "2026", "services": "Campaign, site", "summary": "A campaign that shipped on time."}},
+	}
+}
+
+func localizedKnowledgeEntries(lang string) []entrySpec {
+	if lang == "pl" {
+		return []entrySpec{
+			{Title: "Pierwsze kroki", Slug: "pierwsze-kroki-wiedza", Excerpt: "Wszystko na szybki start.", Body: "Wykonaj kroki aby szybko uruchomić stronę.", Fields: map[string]any{"summary": "Szybki start dla nowych użytkowników.", "category": "Przewodniki"}},
+			{Title: "Zarządzanie treścią", Slug: "zarzadzanie-trescia", Excerpt: "Jak tworzyć strony i wpisy.", Body: "Treść to wpisy i rewizje.", Fields: map[string]any{"summary": "Twórz i publikuj bezpiecznie.", "category": "Przewodniki"}},
+			{Title: "Własne typy treści", Slug: "wlasne-typy-tresci", Excerpt: "Dodaj typy bez kodu.", Body: "Zdefiniuj pola, prezentację zostaw szablonom.", Fields: map[string]any{"summary": "Rozszerz treści polami.", "category": "Referencje"}},
+			{Title: "Media", Slug: "media-wiedza", Excerpt: "Przesyłanie i organizacja obrazów.", Body: "Biblioteka przechowuje warianty.", Fields: map[string]any{"summary": "Obsługa obrazów i zasobów.", "category": "Przewodniki"}},
+			{Title: "SEO i sitemapy", Slug: "seo-sitemapy", Excerpt: "Widoczność w wyszukiwarkach.", Body: "Zarządzane robots i sitemapy.", Fields: map[string]any{"summary": "Kontroluj widoczność strony.", "category": "Przewodniki"}},
+			{Title: "Rozwiązywanie problemów", Slug: "rozwiazywanie-problemow", Excerpt: "Typowe problemy i naprawy.", Body: "Zacznij tutaj gdy coś nie działa.", Fields: map[string]any{"summary": "Napraw typowe problemy.", "category": "Pomoc"}},
+		}
+	}
+	return []entrySpec{
+		{Title: "Getting started", Slug: "getting-started-kb", Excerpt: "Everything you need for a first setup.", Body: "Follow the steps to get your site running quickly.", Fields: map[string]any{"summary": "A quick start for new users.", "category": "Guides"}},
+		{Title: "Managing content", Slug: "managing-content", Excerpt: "How to create and organize pages and posts.", Body: "Content lives as Entries and revisions; publish when ready.", Fields: map[string]any{"summary": "Create and publish content safely.", "category": "Guides"}},
+		{Title: "Custom content types", Slug: "custom-content-types-kb", Excerpt: "Add structured types without code.", Body: "Define fields and keep presentation in templates.", Fields: map[string]any{"summary": "Extend content with fields.", "category": "Reference"}},
+		{Title: "Media management", Slug: "media-management", Excerpt: "Upload, replace and organize images.", Body: "The media library stores variants and usage.", Fields: map[string]any{"summary": "Handle images and assets.", "category": "Guides"}},
+		{Title: "SEO and sitemaps", Slug: "seo-sitemaps", Excerpt: "How search visibility is managed.", Body: "Managed robots and sitemaps keep crawling predictable.", Fields: map[string]any{"summary": "Control how search sees your site.", "category": "Guides"}},
+		{Title: "Troubleshooting", Slug: "troubleshooting", Excerpt: "Common issues and fixes.", Body: "Start here when something seems off.", Fields: map[string]any{"summary": "Fix common setup problems.", "category": "Help"}},
+	}
+}

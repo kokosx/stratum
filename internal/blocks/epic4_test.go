@@ -63,7 +63,7 @@ func TestCoreFormMissingPublicEmptyPreviewWarningAndSuccess(t *testing.T) {
 	}
 	reader := fakeFormReader{active: true, view: forms.FormView{ID: "missing", SuccessMessage: "Done"}}
 	success := renderWithRegistry(t, reg, doc, rendering.RenderContext{Mode: rendering.ModePublic, FormReader: reader, FormResult: rendering.FormResultContext{SuccessFormID: "missing"}})
-	if !strings.Contains(success, "Done") || strings.Contains(success, "<form") {
+	if !strings.Contains(success, "Done") || !strings.Contains(success, "<form") {
 		t.Fatal(success)
 	}
 }

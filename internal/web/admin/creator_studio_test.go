@@ -41,11 +41,11 @@ func TestCreatorStudio_PreviewNoDBMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{
-		"preset":     {string(creator.PresetBlog)},
-		"palette":    {string(creator.PaletteInk)},
-		"site_name":  {"Preview Studio"},
-		"tagline":    {"hello"},
-		"surface":    {"home"},
+		"preset":    {string(creator.PresetBlog)},
+		"palette":   {string(creator.PaletteInk)},
+		"site_name": {"Preview Studio"},
+		"tagline":   {"hello"},
+		"surface":   {"home"},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/admin/creator/preview?"+form.Encode(), nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: session})
@@ -84,10 +84,10 @@ func TestCreatorStudio_PreviewCollectionAndNavigation(t *testing.T) {
 	}
 	// Portfolio preset should have project collection with synthetic entries
 	form := url.Values{
-		"preset":     {string(creator.PresetPortfolio)},
-		"palette":    {string(creator.PaletteInk)},
-		"site_name":  {"Studio"},
-		"language":   {"en"},
+		"preset":    {string(creator.PresetPortfolio)},
+		"palette":   {string(creator.PaletteInk)},
+		"site_name": {"Studio"},
+		"language":  {"en"},
 	}
 	req := httptest.NewRequest(http.MethodGet, "/admin/creator/preview?"+form.Encode()+"&surface=home", nil)
 	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: session})
@@ -288,12 +288,12 @@ func TestCreatorStudio_SiteSettingsPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 	form := url.Values{
-		"csrf_token":     {"test-csrf"},
-		"preset":         {string(creator.PresetBlog)},
-		"site_name":      {"Persisted Site"},
-		"tagline":        {"hello"},
-		"language":       {"pl"},
-		"timezone":       {"Europe/Warsaw"},
+		"csrf_token":      {"test-csrf"},
+		"preset":          {string(creator.PresetBlog)},
+		"site_name":       {"Persisted Site"},
+		"tagline":         {"hello"},
+		"language":        {"pl"},
+		"timezone":        {"Europe/Warsaw"},
 		"site_represents": {"person"},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/admin/creator", strings.NewReader(form.Encode()))

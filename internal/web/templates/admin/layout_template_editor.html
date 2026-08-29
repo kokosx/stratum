@@ -109,6 +109,12 @@
     </div>
     <p class="field-desc">Published/Draft status and Default status are shown here.</p>
   </div>
+  <section class="panel" style="margin-top:16px">
+    <h3>Custom Code</h3>
+    <p class="muted">Template-scoped snippets for <strong>{{ .Content.Name }}</strong>. They load only on pages using this template.</p>
+    <a class="button button-secondary" href="/admin/appearance/templates/{{ .Content.TemplateID }}/custom-code">Manage template code</a>
+    <a class="button button-secondary" href="/admin/settings/custom-code">Manage global code</a>
+  </section>
 </form>
 <script id="editor-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
 <script type="module" src="/admin/static/editor/editor.js"></script>

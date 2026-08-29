@@ -30,6 +30,10 @@ var creatorPresetExpectations = map[creator.PresetID]creatorPresetExpectation{
 	creator.PresetLanding:       {contentType: "testimonial", sampleTitle: "Maya Chen", menuLabels: []string{"Home"}},
 	creator.PresetProducts:      {contentType: "product", archivePath: "/products", entryPath: "/products/form-chair", sampleTitle: "Form Chair", pagePaths: []string{"/about", "/contact"}, menuLabels: []string{"Home", "Products", "About", "Contact"}},
 	creator.PresetLocalBusiness: {contentType: "service", archivePath: "/services", entryPath: "/services/consultation", sampleTitle: "Consultation", pagePaths: []string{"/about", "/contact"}, menuLabels: []string{"Home", "Services", "About", "Contact"}},
+	creator.PresetSimpleSite:    {contentType: "page", pagePaths: []string{"/about", "/contact"}, menuLabels: []string{"Home", "About", "Contact"}},
+	creator.PresetMagazine:      {contentType: "post", archivePath: "/blog", entryPath: "/blog/getting-started", sampleTitle: "Getting started", pagePaths: []string{"/about"}, menuLabels: []string{"Home", "Blog", "About"}},
+	creator.PresetAgency:        {contentType: "case_study", archivePath: "/case-studies", entryPath: "/case-studies/northline-launch", sampleTitle: "Northline launch", pagePaths: []string{"/services", "/about", "/contact"}, menuLabels: []string{"Home", "Case Studies", "Services", "About", "Contact"}},
+	creator.PresetKnowledgeBase: {contentType: "article", archivePath: "/knowledge", entryPath: "/knowledge/getting-started-kb", sampleTitle: "Getting started", pagePaths: []string{"/about"}, menuLabels: []string{"Home", "Knowledge Base", "About"}},
 }
 
 func TestCreatorBuildsEveryPreset(t *testing.T) {
@@ -111,11 +115,21 @@ func TestCreatorBuildsEveryPreset(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(homeRev.DocumentJson, `"block":"core/collection"`) {
-				t.Fatalf("homepage entry must contain collection: %s", homeRev.DocumentJson)
-			}
-			if !strings.Contains(homeRev.DocumentJson, `"block":"core/section"`) {
-				t.Fatalf("homepage entry must contain section: %s", homeRev.DocumentJson)
+			if preset.ID == creator.PresetSimpleSite {
+				// Simple Site has no collection, but has sections and a form
+				if !strings.Contains(homeRev.DocumentJson, `"block":"core/section"`) {
+					t.Fatalf("simple site homepage entry must contain section: %s", homeRev.DocumentJson)
+				}
+				if !strings.Contains(homeRev.DocumentJson, `"block":"core/form"`) {
+					t.Fatalf("simple site homepage entry must contain form: %s", homeRev.DocumentJson)
+				}
+			} else {
+				if !strings.Contains(homeRev.DocumentJson, `"block":"core/collection"`) {
+					t.Fatalf("homepage entry must contain collection: %s", homeRev.DocumentJson)
+				}
+				if !strings.Contains(homeRev.DocumentJson, `"block":"core/section"`) {
+					t.Fatalf("homepage entry must contain section: %s", homeRev.DocumentJson)
+				}
 			}
 			isLanding := preset.ID == creator.PresetLanding
 			if isLanding {

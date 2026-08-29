@@ -1,0 +1,41 @@
+{{ define "quick_edit" }}
+<form method="post" action="{{ .Action }}" class="quick-edit-form">
+  <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+  <div style="display:grid; gap:14px; max-width:640px;">
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <span class="status-badge status-badge--draft">{{ .Status }}</span>
+      <small class="muted">Quick Edit</small>
+    </div>
+    <div class="form-group"><label class="form-label" for="qe-title">Title</label><input class="form-control" type="text" id="qe-title" name="title" value="{{ .Title }}" required></div>
+    <div class="form-group"><label class="form-label" for="qe-slug">Slug</label><input class="form-control" type="text" id="qe-slug" name="slug" value="{{ .Slug }}" pattern="[a-z0-9]+(-[a-z0-9]+)*" required><p class="form-help">Lowercase letters, numbers, hyphens.</p></div>
+    {{ if .ShowExcerpt }}
+    <div class="form-group"><label class="form-label" for="qe-excerpt">Excerpt</label><textarea class="form-control" id="qe-excerpt" name="excerpt" rows="2">{{ .Excerpt }}</textarea></div>
+    {{ end }}
+    {{ if .IsPage }}
+    <div class="form-group"><label class="form-label" for="qe-parent">Parent</label><select class="form-control" id="qe-parent" name="parent_entry_id"><option value="">No parent</option>{{ range .ParentOptions }}<option value="{{ .ID }}" {{ if .Selected }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select></div>
+    <div class="form-group"><label class="form-label" for="qe-order">Order</label><input class="form-control" type="number" id="qe-order" name="menu_order" min="0" step="1" value="{{ .MenuOrder }}"></div>
+    <div class="form-group"><label class="form-label" for="qe-template">Template</label><select class="form-control" id="qe-template" name="layout_template_id"><option value="" {{ if eq .SelectedLayout "" }}selected{{ end }}>{{ .DefaultTemplateLabel }}</option>{{ range .LayoutOptions }}<option value="{{ .ID }}" {{ if eq .SelectedLayout .ID }}selected{{ end }}>{{ .Name }}</option>{{ end }}</select></div>
+    {{ end }}
+    {{ range .CustomFields }}
+    <div class="form-group">
+      <label class="form-label" for="qe-field-{{ .Key }}">{{ .Label }}{{ if .Required }} *{{ end }}</label>
+      {{ if eq .Type "textarea" }}<textarea class="form-control" id="qe-field-{{ .Key }}" name="field_{{ .Key }}" rows="3" {{ if .Required }}required{{ end }}>{{ .Value }}</textarea>
+      {{ else if eq .Type "number" }}<input class="form-control" type="number" id="qe-field-{{ .Key }}" name="field_{{ .Key }}" value="{{ .Value }}" step="any" {{ if .Required }}required{{ end }}>
+      {{ else if eq .Type "select" }}<select class="form-control" id="qe-field-{{ .Key }}" name="field_{{ .Key }}" {{ if .Required }}required{{ end }}><option value="">— Select —</option>{{ range .Options }}<option value="{{ . }}" {{ if eq $.Value . }}selected{{ end }}>{{ . }}</option>{{ end }}</select>
+      {{ else if eq .Type "boolean" }}<label class="check-row"><input type="checkbox" name="field_{{ .Key }}" value="1" {{ if .Checked }}checked{{ end }}> Yes</label>
+      {{ else if eq .Type "media" }}<input type="hidden" name="field_{{ .Key }}" value="{{ .Value }}"><p class="form-help">Media: {{ .Value }} — Edit full item to change media.</p>
+      {{ else }}<input class="form-control" type="{{ .InputType }}" id="qe-field-{{ .Key }}" name="field_{{ .Key }}" value="{{ .Value }}" {{ if .Placeholder }}placeholder="{{ .Placeholder }}"{{ end }} {{ if .Required }}required{{ end }}>
+      {{ end }}
+      {{ if .HelpText }}<p class="form-help">{{ .HelpText }}</p>{{ end }}
+      {{ if .Error }}<p class="form-error">{{ .Error }}</p>{{ end }}
+    </div>
+    {{ end }}
+    {{ if .TaxonomyHTML }}<div>{{ .TaxonomyHTML }}</div>{{ end }}
+    <div class="admin-page-actions">
+      <button type="submit" name="quick_action" value="save" class="button">Save draft</button>
+      <button type="submit" name="quick_action" value="publish" class="button button-primary">Publish changes</button>
+      <button type="button" class="button" data-quick-cancel>Cancel</button>
+    </div>
+  </div>
+</form>
+{{ end }}

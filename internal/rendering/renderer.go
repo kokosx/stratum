@@ -372,6 +372,7 @@ func NewRenderer(definitions []Definition, provider MediaProvider) (*Renderer, e
 				"tagClose":      tagCloseFunc,
 				"safeURL":       safeURLFunc,
 				"anchorID":      anchorIDFunc,
+				"raw":           func(s string) template.HTML { return template.HTML(s) },
 			}).Parse(definition.Template)
 			if err != nil {
 				return nil, fmt.Errorf("parse block %s@%d template: %w", key.name, key.version, err)
@@ -433,6 +434,15 @@ func (f *formRenderer) Render(ctx context.Context, node PreparedNode, rc RenderC
 		if rc.FormResult.SuccessFormID == formID {
 			var out bytes.Buffer
 			_ = template.Must(template.New("success").Parse(`<div id="form-{{ .ID }}" class="stratum-form-success" role="status">{{ .Message }}</div>`)).Execute(&out, map[string]string{"ID": safeDOMToken(node.ID), "Message": view.SuccessMessage})
+			// Keep stable geometry: success notice + fresh empty form
+			returnTo := rc.Route.Path
+			if returnTo == "" || !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") {
+				returnTo = "/"
+			}
+			var formOut bytes.Buffer
+			if err := publicFormTemplate.Execute(&formOut, map[string]any{"InstanceID": safeDOMToken(node.ID), "Form": view, "ReturnTo": returnTo}); err == nil {
+				out.Write(formOut.Bytes())
+			}
 			return template.HTML(out.String()), nil
 		}
 		returnTo := rc.Route.Path
@@ -463,6 +473,15 @@ func (f *formRenderer) Render(ctx context.Context, node PreparedNode, rc RenderC
 		if rc.FormResult.SuccessFormID == formID {
 			var out bytes.Buffer
 			_ = template.Must(template.New("success").Parse(`<div id="form-{{ .ID }}" class="stratum-form-success" role="status">{{ .Message }}</div>`)).Execute(&out, map[string]string{"ID": safeDOMToken(node.ID), "Message": view.SuccessMessage})
+			// Success notice + fresh form keeps layout stable and allows another submission
+			returnTo2 := rc.Route.Path
+			if returnTo2 == "" || !strings.HasPrefix(returnTo2, "/") || strings.HasPrefix(returnTo2, "//") {
+				returnTo2 = "/"
+			}
+			var formOut2 bytes.Buffer
+			if err := publicFormTemplate.Execute(&formOut2, map[string]any{"InstanceID": safeDOMToken(node.ID), "Form": view, "ReturnTo": returnTo2}); err == nil {
+				out.Write(formOut2.Bytes())
+			}
 			return template.HTML(out.String()), nil
 		}
 		returnTo := rc.Route.Path

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"html/template"
+	"sort"
 	"strings"
 
 	"github.com/kokosx/stratum/internal/blocks"
@@ -132,7 +134,6 @@ func newPreviewContentReader(spec presetSpec, plan Input, media *previewMediaPro
 func (r *previewContentReader) Query(_ context.Context, q content.EntryQuery) ([]rendering.ArchiveEntry, error) {
 	q = q.Normalized()
 	entries := r.byType[string(q.ContentType)]
-	// Simple filter: exclude IDs
 	filtered := make([]rendering.ArchiveEntry, 0, len(entries))
 	exclude := make(map[string]bool, len(q.ExcludeIDs))
 	for _, id := range q.ExcludeIDs {
@@ -142,36 +143,36 @@ func (r *previewContentReader) Query(_ context.Context, q content.EntryQuery) ([
 		if exclude[e.ID] {
 			continue
 		}
-		// Apply term filter naively (no taxonomy, ignore)
 		filtered = append(filtered, e)
 	}
-	// Apply ordering: only published_desc / asc by title or published_at
-	if q.OrderBy == "entry.title" || strings.Contains(q.OrderBy, "title") {
-		// Sort by title
-		for i := 0; i < len(filtered); i++ {
-			for j := i + 1; j < len(filtered); j++ {
-				less := filtered[i].Title < filtered[j].Title
-				if q.Direction == "desc" {
-					less = !less
-				}
-				if less {
-					continue
-				}
-				// Actually need proper sort; use simple bubble for now but delegate to sort.Slice
+	// Implement existing EntryQuery semantics correctly: orderBy + direction + offset/limit
+	// Supported orderBy values: entry.published_at (default), entry.title, and fallback to seed order.
+	if strings.Contains(q.OrderBy, "title") {
+		sort.SliceStable(filtered, func(i, j int) bool {
+			less := filtered[i].Title < filtered[j].Title
+			if q.Direction == "desc" {
+				return !less
+			}
+			return less
+		})
+	} else {
+		// Default is published_at desc (seed order). For asc, reverse to reflect opposite direction.
+		// Seed order is already published_desc; only need to reverse for asc and handle title already.
+		if q.Direction == "asc" {
+			// published_at asc means oldest first -> reverse seed order
+			for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
+				filtered[i], filtered[j] = filtered[j], filtered[i]
 			}
 		}
-		// Use stable sort for correctness
-		// We will use sort.Slice
-	}
-	// Use sort for deterministic
-	// Note: we avoid importing sort here? Already in content, but we need sort.
-	// Simple: rely on original order (published_desc) which is already in seed order.
-	if q.Direction == "asc" {
-		// Reverse
-		for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
-			filtered[i], filtered[j] = filtered[j], filtered[i]
+		if strings.Contains(q.OrderBy, "title") {
+			// already handled above; this branch won't run
+		} else if q.OrderBy != "" && q.OrderBy != "entry.published_at" && q.Direction == "desc" {
+			// For unknown orderBy, keep seed order (published_desc)
 		}
+		// For entry.published_at desc we keep seed order; for asc we already reversed.
+		// Ensure stable sort for title case already done.
 	}
+	// Apply offset/limit per Normalized (limit already clamped)
 	if q.Offset >= len(filtered) {
 		return []rendering.ArchiveEntry{}, nil
 	}
@@ -321,7 +322,9 @@ func previewNavigation(spec presetSpec, plan Input) map[string]navigation.Menu {
 	}
 }
 
-// RenderPreview builds HTML for the given plan and surface using the real renderer.
+// RenderPreview builds HTML for the given plan and surface using the real renderer and real theme.
+// It reuses the single theme page path: Theme + Settings + Site + Navigation + Header/Footer SDT + Blocks + Theme CSS + Block CSS → HTML.
+// Synthetic: Entries, Media, Forms, Navigation, Site Settings. Real: Theme shell, header wrapper, footer wrapper, body classes.
 func RenderPreview(ctx context.Context, plan Plan, surface PreviewSurface, blocks *blocks.Registry, themesRuntime *themes.Runtime) (string, error) {
 	spec := specForPlan(plan)
 	mediaProvider := newPreviewMediaProvider(plan.Input.PaletteID)
@@ -330,16 +333,8 @@ func RenderPreview(ctx context.Context, plan Plan, surface PreviewSurface, block
 	formReader := newPreviewFormReader(spec)
 	nav := previewNavigation(spec, plan.Input)
 
-	// Build theme styles via theme definition (real Theme path)
 	settings := composedStyles(plan.Preset.ID, plan.Input.PaletteID, plan.Input.HeaderStyleID, plan.Input.FooterStyleID)
-	var themeCSS string
-	if css, err := themesRuntime.PreviewStyles(settings); err == nil {
-		themeCSS = css
-	} else {
-		themeCSS = themesRuntime.Styles()
-	}
-	// Block styles for all used blocks in preview docs
-	// Prepare docs per surface
+
 	var contentDoc *document.Document
 	var rc rendering.RenderContext
 	syntheticEntry := rendering.EntryContext{
@@ -352,7 +347,6 @@ func RenderPreview(ctx context.Context, plan Plan, surface PreviewSurface, block
 		Fields:        map[string]any{},
 	}
 	siteCtx := rendering.SiteContext{Name: plan.Input.SiteTitle, Tagline: plan.Input.Tagline, URL: plan.Input.SiteURL}
-	// Determine content doc based on surface
 	switch surface {
 	case SurfaceArchive:
 		if spec.archivePath != "" {
@@ -361,19 +355,19 @@ func RenderPreview(ctx context.Context, plan Plan, surface PreviewSurface, block
 			archiveCT := archiveContentType(spec)
 			entries, _ := contentReader.Query(ctx, content.EntryQuery{ContentType: content.ContentTypeID(archiveCT), Limit: 20})
 			rc = rendering.RenderContext{
-				Site:          siteCtx,
-				Entry:         syntheticEntry,
-				Route:         rendering.RouteContext{Path: spec.archivePath, IsArchive: true, ContentType: archiveCT, Archive: &rendering.ArchiveContext{Entries: entries, Permalink: spec.archivePath, Title: copyFor(plan.Input.Language, "heading.services"), Pagination: rendering.PaginationContext{Current: 1, TotalPages: 1}}},
-				Mode:          rendering.ModePreview,
-				IsPreview:     true,
-				ContentReader: contentReader,
-				QueryCache:    make(map[string][]rendering.ArchiveEntry),
-				Navigation:    nav,
-				FormReader:    formReader,
-				FormCache:     make(map[string]forms.FormView),
+				Site:           siteCtx,
+				Entry:          syntheticEntry,
+				Route:          rendering.RouteContext{Path: spec.archivePath, IsArchive: true, ContentType: archiveCT, Archive: &rendering.ArchiveContext{Entries: entries, Permalink: spec.archivePath, Title: copyFor(plan.Input.Language, "heading.services"), Pagination: rendering.PaginationContext{Current: 1, TotalPages: 1}}},
+				Mode:           rendering.ModePreview,
+				IsPreview:      true,
+				ContentReader:  contentReader,
+				QueryCache:     make(map[string][]rendering.ArchiveEntry),
+				Navigation:     nav,
+				FormReader:     formReader,
+				FormCache:      make(map[string]forms.FormView),
 				SitePartReader: sitePartReader,
 				MediaProvider:  mediaProvider,
-				Dependencies:  &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
+				Dependencies:   &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
 			}
 		} else {
 			surface = SurfaceHome
@@ -394,102 +388,154 @@ func RenderPreview(ctx context.Context, plan Plan, surface PreviewSurface, block
 				FeaturedImage: ae.FeaturedImage.ID,
 			}
 			rc = rendering.RenderContext{
-				Site:          siteCtx,
-				Entry:         syntheticEntry,
-				EntryID:       ae.ID,
-				Route:         rendering.RouteContext{Path: ae.URL, IsArchive: false},
-				Mode:          rendering.ModePreview,
-				IsPreview:     true,
-				ContentReader: contentReader,
-				QueryCache:    make(map[string][]rendering.ArchiveEntry),
-				Navigation:    nav,
-				FormReader:    formReader,
-				FormCache:     make(map[string]forms.FormView),
+				Site:           siteCtx,
+				Entry:          syntheticEntry,
+				EntryID:        ae.ID,
+				Route:          rendering.RouteContext{Path: ae.URL, IsArchive: false},
+				Mode:           rendering.ModePreview,
+				IsPreview:      true,
+				ContentReader:  contentReader,
+				QueryCache:     make(map[string][]rendering.ArchiveEntry),
+				Navigation:     nav,
+				FormReader:     formReader,
+				FormCache:      make(map[string]forms.FormView),
 				SitePartReader: sitePartReader,
 				MediaProvider:  mediaProvider,
-				Dependencies:  &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
+				Dependencies:   &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
 			}
 		}
 	default:
-		// Home
 		homeDoc := homepageEntryDocument("preview", plan.Preset.ID, "preview-form", plan)
 		contentDoc = homeDoc
 		rc = rendering.RenderContext{
-			Site:          siteCtx,
-			Entry:         syntheticEntry,
-			Route:         rendering.RouteContext{Path: "/", IsArchive: false},
-			Mode:          rendering.ModePreview,
-			IsPreview:     true,
-			ContentReader: contentReader,
-			QueryCache:    make(map[string][]rendering.ArchiveEntry),
-			Navigation:    nav,
-			FormReader:    formReader,
-			FormCache:     make(map[string]forms.FormView),
+			Site:           siteCtx,
+			Entry:          syntheticEntry,
+			Route:          rendering.RouteContext{Path: "/", IsArchive: false},
+			Mode:           rendering.ModePreview,
+			IsPreview:      true,
+			ContentReader:  contentReader,
+			QueryCache:     make(map[string][]rendering.ArchiveEntry),
+			Navigation:     nav,
+			FormReader:     formReader,
+			FormCache:      make(map[string]forms.FormView),
 			SitePartReader: sitePartReader,
-				MediaProvider:  mediaProvider,
-			Dependencies:  &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
+			MediaProvider:  mediaProvider,
+			Dependencies:   &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
 		}
 	}
-	// Handle home fallback when surface was archive but no archivePath
 	if contentDoc == nil {
 		homeDoc := homepageEntryDocument("preview", plan.Preset.ID, "preview-form", plan)
 		contentDoc = homeDoc
 		rc = rendering.RenderContext{
-			Site:          siteCtx,
-			Entry:         syntheticEntry,
-			Route:         rendering.RouteContext{Path: "/", IsArchive: false},
-			Mode:          rendering.ModePreview,
-			IsPreview:     true,
-			ContentReader: contentReader,
-			QueryCache:    make(map[string][]rendering.ArchiveEntry),
-			Navigation:    nav,
-			FormReader:    formReader,
-			FormCache:     make(map[string]forms.FormView),
+			Site:           siteCtx,
+			Entry:          syntheticEntry,
+			Route:          rendering.RouteContext{Path: "/", IsArchive: false},
+			Mode:           rendering.ModePreview,
+			IsPreview:      true,
+			ContentReader:  contentReader,
+			QueryCache:     make(map[string][]rendering.ArchiveEntry),
+			Navigation:     nav,
+			FormReader:     formReader,
+			FormCache:      make(map[string]forms.FormView),
 			SitePartReader: sitePartReader,
-				MediaProvider:  mediaProvider,
-			Dependencies:  &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
+			MediaProvider:  mediaProvider,
+			Dependencies:   &rendering.DependencyState{SiteParts: make(map[string]rendering.ResolvedSitePart)},
 		}
 	}
 
-	// Render header/footer site parts via blocks
+	// Render header/footer via blocks (synthetic site parts) — these become .Header/.Footer in PageView
 	headerDoc := sitePartDocumentForHeader("preview", plan.Input.HeaderStyleID)
 	footerDoc := sitePartDocumentForFooter("preview", plan.Input.FooterStyleID)
 	headerHTML, _ := blocks.RenderDocumentContext(headerDoc, rc)
 	footerHTML, _ := blocks.RenderDocumentContext(footerDoc, rc)
 
-	// Prepare content: need to inject header/footer handling? Alternatively render content doc with site part reader disabled to avoid recursion.
-	// We render content separately and then wrap with theme chrome.
-	// Ensure LCP state shared
 	rc.LCP = &rendering.LCPState{}
+	// Ensure navigation is available when rendering content (Collection may need Route context)
+	rc.Navigation = nav
 	contentHTML, err := blocks.RenderDocumentContext(contentDoc, rc)
 	if err != nil {
 		return "", err
 	}
 	// Block CSS for used blocks
-	// Collect used blocks from prepared documents
 	pd1, _ := blocks.Prepare(headerDoc)
 	pd2, _ := blocks.Prepare(contentDoc)
 	pd3, _ := blocks.Prepare(footerDoc)
 	used := append(append(pd1.UsedBlocks, pd2.UsedBlocks...), pd3.UsedBlocks...)
 	blockCSS := blocks.StylesFor(used)
 
-	// Build final HTML
-	var buf bytes.Buffer
-	buf.WriteString(`<!doctype html><html lang="` + templateEscape(plan.Input.Language) + `"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`)
-	buf.WriteString(`<title>` + templateEscape(plan.Input.SiteTitle) + `</title>`)
-	buf.WriteString(`<style>` + themeCSS + `</style>`)
-	if blockCSS != "" {
-		buf.WriteString(`<style>` + blockCSS + `</style>`)
+	// Build PageView identical to public handler's renderEntry: one source for Theme shell
+	// Use real theme rendering so body classes, site-header__inner, footer main/legal, etc. are identical.
+	lang := plan.Input.Language
+	if lang == "" {
+		lang = "en"
 	}
-	// Prevent preview form submission via JS
-	buf.WriteString(`<style>html{scroll-behavior:auto;}</style>`)
-	buf.WriteString(`</head><body class="site-` + string(plan.Preset.ID) + `">`)
-	buf.WriteString(`<header class="site-header">` + string(headerHTML) + `</header>`)
-	buf.WriteString(`<main class="site-main">` + string(contentHTML) + `</main>`)
-	buf.WriteString(`<footer class="site-footer">` + string(footerHTML) + `</footer>`)
-	buf.WriteString(`<script>document.addEventListener('submit',e=>{if(e.target.closest('form'))e.preventDefault()});document.addEventListener('click',e=>{let a=e.target.closest('a');if(a&&a.getAttribute('href')?.startsWith('#')===false){let href=a.getAttribute('href');if(href&&href.startsWith('/') ){e.preventDefault();}}});</script>`)
-	buf.WriteString(`</body></html>`)
-	return buf.String(), nil
+	// Minimal Head for preview parity (Theme will output same header/footer shell)
+	head := themes.HeadView{
+		Title:       plan.Input.SiteTitle,
+		Description: plan.Input.Tagline,
+		Canonical:   plan.Input.SiteURL,
+	}
+	regions := make(map[string]template.HTML)
+	if len(headerHTML) > 0 {
+		regions["header"] = headerHTML
+	}
+	if len(footerHTML) > 0 {
+		regions["footer"] = footerHTML
+	}
+	view := themes.PageView{
+		Site:        themes.SiteView{Title: plan.Input.SiteTitle, Tagline: plan.Input.Tagline, Language: lang, SiteURL: plan.Input.SiteURL},
+		Entry:       themes.EntryView{Title: syntheticEntry.Title, SEOTitle: syntheticEntry.Title, SEODescription: syntheticEntry.Excerpt},
+		Head:        head,
+		Navigation:  nav,
+		Content:     contentHTML,
+		ContentType: "page",
+		Kind:        themes.PageKindSingle,
+		IsFrontPage: rc.Route.Path == "/",
+		Header:      headerHTML,
+		Footer:      footerHTML,
+		Regions:     regions,
+		Assets:      themes.AssetsView{},
+	}
+	if rc.Route.IsArchive {
+		view.Kind = themes.PageKindArchive
+	}
+	// Render via real theme — single source for shell
+	var html []byte
+	if themesRuntime != nil {
+		h, err := themesRuntime.Preview(view, settings, "")
+		if err == nil {
+			html = h
+		} else {
+			html, _ = themesRuntime.Render(view, settings)
+		}
+	}
+	if len(html) == 0 {
+		// Fallback minimal wrapper (should not happen)
+		var buf bytes.Buffer
+		buf.WriteString(`<!doctype html><html lang="` + templateEscape(plan.Input.Language) + `"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`)
+		buf.WriteString(`<title>` + templateEscape(plan.Input.SiteTitle) + `</title></head><body>`)
+		buf.WriteString(string(headerHTML))
+		buf.WriteString(string(contentHTML))
+		buf.WriteString(string(footerHTML))
+		buf.WriteString(`</body></html>`)
+		return buf.String(), nil
+	}
+	out := string(html)
+	// Inject block CSS inline for preview (public uses fingerprinted link, but inline ensures preview sees real block styles)
+	if blockCSS != "" {
+		// Insert before </head>
+		if idx := strings.Index(out, "</head>"); idx != -1 {
+			out = out[:idx] + `<style id="stratum-preview-blocks">` + blockCSS + `</style>` + out[idx:]
+		} else {
+			out = `<style>` + blockCSS + `</style>` + out
+		}
+	}
+	// Prevent preview form submission / navigation
+	if idx := strings.Index(out, "</body>"); idx != -1 {
+		script := `<script>document.addEventListener('submit',e=>{if(e.target.closest('form'))e.preventDefault()});document.addEventListener('click',e=>{let a=e.target.closest('a');if(a){let href=a.getAttribute('href');if(href&&href.startsWith('/') ){e.preventDefault();}}});</script>`
+		out = out[:idx] + script + out[idx:]
+	}
+	return out, nil
 }
 
 func archiveContentType(spec presetSpec) string {

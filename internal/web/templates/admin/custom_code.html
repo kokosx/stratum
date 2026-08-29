@@ -1,0 +1,45 @@
+{{ define "content" }}
+<section class="admin-page-header">
+  <div>
+    <h1>{{ if .Content.TemplateName }}Custom Code — {{ .Content.TemplateName }}{{ else }}Custom Code{{ end }}</h1>
+    <p class="muted">Trusted code snippets. Only administrators may manage these. HTML is raw, CSS is wrapped in &lt;style&gt;, JS in &lt;script&gt;.</p>
+  </div>
+</section>
+{{ if .Content.Error }}<div class="notice notice-danger">{{ .Content.Error }}</div>{{ end }}
+<section class="panel">
+  <h2>Snippets</h2>
+  <table class="list-table">
+    <thead><tr><th>Name</th><th>Type</th><th>Location</th><th>Enabled</th><th></th></tr></thead>
+    <tbody>
+      {{ range .Content.Global }}
+      <tr>
+        <td>{{ .Name }}</td>
+        <td>{{ .Kind }}</td>
+        <td>{{ .Placement }}</td>
+        <td>{{ if .Enabled }}Yes{{ else }}No{{ end }}</td>
+        <td>
+          <form method="post" action="/admin/settings/custom-code/{{ .ID }}/delete" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}"><button class="button button-small button-danger" type="submit">Delete</button></form>
+          <form method="post" action="/admin/settings/custom-code/{{ .ID }}/toggle" style="display:inline"><input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}"><input type="hidden" name="enabled" value="{{ if .Enabled }}0{{ else }}1{{ end }}"><button class="button button-small" type="submit">{{ if .Enabled }}Disable{{ else }}Enable{{ end }}</button></form>
+        </td>
+      </tr>
+      {{ else }}
+      <tr><td colspan="5" class="muted">No snippets yet.</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+<section class="panel" style="margin-top:20px">
+  <h2>Add snippet</h2>
+  <form method="post" action="/admin/settings/custom-code" class="admin-form-card" style="display:grid;gap:12px">
+    <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+    {{ if .Content.TemplateID }}<input type="hidden" name="scope" value="template"><input type="hidden" name="scope_id" value="{{ .Content.TemplateID }}">{{ else }}<input type="hidden" name="scope" value="global">{{ end }}
+    <label class="form-label">Name<input class="form-control" type="text" name="name" required maxlength="100"></label>
+    <label class="form-label">Type<select class="form-control" name="kind"><option value="html">HTML</option><option value="css">CSS</option><option value="js">JavaScript</option></select></label>
+    <label class="form-label">Location<select class="form-control" name="placement"><option value="head">Head</option><option value="body_start">After &lt;body&gt;</option><option value="body_end">Before &lt;/body&gt;</option></select></label>
+    <label class="form-label">Code<textarea class="form-control" name="code" rows="8" style="font-family:ui-monospace, monospace" required></textarea></label>
+    <label class="check-row"><input type="checkbox" name="enabled" value="on" checked> Enabled</label>
+    <label class="form-label">Sort order<input class="form-control" type="number" name="sort_order" value="0" min="0" max="10000"></label>
+    <button class="button button-primary" type="submit">Add snippet</button>
+  </form>
+</section>
+{{ end }}

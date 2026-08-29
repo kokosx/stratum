@@ -26,16 +26,16 @@ func (h *Handler) creatorPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := creator.Input{
-		PresetID:      creator.PresetID(strings.TrimSpace(r.FormValue("preset"))),
-		PaletteID:     creator.PaletteID(strings.TrimSpace(r.FormValue("palette"))),
-		HeaderStyleID: creator.HeaderStyleID(strings.TrimSpace(r.FormValue("header_style"))),
-		FooterStyleID: creator.FooterStyleID(strings.TrimSpace(r.FormValue("footer_style"))),
-		SiteTitle:     strings.TrimSpace(r.FormValue("site_name")),
-		Tagline:       strings.TrimSpace(r.FormValue("tagline")),
-		Language:      strings.TrimSpace(r.FormValue("language")),
-		Timezone:      strings.TrimSpace(r.FormValue("timezone")),
+		PresetID:       creator.PresetID(strings.TrimSpace(r.FormValue("preset"))),
+		PaletteID:      creator.PaletteID(strings.TrimSpace(r.FormValue("palette"))),
+		HeaderStyleID:  creator.HeaderStyleID(strings.TrimSpace(r.FormValue("header_style"))),
+		FooterStyleID:  creator.FooterStyleID(strings.TrimSpace(r.FormValue("footer_style"))),
+		SiteTitle:      strings.TrimSpace(r.FormValue("site_name")),
+		Tagline:        strings.TrimSpace(r.FormValue("tagline")),
+		Language:       strings.TrimSpace(r.FormValue("language")),
+		Timezone:       strings.TrimSpace(r.FormValue("timezone")),
 		SiteRepresents: strings.TrimSpace(r.FormValue("site_represents")),
-		SiteURL:       strings.TrimSpace(r.FormValue("site_url")),
+		SiteURL:        strings.TrimSpace(r.FormValue("site_url")),
 	}
 	if v := strings.TrimSpace(r.FormValue("product_media")); v != "" {
 		input.ProductMediaPosition = v

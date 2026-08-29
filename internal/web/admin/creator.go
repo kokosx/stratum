@@ -12,32 +12,32 @@ import (
 )
 
 type creatorPageData struct {
-	Presets               []creator.Preset
-	Selected              creator.PresetID
-	SiteName              string
-	Tagline               string
-	Error                 string
-	Result                *creator.Result
-	Palettes              []creator.Palette
-	Headers               []creator.HeaderOption
-	Footers               []creator.FooterOption
-	SelectedPalette       creator.PaletteID
-	SelectedHeader        creator.HeaderStyleID
-	SelectedFooter        creator.FooterStyleID
-	Language              string
-	Timezone              string
-	SiteRepresents        string
-	IndexingEnabled       bool
-	SiteURL               string
-	LanguageOptions       []site.LanguageOption
-	TimezoneOptions       []site.TimezoneOption
-	BlogLatest            int
-	BlogArchive           int
-	PortfolioCols         int
-	ProductCols           int
-	ProductMedia          string
-	TestimonialsCols      int
-	ServiceCols           int
+	Presets          []creator.Preset
+	Selected         creator.PresetID
+	SiteName         string
+	Tagline          string
+	Error            string
+	Result           *creator.Result
+	Palettes         []creator.Palette
+	Headers          []creator.HeaderOption
+	Footers          []creator.FooterOption
+	SelectedPalette  creator.PaletteID
+	SelectedHeader   creator.HeaderStyleID
+	SelectedFooter   creator.FooterStyleID
+	Language         string
+	Timezone         string
+	SiteRepresents   string
+	IndexingEnabled  bool
+	SiteURL          string
+	LanguageOptions  []site.LanguageOption
+	TimezoneOptions  []site.TimezoneOption
+	BlogLatest       int
+	BlogArchive      int
+	PortfolioCols    int
+	ProductCols      int
+	ProductMedia     string
+	TestimonialsCols int
+	ServiceCols      int
 }
 
 func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
@@ -143,24 +143,24 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		input := creator.Input{
-			PresetID:      data.Selected,
-			SiteTitle:     data.SiteName,
-			Tagline:       data.Tagline,
-			PaletteID:     data.SelectedPalette,
-			HeaderStyleID: data.SelectedHeader,
-			FooterStyleID: data.SelectedFooter,
-			Language:      data.Language,
-			Timezone:      data.Timezone,
-			SiteRepresents: data.SiteRepresents,
-			IndexingEnabled: data.IndexingEnabled,
-			SiteURL:       data.SiteURL,
-			BlogLatestCount: data.BlogLatest,
-			BlogArchiveCount: data.BlogArchive,
-			PortfolioColumns: data.PortfolioCols,
-			ProductColumns: data.ProductCols,
-			ProductMediaPosition: data.ProductMedia,
+			PresetID:                   data.Selected,
+			SiteTitle:                  data.SiteName,
+			Tagline:                    data.Tagline,
+			PaletteID:                  data.SelectedPalette,
+			HeaderStyleID:              data.SelectedHeader,
+			FooterStyleID:              data.SelectedFooter,
+			Language:                   data.Language,
+			Timezone:                   data.Timezone,
+			SiteRepresents:             data.SiteRepresents,
+			IndexingEnabled:            data.IndexingEnabled,
+			SiteURL:                    data.SiteURL,
+			BlogLatestCount:            data.BlogLatest,
+			BlogArchiveCount:           data.BlogArchive,
+			PortfolioColumns:           data.PortfolioCols,
+			ProductColumns:             data.ProductCols,
+			ProductMediaPosition:       data.ProductMedia,
 			LandingTestimonialsColumns: data.TestimonialsCols,
-			ServiceColumns: data.ServiceCols,
+			ServiceColumns:             data.ServiceCols,
 		}
 		plan, previewErr := h.creator.Preview(input)
 		if previewErr == nil {
@@ -230,7 +230,7 @@ func (h *Handler) renderCreator(w http.ResponseWriter, r *http.Request, content 
 	data.CSRFToken = token
 	data.Content = content
 	w.WriteHeader(status)
-	if err := h.creatorTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
+	if err := h.creatorTemplate.ExecuteTemplate(w, "creator_layout.html", data); err != nil {
 		log.Printf("render site creator: %v", err)
 	}
 }

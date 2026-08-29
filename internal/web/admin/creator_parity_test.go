@@ -18,14 +18,14 @@ func TestCreatorPreviewFinalParity(t *testing.T) {
 			handler, authService := newTestHandler(t)
 			// Build plan with same inputs for preview and final
 			planInput := creator.Input{
-				PresetID:      preset.ID,
-				SiteTitle:     "Parity Site",
-				Tagline:       "hello",
-				PaletteID:     creator.DefaultPaletteForPreset(preset.ID),
-				HeaderStyleID: creator.DefaultHeaderForPreset(preset.ID),
-				FooterStyleID: creator.DefaultFooterForPreset(preset.ID),
-				Language:      "en",
-				Timezone:      "UTC",
+				PresetID:       preset.ID,
+				SiteTitle:      "Parity Site",
+				Tagline:        "hello",
+				PaletteID:      creator.DefaultPaletteForPreset(preset.ID),
+				HeaderStyleID:  creator.DefaultHeaderForPreset(preset.ID),
+				FooterStyleID:  creator.DefaultFooterForPreset(preset.ID),
+				Language:       "en",
+				Timezone:       "UTC",
 				SiteRepresents: "organization",
 			}
 			// Set layout options to non-default for some presets to ensure parity on those

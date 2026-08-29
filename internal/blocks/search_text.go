@@ -46,7 +46,7 @@ func blockSearchText(block string, props map[string]any) []string {
 		return stringProp(props, "title")
 	case "core/card", "core/section", "core/stack", "core/grid", "core/columns", "core/divider":
 		return nil
-	case "core/collection", "core/posts", "core/entry-field", "core/entry-media", "core/entry-title", "core/entry-content", "core/site-part", "core/navigation", "core/site-logo", "core/archive-title", "core/archive-description", "core/embed":
+	case "core/collection", "core/posts", "core/entry-field", "core/entry-media", "core/entry-title", "core/entry-content", "core/site-part", "core/navigation", "core/site-logo", "core/archive-title", "core/archive-description", "core/embed", "core/custom-code":
 		return nil
 	}
 	// Generic fallback for textual blocks that expose a "text" string: avoid indexing CSS/variant/IDs.

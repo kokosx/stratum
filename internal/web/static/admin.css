@@ -66,6 +66,7 @@
   --adm-sidebar-accent: var(--ui-primary);
 }
 
+[hidden] { display: none !important; }
 * { box-sizing: border-box; }
 body { margin: 0; color: var(--adm-text); background: var(--adm-bg); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 .auth-page { display: grid; min-height: 100vh; place-items: center; padding: 20px; }
@@ -775,8 +776,17 @@ textarea.form-control, .form-field textarea { height: auto; min-height: 88px; pa
 .sidebar { border-right: 1px solid #0f172a; }
 
 /* Settings shell width */
-.settings-shell { max-width: 880px; }
-.settings-content .panel, .settings-content .settings-section { max-width: 720px; }
+.settings-shell { max-width: 1040px; }
+.settings-content .panel, .settings-content .settings-section { width: 100%; }
+.settings-section { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); padding: 20px; }
+.settings-section .form-control, .settings-section select.form-control, .settings-section textarea.form-control, .settings-section input.form-control { max-width: 640px; }
+.settings-media { max-width: 480px; width: min(100%, 480px); }
+.settings-media__preview { width: 100%; aspect-ratio: 1200 / 630; overflow: hidden; border-radius: var(--ui-radius-md); border: 1px solid var(--ui-border); background: var(--ui-surface-subtle); display: grid; place-items: center; }
+.settings-media__preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.settings-media__preview--favicon { width: 128px; height: 128px; aspect-ratio: 1 / 1; max-width: 128px; }
+.settings-media__preview--favicon img { width: 100%; height: 100%; object-fit: cover; }
+.settings-media__actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+@media (max-width: 768px) { .settings-shell { max-width: 100%; } }
 
 /* Lists */
 .panel { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); box-shadow: var(--ui-shadow-sm); padding: 20px; }

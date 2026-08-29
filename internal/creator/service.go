@@ -516,8 +516,14 @@ func createMenu(ctx context.Context, q *db.Queries, a creationArtifacts, now int
 		}
 	}
 	if a.archiveContentType != "" {
-		label := map[string]string{"post": "Blog", "project": "Work", "product": "Products", "service": "Services"}[a.archiveContentType]
-		path := map[string]string{"post": "/blog", "project": "/work", "product": "/products", "service": "/services"}[a.archiveContentType]
+		label := map[string]string{"post": "Blog", "project": "Work", "product": "Products", "service": "Services", "case_study": "Case Studies", "article": "Knowledge Base"}[a.archiveContentType]
+		path := map[string]string{"post": "/blog", "project": "/work", "product": "/products", "service": "/services", "case_study": "/case-studies", "article": "/knowledge"}[a.archiveContentType]
+		if label == "" {
+			label = a.archiveContentType
+		}
+		if path == "" {
+			path = "/" + a.archiveContentType
+		}
 		items = append(items, menuItem{label: label, targetType: "url", url: path})
 	}
 	for _, entry := range a.entries {
@@ -551,7 +557,7 @@ func createSitePart(ctx context.Context, q *db.Queries, part partArtifact, autho
 }
 
 func landingFormID(id PresetID, formID string) string {
-	if id == PresetLanding {
+	if id == PresetLanding || id == PresetSimpleSite {
 		return formID
 	}
 	return ""

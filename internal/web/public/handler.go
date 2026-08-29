@@ -859,6 +859,19 @@ func (h *Handler) renderEntry(ctx context.Context, origin, path string, entry db
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render: %w", err)
 	}
+	// Inject scoped custom code (global + template) — deterministic ordering sort_order,id
+	{
+		effTemplateID := ""
+		if entry.LayoutTemplateID.Valid && entry.LayoutTemplateID.String != "" {
+			effTemplateID = entry.LayoutTemplateID.String
+		} else if layoutRevID != "" {
+			// fallback to default layout template for content type
+			if ct, err := h.queries.GetContentType(ctx, entry.ContentTypeID); err == nil && ct.DefaultLayoutTemplateID.Valid {
+				effTemplateID = ct.DefaultLayoutTemplateID.String
+			}
+		}
+		html = h.injectCustomCode(ctx, html, effTemplateID)
+	}
 	gz, err := compress.Gzip(html)
 	if err != nil {
 		gz = nil
@@ -1444,6 +1457,7 @@ func (h *Handler) renderArchivePage(ctx context.Context, origin, archivePath str
 	if err != nil {
 		return pagecache.Entry{}, fmt.Errorf("theme render archive: %w", err)
 	}
+	html = h.injectCustomCode(ctx, html, archiveTemplateID)
 	gz, err := compress.Gzip(html)
 	if err != nil {
 		gz = nil
@@ -2798,6 +2812,71 @@ func (h *Handler) serveFavicon(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// injectCustomCode inserts trusted global + template snippets into HTML at head/body_start/body_end.
+// Deterministic ordering: sort_order then id per placement. Only enabled snippets.
+func (h *Handler) injectCustomCode(ctx context.Context, html []byte, templateID string) []byte {
+	dbHandle, ok := h.hub.Queries.DB().(*sql.DB)
+	if !ok {
+		return html
+	}
+	// Fetch snippets: global + template
+	rows, err := dbHandle.QueryContext(ctx, `SELECT id, kind, placement, code FROM custom_code_snippets WHERE enabled=1 AND (scope='global' OR (scope='template' AND scope_id=?)) ORDER BY sort_order ASC, id ASC`, templateID)
+	// If templateID empty, the query still returns globals; for non-matched template it returns no template rows
+	if err != nil {
+		// fallback to global only
+		rows, err = dbHandle.QueryContext(ctx, `SELECT id, kind, placement, code FROM custom_code_snippets WHERE enabled=1 AND scope='global' ORDER BY sort_order ASC, id ASC`)
+		if err != nil {
+			return html
+		}
+	}
+	defer rows.Close()
+	var head, bodyStart, bodyEnd strings.Builder
+	for rows.Next() {
+		var id, kind, placement, code string
+		if err := rows.Scan(&id, &kind, &placement, &code); err != nil {
+			continue
+		}
+		var snippet string
+		switch kind {
+		case "css":
+			snippet = `<style data-stratum-custom-code="` + template.HTMLEscapeString(id) + `">` + code + `</style>`
+		case "js":
+			snippet = `<script data-stratum-custom-code="` + template.HTMLEscapeString(id) + `">` + code + `</script>`
+		default:
+			snippet = code
+		}
+		switch placement {
+		case "head":
+			head.WriteString(snippet)
+		case "body_start":
+			bodyStart.WriteString(snippet)
+		case "body_end":
+			bodyEnd.WriteString(snippet)
+		}
+	}
+	out := string(html)
+	if head.Len() > 0 {
+		if idx := strings.Index(out, "</head>"); idx != -1 {
+			out = out[:idx] + head.String() + out[idx:]
+		}
+	}
+	if bodyStart.Len() > 0 {
+		// find <body ...>
+		if idx := strings.Index(out, "<body"); idx != -1 {
+			if end := strings.Index(out[idx:], ">"); end != -1 {
+				pos := idx + end + 1
+				out = out[:pos] + bodyStart.String() + out[pos:]
+			}
+		}
+	}
+	if bodyEnd.Len() > 0 {
+		if idx := strings.Index(out, "</body>"); idx != -1 {
+			out = out[:idx] + bodyEnd.String() + out[idx:]
+		}
+	}
+	return []byte(out)
 }
 
 // siteIconView resolves the configured Site Icon into favicon links, or nil.

@@ -19,6 +19,7 @@ import (
 	"github.com/kokosx/stratum/internal/comments"
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/creator"
+	"github.com/kokosx/stratum/internal/customcode"
 	"github.com/kokosx/stratum/internal/forms"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
@@ -68,6 +69,7 @@ type Handler struct {
 	toolsRedirectFormTemplate    *template.Template
 	toolsNotFoundTemplate        *template.Template
 	toolsHealthTemplate          *template.Template
+	customCodeTemplate           *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -82,6 +84,7 @@ type Handler struct {
 	forms                        *forms.Service
 	search                       *search.Service
 	creator                      *creator.Service
+	customCode                   *customcode.Service
 }
 
 type LayoutData struct {
@@ -253,9 +256,14 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	creatorTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "creator", "creator.html")
+	creatorTemplate, err := template.New("creator").Funcs(adminFuncs).ParseFS(templateFS, "creator_layout.html", "creator.html")
 	if err != nil {
 		return nil, err
+	}
+	customCodeTemplate, err := template.New("custom_code").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "custom_code.html")
+	if err != nil {
+		// fallback minimal
+		customCodeTemplate = template.New("custom_code")
 	}
 	formNewTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "form_new", "form_new.html")
 	if err != nil {
@@ -335,6 +343,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		toolsRedirectFormTemplate:    toolsRedirectFormTemplate,
 		toolsNotFoundTemplate:        toolsNotFoundTemplate,
 		toolsHealthTemplate:          toolsHealthTemplate,
+		customCodeTemplate:           customCodeTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,
@@ -347,6 +356,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		forms:                        runtime.Forms,
 		search:                       searchService,
 		creator:                      creator.NewService(database, queries, blockRegistry, mediaService, themeRuntime, runtime, searchService),
+		customCode:                   customcode.New(database, runtime.Pages),
 	}, nil
 }
 
@@ -427,6 +437,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/content/{type}/{id}/trash", h.requireAuth(h.trashCustomEntry))
 	mux.HandleFunc("POST /admin/content/{type}/{id}/restore", h.requireAuth(h.restoreCustomEntry))
 	mux.HandleFunc("POST /admin/content/{type}/{id}/delete", h.requireAuth(h.deleteCustomEntry))
+	mux.HandleFunc("GET /admin/content/{type}/{id}/quick-edit", h.requireAuth(h.quickEditCustom))
+	mux.HandleFunc("POST /admin/content/{type}/{id}/quick-edit", h.requireAuth(h.quickEditCustom))
 	mux.HandleFunc("GET /admin/posts", h.requireAuth(h.listPosts))
 	mux.HandleFunc("GET /admin/posts/new", h.requireAuth(h.newPost))
 	mux.HandleFunc("POST /admin/posts", h.requireAuth(h.createPost))
@@ -507,6 +519,13 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/settings/content-types/{id}/delete", h.requireAuth(h.deleteContentType))
 	mux.HandleFunc("POST /admin/settings/robots-preview", h.requireAuth(h.robotsPreview))
 	mux.HandleFunc("POST /admin/settings/seo/robots-preview", h.requireAuth(h.robotsPreview))
+	mux.HandleFunc("GET /admin/settings/custom-code", h.requireAuth(h.listCustomCode))
+	mux.HandleFunc("POST /admin/settings/custom-code", h.requireAuth(h.createCustomCodeSnippet))
+	mux.HandleFunc("POST /admin/settings/custom-code/{id}", h.requireAuth(h.updateCustomCodeSnippet))
+	mux.HandleFunc("POST /admin/settings/custom-code/{id}/delete", h.requireAuth(h.deleteCustomCodeSnippet))
+	mux.HandleFunc("POST /admin/settings/custom-code/{id}/toggle", h.requireAuth(h.toggleCustomCodeSnippet))
+	mux.HandleFunc("GET /admin/appearance/templates/{id}/custom-code", h.requireAuth(h.templateCustomCode))
+	mux.HandleFunc("POST /admin/appearance/templates/{id}/custom-code", h.requireAuth(h.createCustomCodeSnippet))
 	mux.HandleFunc("GET /admin/media", h.requireAuth(h.mediaLibrary))
 	mux.HandleFunc("GET /admin/media.json", h.requireAuth(h.mediaListJSON))
 	mux.HandleFunc("POST /admin/media/upload", h.requireAuth(h.uploadMedia))
