@@ -83,22 +83,32 @@ func TargetURL(r *http.Request, cfg Config) (*url.URL, bool) {
 		}
 	}
 
+	// If we need scheme redirect and know a canonical host, prefer it over hostile Host.
+	// Preserve localhost/loopback to avoid breaking dev, and preserve Host when no Site URL.
+	if needScheme && !needWWW && cfg.CanonicalHost != "" {
+		effHostnameForScheme, _, _ := splitHost(effHost)
+		if effHostnameForScheme != "" && !isLocalHost(strings.ToLower(effHostnameForScheme)) {
+			// Use canonical host instead of request Host to avoid open redirect via evil Host.
+			targetHost = cfg.CanonicalHost
+		}
+	}
+
 	if !needScheme && !needWWW {
 		return nil, false
 	}
 
 	// If host needs canonicalization, targetHost already set to canonical.
-	// If only scheme needs change and www is off, targetHost remains effective host (preserve).
+	// If only scheme needs change and www is off, targetHost now holds canonical when known (evil-host fix).
 	// If both need change, host is already canonical and scheme is desiredScheme.
 
 	finalHost := targetHost
-	// When only scheme needs redirect and www is off, we preserve effective host.
+	// When only scheme needs redirect and www is off, we now prefer canonical host if known.
 	// When www needs redirect, we already have canonical host.
 	// Edge: if scheme needs redirect but host also needs canonicalization (combined), finalHost is canonical host.
 	if needWWW {
 		finalHost = targetHost
 	} else if needScheme {
-		finalHost = effHost
+		finalHost = targetHost
 	}
 
 	u := &url.URL{

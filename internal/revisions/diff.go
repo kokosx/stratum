@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/kokosx/stratum/internal/blocks"
@@ -104,11 +105,15 @@ func CompareRevisions(a, b db.EntryRevision, opts CompareOptions) (*Diff, error)
 	// Metadata
 	diff.Metadata = compareMetadata(a, b)
 	// Fields
-	diff.Fields = compareFields(a, b, opts)
+	fields, err := compareFields(a, b, opts)
+	if err != nil {
+		return nil, fmt.Errorf("comparison unavailable: fields decode failed: %w", err)
+	}
+	diff.Fields = fields
 	// Content
 	contentDiff, err := compareContent(a, b, opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("comparison unavailable: %w", err)
 	}
 	diff.Content = *contentDiff
 
@@ -120,25 +125,59 @@ func CompareRevisions(a, b db.EntryRevision, opts CompareOptions) (*Diff, error)
 		Modified: len(contentDiff.Modified),
 	}
 	diff.Summary.TotalChanges = diff.Summary.Added + diff.Summary.Removed + diff.Summary.Moved + diff.Summary.Modified
-	// Count metadata and fields changes in total
+	// Count metadata and fields changes via helper (includes all metadata fields)
+	diff.Summary.TotalChanges += countMetadataChanges(diff.Metadata)
 	for _, f := range diff.Fields {
 		if f.Changed {
 			diff.Summary.TotalChanges++
 		}
 	}
-	if diff.Metadata.Title != nil && diff.Metadata.Title.Changed {
-		diff.Summary.TotalChanges++
-	}
-	if diff.Metadata.Slug != nil && diff.Metadata.Slug.Changed {
-		diff.Summary.TotalChanges++
-	}
-	if diff.Metadata.Excerpt != nil && diff.Metadata.Excerpt.Changed {
-		diff.Summary.TotalChanges++
-	}
 	// Warnings for missing media
 	diff.Warnings = collectWarnings(a, b, *contentDiff)
 
+	// Deterministic sort
+	sortFieldDiffs(diff.Fields, opts)
+	sortContentDiff(diff)
+
 	return diff, nil
+}
+
+func countMetadataChanges(md MetadataDiff) int {
+	c := 0
+	if md.Title != nil && md.Title.Changed {
+		c++
+	}
+	if md.Slug != nil && md.Slug.Changed {
+		c++
+	}
+	if md.Excerpt != nil && md.Excerpt.Changed {
+		c++
+	}
+	if md.FeaturedMedia != nil && md.FeaturedMedia.Changed {
+		c++
+	}
+	if md.SocialMedia != nil && md.SocialMedia.Changed {
+		c++
+	}
+	if md.ParentID != nil && md.ParentID.Changed {
+		c++
+	}
+	if md.MenuOrder != nil && md.MenuOrder.Changed {
+		c++
+	}
+	if md.LayoutTemplate != nil && md.LayoutTemplate.Changed {
+		c++
+	}
+	if md.Visibility != nil && md.Visibility.Changed {
+		c++
+	}
+	if md.Sticky != nil && md.Sticky.Changed {
+		c++
+	}
+	if md.SEO != nil && md.SEO.Changed {
+		c++
+	}
+	return c
 }
 
 func compareMetadata(a, b db.EntryRevision) MetadataDiff {
@@ -185,13 +224,43 @@ func compareMetadata(a, b db.EntryRevision) MetadataDiff {
 	if a.Sticky != b.Sticky {
 		md.Sticky = &ValueDiff{Old: fmt.Sprintf("%d", a.Sticky), New: fmt.Sprintf("%d", b.Sticky), Changed: true}
 	}
+	// SEO: compare SeoTitle, SeoDescription, CanonicalUrl, Robots, SchemaMode
+	seoA := strings.Join([]string{
+		stringValue(a.SeoTitle),
+		stringValue(a.SeoDescription),
+		stringValue(a.CanonicalUrl),
+		fmt.Sprintf("%v", a.SeoRobotsIndex),
+		fmt.Sprintf("%v", a.SeoRobotsFollow),
+		a.SchemaMode,
+	}, "|")
+	seoB := strings.Join([]string{
+		stringValue(b.SeoTitle),
+		stringValue(b.SeoDescription),
+		stringValue(b.CanonicalUrl),
+		fmt.Sprintf("%v", b.SeoRobotsIndex),
+		fmt.Sprintf("%v", b.SeoRobotsFollow),
+		b.SchemaMode,
+	}, "|")
+	if seoA != seoB {
+		md.SEO = &ValueDiff{Old: seoA, New: seoB, Changed: true}
+	}
 	return md
 }
 
-func compareFields(a, b db.EntryRevision, opts CompareOptions) []FieldDiff {
+func compareFields(a, b db.EntryRevision, opts CompareOptions) ([]FieldDiff, error) {
 	var fieldsA, fieldsB map[string]any
-	_ = json.Unmarshal([]byte(stringValueRaw(a.FieldsJson)), &fieldsA)
-	_ = json.Unmarshal([]byte(stringValueRaw(b.FieldsJson)), &fieldsB)
+	rawA := stringValueRaw(a.FieldsJson)
+	rawB := stringValueRaw(b.FieldsJson)
+	if strings.TrimSpace(rawA) != "" {
+		if err := json.Unmarshal([]byte(rawA), &fieldsA); err != nil {
+			return nil, fmt.Errorf("fields A decode: %w", err)
+		}
+	}
+	if strings.TrimSpace(rawB) != "" {
+		if err := json.Unmarshal([]byte(rawB), &fieldsB); err != nil {
+			return nil, fmt.Errorf("fields B decode: %w", err)
+		}
+	}
 	if fieldsA == nil {
 		fieldsA = map[string]any{}
 	}
@@ -214,28 +283,83 @@ func compareFields(a, b db.EntryRevision, opts CompareOptions) []FieldDiff {
 		if schema, ok := opts.FieldSchemas[k]; ok && schema.Label != "" {
 			label = schema.Label
 		} else {
-			// Try to get label from content type definition if available
-			// Fallback to key itself, but we try to prettify
 			label = prettifyKey(k)
 		}
 		diffs = append(diffs, FieldDiff{
 			Key: k, Label: label, Old: valA, New: valB, Changed: changed,
 		})
 	}
-	// Also handle content type fields that may not be in either but schema exists - we already handle via keys, but we should ensure we show all schema fields even if not present
-	// For now, only show keys that appear in either revision
-	return diffs
+	return diffs, nil
+}
+
+func sortFieldDiffs(diffs []FieldDiff, opts CompareOptions) {
+	// Schema order if available, then alphabetical
+	order := map[string]int{}
+	i := 0
+	for k := range opts.FieldSchemas {
+		order[k] = i
+		i++
+	}
+	sort.Slice(diffs, func(a, b int) bool {
+		oa, hasA := order[diffs[a].Key]
+		ob, hasB := order[diffs[b].Key]
+		if hasA && hasB {
+			return oa < ob
+		}
+		if hasA != hasB {
+			return hasA
+		}
+		return diffs[a].Key < diffs[b].Key
+	})
+}
+
+func sortContentDiff(diff *Diff) {
+	sort.Slice(diff.Content.Added, func(i, j int) bool { return diff.Content.Added[i].ID < diff.Content.Added[j].ID })
+	sort.Slice(diff.Content.Removed, func(i, j int) bool { return diff.Content.Removed[i].ID < diff.Content.Removed[j].ID })
+	sort.Slice(diff.Content.Moved, func(i, j int) bool { return diff.Content.Moved[i].ID < diff.Content.Moved[j].ID })
+	sort.Slice(diff.Content.Modified, func(i, j int) bool { return diff.Content.Modified[i].ID < diff.Content.Modified[j].ID })
+	sort.Slice(diff.Content.Unchanged, func(i, j int) bool { return diff.Content.Unchanged[i].ID < diff.Content.Unchanged[j].ID })
+	// Also sort prop diffs deterministically
+	for i := range diff.Content.Added {
+		sortPropDiffs(diff.Content.Added[i].PropDiffs)
+		sortPropDiffs(diff.Content.Added[i].SettingDiffs)
+	}
+	for i := range diff.Content.Removed {
+		sortPropDiffs(diff.Content.Removed[i].PropDiffs)
+		sortPropDiffs(diff.Content.Removed[i].SettingDiffs)
+	}
+	for i := range diff.Content.Moved {
+		sortPropDiffs(diff.Content.Moved[i].PropDiffs)
+		sortPropDiffs(diff.Content.Moved[i].SettingDiffs)
+	}
+	for i := range diff.Content.Modified {
+		sortPropDiffs(diff.Content.Modified[i].PropDiffs)
+		sortPropDiffs(diff.Content.Modified[i].SettingDiffs)
+	}
+}
+
+func sortPropDiffs(d []PropDiff) {
+	sort.Slice(d, func(i, j int) bool { return d[i].Key < d[j].Key })
 }
 
 func compareContent(a, b db.EntryRevision, opts CompareOptions) (*ContentDiff, error) {
-	docA, err := document.Decode([]byte(a.DocumentJson))
-	if err != nil {
-		// Try to handle empty or invalid as empty doc
+	var docA, docB *document.Document
+	var err error
+	if strings.TrimSpace(a.DocumentJson) == "" {
 		docA = &document.Document{Version: 1, Nodes: []document.Node{}}
+	} else {
+		docA, err = document.Decode([]byte(a.DocumentJson))
+		if err != nil {
+			return nil, fmt.Errorf("invalid document A: %w", err)
+		}
 	}
-	docB, err := document.Decode([]byte(b.DocumentJson))
-	if err != nil {
+	if strings.TrimSpace(b.DocumentJson) == "" {
 		docB = &document.Document{Version: 1, Nodes: []document.Node{}}
+	} else {
+		docB, err = document.Decode([]byte(b.DocumentJson))
+		if err != nil {
+			return nil, fmt.Errorf("invalid document B: %w", err)
+		}
 	}
 	// Flatten both
 	mapA := flattenDocument(docA)
@@ -243,7 +367,7 @@ func compareContent(a, b db.EntryRevision, opts CompareOptions) (*ContentDiff, e
 
 	diff := &ContentDiff{}
 
-	// Track all IDs
+	// Track all IDs - deterministic iteration via sorted keys
 	allIDs := make(map[string]bool)
 	for id := range mapA {
 		allIDs[id] = true
@@ -251,8 +375,14 @@ func compareContent(a, b db.EntryRevision, opts CompareOptions) (*ContentDiff, e
 	for id := range mapB {
 		allIDs[id] = true
 	}
-
+	// Collect sorted IDs for deterministic order
+	ids := make([]string, 0, len(allIDs))
 	for id := range allIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	for _, id := range ids {
 		infoA, okA := mapA[id]
 		infoB, okB := mapB[id]
 		if !okA && okB {
@@ -374,8 +504,14 @@ func diffMaps(a, b map[string]any, block string, registry *blocks.Registry, kind
 	for k := range b {
 		keys[k] = true
 	}
-	var diffs []PropDiff
+	// Deterministic order
+	sortedKeys := make([]string, 0, len(keys))
 	for k := range keys {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+	var diffs []PropDiff
+	for _, k := range sortedKeys {
 		valA, okA := a[k]
 		valB, okB := b[k]
 		if !okA || !okB || !equalJSON(valA, valB) {
@@ -398,7 +534,6 @@ func equalJSON(a, b any) bool {
 }
 
 func prettifyKey(k string) string {
-	// price -> Price, seo_title -> SEO Title
 	parts := strings.Split(k, "_")
 	for i, p := range parts {
 		if p == "" {
@@ -410,7 +545,6 @@ func prettifyKey(k string) string {
 }
 
 func blockLabel(block string, registry *blocks.Registry) string {
-	// For now, use simple fallback without registry lookup to avoid coupling
 	parts := strings.Split(block, "/")
 	if len(parts) == 2 {
 		return prettifyKey(parts[1])

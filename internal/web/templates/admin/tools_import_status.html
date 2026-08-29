@@ -1,0 +1,55 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Import in progress</h1><p>Please wait while content is imported. Do not close the browser.</p></div></header>
+
+{{ $job := .Content.Job }}
+<div id="import-status" style="border:1px solid #e5e7eb;background:#fff;padding:16px;">
+  {{ if $job }}
+    <div style="font-weight:600;">Phase: {{ $job.Phase }}</div>
+    {{ if $job.Done }}
+      {{ if $job.Error }}
+        <div style="margin-top:8px;padding:10px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;">Import failed: {{ $job.Error }}</div>
+      {{ else }}
+        {{ $rep := $job.Report }}
+        <div style="margin-top:8px;padding:12px;border:1px solid #bbf7d0;background:#f0fdf4;">
+          <strong>Import complete</strong>
+          {{ if $rep }}
+          <div class="muted" style="margin-top:6px;font-size:13px;">Posts: {{ $rep.Posts }}, Pages: {{ $rep.Pages }}, Media: {{ $rep.MediaImported }}, Categories: {{ $rep.Categories }}, Tags: {{ $rep.Tags }}, Warnings: {{ $rep.Warnings }}</div>
+          {{ if $rep.Issues }}<ul style="font-size:12.5px;margin-top:6px;">{{ range $rep.Issues }}<li>{{ .Message }}</li>{{ end }}</ul>{{ end }}
+          {{ end }}
+          {{ if $job.BackupPath }}<div class="muted" style="font-size:12px;margin-top:6px;">Backup created before import.</div>{{ end }}
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <a class="button button-small" href="/admin/posts">View posts</a>
+            <a class="button button-small" href="/admin/pages">View pages</a>
+            <a class="button button-small" href="/admin/media">View media</a>
+            <a class="button button-small" href="/">View site</a>
+            <a class="button button-small" href="/admin/tools/backups">Backups</a>
+          </div>
+        </div>
+      {{ end }}
+    {{ else }}
+      <div class="muted" style="margin-top:6px;">Import in progress… Phase: {{ $job.Phase }}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px;">This may take a while.</div>
+      <script>
+        // Simple polling every 1s via fetch + replace innerHTML, fallback for no Datastar
+        setInterval(async () => {
+          try {
+            const r = await fetch('/admin/tools/import/wordpress/{{ $job.ID }}/status', {headers: {'Datastar-Request': 'true'}});
+            if (!r.ok) return;
+            const t = await r.text();
+            // Datastar would patch automatically via SSE; for plain fetch we reload when done
+            if (t.includes('Import complete') || t.includes('Import failed')) location.reload();
+          } catch(e) {}
+        }, 1500);
+      </script>
+    {{ end }}
+  {{ else }}
+    <div>Job not found</div>
+  {{ end }}
+</div>
+
+<div style="margin-top:12px;">
+  <a class="button" href="/admin/tools/import">Back to import</a>
+</div>
+
+<div id="admin-toast-region"></div>
+{{ end }}

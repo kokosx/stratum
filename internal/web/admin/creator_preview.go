@@ -72,8 +72,10 @@ func (h *Handler) creatorPreview(w http.ResponseWriter, r *http.Request) {
 			input.ServiceColumns = iv
 		}
 	}
+	// "Discourage" checkbox: checked => indexing DISABLED, unchecked/default => enabled
+	input.IndexingEnabled = true
 	if strings.TrimSpace(r.FormValue("indexing_enabled")) == "on" || strings.TrimSpace(r.FormValue("indexing_enabled")) == "1" || strings.TrimSpace(r.FormValue("indexing_enabled")) == "true" {
-		input.IndexingEnabled = true
+		input.IndexingEnabled = false
 	}
 	// Fallbacks for site details when not provided via form (use current settings)
 	if input.SiteTitle == "" {

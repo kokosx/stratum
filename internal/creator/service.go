@@ -140,9 +140,11 @@ func (s *Service) Preview(input Input) (Plan, error) {
 		return Plan{}, errors.New("choose valid product media position")
 	}
 	if input.SiteURL != "" {
-		if _, err := site.ValidateSiteURL(input.SiteURL); err != nil {
+		normalized, err := site.ValidateSiteURL(input.SiteURL)
+		if err != nil {
 			return Plan{}, err
 		}
+		input.SiteURL = normalized
 		// Do not persist localhost/private host as canonical URL
 		lower := strings.ToLower(input.SiteURL)
 		if strings.Contains(lower, "localhost") || strings.Contains(lower, "127.0.0.1") || strings.Contains(lower, "192.168.") || strings.Contains(lower, "10.0.") || strings.Contains(lower, "10.1.") {

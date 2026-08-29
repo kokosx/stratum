@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/preview"
 )
 
@@ -52,6 +54,21 @@ func (h *Handler) handleCreatePreviewLink(w http.ResponseWriter, r *http.Request
 		http.Error(w, "entry and revision required", http.StatusBadRequest)
 		return
 	}
+	// Authorization: only users who can edit the entry may create preview links
+	entry, err := h.queries.GetEntry(r.Context(), entryID)
+	if err != nil {
+		http.Error(w, "entry not found", http.StatusNotFound)
+		return
+	}
+	if !authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, entry.ContentTypeID, authz.EntryEdit) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	// Validate revision belongs to entry (also checked in service)
+	if rev, err := h.queries.GetEntryRevision(r.Context(), revisionID); err != nil || rev.EntryID != entryID {
+		http.Error(w, "revision not found", http.StatusBadRequest)
+		return
+	}
 	svc := preview.NewService(h.database, h.queries)
 	token, link, err := svc.Create(r.Context(), entryID, revisionID, user.ID, expires)
 	if err != nil {
@@ -67,6 +84,10 @@ func (h *Handler) handleCreatePreviewLink(w http.ResponseWriter, r *http.Request
 		siteURL = strings.TrimRight(strings.TrimSpace(settings.SiteUrl), "/")
 	}
 	if siteURL == "" {
+		if os.Getenv("STRATUM_ENV") == "production" {
+			http.Error(w, "Configure Site URL before sharing external previews.", http.StatusBadRequest)
+			return
+		}
 		scheme := "http"
 		if r.TLS != nil {
 			scheme = "https"
@@ -101,7 +122,8 @@ func (h *Handler) handleRevokePreviewLink(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Invalid CSRF token", http.StatusForbidden)
 		return
 	}
-	if _, err := h.currentUser(r); err != nil {
+	user, err := h.currentUser(r)
+	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -111,6 +133,21 @@ func (h *Handler) handleRevokePreviewLink(w http.ResponseWriter, r *http.Request
 		return
 	}
 	svc := preview.NewService(h.database, h.queries)
+	// Ownership check: load link → entry → CanAccessEntry
+	link, err := svc.GetByID(r.Context(), id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	entry, err := h.queries.GetEntry(r.Context(), link.EntryID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, entry.ContentTypeID, authz.EntryEdit) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	if err := svc.Revoke(r.Context(), id); err != nil {
 		http.NotFound(w, r)
 		return
@@ -136,8 +173,22 @@ func (h *Handler) handleListPreviewLinks(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "entry_id required", http.StatusBadRequest)
 		return
 	}
+	user, err := h.currentUser(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	entry, err := h.queries.GetEntry(r.Context(), entryID)
+	if err != nil {
+		http.Error(w, "entry not found", http.StatusNotFound)
+		return
+	}
+	if !authz.CanAccessEntry(user.Role, user.ID, entry.AuthorID.String, entry.ContentTypeID, authz.EntryEdit) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	svc := preview.NewService(h.database, h.queries)
-	links, err := svc.ListActiveByEntry(r.Context(), entryID)
+	links, err := svc.ListActiveViewByEntry(r.Context(), entryID)
 	if err != nil {
 		log.Printf("list preview links: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

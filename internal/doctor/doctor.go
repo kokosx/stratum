@@ -18,15 +18,24 @@ import (
 type Options struct {
 	Production bool
 	DataDir    string
+	// DB and Queries allow Admin to reuse the existing open database
+	// instead of reopening the SQLite file. When both are non-nil,
+	// Run will use them directly and will NOT open or close the DB.
+	DB      *storage.Database
+	Queries *db.Queries
 }
 
-// Run executes all checks and returns a report. It is read-only.
+// Run executes all checks and returns a report. It is strictly read-only.
 func Run(ctx context.Context, opts Options) (*Report, error) {
 	if opts.DataDir == "" {
 		opts.DataDir = os.Getenv("STRATUM_DATA_DIR")
 		if opts.DataDir == "" {
 			opts.DataDir = "data"
 		}
+	}
+	// If injected DB is provided, use it without reopening.
+	if opts.DB != nil && opts.Queries != nil {
+		return runWithDB(ctx, opts, opts.DB, opts.Queries, false)
 	}
 	report := &Report{
 		SchemaVersion: 1,
@@ -36,13 +45,106 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	// Data directory first
 	report.Checks = append(report.Checks, checkDataDirectory(opts.DataDir))
 
-	// Database
+	// Database (read-only, no fallback to writable)
 	dbCheck, queries, database := checkDatabase(ctx, opts.DataDir)
 	report.Checks = append(report.Checks, dbCheck)
-	if database != nil {
+	owned := database != nil
+	if owned {
 		defer database.Close()
 	}
+	if queries != nil && database != nil {
+		// continue via shared helper to avoid duplication
+		// but we already have dbCheck, so run remaining checks directly
+		var settings *db.GetSiteSettingsRow
+		var siteURL string
+		if s, err := queries.GetSiteSettings(ctx); err == nil {
+			settings = &s
+			siteURL = s.SiteUrl
+		}
+		report.Checks = append(report.Checks, checkSiteConfiguration(settings, opts.Production))
+		report.Checks = append(report.Checks, checkCanonicalOrigin(siteURL, opts.Production))
+		report.Checks = append(report.Checks, checkSEO(settings, opts.Production, queries, ctx))
+		report.Checks = append(report.Checks, checkRoutes(ctx, queries, database))
+		report.Checks = append(report.Checks, checkMedia(ctx, queries, database, opts.DataDir))
+		report.Checks = append(report.Checks, checkSearch(ctx, database))
+		report.Checks = append(report.Checks, checkTemplatesSiteParts(ctx, queries, database))
+		report.Checks = append(report.Checks, checkForms(ctx, queries))
+		report.Checks = append(report.Checks, checkBackup(opts.DataDir, database))
+		report.Checks = append(report.Checks, checkSecurityProduction(ctx, queries, settings, siteURL, opts.Production))
+		report.Checks = append(report.Checks, checkCustomCode(ctx, queries))
+		report.computeStatus()
+		return report, nil
+	}
+	// Database unavailable: still run checks that degrade gracefully
+	var settings *db.GetSiteSettingsRow
+	var siteURL string
+	report.Checks = append(report.Checks, checkSiteConfiguration(settings, opts.Production))
+	report.Checks = append(report.Checks, checkCanonicalOrigin(siteURL, opts.Production))
+	report.Checks = append(report.Checks, checkSEO(settings, opts.Production, nil, ctx))
+	report.Checks = append(report.Checks, checkRoutes(ctx, nil, nil))
+	report.Checks = append(report.Checks, checkMedia(ctx, nil, nil, opts.DataDir))
+	report.Checks = append(report.Checks, checkSearch(ctx, nil))
+	report.Checks = append(report.Checks, checkTemplatesSiteParts(ctx, nil, nil))
+	report.Checks = append(report.Checks, checkForms(ctx, nil))
+	report.Checks = append(report.Checks, checkBackup(opts.DataDir, nil))
+	report.Checks = append(report.Checks, checkSecurityProduction(ctx, nil, settings, siteURL, opts.Production))
+	report.Checks = append(report.Checks, checkCustomCode(ctx, nil))
+	report.computeStatus()
+	return report, nil
+}
 
+// RunWithDB executes doctor checks using an existing database handle (Admin path).
+// It does not open or close the database.
+func RunWithDB(ctx context.Context, opts Options, database *storage.Database, queries *db.Queries) (*Report, error) {
+	opts.DB = database
+	opts.Queries = queries
+	return Run(ctx, opts)
+}
+
+func runWithDB(ctx context.Context, opts Options, database *storage.Database, queries *db.Queries, owned bool) (*Report, error) {
+	report := &Report{
+		SchemaVersion: 1,
+		Production:    opts.Production,
+		Checks:        []Check{},
+	}
+	report.Checks = append(report.Checks, checkDataDirectory(opts.DataDir))
+	// Database check when using injected DB: synthesize PASS if DB ping succeeds.
+	dbCheck := Check{ID: "database", Title: "Database"}
+	if database != nil {
+		if err := database.Ping(ctx); err != nil {
+			dbCheck.Status = StatusFail
+			dbCheck.Message = fmt.Sprintf("Database ping failed: %v", err)
+		} else {
+			var integrity string
+			if err := database.DB.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil {
+				dbCheck.Status = StatusFail
+				dbCheck.Message = fmt.Sprintf("SQLite quick_check failed: %v", err)
+			} else if strings.ToLower(strings.TrimSpace(integrity)) != "ok" {
+				dbCheck.Status = StatusFail
+				dbCheck.Message = fmt.Sprintf("SQLite quick_check: %s", integrity)
+			} else {
+				// check FK and migrations similarly to checkDatabase
+				var fkEnabled int
+				if err := database.DB.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fkEnabled); err == nil && fkEnabled != 1 {
+					dbCheck.Status = StatusWarn
+					dbCheck.Message = "Foreign keys not enabled"
+				} else if err := checkMigrationsCurrent(ctx, database); err != nil {
+					dbCheck.Status = StatusFail
+					dbCheck.Message = fmt.Sprintf("Migrations not current: %v", err)
+				} else {
+					dbCheck.Status = StatusPass
+					dbCheck.Message = "SQLite quick check passed"
+				}
+			}
+		}
+	} else {
+		dbCheck.Status = StatusFail
+		dbCheck.Message = "Database unavailable"
+	}
+	report.Checks = append(report.Checks, dbCheck)
+	if owned && database != nil {
+		defer database.Close()
+	}
 	var settings *db.GetSiteSettingsRow
 	var siteURL string
 	if queries != nil {
@@ -51,7 +153,6 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 			siteURL = s.SiteUrl
 		}
 	}
-
 	report.Checks = append(report.Checks, checkSiteConfiguration(settings, opts.Production))
 	report.Checks = append(report.Checks, checkCanonicalOrigin(siteURL, opts.Production))
 	report.Checks = append(report.Checks, checkSEO(settings, opts.Production, queries, ctx))
@@ -63,7 +164,6 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	report.Checks = append(report.Checks, checkBackup(opts.DataDir, database))
 	report.Checks = append(report.Checks, checkSecurityProduction(ctx, queries, settings, siteURL, opts.Production))
 	report.Checks = append(report.Checks, checkCustomCode(ctx, queries))
-
 	report.computeStatus()
 	return report, nil
 }
@@ -98,15 +198,10 @@ func checkDatabase(ctx context.Context, dataDir string) (Check, *db.Queries, *st
 	}
 	database, err := storage.OpenReadOnly(dbPath)
 	if err != nil {
-		// fallback try normal open to get better error
-		if db2, err2 := storage.Open(dbPath); err2 == nil {
-			database = db2
-		} else {
-			check.Status = StatusFail
-			check.Message = fmt.Sprintf("Database open failed: %v", err)
-			check.Details = []string{dbPath}
-			return check, nil, nil
-		}
+		check.Status = StatusFail
+		check.Message = fmt.Sprintf("Database open failed: %v", err)
+		check.Details = []string{dbPath}
+		return check, nil, nil
 	}
 	if err := database.Ping(ctx); err != nil {
 		check.Status = StatusFail

@@ -32,6 +32,14 @@ type PreviewLink struct {
 	CreatedAt  int64
 }
 
+type PreviewLinkView struct {
+	ID         string `json:"id"`
+	RevisionID string `json:"revisionId"`
+	CreatedAt  int64  `json:"createdAt"`
+	ExpiresAt  int64  `json:"expiresAt"`
+	CreatedBy  string `json:"createdBy,omitempty"`
+}
+
 // Service handles preview link lifecycle.
 type Service struct {
 	db      *sql.DB
@@ -165,6 +173,42 @@ func (s *Service) ListActiveByEntry(ctx context.Context, entryID string) ([]Prev
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// ListActiveViewByEntry returns safe view models without TokenHash.
+func (s *Service) ListActiveViewByEntry(ctx context.Context, entryID string) ([]PreviewLinkView, error) {
+	links, err := s.ListActiveByEntry(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PreviewLinkView, 0, len(links))
+	for _, l := range links {
+		createdBy := ""
+		if l.CreatedBy.Valid {
+			createdBy = l.CreatedBy.String
+		}
+		out = append(out, PreviewLinkView{
+			ID:         l.ID,
+			RevisionID: l.RevisionID,
+			CreatedAt:  l.CreatedAt,
+			ExpiresAt:  l.ExpiresAt,
+			CreatedBy:  createdBy,
+		})
+	}
+	return out, nil
+}
+
+// GetByID returns a preview link by ID (for revoke ownership check).
+func (s *Service) GetByID(ctx context.Context, id string) (*PreviewLink, error) {
+	var l PreviewLink
+	var revoked sql.NullInt64
+	err := s.db.QueryRowContext(ctx, `SELECT id, token_hash, entry_id, revision_id, created_by, expires_at, revoked_at, created_at FROM preview_links WHERE id = ?`, id).Scan(
+		&l.ID, &l.TokenHash, &l.EntryID, &l.RevisionID, &l.CreatedBy, &l.ExpiresAt, &revoked, &l.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	l.RevokedAt = revoked
+	return &l, nil
 }
 
 // Revoke marks a preview link as revoked. Only owner or admin can revoke? For now any authenticated can revoke via entry check.

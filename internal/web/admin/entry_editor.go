@@ -933,13 +933,32 @@ func (h *Handler) restoreEntryRevision(ctx context.Context, contentType, entryID
 	defer tx.Rollback()
 	qtx := h.queries.WithTx(tx)
 	documentJSON := revision.DocumentJson
+	isEmptyDoc := false
 	if def, err := content.NewCatalog(qtx).GetDefinition(ctx, contentType); err == nil {
 		if !def.Capabilities.HasContent {
 			// Respect current capability: empty SDT even when restoring a historical revision with blocks
 			documentJSON = `{"version":1,"nodes":[]}`
+			isEmptyDoc = true
 		}
 	} else if !content.DefinitionFor(contentType).Capabilities.HasContent {
 		documentJSON = `{"version":1,"nodes":[]}`
+		isEmptyDoc = true
+	}
+	// Validate historical document before creating new revision.
+	if !isEmptyDoc {
+		if _, err := document.Decode([]byte(documentJSON)); err != nil {
+			return fmt.Errorf("corrupt revision document: %w", err)
+		}
+		// Block registry validation (warn on missing media, fail on truly corrupt)
+		if h.blocks != nil && strings.TrimSpace(documentJSON) != "" && documentJSON != `{"version":1,"nodes":[]}` {
+			if doc, err := document.Decode([]byte(documentJSON)); err == nil {
+				if err := h.blocks.ValidateDocument(doc); err != nil {
+					// Distinguish missing media (allow) vs corrupt schema: log warning, don't fail
+					// For now, treat validation error as warning unless it's a fundamental decode error
+					log.Printf("restore: block validation warning for revision %s: %v", revisionID, err)
+				}
+			}
+		}
 	}
 	if err := qtx.CreateEntryRevision(ctx, db.CreateEntryRevisionParams{
 		ID: newID, EntryID: entry.ID, RevisionNumber: latest.RevisionNumber + 1, Slug: revision.Slug,

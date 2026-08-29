@@ -41,6 +41,13 @@ type Options struct {
 	Author        string
 	OnConflict    string
 	DataDir       string
+	Progress      func(phase string)
+}
+
+type Issue struct {
+	Level   string `json:"level"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
 }
 
 type Report struct {
@@ -63,6 +70,7 @@ type Report struct {
 	CommentsImported int
 	CommentsSkipped  int
 	PingbacksSkipped int
+	Issues           []Issue `json:"issues,omitempty"`
 }
 
 func (r Report) String() string {
@@ -98,20 +106,47 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	if opt.DataDir == "" {
 		opt.DataDir = im.dataDir
 	}
-	report := Report{}
 	if opt.DryRun {
-		err := im.dryRun(ctx, filename, &report)
+		report, err := im.Analyze(ctx, filename, opt)
 		return report, "", err
 	}
-	// Non-dry-run import must hold exclusive dataDir lock (see internal/datalock).
-	// Ownership: the importer owns the lock for the whole mutation phase; the CLI
-	// never acquires it separately, so there is no double-acquire risk.
+	// Non-dry-run import: importer owns the lock for backwards compat (tests).
+	// New callers (CLI at process boundary and Admin while serve holds lock) should
+	// use Execute directly with explicit lock ownership. Keep Import for legacy.
 	lock, err := datalock.Acquire(opt.DataDir)
 	if err != nil {
 		return Report{}, "", fmt.Errorf("cannot import while Stratum is serving this data directory: %w", err)
 	}
 	defer lock.Close()
+	return im.Execute(ctx, filename, opt)
+}
 
+// Analyze performs a dry-run analysis without writes, media downloads or locks.
+// It validates route planning, block conversion, and counts.
+func (im *Importer) Analyze(ctx context.Context, filename string, opt Options) (Report, error) {
+	if opt.OnConflict != "" && opt.OnConflict != "skip" {
+		return Report{}, errors.New("only --on-conflict=skip is supported")
+	}
+	report := Report{}
+	err := im.dryRun(ctx, filename, &report)
+	return report, err
+}
+
+// Execute performs the real import without acquiring the data directory lock.
+// Caller must hold the lock if protection against an external process is required.
+// When called from Admin while stratum serve already holds the lock, no second
+// acquisition is attempted. CLI should acquire before calling Execute.
+func (im *Importer) Execute(ctx context.Context, filename string, opt Options) (Report, string, error) {
+	if opt.OnConflict != "" && opt.OnConflict != "skip" {
+		return Report{}, "", errors.New("only --on-conflict=skip is supported")
+	}
+	if opt.DataDir == "" {
+		opt.DataDir = im.dataDir
+	}
+	report := Report{}
+	if opt.Progress != nil {
+		opt.Progress("Preparing")
+	}
 	runID, err := newID()
 	if err != nil {
 		return report, "", err
@@ -119,6 +154,9 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	backupPath := filepath.Join(opt.DataDir, "backups", "pre-import-"+runID+".zip")
 	if err := os.MkdirAll(filepath.Join(opt.DataDir, "backups"), 0700); err != nil {
 		return report, "", fmt.Errorf("create backup dir: %w", err)
+	}
+	if opt.Progress != nil {
+		opt.Progress("Creating backup")
 	}
 	if _, err := backup.Create(ctx, &storage.Database{DB: im.db}, im.q, opt.DataDir, backupPath); err != nil {
 		return report, "", fmt.Errorf("create mandatory pre-import backup: %w", err)
@@ -145,10 +183,13 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	}
 	for wpID, perr := range plan.errors {
 		report.Warnings++
-		fmt.Printf("route plan rejected %s: %v\n", wpID, perr)
+		report.Issues = append(report.Issues, Issue{Level: "warning", Source: "route", Message: fmt.Sprintf("route plan rejected %s: %v", wpID, perr)})
 	}
 
 	termIDs, termSlugIndex := map[string]string{}, map[string]string{}
+	if opt.Progress != nil {
+		opt.Progress("Importing taxonomy")
+	}
 	if err := parse(filename, nil, func(t term) error { return im.importTerm(ctx, runID, t, termIDs, termSlugIndex, &report) }, nil); err != nil {
 		return report, backupPath, err
 	}
@@ -158,6 +199,9 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 	}
 
 	imageIDs := map[string]string{}
+	if opt.Progress != nil {
+		opt.Progress("Importing content")
+	}
 	newEntries := map[string]bool{}
 	if err := parse(filename, func(it item) error {
 		if (it.Type == "post" || it.Type == "page") && it.Status != "trash" && it.Status != "inherit" && it.Status != "auto-draft" {
@@ -219,15 +263,27 @@ func (im *Importer) Import(ctx context.Context, filename string, opt Options) (R
 			return report, backupPath, err
 		}
 	}
+	if opt.Progress != nil {
+		opt.Progress("Importing media")
+	}
+	if opt.Progress != nil {
+		opt.Progress("Importing comments")
+	}
 	if im.comments != nil {
 		if err := im.importComments(ctx, filename, runID, &report); err != nil {
 			report.Warnings++
-			fmt.Printf("comment import failed: %v\n", err)
+			report.Issues = append(report.Issues, Issue{Level: "warning", Source: "comments", Message: fmt.Sprintf("comment import failed: %v", err)})
 		}
+	}
+	if opt.Progress != nil {
+		opt.Progress("Rebuilding search")
 	}
 	if _, err := im.search.Rebuild(ctx); err != nil {
 		report.Warnings++
-		fmt.Println("search rebuild failed; run: stratum search rebuild")
+		report.Issues = append(report.Issues, Issue{Level: "warning", Source: "search", Message: "search rebuild failed; run: stratum search rebuild"})
+	}
+	if opt.Progress != nil {
+		opt.Progress("Finishing")
 	}
 	if err := im.q.CompleteImportRun(ctx, db.CompleteImportRunParams{CompletedAt: sql.NullInt64{Int64: time.Now().Unix(), Valid: true}, ID: runID}); err != nil {
 		return report, backupPath, err
@@ -275,9 +331,10 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 	if err != nil {
 		return err
 	}
-	for range plan.errors {
+	for wpID, perr := range plan.errors {
 		r.Conflicts++
 		r.Skipped++
+		r.Issues = append(r.Issues, Issue{Level: "warning", Source: "route", Message: fmt.Sprintf("route plan rejected %s: %v", wpID, perr)})
 	}
 	return parse(filename, func(it item) error {
 		r.Comments += len(it.Comments)
@@ -289,6 +346,7 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 				parsed, perr := url.Parse(u)
 				if perr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 					r.Warnings++
+					r.Issues = append(r.Issues, Issue{Level: "warning", Source: "media", Message: fmt.Sprintf("malformed attachment URL %q", u)})
 				}
 			}
 			return nil
@@ -296,6 +354,7 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 			if it.Type != "" {
 				r.Skipped++
 				r.Warnings++
+				r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: fmt.Sprintf("unsupported content type %q", it.Type)})
 			}
 			return nil
 		}
@@ -310,6 +369,7 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 		if s == "" || !entrySlugPattern.MatchString(s) {
 			r.Skipped++
 			r.Warnings++
+			r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: fmt.Sprintf("invalid slug for item %s", it.ID)})
 			return nil
 		}
 		// Validate content conversion against the REAL block registry (no writes).
@@ -317,12 +377,17 @@ func (im *Importer) dryRun(ctx context.Context, filename string, r *Report) erro
 		doc, cerr := htmlDocument(it.Content, map[string]string{}, &warnings)
 		if cerr != nil {
 			r.Warnings++
+			r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: fmt.Sprintf("content conversion failed for %s: %v", it.ID, cerr)})
 			return nil
 		}
 		if im.blocks != nil {
 			if verr := im.blocks.ValidateDocument(doc); verr != nil {
 				r.Warnings++
+				r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: fmt.Sprintf("block validation failed for %s: %v", it.ID, verr)})
 			}
+		}
+		for _, w := range warnings {
+			r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: w})
 		}
 		r.Warnings += len(warnings)
 		countAccepted(r, it)
@@ -418,7 +483,7 @@ func (im *Importer) importTerm(ctx context.Context, runID string, t term, ids ma
 			}
 		}
 		r.Warnings++
-		fmt.Printf("term %q (%s): %v\n", t.Name, t.Slug, err)
+		r.Issues = append(r.Issues, Issue{Level: "warning", Source: "taxonomy", Message: fmt.Sprintf("term %q (%s): %v", t.Name, t.Slug, err)})
 		return nil
 	}
 	if err := im.mapObject(ctx, runID, "term", external, created.ID); err != nil {
@@ -477,7 +542,7 @@ func (im *Importer) resolveTermParents(ctx context.Context, filename string, r *
 		if err := im.taxonomy.SetParent(ctx, child, parent); err != nil {
 			// Cycle/self/missing-parent rejections keep hierarchy valid; warn only.
 			r.Warnings++
-			fmt.Printf("category parent %s -> %s rejected: %v\n", child, parent, err)
+			r.Issues = append(r.Issues, Issue{Level: "warning", Source: "taxonomy", Message: fmt.Sprintf("category parent %s -> %s rejected: %v", child, parent, err)})
 		}
 	}
 	return nil
@@ -624,6 +689,7 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 		parent, _ = im.mapping(ctx, "page", it.ParentID)
 		if parent == "" {
 			r.Warnings++
+			r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: fmt.Sprintf("parent %s not found for page %s", it.ParentID, it.ID)})
 		}
 	}
 	visibility, review := "public", "draft"
@@ -690,7 +756,11 @@ func (im *Importer) createRevision(ctx context.Context, runID string, it item, t
 			}
 		} else {
 			r.Warnings++
+			r.Issues = append(r.Issues, Issue{Level: "warning", Source: "media", Message: fmt.Sprintf("thumbnail %s not found for %s", thumbnail, it.ID)})
 		}
+	}
+	for _, w := range warnings {
+		r.Issues = append(r.Issues, Issue{Level: "warning", Source: "content", Message: w})
 	}
 	r.Warnings += len(warnings)
 	switch it.Status {

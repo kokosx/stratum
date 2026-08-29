@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/kokosx/stratum/internal/auth"
@@ -21,6 +22,7 @@ import (
 	"github.com/kokosx/stratum/internal/creator"
 	"github.com/kokosx/stratum/internal/customcode"
 	"github.com/kokosx/stratum/internal/forms"
+	wordpress "github.com/kokosx/stratum/internal/importer/wordpress"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/navigation"
@@ -70,6 +72,11 @@ type Handler struct {
 	toolsRedirectFormTemplate    *template.Template
 	toolsNotFoundTemplate        *template.Template
 	toolsHealthTemplate          *template.Template
+	toolsImportTemplate          *template.Template
+	toolsImportReviewTemplate    *template.Template
+	toolsImportStatusTemplate    *template.Template
+	toolsImportCompleteTemplate  *template.Template
+	toolsBackupsTemplate         *template.Template
 	customCodeTemplate           *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
@@ -86,6 +93,7 @@ type Handler struct {
 	search                       *search.Service
 	creator                      *creator.Service
 	customCode                   *customcode.Service
+	importManager                *wordpress.WordPressImportManager
 }
 
 type LayoutData struct {
@@ -302,6 +310,26 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	toolsImportTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_import", "tools_import.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsImportReviewTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_import_review", "tools_import_review.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsImportStatusTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_import_status", "tools_import_status.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsImportCompleteTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_import_complete", "tools_import_complete.html")
+	if err != nil {
+		return nil, err
+	}
+	toolsBackupsTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "tools_backups", "tools_backups.html")
+	if err != nil {
+		return nil, err
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
@@ -312,6 +340,12 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	commentsService.SetInvalidator(func(entryID string) {
 		runtime.Pages.InvalidateTag("entry:" + entryID)
 	})
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	importerForManager := wordpress.New(database, queries, blockRegistry, mediaService, dataDir)
+	importManager := wordpress.NewManager(dataDir, importerForManager, runtime)
 	return &Handler{
 		database:                     database,
 		queries:                      queries,
@@ -349,6 +383,11 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		toolsRedirectFormTemplate:    toolsRedirectFormTemplate,
 		toolsNotFoundTemplate:        toolsNotFoundTemplate,
 		toolsHealthTemplate:          toolsHealthTemplate,
+		toolsImportTemplate:          toolsImportTemplate,
+		toolsImportReviewTemplate:    toolsImportReviewTemplate,
+		toolsImportStatusTemplate:    toolsImportStatusTemplate,
+		toolsImportCompleteTemplate:  toolsImportCompleteTemplate,
+		toolsBackupsTemplate:         toolsBackupsTemplate,
 		customCodeTemplate:           customCodeTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
@@ -363,6 +402,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		search:                       searchService,
 		creator:                      creator.NewService(database, queries, blockRegistry, mediaService, themeRuntime, runtime, searchService),
 		customCode:                   customcode.New(database, runtime.Pages),
+		importManager:                importManager,
 	}, nil
 }
 
@@ -542,6 +582,18 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/media/{id}/delete", h.requireAuth(h.deleteMedia))
 	// Tools — Site Operations (EPIC 5)
 	mux.HandleFunc("GET /admin/tools/site-health", h.requireAuth(h.toolsSiteHealth))
+	mux.HandleFunc("POST /admin/tools/search/rebuild", h.requireAuth(h.handleSearchRebuild))
+	mux.HandleFunc("GET /admin/tools/import", h.requireAuth(h.handleImportPage))
+	mux.HandleFunc("POST /admin/tools/import/wordpress/analyze", h.requireAuth(h.handleImportAnalyze))
+	mux.HandleFunc("GET /admin/tools/import/wordpress/{id}/review", h.requireAuth(h.handleImportReview))
+	mux.HandleFunc("POST /admin/tools/import/wordpress/{id}/start", h.requireAuth(h.handleImportStart))
+	mux.HandleFunc("GET /admin/tools/import/wordpress/{id}/status", h.requireAuth(h.handleImportStatus))
+	mux.HandleFunc("GET /admin/tools/import/wordpress/{id}/complete", h.requireAuth(h.handleImportComplete))
+	mux.HandleFunc("POST /admin/tools/import/wordpress/{id}/cancel", h.requireAuth(h.handleImportCancel))
+	mux.HandleFunc("GET /admin/tools/backups", h.requireAuth(h.handleBackupsList))
+	mux.HandleFunc("POST /admin/tools/backups", h.requireAuth(h.handleBackupsCreate))
+	mux.HandleFunc("GET /admin/tools/backups/{name}/download", h.requireAuth(h.handleBackupsDownload))
+	mux.HandleFunc("POST /admin/tools/backups/{name}/verify", h.requireAuth(h.handleBackupsVerify))
 	mux.HandleFunc("GET /admin/tools/redirects", h.requireAuth(h.toolsRedirectsList))
 	mux.HandleFunc("GET /admin/tools/redirects/new", h.requireAuth(h.toolsRedirectsNew))
 	mux.HandleFunc("POST /admin/tools/redirects", h.requireAuth(h.toolsRedirectsCreate))
@@ -574,8 +626,9 @@ func (h *Handler) Routes() http.Handler {
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 		w.Header().Set("Cache-Control", "no-store")
 		// The media upload/replace endpoints carry large multipart bodies (~12 MB),
+		// and the WordPress import carries up to 256 MB,
 		// so they must not inherit the small global admin POST body limit.
-		if r.Method == http.MethodPost && r.URL.Path != "/admin/media/upload" && !strings.HasSuffix(r.URL.Path, "/replace") && !strings.HasSuffix(r.URL.Path, "/regenerate") {
+		if r.Method == http.MethodPost && r.URL.Path != "/admin/media/upload" && !strings.HasSuffix(r.URL.Path, "/replace") && !strings.HasSuffix(r.URL.Path, "/regenerate") && !strings.HasPrefix(r.URL.Path, "/admin/tools/import") {
 			r.Body = http.MaxBytesReader(w, r.Body, maxAdminRequestBody)
 		}
 		mux.ServeHTTP(w, r)

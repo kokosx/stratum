@@ -58,6 +58,8 @@ func AdminNav() []AdminNavItem {
 		}},
 		{ID: "tools", Label: "Tools", Href: "/admin/tools/site-health", Icon: "settings", Children: []AdminNavItem{
 			{ID: "tools-site-health", Label: "Site Health", Href: "/admin/tools/site-health"},
+			{ID: "tools-import", Label: "Import", Href: "/admin/tools/import"},
+			{ID: "tools-backups", Label: "Backups", Href: "/admin/tools/backups"},
 			{ID: "tools-redirects", Label: "Redirects", Href: "/admin/tools/redirects"},
 			{ID: "tools-not-found", Label: "Not Found", Href: "/admin/tools/not-found"},
 		}},
@@ -196,6 +198,12 @@ func ResolveNav(path string) NavState {
 		}
 		return NavState{ActiveSection: "settings", ActiveItem: "settings-general"}
 	case strings.HasPrefix(path, "/admin/tools"):
+		if strings.HasPrefix(path, "/admin/tools/import") {
+			return NavState{ActiveSection: "tools", ActiveItem: "tools-import"}
+		}
+		if strings.HasPrefix(path, "/admin/tools/backups") {
+			return NavState{ActiveSection: "tools", ActiveItem: "tools-backups"}
+		}
 		if strings.HasPrefix(path, "/admin/tools/redirects") {
 			return NavState{ActiveSection: "tools", ActiveItem: "tools-redirects"}
 		}

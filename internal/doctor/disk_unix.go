@@ -1,3 +1,5 @@
+//go:build unix
+
 package doctor
 
 import "syscall"
@@ -7,6 +9,5 @@ func diskFreeBytes(path string) (uint64, error) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0, err
 	}
-	// Available blocks * block size
 	return uint64(stat.Bavail) * uint64(stat.Bsize), nil
 }

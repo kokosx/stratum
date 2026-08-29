@@ -1,0 +1,39 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>WordPress import complete</h1><p>All requested content has been imported.</p></div></header>
+
+{{ $job := .Content.Job }}
+{{ if $job }}
+  {{ $rep := $job.Report }}
+  <div style="border:1px solid #e5e7eb;background:#fff;padding:16px;margin-bottom:12px;">
+    <h2 style="font-size:14px;font-weight:600;">Summary</h2>
+    {{ if $rep }}
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;font-size:13px;margin-top:8px;">
+      <div>Posts imported: <strong>{{ $rep.Posts }}</strong></div>
+      <div>Pages imported: <strong>{{ $rep.Pages }}</strong></div>
+      <div>Media imported: <strong>{{ $rep.MediaImported }}</strong></div>
+      <div>Comments imported: <strong>{{ $rep.CommentsImported }}</strong></div>
+      <div>Categories: <strong>{{ $rep.Categories }}</strong></div>
+      <div>Tags: <strong>{{ $rep.Tags }}</strong></div>
+      <div>Skipped: <strong>{{ $rep.Skipped }}</strong></div>
+      <div>Conflicts: <strong>{{ $rep.Conflicts }}</strong></div>
+      <div>Warnings: <strong>{{ $rep.Warnings }}</strong></div>
+    </div>
+    {{ if $job.BackupPath }}<div style="margin-top:8px;font-size:12.5px;" class="muted">Backup created before import</div>{{ end }}
+    {{ if $rep.Issues }}
+      <h3 style="margin-top:12px;font-size:13px;font-weight:600;">Warnings</h3>
+      <ul style="font-size:12.5px;" class="muted">
+        {{ range $rep.Issues }}<li>{{ .Message }}</li>{{ end }}
+      </ul>
+    {{ end }}
+    {{ end }}
+    <div style="margin-top:12px;display:flex;gap:8px;">
+      <a class="button button-small" href="/admin/posts">View posts</a>
+      <a class="button button-small" href="/admin/pages">View pages</a>
+      <a class="button button-small" href="/admin/media">View media</a>
+      <a class="button button-small" href="/">View site</a>
+    </div>
+  </div>
+{{ end }}
+
+<div id="admin-toast-region"></div>
+{{ end }}

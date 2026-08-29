@@ -116,51 +116,62 @@ func NewConfig(schemeStr, wwwStr string, trustProxy bool, siteURL string) (Confi
 			}
 		}
 	}
-	if www != WWWOff {
-		if strings.TrimSpace(siteURL) == "" || siteHost == "" {
+	// Always derive canonical host from Site URL for scheme-only protection (open-redirect fix).
+	// WWW policy determines transformed canonical, but even with WWW==off we keep the public host.
+	if siteHost != "" {
+		if www != WWWOff {
+			// siteHost already validated non-local; reuse
+			lowerHost := siteHostnameLower
+			port := sitePort
+			hasPort := siteHasPort
+			// Derive canonical hostname based on www policy
+			var canonicalHostname string
+			switch www {
+			case WWWForbidden:
+				if strings.HasPrefix(lowerHost, "www.") {
+					canonicalHostname = strings.TrimPrefix(lowerHost, "www.")
+					if canonicalHostname == "" || isLocalHost(canonicalHostname) {
+						return Config{}, fmt.Errorf("cannot enable --redirect-www: Site URL does not contain a valid public hostname")
+					}
+				} else {
+					canonicalHostname = lowerHost
+				}
+			case WWWRequired:
+				if strings.HasPrefix(lowerHost, "www.") {
+					canonicalHostname = lowerHost
+				} else {
+					canonicalHostname = "www." + lowerHost
+				}
+			}
+			// Reassemble canonical host with port (if any)
+			var canonicalHost string
+			if hasPort {
+				canonicalHost = net.JoinHostPort(canonicalHostname, port)
+			} else {
+				if strings.Contains(canonicalHostname, ":") {
+					canonicalHost = "[" + canonicalHostname + "]"
+				} else {
+					canonicalHost = canonicalHostname
+				}
+			}
+			if !strings.Contains(canonicalHostname, ".") && !strings.Contains(canonicalHostname, ":") {
+				// lenient
+			}
+			cfg.CanonicalHost = strings.ToLower(canonicalHost)
+			cfg.canonicalHostname = canonicalHostname
+			cfg.canonicalPort = port
+			cfg.hasPort = hasPort
+		} else {
+			// Scheme-only: canonical host is exactly Site URL host (for evil-host protection)
+			cfg.CanonicalHost = siteHost
+			cfg.canonicalHostname = siteHostnameLower
+			cfg.canonicalPort = sitePort
+			cfg.hasPort = siteHasPort
+		}
+	} else {
+		if www != WWWOff {
 			return Config{}, fmt.Errorf("cannot enable --redirect-www: Site URL does not contain a valid public hostname")
 		}
-		// siteHost already validated non-local; reuse
-		lowerHost := siteHostnameLower
-		port := sitePort
-		hasPort := siteHasPort
-		// Derive canonical hostname based on www policy
-		var canonicalHostname string
-		switch www {
-		case WWWForbidden:
-			if strings.HasPrefix(lowerHost, "www.") {
-				canonicalHostname = strings.TrimPrefix(lowerHost, "www.")
-				if canonicalHostname == "" || isLocalHost(canonicalHostname) {
-					return Config{}, fmt.Errorf("cannot enable --redirect-www: Site URL does not contain a valid public hostname")
-				}
-			} else {
-				canonicalHostname = lowerHost
-			}
-		case WWWRequired:
-			if strings.HasPrefix(lowerHost, "www.") {
-				canonicalHostname = lowerHost
-			} else {
-				canonicalHostname = "www." + lowerHost
-			}
-		}
-		// Reassemble canonical host with port (if any)
-		var canonicalHost string
-		if hasPort {
-			canonicalHost = net.JoinHostPort(canonicalHostname, port)
-		} else {
-			if strings.Contains(canonicalHostname, ":") {
-				canonicalHost = "[" + canonicalHostname + "]"
-			} else {
-				canonicalHost = canonicalHostname
-			}
-		}
-		if !strings.Contains(canonicalHostname, ".") && !strings.Contains(canonicalHostname, ":") {
-			// lenient
-		}
-		cfg.CanonicalHost = strings.ToLower(canonicalHost)
-		cfg.canonicalHostname = canonicalHostname
-		cfg.canonicalPort = port
-		cfg.hasPort = hasPort
 	}
 	return cfg, nil
 }

@@ -1,0 +1,32 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Import content</h1><p>Import posts, pages, categories, tags, comments and media from a WordPress WXR export file.</p></div></header>
+{{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
+
+<div style="border:1px solid #e5e7eb;background:#fff;padding:16px;margin-bottom:16px;">
+  <h2 style="font-size:14px;font-weight:600;margin-bottom:8px;">WordPress</h2>
+  <p class="form-help" style="margin-bottom:12px;">Import posts, pages, categories, tags, comments and media from a WordPress WXR export file.</p>
+  <form method="post" action="/admin/tools/import/wordpress/analyze" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <div class="form-group">
+      <label>WordPress export (.xml)</label>
+      <input type="file" name="wxr_file" accept=".xml" required>
+      <p class="form-help">Max 256 MB. The file is streamed to a temporary location and removed after import.</p>
+    </div>
+    <div class="form-group">
+      <label><input type="checkbox" name="download_media" value="true" checked> Download media</label>
+      <p class="form-help">Checked by default. Uncheck to skip downloading attachments.</p>
+    </div>
+    <div class="form-group">
+      <label>Fallback author (optional)</label>
+      <select name="fallback_author">
+        <option value="">— No fallback —</option>
+        {{ range .Content.Users }}<option value="{{ .Email }}">{{ .Email }}</option>{{ end }}
+      </select>
+      <p class="form-help">Used when the WordPress author does not exist in Stratum.</p>
+    </div>
+    <button class="button button-primary" type="submit">Start WordPress import</button>
+  </form>
+</div>
+
+<div id="admin-toast-region"></div>
+{{ end }}

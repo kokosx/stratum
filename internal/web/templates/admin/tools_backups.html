@@ -1,0 +1,38 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Backups</h1><p>Manage portable site backups. Backups include the database and media.</p></div><div class="admin-page-actions">
+  <form method="post" action="/admin/tools/backups" style="display:inline;">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <button class="button button-primary" type="submit" data-on:click__prevent="@post('/admin/tools/backups', {contentType: 'form'})">Create backup</button>
+  </form>
+</div></header>
+{{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
+
+{{ if .Content.Backups }}
+<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Backup</th><th>Created</th><th>Size</th><th>Actions</th></tr></thead><tbody>
+{{ range .Content.Backups }}
+<tr>
+  <td><code>{{ .Name }}</code></td>
+  <td class="muted" style="font-size:12.5px;">{{ .Created }}</td>
+  <td class="muted" style="font-size:12.5px;">{{ .Size }}</td>
+  <td>
+    <div style="display:flex;gap:6px;">
+      <a class="button button-small" href="/admin/tools/backups/{{ .Name }}/download">Download</a>
+      <form method="post" action="/admin/tools/backups/{{ .Name }}/verify" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+        <button class="button button-small" type="submit" data-on:click__prevent="@post('/admin/tools/backups/{{ .Name }}/verify', {contentType: 'form'})">Verify</button>
+      </form>
+    </div>
+  </td>
+</tr>
+{{ end }}
+</tbody></table></div>
+{{ else }}
+<div class="empty-state"><p>No backups yet.</p><p class="form-help">Backups are stored in the data directory. Create one to get started.</p></div>
+{{ end }}
+
+<div style="margin-top:16px;padding:12px;border:1px solid #e5e7eb;background:#fff;">
+  <p class="form-help" style="margin:0;">Restoring replaces the active site database and media. Restore is currently available from the command line while Stratum is stopped. <code>stratum backup restore &lt;archive&gt;</code></p>
+</div>
+
+<div id="admin-toast-region"></div>
+{{ end }}

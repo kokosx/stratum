@@ -75,7 +75,15 @@ func main() {
 	var serveCfg ServeConfig
 	if command == "serve" {
 		var parseErr error
-		serveCfg, parseErr = parseServeOptions(os.Args[2:])
+		var serveArgs []string
+		if len(os.Args) > 2 && os.Args[1] == "serve" {
+			serveArgs = os.Args[2:]
+		} else if len(os.Args) > 1 && os.Args[1] == "serve" {
+			serveArgs = []string{}
+		} else {
+			serveArgs = []string{}
+		}
+		serveCfg, parseErr = parseServeOptions(serveArgs)
 		if parseErr != nil {
 			fmt.Fprintln(os.Stderr, parseErr)
 			os.Exit(2)
@@ -125,6 +133,13 @@ func runImport(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] != "wordpress" {
 		return fmt.Errorf("usage: stratum import wordpress <file.xml> [--dry-run] [--download-media=true|false] [--author=email] [--on-conflict=skip]")
 	}
+	// Help handling
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			fmt.Fprintln(os.Stderr, "usage: stratum import wordpress <file.xml> [--dry-run] [--download-media=true|false] [--author=email] [--on-conflict=skip]")
+			return nil
+		}
+	}
 	fs := flag.NewFlagSet("wordpress", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	dryRun := fs.Bool("dry-run", false, "validate without writing")
@@ -168,13 +183,19 @@ func runImport(ctx context.Context, args []string) error {
 		fmt.Println(report.String())
 		return nil
 	}
+	// Acquire data lock explicitly at process boundary (spec §19).
+	lock, err := datalock.Acquire(dataDir)
+	if err != nil {
+		return fmt.Errorf("cannot import while Stratum is serving this data directory: %w", err)
+	}
+	defer lock.Close()
 	application, err := app.New(ctx)
 	if err != nil {
 		return err
 	}
 	defer application.Close()
 	im := wordpress.New(application.Database.DB, application.Queries, application.Blocks, application.Media, dataDir)
-	report, backupPath, err := im.Import(ctx, filename, wordpress.Options{DryRun: *dryRun, DownloadMedia: *downloadMedia, Author: *author, OnConflict: *onConflict, DataDir: dataDir})
+	report, backupPath, err := im.Execute(ctx, filename, wordpress.Options{DryRun: *dryRun, DownloadMedia: *downloadMedia, Author: *author, OnConflict: *onConflict, DataDir: dataDir})
 	if backupPath != "" {
 		fmt.Printf("Pre-import backup created: %s\n", backupPath)
 	}

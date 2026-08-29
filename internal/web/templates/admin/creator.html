@@ -165,7 +165,7 @@
               <label>Site represents<select name="site_represents"><option value="organization" {{ if eq .Content.SiteRepresents "organization" }}selected{{ end }}>Organization</option><option value="person" {{ if eq .Content.SiteRepresents "person" }}selected{{ end }}>Person</option></select></label>
               <label>Site URL <small>optional</small><input type="url" name="site_url" value="{{ .Content.SiteURL }}" placeholder="https://example.com"></label>
             </div>
-            <label class="creator-checkbox"><input type="checkbox" name="indexing_enabled" value="on" {{ if .Content.IndexingEnabled }}checked{{ end }}> Discourage search engines until site is ready</label>
+              <label class="creator-checkbox"><input type="checkbox" name="indexing_enabled" value="on" {{ if not .Content.IndexingEnabled }}checked{{ end }}> Discourage search engines until site is ready</label>
           </div>
         </fieldset>
         <nav class="creator-nav">

@@ -1,0 +1,53 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Review import</h1><p>Analyze completed. Review the content to be imported.</p></div><div class="admin-page-actions"><a class="button" href="/admin/tools/import">Cancel</a></div></header>
+
+{{ $job := .Content.Job }}
+{{ if $job }}
+  {{ $rep := $job.Report }}
+  <div style="border:1px solid #e5e7eb;background:#fff;padding:16px;margin-bottom:16px;">
+    <h2 style="font-size:14px;font-weight:600;margin-bottom:12px;">Summary</h2>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:13px;">
+      <div>Posts: <strong>{{ $rep.Posts }}</strong></div>
+      <div>Pages: <strong>{{ $rep.Pages }}</strong></div>
+      <div>Published: <strong>{{ $rep.Published }}</strong></div>
+      <div>Draft: <strong>{{ $rep.Drafts }}</strong></div>
+      <div>Pending: <strong>{{ $rep.Pending }}</strong></div>
+      <div>Scheduled: <strong>{{ $rep.Scheduled }}</strong></div>
+      <div>Private: <strong>{{ $rep.Private }}</strong></div>
+      <div>Password protected: <strong>{{ $rep.Password }}</strong></div>
+      <div>Categories: <strong>{{ $rep.Categories }}</strong></div>
+      <div>Tags: <strong>{{ $rep.Tags }}</strong></div>
+      <div>Comments: <strong>{{ $rep.Comments }}</strong></div>
+      <div>Media attachments: <strong>{{ $rep.MediaImported }}</strong></div>
+    </div>
+    <div style="margin-top:12px;font-size:13px;">
+      <div>Conflicts: <strong>{{ $rep.Conflicts }}</strong></div>
+      <div>Skipped: <strong>{{ $rep.Skipped }}</strong></div>
+      <div>Warnings: <strong>{{ $rep.Warnings }}</strong></div>
+    </div>
+    {{ if $rep.Issues }}
+    <div style="margin-top:12px;">
+      <h3 style="font-size:13px;font-weight:600;">Warnings</h3>
+      <ul style="font-size:12.5px;" class="muted">
+        {{ range $rep.Issues }}<li>[{{ .Level }}:{{ .Source }}] {{ .Message }}</li>{{ end }}
+      </ul>
+    </div>
+    {{ end }}
+    <p class="form-help" style="margin-top:12px;">A backup will be created automatically before importing.</p>
+    <div style="margin-top:12px;display:flex;gap:8px;">
+      <form method="post" action="/admin/tools/import/wordpress/{{ $job.ID }}/cancel" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+        <button class="button" type="submit">Cancel</button>
+      </form>
+      <form method="post" action="/admin/tools/import/wordpress/{{ $job.ID }}/start" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
+        <button class="button button-primary" type="submit" data-on:click__prevent="@post('/admin/tools/import/wordpress/{{ $job.ID }}/start', {contentType: 'form'})">Import content</button>
+      </form>
+    </div>
+  </div>
+{{ else }}
+  <p>Job not found.</p>
+{{ end }}
+
+<div id="admin-toast-region"></div>
+{{ end }}

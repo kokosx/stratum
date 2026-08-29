@@ -71,7 +71,7 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		Language:         "en",
 		Timezone:         settings.Timezone,
 		SiteRepresents:   creator.DefaultRepresentsForPreset(defaultPreset),
-		IndexingEnabled:  false,
+		IndexingEnabled:  true,
 		SiteURL:          settings.SiteUrl,
 		LanguageOptions:  site.CreatorLanguageOptions(),
 		TimezoneOptions:  site.TimezoneOptions(),
@@ -100,10 +100,12 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		data.Timezone = strings.TrimSpace(r.FormValue("timezone"))
 		data.SiteRepresents = strings.TrimSpace(r.FormValue("site_represents"))
 		data.SiteURL = strings.TrimSpace(r.FormValue("site_url"))
+		// Checkbox is "Discourage search engines" — when checked, indexing should be DISABLED.
+		// So invert: checked => IndexingEnabled=false, unchecked => true.
 		if v := strings.TrimSpace(r.FormValue("indexing_enabled")); v == "on" || v == "1" || v == "true" {
-			data.IndexingEnabled = true
-		} else {
 			data.IndexingEnabled = false
+		} else {
+			data.IndexingEnabled = true
 		}
 		if v := strings.TrimSpace(r.FormValue("blog_latest")); v != "" {
 			if iv, err := strconv.Atoi(v); err == nil {

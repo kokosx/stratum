@@ -5,13 +5,16 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/kokosx/stratum/internal/doctor"
 	"github.com/kokosx/stratum/internal/health"
 	"github.com/kokosx/stratum/internal/notfound"
 	"github.com/kokosx/stratum/internal/redirects"
+	"github.com/kokosx/stratum/internal/storage"
 )
 
 // Tools data structs
@@ -58,20 +61,43 @@ type notFoundRow struct {
 }
 
 type siteHealthData struct {
-	Results   []health.CheckResult
+	Report    *doctor.Report
+	Sections  []healthSection
 	Issues    []health.IntegrityIssue
 	CSRFToken string
 	Flash     string
 	Generated string
 }
 
+type healthSection struct {
+	Title  string
+	Checks []doctor.Check
+}
+
 func (h *Handler) toolsSiteHealth(w http.ResponseWriter, r *http.Request) {
-	svc := health.New(h.database, h.queries)
-	results, issues, err := svc.Run(r.Context())
+	dataDir := os.Getenv("STRATUM_DATA_DIR")
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	isProd := os.Getenv("STRATUM_ENV") == "production"
+	dbWrapper := &storage.Database{DB: h.database}
+	report, err := doctor.Run(r.Context(), doctor.Options{
+		Production: isProd,
+		DataDir:    dataDir,
+		DB:         dbWrapper,
+		Queries:    h.queries,
+	})
 	if err != nil {
 		http.Error(w, "Health check failed", http.StatusInternalServerError)
 		return
 	}
+	// Content integrity issues via health service (reuse same DB)
+	healthSvc := health.New(h.database, h.queries)
+	_, issues, _ := healthSvc.Run(r.Context())
+
+	// Group doctor checks into product sections
+	sections := groupDoctorChecks(report.Checks)
+
 	token, _ := h.csrfToken(w, r)
 	data := LayoutData{
 		Title:         "Site Health",
@@ -82,7 +108,8 @@ func (h *Handler) toolsSiteHealth(w http.ResponseWriter, r *http.Request) {
 		Flash:         h.consumeFlash(w, r),
 		CSRFToken:     token,
 		Content: siteHealthData{
-			Results:   results,
+			Report:    report,
+			Sections:  sections,
 			Issues:    issues,
 			CSRFToken: token,
 			Generated: time.Now().Format("2 Jan 2006, 15:04"),
@@ -91,6 +118,55 @@ func (h *Handler) toolsSiteHealth(w http.ResponseWriter, r *http.Request) {
 	if err := h.toolsHealthTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render site health: %v", err)
 	}
+}
+
+func groupDoctorChecks(checks []doctor.Check) []healthSection {
+	// Map check ID to section title
+	sectionMap := map[string]string{
+		"data_directory":     "Environment",
+		"database":           "Database",
+		"site_configuration": "Site configuration",
+		"canonical_origin":   "Environment",
+		"seo":                "SEO & Crawling",
+		"routes":             "Routes",
+		"media":              "Media",
+		"search":             "Search",
+		"templates":          "Templates & Site Parts",
+		"forms":              "Forms",
+		"backup":             "Backups",
+		"security":           "Security",
+		"custom_code":        "Templates & Site Parts",
+	}
+	// Order of sections as per spec
+	order := []string{"Environment", "Database", "Site configuration", "SEO & Crawling", "Routes", "Media", "Search", "Templates & Site Parts", "Forms", "Backups", "Security"}
+	grouped := map[string][]doctor.Check{}
+	for _, c := range checks {
+		title := sectionMap[c.ID]
+		if title == "" {
+			title = "Environment"
+		}
+		grouped[title] = append(grouped[title], c)
+	}
+	var out []healthSection
+	for _, title := range order {
+		if cs, ok := grouped[title]; ok && len(cs) > 0 {
+			out = append(out, healthSection{Title: title, Checks: cs})
+		}
+	}
+	// Append any remaining not in order (should not happen)
+	for title, cs := range grouped {
+		found := false
+		for _, o := range order {
+			if o == title {
+				found = true
+				break
+			}
+		}
+		if !found {
+			out = append(out, healthSection{Title: title, Checks: cs})
+		}
+	}
+	return out
 }
 
 func (h *Handler) toolsRedirectsList(w http.ResponseWriter, r *http.Request) {

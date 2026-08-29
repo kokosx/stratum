@@ -1,4 +1,5 @@
 stratum
-stratum-freebsd-*
+stratum-*
 data
 .tmp-qa/
+.tmp-lighthouse/

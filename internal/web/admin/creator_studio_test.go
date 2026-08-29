@@ -318,8 +318,8 @@ func TestCreatorStudio_SiteSettingsPersisted(t *testing.T) {
 	if row.SiteRepresents != "person" {
 		t.Fatalf("represents not persisted %s", row.SiteRepresents)
 	}
-	if row.IndexingEnabled != 0 {
-		t.Fatalf("indexing should be 0 by default, got %d", row.IndexingEnabled)
+	if row.IndexingEnabled != 1 {
+		t.Fatalf("indexing should be 1 by default (site crawlable), got %d", row.IndexingEnabled)
 	}
 	if row.SitemapEnabled == 0 {
 		t.Fatalf("sitemap should be enabled")
