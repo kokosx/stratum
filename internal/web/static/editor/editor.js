@@ -1,6 +1,7 @@
 // Stratum Visual Editor — unified SDT editor (modular)
-import { state, bootstrap, definitions, definitionFor, pushHistory, maybePushHistory, undo, redo, updateDirty, syncBaseline, initHistory, hydrateNode, isDirtyNow } from "./state.js";
+import { state, bootstrap, definitions, definitionFor, pushHistory, maybePushHistory, undo, redo, updateDirty, syncBaseline, initHistory, hydrateNode, isDirtyNow, commitMutation, setInsertionTarget, clearInsertionTarget } from "./state.js";
 import { findNode, isContainer, createNode, duplicateSubtree, assignNewIDs, clonePatternNodes, insertionPoint, insertionPointForPattern, canInsertRoots, containerAccepts, isWithin, collectNodeIds } from "./tree.js";
+import { createValidNode, canInsert, canInsertRoots as canInsertRootsM, canRemove, canMove, canDuplicate, canIndent as canIndentM, canOutdent as canOutdentM, insertionPointForBlock, resolveInsertionTarget } from "./mutations.js";
 import { renderCatalog, renderPatternCatalog, initLibraryTabs } from "./library.js";
 import { renderNavigator, updateBreadcrumbs } from "./navigator.js";
 import { renderInspector } from "./inspector.js";
@@ -39,6 +40,14 @@ window.__stratum_insertPattern = insertPattern;
 window.__stratum_removeNode = removeNode;
 window.__stratum_duplicateNode = duplicateNode;
 window.__stratum_moveNode = moveNode;
+window.__stratum_undo = () => { if(undo()){ renderTree(); renderInspector(); updateBreadcrumbs(); updateDirty(); schedulePreview(); if(canvasController) canvasController.refresh(); } };
+window.__stratum_redo = () => { if(redo()){ renderTree(); renderInspector(); updateBreadcrumbs(); updateDirty(); schedulePreview(); if(canvasController) canvasController.refresh(); } };
+window.__stratum_setInsertionTarget = (parentId, index) => { setInsertionTarget({parentId, index}); renderCatalog(document.getElementById("block-search")?.value||""); if (canvasController) canvasController.renderOverlays(); renderTree(); };
+window.__stratum_clearInsertionTarget = () => { clearInsertionTarget(); renderCatalog(document.getElementById("block-search")?.value||""); if (canvasController) canvasController.renderOverlays(); renderTree(); };
+window.__stratum_canRemove = canRemove;
+window.__stratum_canDuplicate = canDuplicate;
+window.__stratum_canInsert = canInsert;
+window.__stratum_renderCatalog = (f) => renderCatalog(f || document.getElementById("block-search")?.value||"");
 window.__stratum_onSelectionChange = (nodeId, instanceKey, externalInfo) => {
   state.selectedNodeId = nodeId;
   state.selectedInstanceKey = instanceKey || null;
@@ -56,11 +65,58 @@ if (canvasEl) {
   canvasController = new CanvasController(canvasEl, canvasOverlay);
   window.__stratum_canvasController = canvasController;
 }
+window.__stratum_catalog = state.catalog;
+window.__stratum_bootstrap = bootstrap;
+
+// Insertion affordance helpers
+function showInsertionPrompt(msg) {
+  if (errorElement) {
+    errorElement.textContent = msg;
+    errorElement.hidden = false;
+    setTimeout(()=>{ if (errorElement.textContent===msg) errorElement.hidden=true; }, 3000);
+  } else if (window.stratumToast) window.stratumToast("error", msg);
+  else alert(msg);
+}
 
 // Legacy tree rendering (fallback) — kept for progressive enhancement and hidden legacy fallback
 function renderTree() {
   if (!treeElement) return;
   treeElement.replaceChildren();
+  // Empty document editor-only state
+  if (state.document.nodes.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-document-state";
+    empty.style.cssText = "display:grid;gap:12px;place-items:center;padding:32px 16px;border:2px dashed #cbd5e1;border-radius:8px;background:#f8fafc;margin:8px";
+    const title = element("h3", "", "Start building this page");
+    title.style.cssText = "margin:0;font-size:16px;font-weight:600";
+    const desc = element("p", "muted", "Add your first block to get started.");
+    desc.style.cssText = "margin:0;color:#64748b;font-size:13px";
+    const actions = element("div");
+    actions.style.cssText = "display:flex;gap:8px";
+    const addBtn = element("button", "button button-primary", "+ Add block");
+    addBtn.type = "button";
+    addBtn.addEventListener("click", () => {
+      setInsertionTarget({parentId:null, index:0});
+      renderCatalog("");
+      const lib = document.querySelector(".block-library");
+      if (lib) lib.scrollIntoView({behavior:"smooth"});
+      const tabs = document.querySelectorAll(".library-tab");
+      tabs.forEach(t=>{ if(t.dataset.tab==="blocks"){ t.click(); }});
+    });
+    const patBtn = element("button", "button", "Browse patterns");
+    patBtn.type = "button";
+    patBtn.addEventListener("click", () => {
+      const tabs = document.querySelectorAll(".library-tab");
+      tabs.forEach(t=>{ if(t.dataset.tab==="patterns"){ t.click(); }});
+    });
+    actions.append(addBtn, patBtn);
+    empty.append(title, desc, actions);
+    treeElement.append(empty);
+    if (emptyElement) emptyElement.hidden = true;
+    renderNavigator();
+    updateBreadcrumbs();
+    return;
+  }
   treeElement.append(renderDropZone(state.document.nodes, null));
   if (emptyElement) emptyElement.hidden = state.document.nodes.length > 0;
   // also update navigator
@@ -68,29 +124,118 @@ function renderTree() {
   updateBreadcrumbs();
 }
 
+function insertionLabelForContainer(containerNode) {
+  if (!containerNode) return "Add block";
+  const def = definitionFor(containerNode);
+  if (!def) return "Add block";
+  const rule = def.schema.children;
+  if (rule.mode === "allowed" && rule.blocks.length===1) {
+    const childBlock = rule.blocks[0];
+    // find display name
+    for (const d of state.catalog) if (d.block===childBlock) return `+ Add ${d.displayName}`;
+  }
+  return "+ Add block";
+}
+
 function renderDropZone(siblings, containerNode) {
   const zone = document.createElement("div");
   zone.className = containerNode ? "node__children" : "tree__root";
+  const canAddInside = (() => {
+    if (!containerNode) return true;
+    const def = definitionFor(containerNode);
+    if (!def) return false;
+    if (def.schema.children.mode==="none") return false;
+    if (def.schema.children.max!=null && siblings.length >= def.schema.children.max) return false;
+    return true;
+  })();
   if (siblings.length === 0) {
     const slot = document.createElement("div");
     slot.className = "drop-slot drop-slot--empty";
     const inner = document.createElement("div");
     inner.className = "node__empty";
-    inner.textContent = containerNode ? "Drop blocks here" : "Drag blocks here to begin";
+    if (canAddInside) {
+      inner.style.cssText = "display:grid;gap:6px;place-items:center;padding:12px";
+      const label = insertionLabelForContainer(containerNode);
+      const btn = element("button", "button button-small", label);
+      btn.type = "button";
+      btn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        const parentId = containerNode ? containerNode.id : null;
+        setInsertionTarget({parentId, index:0});
+        renderCatalog("");
+        const lib = document.querySelector(".block-library");
+        if (lib) lib.scrollIntoView({behavior:"smooth"});
+        // switch to blocks tab
+        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+      });
+      inner.replaceChildren();
+      inner.append(element("span","muted", containerNode ? `${definitionFor(containerNode)?.displayName || "Container"} is empty` : "No blocks"), btn);
+    } else {
+      inner.textContent = containerNode ? "Drop blocks here" : "Drag blocks here to begin";
+      if (!canAddInside) inner.textContent = "Maximum reached";
+    }
     slot.append(inner);
     attachSlot(slot, containerNode, 0);
+    // mark slot insertion target highlight
+    if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===0) {
+      slot.classList.add("drop-slot--active");
+    }
     zone.append(slot);
     return zone;
   }
   siblings.forEach((child, index) => {
     const slot = document.createElement("div");
-    slot.className = "drop-slot";
+    slot.className = "drop-slot drop-slot--insertion";
+    // Insertion button between blocks (subtle hover)
+    const btn = element("button", "insertion-btn", "+");
+    btn.type = "button";
+    btn.title = "Add block here";
+    btn.setAttribute("aria-label", "Add block here");
+    btn.style.cssText = "width:100%;height:18px;border:1px dashed transparent;background:transparent;color:#94a3b8;font-size:11px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .12s, border-color .12s";
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const parentId = containerNode ? containerNode.id : null;
+      setInsertionTarget({parentId, index});
+      renderCatalog("");
+      document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+    });
+    slot.addEventListener("mouseenter", ()=> btn.style.opacity="1");
+    slot.addEventListener("mouseleave", ()=> btn.style.opacity="0");
+    slot.addEventListener("focusin", ()=> btn.style.opacity="1");
+    // highlight if this is insertion target
+    if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===index) {
+      slot.classList.add("drop-slot--active");
+      btn.style.opacity="1";
+      btn.style.borderColor="#2563eb";
+      btn.style.background="#eff6ff";
+    }
+    slot.append(btn);
     attachSlot(slot, containerNode, index);
     zone.append(slot);
     zone.append(renderNode(child));
   });
   const tail = document.createElement("div");
-  tail.className = "drop-slot";
+  tail.className = "drop-slot drop-slot--insertion";
+  const tailBtn = element("button", "insertion-btn", "+");
+  tailBtn.type = "button";
+  tailBtn.title = "Add block here";
+  tailBtn.style.cssText = "width:100%;height:18px;border:1px dashed transparent;background:transparent;color:#94a3b8;font-size:11px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .12s";
+  tailBtn.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const parentId = containerNode ? containerNode.id : null;
+    setInsertionTarget({parentId, index:siblings.length});
+    renderCatalog("");
+    document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+  });
+  tail.addEventListener("mouseenter", ()=> tailBtn.style.opacity="1");
+  tail.addEventListener("mouseleave", ()=> tailBtn.style.opacity="0");
+  if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===siblings.length) {
+    tail.classList.add("drop-slot--active");
+    tailBtn.style.opacity="1";
+    tailBtn.style.borderColor="#2563eb";
+    tailBtn.style.background="#eff6ff";
+  }
+  tail.append(tailBtn);
   attachSlot(tail, containerNode, siblings.length);
   zone.append(tail);
   return zone;
@@ -170,12 +315,45 @@ function renderNode(node) {
     btn.classList.add("node__collapse");
     actions.append(btn);
   }
-  actions.append(actionButton("⧉","Duplicate", ()=>duplicateNode(node.id)));
-  if (canIndent(node.id)) actions.append(actionButton("↳","Indent", ()=>indentNode(node.id)));
-  if (canOutdent(node.id)) actions.append(actionButton("↰","Outdent", ()=>outdentNode(node.id)));
+  // Add inside button for containers
+  if (container) {
+    const canInsertInside = (() => {
+      const def = definitionFor(node);
+      if (!def) return false;
+      if (def.schema.children.max!=null && node.children.length >= def.schema.children.max) return false;
+      return def.schema.children.mode!=="none";
+    })();
+    const addInsideBtn = actionButton("+", canInsertInside? insertionLabelForContainer(node) : "Maximum reached", ()=>{
+      if (!canInsertInside) { showInsertionPrompt(`${definition?.displayName || node.block} has reached maximum children.`); return; }
+      setInsertionTarget({parentId: node.id, index: node.children.length});
+      renderCatalog("");
+      document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+    });
+    if (!canInsertInside) { addInsideBtn.disabled=true; addInsideBtn.style.opacity="0.4"; addInsideBtn.title="Maximum reached"; }
+    actions.append(addInsideBtn);
+  }
+  // Duplicate with validation
+  const dupCheck = canDuplicate(node.id);
+  const dupBtn = actionButton("⧉","Duplicate", ()=>duplicateNode(node.id));
+  if (!dupCheck.ok) { dupBtn.disabled=true; dupBtn.style.opacity="0.4"; dupBtn.title=dupCheck.reason; } else dupBtn.title="Duplicate";
+  actions.append(dupBtn);
+  const indentCheck = canIndentM(node.id);
+  const indentBtn = actionButton("↳","Indent", ()=>indentNode(node.id));
+  if (!indentCheck.ok) { indentBtn.disabled=true; indentBtn.style.opacity="0.4"; }
+  indentBtn.title = indentCheck.ok ? "Indent" : indentCheck.reason;
+  actions.append(indentBtn);
+  const outdentCheck = canOutdentM(node.id);
+  const outdentBtn = actionButton("↰","Outdent", ()=>outdentNode(node.id));
+  if (!outdentCheck.ok) { outdentBtn.disabled=true; outdentBtn.style.opacity="0.4"; }
+  outdentBtn.title = outdentCheck.ok ? "Outdent" : outdentCheck.reason;
+  actions.append(outdentBtn);
   actions.append(actionButton("↑","Move up", ()=>moveNode(node.id,-1)));
   actions.append(actionButton("↓","Move down", ()=>moveNode(node.id,1)));
-  actions.append(actionButton("✕","Remove", ()=>removeNode(node.id), true));
+  const remCheck = canRemove(node.id);
+  const remBtn = actionButton("✕","Remove", ()=>removeNode(node.id), true);
+  if (!remCheck.ok) { remBtn.disabled=true; remBtn.style.opacity="0.4"; }
+  remBtn.title = remCheck.ok ? "Remove" : remCheck.reason;
+  actions.append(remBtn);
   actions.addEventListener("click", e=>e.stopPropagation());
   header.append(actions);
   wrapper.append(header);
@@ -311,130 +489,142 @@ function performDrop(drag, containerNode, index){
   if (!drag) return;
   const block = blockForDrag(drag);
   if (!block) return;
-  // Use shared dragdrop validation (also checks external)
-  const editable = true; // root is always editable, external check handled in canvas wrapper
+  const editable = true;
   const v = validateDropTarget(containerNode, block, drag, editable);
-  if (!v.ok) return;
-  if (!containerAccepts(containerNode, block, drag)) return;
-  const target = containerNode? containerNode.children : state.document.nodes;
-  let node;
-  if (drag.type==="library"){
-    pushHistory();
-    node = createNode(drag.definition);
-    target.splice(index,0,node);
+  if (!v.ok) { showInsertionPrompt(v.reason==="external" ? "Cannot drop inside read-only content." : "Not allowed at that position."); return; }
+  if (!containerAccepts(containerNode, block, drag)) { showInsertionPrompt("Not allowed at that position."); return; }
+  // Additional mutation validation for source min
+  if (drag.type==="node") {
+    const mv = canMove(drag.nodeId, containerNode, index);
+    if (!mv.ok) { showInsertionPrompt(mv.reason); return; }
   } else {
-    const found = findNode(drag.nodeId);
-    if (!found) return;
-    if (containerNode && isWithin(drag.nodeId, containerNode)) return;
-    if (found.parent===containerNode && found.index===index) return;
-    pushHistory();
-    found.siblings.splice(found.index,1);
-    let ti=index;
-    if (found.parent===containerNode && found.index < index) ti-=1;
-    target.splice(ti,0,found.node);
-    node=found.node;
+    const ins = canInsert(containerNode, block, index);
+    if (!ins.ok) { showInsertionPrompt(ins.reason); return; }
   }
-  state.selectedNodeId=node.id;
+  const target = containerNode? containerNode.children : state.document.nodes;
+  let nodeId = null;
+  const ok = commitMutation(()=>{
+    if (drag.type==="library"){
+      const node = createValidNode(drag.definition);
+      target.splice(index,0,node);
+      nodeId = node.id;
+    } else {
+      const found = findNode(drag.nodeId);
+      if (!found) return false;
+      if (containerNode && isWithin(drag.nodeId, containerNode)) return false;
+      if (found.parent===containerNode && found.index===index) return false;
+      const from = found.siblings;
+      const [moved] = from.splice(found.index,1);
+      let ti=index;
+      if (found.parent===containerNode && found.index < index) ti-=1;
+      target.splice(ti,0,moved);
+      nodeId = moved.id;
+    }
+  });
+  if (!ok) return;
+  clearInsertionTarget();
+  state.selectedNodeId=nodeId;
   state.selectedInstanceKey=null;
-  if (canvasController) canvasController.selectNode(node.id, null);
+  if (canvasController) canvasController.selectNode(nodeId, null);
   changed();
 }
-window.__stratum_performNavigatorDrop = (drag, targetNode)=>{
-  // drop dragged node onto targetNode (as child if container, else sibling)
+window.__stratum_performNavigatorDrop = (drag, targetNode, position)=>{
   if (!drag) return;
   const block = drag.type==="library"? drag.definition.block : findNode(drag.nodeId)?.node.block;
-  // Try to insert as child of target if container accepts, else after target
   const targetInfo = findNode(targetNode.id);
   if (!targetInfo) return;
-  const def = definitionFor(targetNode);
-  if (def && isContainer(targetNode) && containerAccepts(targetNode, block, drag)) {
+  // position can be "before", "inside", "after"
+  if (position === "inside" && isContainer(targetNode) && canInsert(targetNode, block, targetNode.children.length, drag).ok) {
     performDrop(drag, targetNode, targetNode.children.length);
-  } else {
-    // insert after target in its siblings
+  } else if (position === "before") {
+    performDrop(drag, targetInfo.parent, targetInfo.index);
+  } else if (position === "after") {
     performDrop(drag, targetInfo.parent, targetInfo.index+1);
+  } else {
+    // legacy fallback
+    const def = definitionFor(targetNode);
+    if (def && isContainer(targetNode) && containerAccepts(targetNode, block, drag)) {
+      performDrop(drag, targetNode, targetNode.children.length);
+    } else {
+      performDrop(drag, targetInfo.parent, targetInfo.index+1);
+    }
   }
 };
 
 // Node operations
 function addBlock(definition){
-  pushHistory();
-  const point = insertionPoint(definition.block);
-  const node = createNode(definition);
-  point.siblings.splice(point.index,0,node);
-  state.selectedNodeId=node.id;
-  if (canvasController) canvasController.selectNode(node.id, null);
+  const point = insertionPointForBlock(definition.block);
+  if (!point) {
+    showInsertionPrompt("Choose where to add this block.");
+    // Enter insertion mode without target: highlight valid drop slots
+    // For now just set root target if allowed
+    const canRoot = canInsert(null, definition.block, state.document.nodes.length);
+    if (canRoot.ok) {
+      setInsertionTarget({parentId:null, index: state.document.nodes.length});
+      renderCatalog("");
+    }
+    return;
+  }
+  let newId = null;
+  const ok = commitMutation(()=>{
+    const node = createValidNode(definition);
+    point.siblings.splice(point.index,0,node);
+    newId = node.id;
+  });
+  if (!ok) { showInsertionPrompt("Could not add block."); return; }
+  clearInsertionTarget();
+  state.selectedNodeId=newId;
+  if (canvasController) canvasController.selectNode(newId, null);
   changed();
 }
 function moveNode(id, offset){
   const found=findNode(id); if(!found) return;
   const next=found.index+offset; if(next<0||next>=found.siblings.length) return;
-  pushHistory();
-  [found.siblings[found.index], found.siblings[next]]=[found.siblings[next], found.siblings[found.index]];
+  const ok = commitMutation(()=>{
+    [found.siblings[found.index], found.siblings[next]]=[found.siblings[next], found.siblings[found.index]];
+  });
+  if (!ok) return;
   state.selectedNodeId=id;
   state.selectedInstanceKey=null;
   changed();
 }
 function canIndent(id){
-  const found=findNode(id); if(!found||found.index<1) return false;
-  const prev=found.siblings[found.index-1];
-  const prevDef=definitionFor(prev);
-  if(!prevDef||prevDef.schema.children.mode==="none") return false;
-  const childrenAllow = (def, block, count)=>{
-    if(!def) return false; const r=def.schema.children;
-    if(r.mode==="none") return false;
-    if(r.max!==undefined&&r.max!==null&&count>=r.max) return false;
-    return r.mode==="any"||(r.mode==="allowed"&&r.blocks.includes(block));
-  };
-  return childrenAllow(prevDef, found.node.block, prev.children.length);
+  const r = canIndentM(id);
+  return r.ok;
 }
 function indentNode(id){
-  const found=findNode(id); if(!found||found.index<1) return;
+  const check = canIndentM(id);
+  if (!check.ok) { showInsertionPrompt(check.reason); return; }
+  const found=findNode(id); if(!found) return;
   const prev=found.siblings[found.index-1];
-  const prevDef=definitionFor(prev);
-  if(!prevDef||prevDef.schema.children.mode==="none") return;
-  const childrenAllow = (def, block, count)=>{
-    if(!def) return false; const r=def.schema.children;
-    if(r.mode==="none") return false;
-    if(r.max!==undefined&&r.max!==null&&count>=r.max) return false;
-    return r.mode==="any"||(r.mode==="allowed"&&r.blocks.includes(block));
-  };
-  if(!childrenAllow(prevDef, found.node.block, prev.children.length)) return;
-  pushHistory();
-  const [moved]=found.siblings.splice(found.index,1);
-  prev.children.push(moved);
+  const ok = commitMutation(()=>{
+    const [moved]=found.siblings.splice(found.index,1);
+    prev.children.push(moved);
+  });
+  if (!ok) return;
   changed();
 }
 function canOutdent(id){
-  const found=findNode(id); if(!found||!found.parent) return false;
-  const parentFound=findNode(found.parent.id); if(!parentFound) return false;
-  const newContainer=parentFound.parent;
-  if(!newContainer) return true;
-  const childrenAllow = (def, block, count)=>{
-    if(!def) return false; const r=def.schema.children;
-    if(r.mode==="none") return false;
-    if(r.max!==undefined&&r.max!==null&&count>=r.max) return false;
-    return r.mode==="any"||(r.mode==="allowed"&&r.blocks.includes(block));
-  };
-  return childrenAllow(definitionFor(newContainer), found.node.block, newContainer.children.length);
+  const r = canOutdentM(id);
+  return r.ok;
 }
 function outdentNode(id){
+  const check = canOutdentM(id);
+  if (!check.ok) { showInsertionPrompt(check.reason); return; }
   const found=findNode(id); if(!found||!found.parent) return;
   const parentFound=findNode(found.parent.id); if(!parentFound) return;
   const newContainer=parentFound.parent;
-  const childrenAllow = (def, block, count)=>{
-    if(!def) return false; const r=def.schema.children;
-    if(r.mode==="none") return false;
-    if(r.max!==undefined&&r.max!==null&&count>=r.max) return false;
-    return r.mode==="any"||(r.mode==="allowed"&&r.blocks.includes(block));
-  };
-  if(newContainer && !childrenAllow(definitionFor(newContainer), found.node.block, newContainer.children.length)) return;
-  pushHistory();
-  const [moved]=found.siblings.splice(found.index,1);
-  const target=newContainer? newContainer.children : state.document.nodes;
-  target.splice(parentFound.index+1,0,moved);
+  const ok = commitMutation(()=>{
+    const [moved]=found.siblings.splice(found.index,1);
+    const target=newContainer? newContainer.children : state.document.nodes;
+    target.splice(parentFound.index+1,0,moved);
+  });
+  if (!ok) return;
   changed();
 }
 function removeNode(id){
+  const check = canRemove(id);
+  if (!check.ok) { showInsertionPrompt(check.reason); return; }
   const found=findNode(id); if(!found) return;
   const hasChildren = (found.node.children||[]).length>0 || (found.node.children||[]).some(n=> (n.children||[]).length>0);
   if (hasChildren){
@@ -442,18 +632,26 @@ function removeNode(id){
     const label=def?.displayName||found.node.block;
     if(!confirm(`Remove "${label}" and all its children?`)) return;
   }
-  pushHistory();
-  found.siblings.splice(found.index,1);
+  const ok = commitMutation(()=>{
+    found.siblings.splice(found.index,1);
+  });
+  if (!ok) return;
   state.collapsed.delete(id);
   if(state.selectedNodeId===id) state.selectedNodeId=found.parent?.id||null;
   changed();
 }
 function duplicateNode(id){
+  const check = canDuplicate(id);
+  if (!check.ok) { showInsertionPrompt(check.reason); return; }
   const found=findNode(id); if(!found) return;
-  pushHistory();
-  const dupe=duplicateSubtree(found.node);
-  found.siblings.splice(found.index+1,0,dupe);
-  state.selectedNodeId=dupe.id;
+  let dupeId = null;
+  const ok = commitMutation(()=>{
+    const dupe=duplicateSubtree(found.node);
+    found.siblings.splice(found.index+1,0,dupe);
+    dupeId = dupe.id;
+  });
+  if (!ok) return;
+  state.selectedNodeId=dupeId;
   changed();
 }
 function insertPattern(patternId){
@@ -461,15 +659,45 @@ function insertPattern(patternId){
   if(!pattern) return;
   const cloned=clonePatternNodes(pattern);
   if(!cloned.length) return;
-  const point=insertionPointForPattern(cloned);
+  // Use insertionTarget if set
+  let point = null;
+  if (state.insertionTarget) {
+    const resolved = resolveInsertionTarget(state.insertionTarget);
+    if (resolved) {
+      const can = canInsertRootsM(resolved.parentNode, cloned);
+      if (can.ok) point = resolved;
+      else { showInsertionPrompt(can.reason || "Cannot insert pattern here."); return; }
+    }
+  }
+  if (!point) point=insertionPointForPattern(cloned);
   if(!point){
-    if(errorElement){ errorElement.textContent="Cannot insert pattern here — container does not allow this content."; errorElement.hidden=false; setTimeout(()=>errorElement.hidden=true,3000);}
-    else alert("Cannot insert pattern here");
+    showInsertionPrompt("Cannot insert pattern here — container does not allow this content.");
     return;
   }
-  pushHistory();
-  for(let i=0;i<cloned.length;i++) point.siblings.splice(point.index+i,0,cloned[i]);
-  state.selectedNodeId=cloned[0].id;
+  // Validate again atomic
+  const parentForPoint = (() => {
+    // find parentNode from point.siblings
+    if (point.siblings === state.document.nodes) return null;
+    // search for parent that owns siblings
+    function findParent(nodes, targetSibs) {
+      for (const n of nodes) {
+        if (n.children === targetSibs) return n;
+        const deeper = findParent(n.children||[], targetSibs);
+        if (deeper) return deeper;
+      }
+      return null;
+    }
+    return findParent(state.document.nodes, point.siblings);
+  })();
+  const can = canInsertRootsM(parentForPoint, cloned);
+  if (!can.ok) { showInsertionPrompt(can.reason); return; }
+  let firstId = cloned[0].id;
+  const ok = commitMutation(()=>{
+    for(let i=0;i<cloned.length;i++) point.siblings.splice(point.index+i,0,cloned[i]);
+  });
+  if (!ok) return;
+  clearInsertionTarget();
+  state.selectedNodeId=firstId;
   changed();
 }
 
@@ -646,12 +874,31 @@ function renderDocumentInspector(){
   info.className="document-inspector";
   const res=bootstrap.resource || {};
   const caps=bootstrap.capabilities || {};
-  info.innerHTML=`<h3 style="margin:0 0 8px">${res.label||res.id||"Document"}</h3>
-    <p class="muted" style="font-size:12px">${res.type||""} ${res.kind? "· "+res.kind:""} ${res.contentTypeId? "· "+res.contentTypeId:""}</p>
-    <div style="display:grid; gap:6px; margin-top:12px; font-size:12px">
-      ${Object.entries(caps).map(([k,v])=> `<div><strong>${k}:</strong> ${v?"yes":"no"}</div>`).join("")}
-    </div>
-    <p class="muted" style="margin-top:12px;font-size:11px">Switch to Settings tab for full metadata (title, slug, SEO, fields, taxonomies). Visual canvas is primary; Inspector Block tab edits selected block.</p>`;
+  const h3 = document.createElement("h3");
+  h3.style.margin = "0 0 8px";
+  h3.textContent = res.label || res.id || "Document";
+  const p1 = document.createElement("p");
+  p1.className = "muted";
+  p1.style.fontSize = "12px";
+  p1.textContent = `${res.type||""} ${res.kind? "· "+res.kind:""} ${res.contentTypeId? "· "+res.contentTypeId:""}`.trim();
+  const grid = document.createElement("div");
+  grid.style.display = "grid";
+  grid.style.gap = "6px";
+  grid.style.marginTop = "12px";
+  grid.style.fontSize = "12px";
+  for (const [k,v] of Object.entries(caps)) {
+    const row = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = `${k}: `;
+    row.append(strong, document.createTextNode(v?"yes":"no"));
+    grid.append(row);
+  }
+  const p2 = document.createElement("p");
+  p2.className = "muted";
+  p2.style.marginTop = "12px";
+  p2.style.fontSize = "11px";
+  p2.textContent = "Switch to Settings tab for full metadata (title, slug, SEO, fields, taxonomies). Visual canvas is primary; Inspector Block tab edits selected block.";
+  info.append(h3, p1, grid, p2);
   slot.append(info);
   // Also try to move legacy Settings tab content if present (for entry)
   const settingsTab=document.getElementById("tab-settings");

@@ -9,7 +9,6 @@ const INLINE_EDITABLE = {
   "core/heading": { prop: "text", rich: true },
   "core/text": { prop: "text", rich: false },
   "core/button": { prop: "label", rich: false },
-  "core/entry-title": { prop: "text", rich: false },
 };
 
 export function isInlineEditable(node) {
@@ -40,10 +39,31 @@ export function startInlineEdit(nodeId, instanceKey, canvasController) {
   editor.style.top = rect.top + "px";
   editor.style.width = Math.max(120, rect.width) + "px";
   editor.style.minHeight = Math.max(24, rect.height) + "px";
+  // Copy theme typography from rendered element for visual continuity
+  let renderedEl = null;
+  try {
+    let probe = info.startComment.nextSibling;
+    while (probe && probe.nodeType === Node.COMMENT_NODE) probe = probe.nextSibling;
+    if (probe && probe.nodeType === 1) renderedEl = probe;
+    else if (info.range) {
+      const c = info.range.commonAncestorContainer;
+      if (c && c.nodeType===1) renderedEl = c;
+    }
+  } catch (_) {}
+  if (renderedEl) {
+    try {
+      const cs = doc.defaultView.getComputedStyle(renderedEl);
+      const props = ["fontFamily","fontSize","fontWeight","fontStyle","lineHeight","letterSpacing","textAlign","color","textTransform"];
+      for (const p of props) {
+        const v = cs[p];
+        if (v) editor.style[p] = v;
+      }
+      editor.style.width = Math.max(120, renderedEl.getBoundingClientRect().width) + "px";
+    } catch (_) {}
+  }
   editor.style.background = "white";
   editor.style.border = "1px solid #3b82f6";
   editor.style.padding = "4px 8px";
-  editor.style.font = "inherit";
   editor.style.zIndex = "9999";
   // Initialize text from props
   let currentText = "";

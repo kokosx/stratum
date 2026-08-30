@@ -257,5 +257,28 @@
 .inspector-external { padding:12px; border:1px solid #f59e0b; background:#fffbeb; border-radius:8px; }
 .document-inspector { font-size:12px; }
 .inline-edit-overlay { box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:6px; }
+/* Corrective pass: insertion affordances, empty states, navigator, preview error */
+.insertion-context { animation: slideIn .15s ease; }
+.empty-document-state { animation: fadeIn .2s ease; }
+.drop-slot--insertion { min-height: 6px; display:flex; align-items:center; justify-content:center; margin: 2px 0; }
+.drop-slot--insertion .insertion-btn { opacity:0; pointer-events:auto; }
+.tree__root:hover .insertion-btn, .node__children:hover .insertion-btn { opacity:0.6; }
+.drop-slot--insertion:hover .insertion-btn { opacity:1 !important; }
+.preview-error-banner { animation: slideIn .15s ease; }
+.canvas-empty-placeholder { animation: fadeIn .15s ease; }
+.canvas-insertion-btn { transition: opacity .12s, transform .12s; }
+.navigator-node.navigator-drop-target--before { border-top: 3px solid #2563eb !important; }
+.navigator-node.navigator-drop-target--after { border-bottom: 3px solid #2563eb !important; }
+.navigator-node.navigator-drop-target--inside { background:#eff6ff !important; outline:2px dashed #2563eb; }
+.navigator-node.is-invalid { outline-color:#dc2626 !important; background:#fef2f2 !important; }
+.navigator-node__actions { flex-shrink:0; }
+.navigator-action { transition: background .12s; }
+.navigator-action:hover { background:#f1f5f9 !important; border-color:#2563eb !important; }
+.catalog-item:disabled { cursor:not-allowed; opacity:0.5; }
+.catalog-item:disabled:hover { border-color:#dcdcde; background:#fff; box-shadow:none; }
+.inspector-badge { animation: fadeIn .15s ease; }
+@keyframes slideIn { from { opacity:0; transform:translateY(-4px);} to {opacity:1; transform:translateY(0);} }
+@keyframes fadeIn { from { opacity:0;} to {opacity:1;} }
+
 @media (max-width:1100px){ .editor-workbench--shared .editor-workspace{ grid-template-columns:200px 1fr; } .block-inspector{ grid-column:1/-1; height:300px; } }
 @media (max-width:720px){ .editor-workbench--shared .editor-workspace{ grid-template-columns:1fr; } .editor-canvas-panel{ min-height:400px; } }

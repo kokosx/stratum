@@ -3,6 +3,8 @@ import { state, bootstrap } from "./state.js";
 import { isDirtyNow } from "./state.js";
 
 let previewTimer = null;
+let lastGoodSrcdoc = null;
+let pendingController = null;
 
 export function schedulePreview() {
   clearTimeout(previewTimer);
@@ -77,23 +79,27 @@ export async function updatePreview() {
 
   const previewUrl = bootstrap.previewUrl || bootstrap.actions?.previewUrl || "/admin/editor/preview";
   const url = new URL(previewUrl, window.location.origin);
-  // For canvas, always use /admin/editor/preview with editor_canvas=1
-  // Layout/site-part previews have separate URLs but unified preview should use main endpoint with composition
-  // Detect if previewUrl is site-part/template specific — keep it for now, but add editor_canvas param
   url.searchParams.set("editor_canvas", "1");
+
+  // Abort previous pending preview
+  if (pendingController) {
+    try { pendingController.abort(); } catch (_) {}
+  }
+  pendingController = new AbortController();
 
   try {
     const response = await fetch(url.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "StratumEditor" },
       body: previewParams,
+      signal: pendingController.signal,
     });
     const output = await response.text();
     if (!response.ok) throw new Error(output.trim() || "Preview failed");
-    // Dual path: legacy preview element + canvas iframe
+    // Success — remember last good
+    lastGoodSrcdoc = output;
     if (previewElement) {
       previewElement.classList.remove("editor-preview-error");
-      // Keep legacy hidden but still populate for fallback
     }
     const canvas = document.getElementById("editor-canvas");
     if (canvas) {
@@ -101,24 +107,17 @@ export async function updatePreview() {
       canvas.onload = () => {
         canvas.dataset.previewLoaded = "1";
         try {
-          if (canvas.contentDocument && canvas.contentDocument.body) {
-            // auto height fallback handled in canvas.js
-          }
+          if (canvas.contentDocument && canvas.contentDocument.body) {}
         } catch (_) {}
         if (window.__stratum_canvasController) {
-          // let controller parse after load
           setTimeout(() => window.__stratum_canvasController.refresh(), 50);
         }
-        // preserve selection after rerender
         if (state.selectedNodeId && window.__stratum_canvasController) {
           const inst = state.selectedInstanceKey;
           window.__stratum_canvasController.selectNode(state.selectedNodeId, inst, { scroll: false });
         }
       };
-      // Install the lifecycle hook before replacing the iframe document: srcdoc
-      // can load immediately in a warm browser cache.
       canvas.srcdoc = output;
-      // If already loaded (srcdoc immediate), trigger refresh manually after tick
       setTimeout(() => {
         if (canvas.contentDocument && canvas.contentDocument.body && canvas.dataset.previewLoaded === "0") {
           canvas.dataset.previewLoaded = "1";
@@ -126,12 +125,9 @@ export async function updatePreview() {
         }
       }, 300);
     }
-    // Also populate legacy iframe for old UI if visible
     const legacyFrame = previewElement ? previewElement.querySelector("iframe") : null;
     if (legacyFrame) {
-      // update legacy
     } else if (previewElement && !document.getElementById("editor-canvas")) {
-      // fallback when canvas not present (old shell)
       previewElement.replaceChildren();
       const frame = document.createElement("iframe");
       frame.className = "editor-preview-frame";
@@ -141,18 +137,62 @@ export async function updatePreview() {
       frame.style.width = state.previewWidth;
       previewElement.append(frame);
     }
-    if (errorElement) { errorElement.textContent = ""; errorElement.hidden = true; }
+    if (errorElement) {
+      errorElement.textContent = "";
+      errorElement.hidden = true;
+      errorElement.style.display = "none";
+      // also hide banner if present
+      const banner = document.getElementById("preview-error-banner");
+      if (banner) banner.hidden = true;
+    }
   } catch (error) {
+    if (error.name === "AbortError") return;
+    const msg = String(error.message || "Preview failed").slice(0, 2000);
+    const friendly = `Could not render current draft: ${msg}`;
     if (previewElement) {
       previewElement.classList.add("editor-preview-error");
-      previewElement.textContent = error.message;
+      // keep previewElement minimal; main error is banner
     }
-    if (errorElement) { errorElement.textContent = error.message; errorElement.hidden = false; }
+    // Show banner above canvas instead of replacing iframe
+    let banner = document.getElementById("preview-error-banner");
+    const canvasWrap = document.getElementById("editor-canvas-wrap");
+    if (!banner && canvasWrap) {
+      banner = document.createElement("div");
+      banner.id = "preview-error-banner";
+      banner.className = "preview-error-banner";
+      banner.style.cssText = "background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:8px 12px;margin-bottom:8px;border-radius:6px;font-size:12px;display:flex;gap:8px;align-items:center;justify-content:space-between";
+      const textSpan = document.createElement("span");
+      textSpan.id = "preview-error-text";
+      textSpan.style.flex = "1";
+      const undoBtn = document.createElement("button");
+      undoBtn.type = "button";
+      undoBtn.textContent = "Undo";
+      undoBtn.className = "button button-small";
+      undoBtn.style.cssText = "padding:4px 8px;font-size:11px;border:1px solid #fecaca;background:white;color:#991b1b;border-radius:4px;cursor:pointer";
+      undoBtn.addEventListener("click", () => {
+        if (window.__stratum_undo) window.__stratum_undo();
+      });
+      banner.append(textSpan, undoBtn);
+      canvasWrap.parentNode.insertBefore(banner, canvasWrap);
+    }
+    if (banner) {
+      const txt = banner.querySelector("#preview-error-text");
+      if (txt) txt.textContent = friendly;
+      banner.hidden = false;
+      banner.style.display = "flex";
+    }
+    if (errorElement) {
+      errorElement.textContent = friendly;
+      errorElement.hidden = false;
+      errorElement.style.display = "block";
+    }
+    // Do NOT replace canvas srcdoc if we have a last good version
     const canvas = document.getElementById("editor-canvas");
-    if (canvas) {
-      const safe = String(error.message).slice(0, 2000).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    if (canvas && !lastGoodSrcdoc) {
+      const safe = msg.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
       canvas.srcdoc = `<html><body style="padding:20px;color:#991b1b;font-family:system-ui"><h3>Preview error</h3><pre>${safe}</pre></body></html>`;
     }
+    // If we have lastGood, keep it — canvas already shows last good
   }
 }
 

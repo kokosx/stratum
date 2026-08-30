@@ -166,8 +166,9 @@ type EditorCanvas struct {
 	PrimaryResourceID   string
 	InstanceScope       string
 	// Owner tracking for external boundaries (optional, for toast CTA)
-	OwnerResourceType string
-	OwnerResourceID   string
+	OwnerResourceType  string
+	OwnerResourceID    string
+	OwnerResourceLabel string
 }
 
 func (e *EditorCanvas) IsEditable(nodeID string) bool {
@@ -206,14 +207,19 @@ func (e *EditorCanvas) CloneWithOwner(ownerType, ownerID string) *EditorCanvas {
 }
 
 func editorStartComment(nodeID, instanceKey string, editable bool, ownerType, ownerID string) string {
-	// Format: <!-- stratum-node-start:nodeID:instanceKey:editable[:ownerType:ownerId] -->
-	// nodeID and instanceKey are PathEscaped so they cannot break the comment or the colon delimiter.
-	// This prevents XSS via crafted IDs (e.g. "x--> <script>") and makes the marker parser robust.
+	return editorStartCommentWithLabel(nodeID, instanceKey, editable, ownerType, ownerID, "")
+}
+
+func editorStartCommentWithLabel(nodeID, instanceKey string, editable bool, ownerType, ownerID, ownerLabel string) string {
+	// Format: <!-- stratum-node-start:nodeID:instanceKey:editable[:ownerType:ownerId[:ownerLabel]] -->
 	safeID := url.PathEscape(sanitizeMarkerToken(nodeID))
 	safeKey := url.PathEscape(instanceKey)
 	s := "<!-- stratum-node-start:" + safeID + ":" + safeKey + ":" + fmt.Sprintf("%t", editable)
 	if ownerType != "" {
 		s += ":" + url.PathEscape(ownerType) + ":" + url.PathEscape(ownerID)
+		if ownerLabel != "" {
+			s += ":" + url.PathEscape(ownerLabel)
+		}
 	}
 	s += " -->"
 	return s
@@ -875,7 +881,7 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 	editorEnabled := rc.Editor != nil && rc.Editor.Enabled
 	var instanceKey string
 	var editable bool
-	var ownerType, ownerID string
+	var ownerType, ownerID, ownerLabel string
 	var childScope string
 	if editorEnabled {
 		scope := rc.Editor.InstanceScope
@@ -886,6 +892,7 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 		editable = rc.Editor.IsEditable(node.ID)
 		ownerType = rc.Editor.OwnerResourceType
 		ownerID = rc.Editor.OwnerResourceID
+		ownerLabel = rc.Editor.OwnerResourceLabel
 		childScope = instanceKey
 	}
 	// Runtime blocks (Collection, future WASM) are dispatched via the registry
@@ -908,7 +915,7 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 			return "", err
 		}
 		if editorEnabled {
-			start := editorStartComment(node.ID, instanceKey, editable, ownerType, ownerID)
+			start := editorStartCommentWithLabel(node.ID, instanceKey, editable, ownerType, ownerID, ownerLabel)
 			end := editorEndComment(node.ID, instanceKey)
 			return template.HTML(start + string(html) + end), nil
 		}
@@ -950,7 +957,7 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	if editorEnabled {
-		start := editorStartComment(node.ID, instanceKey, editable, ownerType, ownerID)
+		start := editorStartCommentWithLabel(node.ID, instanceKey, editable, ownerType, ownerID, ownerLabel)
 		end := editorEndComment(node.ID, instanceKey)
 		return template.HTML(start + out.String() + end), nil
 	}

@@ -230,15 +230,34 @@ export function renderInspector(externalInfo = null) {
   const inspectorElement = document.getElementById("block-inspector");
   if (!inspectorElement) return;
   inspectorElement.replaceChildren();
-  // Handle external boundary
+  // Handle external boundary — show ownerLabel if available, fallback to bootstrap siteParts
   if (externalInfo && !externalInfo.editable) {
     const wrap = element("div", "inspector-external");
-    const title = element("h3", "", externalInfo.ownerType ? externalInfo.ownerType : "External content");
+    let label = externalInfo.ownerLabel || "";
+    if (!label && externalInfo.ownerId) {
+      try {
+        const parts = bootstrap.siteParts || bootstrap.SiteParts || [];
+        if (Array.isArray(parts)) {
+          const found = parts.find(p=> (p.id||p.ID)===externalInfo.ownerId);
+          if (found) label = found.name || found.Name || "";
+        }
+        if (!label && externalInfo.ownerType==="layout-template" && bootstrap.resource && bootstrap.resource.id===externalInfo.ownerId) label = bootstrap.resource.label || "";
+      } catch (_) {}
+    }
+    if (!label) label = externalInfo.ownerId ? externalInfo.ownerId.slice(0,8) : "";
+    const typePretty = externalInfo.ownerType === "site-part" ? "Site Part" : externalInfo.ownerType === "layout-template" ? "Template" : externalInfo.ownerType || "External";
+    const titleText = label ? `${label}` : (typePretty + " content");
+    const title = element("h3", "", titleText);
     wrap.append(title);
-    const note = element("p", "muted", "This content comes from another resource and is read-only here.");
+    const sub = element("p", "muted", typePretty + (label ? ` • ${externalInfo.ownerId.slice(0,8)}` : ""));
+    sub.style.fontSize = "11px";
+    sub.style.color = "#64748b";
+    wrap.append(sub);
+    const note = element("p", "muted", "Global content — changes affect the whole website.");
+    note.style.fontSize = "12px";
     wrap.append(note);
     if (externalInfo.ownerType && externalInfo.ownerId) {
-      const btn = element("button", "button button-primary", `Edit ${externalInfo.ownerType}`);
+      const btn = element("button", "button button-primary", `Edit ${label || typePretty}`);
       btn.type = "button";
       btn.addEventListener("click", () => {
         let url = "";
@@ -252,7 +271,6 @@ export function renderInspector(externalInfo = null) {
       const info = element("p", "muted", "Edit the source to change this content.");
       wrap.append(info);
     }
-    // Show node that was clicked for context
     const nodeId = externalInfo.nodeId;
     const found = findNode(nodeId);
     if (found) {
@@ -273,6 +291,38 @@ export function renderInspector(externalInfo = null) {
     return;
   }
   inspectorElement.append(element("p", "inspector-title", definition.displayName));
+  // Collection repeated instances badge
+  try {
+    const ctrl = window.__stratum_canvasController;
+    if (ctrl && ctrl.nodeToKeys) {
+      const keys = ctrl.nodeToKeys.get(found.node.id) || [];
+      if (keys.length > 1) {
+        const badge = element("div", "inspector-badge");
+        badge.style.cssText = "background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;padding:6px 8px;border-radius:6px;font-size:11px;margin-bottom:10px";
+        badge.textContent = `Collection item template — Changes apply to all ${keys.length} rendered items.`;
+        inspectorElement.append(badge);
+      } else if (found.node.block === "core/collection") {
+        // Check if collection has zero entries: no rendered instances for its children
+        let hasNoResults = false;
+        try {
+          // If collection's children have no rendered instances, the block itself may still have one marker but children not rendered per item
+          // We detect by checking if any child has zero keys
+          const childIds = (found.node.children||[]).map(c=>c.id);
+          const anyMissing = childIds.some(id=> !(ctrl.nodeToKeys.get(id) && ctrl.nodeToKeys.get(id).length));
+          if (found.node.children && found.node.children.length>0 && anyMissing) hasNoResults = true;
+        } catch (_) {}
+        if (hasNoResults) {
+          const empty = element("div", "inspector-empty-collection");
+          empty.style.cssText = "background:#fffbeb;border:1px solid #fde68a;color:#92400e;padding:8px;border-radius:6px;font-size:12px;margin-bottom:10px";
+          const t1 = document.createTextNode("No entries match this collection.");
+          const br = document.createElement("br");
+          const t2 = element("small", "", "Edit item layout below — structure is still editable via Navigator.");
+          empty.append(t1, br, t2);
+          inspectorElement.append(empty);
+        }
+      }
+    }
+  } catch (_) {}
   const groups = new Map();
   collectFields(groups, found.node, definition, "props", definition.schema.props, found.node.props, "Content");
   collectFields(groups, found.node, definition, "settings", definition.schema.settings, found.node.settings, "Style");

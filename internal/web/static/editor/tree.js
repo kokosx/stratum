@@ -56,8 +56,11 @@ export function isWithin(ancestorId, node) {
 }
 
 export function insertionPoint(block) {
+  // Deprecated: use mutations.insertionPointForBlock. Returns null when no valid contextual location.
   const selected = state.selectedNodeId && findNode(state.selectedNodeId);
-  if (!selected) return { siblings: state.document.nodes, index: state.document.nodes.length };
+  if (!selected) {
+    return { siblings: state.document.nodes, index: state.document.nodes.length };
+  }
   const def = definitionFor(selected.node);
   const selectedChildren = selected.node.children || [];
   if (childrenAllow(def, block, selectedChildren.length)) {
@@ -68,7 +71,8 @@ export function insertionPoint(block) {
   if (childrenAllow(parentDef, block, selected.siblings.length)) {
     return { siblings: selected.siblings, index: selected.index + 1 };
   }
-  return { siblings: state.document.nodes, index: state.document.nodes.length };
+  // No valid contextual location — return null to enforce explicit placement (caller must handle)
+  return null;
 }
 
 export function randomID() {

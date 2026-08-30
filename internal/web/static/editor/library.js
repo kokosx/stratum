@@ -1,5 +1,7 @@
 // library.js — block library + patterns + search + tabs
-import { state, bootstrap } from "./state.js";
+import { state, bootstrap, definitionFor } from "./state.js";
+import { findNode } from "./tree.js";
+import { canInsert, canInsertRoots } from "./mutations.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -8,14 +10,81 @@ function element(tag, className, text) {
   return node;
 }
 
+function getInsertionContext() {
+  if (!state.insertionTarget) return null;
+  const target = state.insertionTarget;
+  if (target.parentId == null) return { parentNode: null, label: "Root", index: target.index };
+  const found = findNode(target.parentId);
+  if (!found) return null;
+  const def = definitionFor(found.node);
+  return { parentNode: found.node, label: def ? def.displayName : found.node.block, index: target.index };
+}
+
+function allowedBlocksForTarget() {
+  const ctx = getInsertionContext();
+  if (!ctx) return null; // no filter
+  if (!ctx.parentNode) return null; // root accepts any (subject to context, but treat as any)
+  const def = definitionFor(ctx.parentNode);
+  if (!def) return [];
+  const rule = def.schema.children;
+  if (rule.mode === "any") return null;
+  if (rule.mode === "allowed") return rule.blocks || [];
+  return [];
+}
+
 export function renderCatalog(filter = "") {
   const catalogElement = document.getElementById("block-catalog");
   if (!catalogElement) return;
   catalogElement.replaceChildren();
+  // Insertion context header
+  const ctx = getInsertionContext();
+  if (ctx) {
+    const header = element("div", "insertion-context");
+    header.style.cssText = "background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px";
+    const left = element("div");
+    const title = element("strong", "", `Adding ${ctx.parentNode ? "inside" : "at"}: ${ctx.label}`);
+    title.style.fontSize = "12px";
+    left.append(title);
+    const sub = element("small", "muted", ctx.parentNode ? `Index ${ctx.index}` : `Position ${ctx.index}`);
+    sub.style.display = "block";
+    sub.style.color = "#64748b";
+    left.append(sub);
+    const cancel = element("button", "button button-small");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.style.cssText = "padding:4px 8px;font-size:11px;border:1px solid #bfdbfe;background:white;border-radius:4px;cursor:pointer";
+    cancel.addEventListener("click", () => {
+      if (window.__stratum_clearInsertionTarget) window.__stratum_clearInsertionTarget();
+      renderCatalog(filter);
+    });
+    header.append(left, cancel);
+    catalogElement.append(header);
+  }
   const query = filter.trim().toLowerCase();
-  const matches = state.catalog.filter((d) =>
+  const allowed = allowedBlocksForTarget();
+  const maxReached = (() => {
+    if (!ctx || !ctx.parentNode) return false;
+    const def = definitionFor(ctx.parentNode);
+    if (!def || def.schema.children.max == null) return false;
+    return ctx.parentNode.children.length >= def.schema.children.max;
+  })();
+  if (maxReached) {
+    const warn = element("div", "insertion-warning");
+    warn.style.cssText = "background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:8px;border-radius:6px;font-size:12px;margin-bottom:10px";
+    warn.textContent = `${ctx.label} has reached maximum children (${definitionFor(ctx.parentNode).schema.children.max}).`;
+    catalogElement.append(warn);
+  }
+  let matches = state.catalog.filter((d) =>
     `${d.displayName} ${d.description || ""} ${d.block}`.toLowerCase().includes(query)
   );
+  if (allowed !== null) {
+    matches = matches.filter(d => allowed.includes(d.block));
+  }
+  if (allowed !== null && !matches.length && !maxReached) {
+    catalogElement.append(element("p", "editor-empty", `No blocks allowed in ${ctx.label}.`));
+    renderPatternCatalog(filter);
+    return;
+  }
   let category = null;
   matches
     .sort((a, b) =>
@@ -33,6 +102,21 @@ export function renderCatalog(filter = "") {
       button.draggable = true;
       button.dataset.block = d.block;
       button.dataset.version = String(d.version);
+      // Disable if insertion target present and block not allowed or max reached
+      let disabledReason = "";
+      if (ctx && ctx.parentNode) {
+        const c = canInsert(ctx.parentNode, d.block, ctx.index);
+        if (!c.ok) {
+          button.disabled = true;
+          button.title = c.reason;
+          button.style.opacity = "0.5";
+          disabledReason = c.reason;
+        }
+      }
+      if (maxReached) {
+        button.disabled = true;
+        button.title = `${ctx.label} max reached`;
+      }
       button.addEventListener("dragstart", (event) => {
         window.__stratum_currentDrag = { type: "library", definition: d };
         const treeEl = document.getElementById("document-tree");
@@ -52,12 +136,20 @@ export function renderCatalog(filter = "") {
       title.append(document.createTextNode(d.displayName));
       button.append(title);
       if (d.description) button.append(element("small", "", d.description));
-      button.addEventListener("click", () => {
-        if (window.__stratum_addBlock) window.__stratum_addBlock(d);
-      });
+      if (disabledReason) button.append(element("small", "muted", disabledReason));
+      if (button.disabled) {
+        button.addEventListener("click", (e) => {
+          e.preventDefault();
+          if (window.stratumToast) window.stratumToast("error", disabledReason || "Not allowed here");
+        });
+      } else {
+        button.addEventListener("click", () => {
+          if (window.__stratum_addBlock) window.__stratum_addBlock(d);
+        });
+      }
       catalogElement.append(button);
     });
-  if (!matches.length) catalogElement.append(element("p", "editor-empty", "No matching blocks."));
+  if (!matches.length && allowed===null) catalogElement.append(element("p", "editor-empty", "No matching blocks."));
   renderPatternCatalog(filter);
 }
 

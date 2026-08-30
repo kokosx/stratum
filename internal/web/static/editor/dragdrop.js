@@ -1,17 +1,33 @@
 // dragdrop.js — shared canvas/library/navigator DnD coordination
-// This module centralizes drop validation so canvas, navigator and library use the same
-// mutation helpers from tree.js (insert/move) and respect ChildrenSchema.
 import { state } from "./state.js";
 import { containerAccepts, isWithin, findNode } from "./tree.js";
+import { canInsert, canMove } from "./mutations.js";
 
 export function canDrop(containerNode, block, drag) {
   if (!containerAccepts(containerNode, block, drag)) return false;
   if (drag && drag.type === "node" && containerNode && isWithin(drag.nodeId, containerNode)) return false;
+  if (drag && drag.type === "node") {
+    const found = findNode(drag.nodeId);
+    if (found && found.parent) {
+      // quick min check for source
+      try {
+        const c = canMove(drag.nodeId, containerNode, containerNode ? containerNode.children.length : state.document.nodes.length);
+        if (!c.ok) return false;
+      } catch (_) {}
+    }
+  }
   return true;
 }
 
 export function validateDropTarget(containerNode, block, drag, editable = true) {
   if (!editable) return { ok: false, reason: "external" };
+  if (drag && drag.type === "node") {
+    try {
+      const targetIdx = containerNode ? containerNode.children.length : state.document.nodes.length;
+      const res = canMove(drag.nodeId, containerNode, targetIdx);
+      if (!res.ok) return { ok: false, reason: "schema" };
+    } catch (_) {}
+  }
   const ok = canDrop(containerNode, block, drag);
   return { ok, reason: ok ? "" : "schema" };
 }

@@ -12,6 +12,7 @@ export const state = {
   mode: "edit",
   previewWidth: "100%",
   libraryTab: "blocks",
+  insertionTarget: null, // {parentId: string|null, index:number}
 };
 
 export const definitions = new Map(
@@ -26,28 +27,47 @@ export function setPersistedJSON(v) { persistedJSON = v; }
 export function getPersistedMeta() { return persistedMeta; }
 export function setPersistedMeta(v) { persistedMeta = v; }
 
-// History
+// History — commit-after-mutation model
 const history = [];
 let historyIndex = -1;
 const MAX_HISTORY = 50;
 let lastPushTime = 0;
 
 export function pushHistory() {
+  // Legacy: push current snapshot (pre-mutation). Prefer commitMutation.
   history.splice(historyIndex + 1);
   const snap = JSON.stringify(state.document);
   if (historyIndex >= 0 && history[historyIndex] === snap) return;
   history.push(snap);
   if (history.length > MAX_HISTORY) history.shift();
   historyIndex = history.length - 1;
+  lastPushTime = Date.now();
 }
 
 export function maybePushHistory() {
   const now = Date.now();
   if (now - lastPushTime < 500) return;
-  const snap = JSON.stringify(state.document);
-  if (historyIndex >= 0 && history[historyIndex] === snap) return;
-  pushHistory();
-  lastPushTime = now;
+  commitMutation(()=>{}, {force:false});
+}
+
+export function commitMutation(mutator, opts = {}) {
+  const before = JSON.stringify(state.document);
+  if (typeof mutator === "function") {
+    const r = mutator();
+    if (r === false) return false;
+  }
+  const after = JSON.stringify(state.document);
+  if (before === after) return false;
+  // Append after snapshot
+  history.splice(historyIndex + 1);
+  history.push(after);
+  if (history.length > MAX_HISTORY) {
+    history.shift();
+  }
+  historyIndex = history.length - 1;
+  lastPushTime = Date.now();
+  updateDirty();
+  return true;
 }
 
 export function undo() {
@@ -70,6 +90,7 @@ function restoreSnapshot() {
   state.document.nodes.forEach(hydrateNode);
   state.selectedNodeId = null;
   state.selectedInstanceKey = null;
+  state.insertionTarget = null;
   // caller will render
 }
 
@@ -128,8 +149,25 @@ export function syncBaseline() {
 }
 
 export function initHistory() {
-  pushHistory();
+  // Seed history with initial document as first entry
+  history.length = 0;
+  historyIndex = -1;
+  const snap = JSON.stringify(state.document);
+  history.push(snap);
+  historyIndex = 0;
+  lastPushTime = Date.now();
 }
+
+export function setInsertionTarget(target) {
+  state.insertionTarget = target;
+  // notify library to re-render
+  if (window.__stratum_renderCatalog) window.__stratum_renderCatalog();
+}
+export function clearInsertionTarget() {
+  state.insertionTarget = null;
+  if (window.__stratum_renderCatalog) window.__stratum_renderCatalog();
+}
+export function getInsertionTarget() { return state.insertionTarget; }
 
 // Hydration helpers needed early
 function definitionFor(node) {

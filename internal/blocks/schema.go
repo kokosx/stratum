@@ -52,6 +52,12 @@ type EditorSchema struct {
 	SummaryFields    []string               `json:"summaryFields,omitempty"`
 	LCPCandidate     bool                   `json:"lcpCandidate,omitempty"`
 	RequiresFeatured bool                   `json:"requiresFeatured,omitempty"`
+	StarterChildren  []StarterChild         `json:"starterChildren,omitempty"`
+}
+
+type StarterChild struct {
+	Block   string `json:"block"`
+	Version int64  `json:"version"`
 }
 
 type EditorField struct {
@@ -203,6 +209,14 @@ func (s *Schema) validateContract() error {
 	}
 	if s.Children.Min != nil && s.Children.Max != nil && *s.Children.Min > *s.Children.Max {
 		return fmt.Errorf("children.min cannot exceed children.max")
+	}
+	for i, sc := range s.Editor.StarterChildren {
+		if !blockNamePattern.MatchString(sc.Block) {
+			return fmt.Errorf("editor.starterChildren[%d]: invalid block name %q", i, sc.Block)
+		}
+		if sc.Version <= 0 {
+			return fmt.Errorf("editor.starterChildren[%d]: version must be >0", i)
+		}
 	}
 	for path, field := range s.Editor.Fields {
 		parts := strings.Split(path, ".")

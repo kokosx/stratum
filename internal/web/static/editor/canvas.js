@@ -78,22 +78,20 @@ export class CanvasController {
         const payload = data.slice("stratum-node-start:".length);
         const parts = payload.split(":");
         if (parts.length < 3) continue;
-        let nodeId, instanceKey, editable = false, ownerType = "", ownerId = "";
-        // New format: server PathEscapes nodeId and instanceKey, so they contain no ':' unescaped.
-        // Hence new markers have exactly 3 parts (or 5 with owner). Legacy markers have >3 parts because instanceKey contained ':'.
-        let isNew = (parts.length === 3 || parts.length === 5);
-        // Additional heuristic: if parts[1] when decoded still contains '/' then it was likely encoded, but legacy also does.
-        // We use length heuristic for now.
+        let nodeId, instanceKey, editable = false, ownerType = "", ownerId = "", ownerLabel = "";
+        let isNew = (parts.length === 3 || parts.length === 5 || parts.length === 6);
         if (isNew) {
           try { nodeId = decodeURIComponent(parts[0]); } catch { nodeId = parts[0]; }
           try { instanceKey = decodeURIComponent(parts[1]); } catch { instanceKey = parts[1]; }
           editable = parts[2] === "true";
-          if (parts.length === 5) {
+          if (parts.length >= 5) {
             try { ownerType = decodeURIComponent(parts[3]); } catch { ownerType = parts[3]; }
             try { ownerId = decodeURIComponent(parts[4]); } catch { ownerId = parts[4]; }
           }
+          if (parts.length === 6) {
+            try { ownerLabel = decodeURIComponent(parts[5]); } catch { ownerLabel = parts[5]; }
+          }
         } else {
-          // Legacy fallback: instanceKey may contain colons, so join middle
           nodeId = parts[0];
           try { nodeId = decodeURIComponent(nodeId); } catch {}
           const editableStr = parts[parts.length - 1];
@@ -113,7 +111,7 @@ export class CanvasController {
             }
           }
         }
-        stack.push({ nodeId, instanceKey, editable, ownerType, ownerId, startComment: node, range: null });
+        stack.push({ nodeId, instanceKey, editable, ownerType, ownerId, ownerLabel, startComment: node, range: null });
       } else if (data.startsWith("stratum-node-end:")) {
         const payload = data.slice("stratum-node-end:".length);
         const parts = payload.split(":");
@@ -141,9 +139,31 @@ export class CanvasController {
           range.setEndBefore(node);
           startInfo.range = range;
           let rects = [];
+          // Prefer single top-level element rect for containers with padding/background
+          let singleEl = null;
           try {
-            rects = Array.from(range.getClientRects());
-          } catch (_) { rects = []; }
+            let probe = startInfo.startComment.nextSibling;
+            while (probe && probe.nodeType === Node.COMMENT_NODE) probe = probe.nextSibling;
+            let count = 0;
+            let lastEl = null;
+            let cur = startInfo.startComment.nextSibling;
+            while (cur && cur !== node) {
+              if (cur.nodeType === 1) { count++; lastEl = cur; if (count>1) break; }
+              cur = cur.nextSibling;
+            }
+            if (count===1 && lastEl && lastEl.getBoundingClientRect) singleEl = lastEl;
+          } catch (_) {}
+          if (singleEl) {
+            try {
+              const er = singleEl.getBoundingClientRect();
+              if (er && (er.width>0 || er.height>0)) rects = [er];
+            } catch (_) {}
+          }
+          if (!rects.length) {
+            try {
+              rects = Array.from(range.getClientRects());
+            } catch (_) { rects = []; }
+          }
           if (!rects.length) {
             try {
               const rect = range.getBoundingClientRect();
@@ -154,9 +174,9 @@ export class CanvasController {
                 if (probe && probe.getBoundingClientRect) {
                   const pr = probe.getBoundingClientRect();
                   if (pr.width > 0 || pr.height > 0) rects = [pr];
-                  else rects = [{ top: 0, left: 0, width: 100, height: 24, _empty: true }];
+                  else rects = [{ top: 0, left: 0, width: 100, height: 60, _empty: true }];
                 } else {
-                  rects = [{ top: 0, left: 0, width: 100, height: 24, _empty: true }];
+                  rects = [{ top: 0, left: 0, width: 100, height: 60, _empty: true }];
                 }
               }
             } catch (_) {}
@@ -168,6 +188,7 @@ export class CanvasController {
             editable: startInfo.editable,
             ownerType: startInfo.ownerType,
             ownerId: startInfo.ownerId,
+            ownerLabel: startInfo.ownerLabel || "",
             range,
             rects,
             startComment: startInfo.startComment,
@@ -480,6 +501,202 @@ export class CanvasController {
         this.renderExternalNotice(info, doc, iframeRect);
       }
     }
+    // Insertion affordances & empty containers
+    this.renderInsertionAffordances(doc, iframeRect);
+    this.renderEmptyPlaceholders(doc, iframeRect);
+  }
+
+  renderInsertionAffordances(doc, iframeRect) {
+    // Root affordances: between blocks and before/after
+    try {
+      const rootNodes = (window.__stratum_findNode ? null : null);
+    } catch (_) {}
+    // Show subtle + buttons for selected container and for empty containers
+    // Iterate over all editable nodes that are containers
+    for (const info of this.index.values()) {
+      if (!info.editable) continue;
+      const nodeId = info.nodeId;
+      let found = null;
+      try { found = window.__stratum_findNode ? window.__stratum_findNode(nodeId) : null; } catch (_) {}
+      if (!found) continue;
+      if (!window.__stratum_isContainer || !window.__stratum_isContainer(found.node)) continue;
+      // Empty container placeholder is handled separately, but also show + button centered
+      const isEmpty = !found.node.children || found.node.children.length===0;
+      if (isEmpty) continue; // handled in renderEmptyPlaceholders
+      // Show Add button at bottom of container
+      const rect = this.boundsForInfo(info);
+      if (!rect) continue;
+      const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
+      const canAdd = (() => {
+        if (!def) return false;
+        const rule = def.schema.children;
+        if (rule.mode==="none") return false;
+        if (rule.max!=null && found.node.children.length >= rule.max) return false;
+        return true;
+      })();
+      if (!canAdd) continue;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "canvas-insertion-btn";
+      // Label: specific when single allowed type
+      let label = "+ Add block";
+      if (def && def.schema.children.mode==="allowed" && def.schema.children.blocks.length===1) {
+        const childBlock = def.schema.children.blocks[0];
+        let childName = childBlock;
+        try {
+          for (const d of (window.__stratum_catalog||[])) if (d.block===childBlock) { childName = d.displayName; break; }
+          if (childName===childBlock && def) {
+            // try bootstrap catalog
+            const cat = document.getElementById("editor-bootstrap") ? JSON.parse(document.getElementById("editor-bootstrap").textContent).catalog||[] : [];
+            for (const d of cat) if (d.block===childBlock) childName = d.displayName;
+          }
+        } catch (_) {}
+        label = `+ Add ${childName}`;
+      }
+      btn.textContent = label;
+      btn.title = label;
+      btn.style.position = "absolute";
+      btn.style.left = (rect.left + rect.width/2 - 60) + "px";
+      btn.style.top = (rect.bottom - 12) + "px";
+      btn.style.transform = "translateY(-50%)";
+      btn.style.padding = "4px 10px";
+      btn.style.fontSize = "11px";
+      btn.style.border = "1px solid #cbd5e1";
+      btn.style.borderRadius = "14px";
+      btn.style.background = "white";
+      btn.style.boxShadow = "0 1px 4px rgba(0,0,0,0.12)";
+      btn.style.cursor = "pointer";
+      btn.style.opacity = "0.88";
+      btn.style.zIndex = "5";
+      btn.addEventListener("click", (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(found.node.id, found.node.children.length);
+        // Switch to library blocks tab
+        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+        const lib = document.querySelector(".block-library") || document.getElementById("block-catalog");
+        if (lib) lib.scrollIntoView({behavior:"smooth"});
+      });
+      // Hide when not hovered over container (show on hover)
+      btn.style.opacity = "0";
+      // Use parent hover via overlay mousemove already handles hoverKey; show only when hovered or selected
+      const isHovered = this.hoverKey && this.index.get(this.hoverKey)?.nodeId === nodeId;
+      const isSelected = this.selectedKey && this.index.get(this.selectedKey)?.nodeId === nodeId;
+      if (isHovered || isSelected) btn.style.opacity = "0.95";
+      this.overlay.append(btn);
+    }
+    // Root insertion: show before first, between, after last when hovering canvas
+    // Only show if there is at least one node
+    const hasNodes = this.nodeToKeys.size > 0;
+    if (hasNodes) {
+      // Between logic handled via drop indicator; insertion affordances for root are subtle dots visible on overlay hover
+    } else {
+      // Empty document handled in editor.js tree, but also show centered CTA in canvas when no nodes
+      const canvasRect = this.iframe.getBoundingClientRect();
+      // Don't duplicate if tree already shows empty; just ensure canvas shows placeholder
+      const isEmptyDoc = (()=>{ try{ const docState = window.__stratum_findNode? null : null; return document.querySelectorAll(".empty-document-state").length===0; } catch(_){return true;} })();
+      // We will not render duplicate; tree already handles empty. Canvas placeholder only if needed.
+    }
+  }
+
+  renderEmptyPlaceholders(doc, iframeRect) {
+    for (const info of this.index.values()) {
+      if (!info.editable) continue;
+      if (!info.rects.some(r=>r._empty)) continue;
+      const r = info.rects.find(x=>x._empty) || info.rects[0];
+      if (!r) continue;
+      const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
+      if (!found || !window.__stratum_isContainer || !window.__stratum_isContainer(found.node)) continue;
+      const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
+      const label = def ? def.displayName : info.nodeId;
+      const box = document.createElement("div");
+      box.className = "canvas-empty-placeholder";
+      box.style.position = "absolute";
+      box.style.left = (r.left) + "px";
+      box.style.top = (r.top) + "px";
+      box.style.width = Math.max(120, r.width) + "px";
+      box.style.minHeight = "60px";
+      box.style.border = "1px dashed #cbd5e1";
+      box.style.borderRadius = "6px";
+      box.style.background = "#f8fafc";
+      box.style.display = "flex";
+      box.style.flexDirection = "column";
+      box.style.alignItems = "center";
+      box.style.justifyContent = "center";
+      box.style.gap = "4px";
+      box.style.padding = "8px";
+      box.style.cursor = "pointer";
+      const span = document.createElement("span");
+      span.style.fontSize = "11px";
+      span.style.color = "#64748b";
+      span.textContent = label;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "+ Add block";
+      btn.style.padding = "4px 10px";
+      btn.style.border = "1px solid #cbd5e1";
+      btn.style.background = "white";
+      btn.style.borderRadius = "14px";
+      btn.style.fontSize = "11px";
+      btn.style.cursor = "pointer";
+      box.append(span, btn);
+      box.addEventListener("click", (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(info.nodeId, 0);
+        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+      });
+      btn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(info.nodeId, 0);
+        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+      });
+      this.overlay.append(box);
+    }
+    // Collection empty state (has SDT children but no rendered child markers)
+    for (const info of this.index.values()) {
+      if (!info.editable) continue;
+      const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
+      if (!found) continue;
+      if (found.node.block !== "core/collection") continue;
+      if (!found.node.children || !found.node.children.length) continue;
+      // Check if any child has a marker
+      let hasRenderedChildren = false;
+      for (const child of found.node.children) {
+        if (this.nodeToKeys.get(child.id) && this.nodeToKeys.get(child.id).length) { hasRenderedChildren = true; break; }
+        // also check nested?
+        const checkNested = (nodes) => {
+          for (const n of nodes) {
+            if (this.nodeToKeys.get(n.id)?.length) return true;
+            if (n.children && checkNested(n.children)) return true;
+          }
+          return false;
+        };
+        if (checkNested(found.node.children)) { hasRenderedChildren=true; break; }
+      }
+      if (hasRenderedChildren) continue;
+      const rect = this.boundsForInfo(info);
+      if (!rect) continue;
+      const banner = document.createElement("div");
+      banner.className = "canvas-collection-empty";
+      banner.style.position = "absolute";
+      banner.style.left = (rect.left) + "px";
+      banner.style.top = (rect.top + rect.height + 4) + "px";
+      banner.style.background = "#fffbeb";
+      banner.style.border = "1px solid #fde68a";
+      banner.style.borderRadius = "6px";
+      banner.style.padding = "8px 10px";
+      banner.style.fontSize = "11px";
+      banner.style.color = "#92400e";
+      banner.style.maxWidth = Math.max(200, rect.width) + "px";
+      banner.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)";
+      const b1 = document.createElement("div");
+      b1.textContent = "No entries match this collection.";
+      const b2 = document.createElement("span");
+      b2.style.fontSize = "11px";
+      b2.style.color = "#a16207";
+      b2.textContent = "Edit item layout via Navigator";
+      banner.append(b1, document.createElement("br"), b2);
+      this.overlay.append(banner);
+    }
   }
 
   renderRects(info, kind, doc, iframeRect) {
@@ -557,13 +774,19 @@ export class CanvasController {
     try {
       inlineNode = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId)?.node : null;
     } catch (_) {}
+    // Check constraints for toolbar
+    let canDup = {ok:true, reason:""}, canDel = {ok:true, reason:""};
+    try {
+      if (window.__stratum_canDuplicate) canDup = window.__stratum_canDuplicate(info.nodeId);
+      if (window.__stratum_canRemove) canDel = window.__stratum_canRemove(info.nodeId);
+    } catch (_) {}
     const actions = [
       ...(inlineNode && isInlineEditable(inlineNode) ? [{ label: "Edit", title: "Edit text", action: "edit" }] : []),
       { label: "Drag", title: "Drag", action: "drag" },
       { label: "↑", title: "Move up", action: "up" },
       { label: "↓", title: "Move down", action: "down" },
-      { label: "⧉", title: "Duplicate", action: "duplicate" },
-      { label: "✕", title: "Delete", action: "delete" },
+      { label: "⧉", title: canDup.ok ? "Duplicate" : canDup.reason, action: "duplicate", disabled: !canDup.ok, reason: canDup.reason },
+      { label: "✕", title: canDel.ok ? "Delete" : canDel.reason, action: "delete", disabled: !canDel.ok, reason: canDel.reason },
     ];
     actions.forEach(a => {
       const btn = document.createElement("button");
@@ -574,7 +797,8 @@ export class CanvasController {
       btn.style.border = "1px solid #e5e7eb";
       btn.style.borderRadius = "4px";
       btn.style.background = "#f8fafc";
-      btn.style.cursor = "pointer";
+      btn.style.cursor = a.disabled ? "not-allowed" : "pointer";
+      if (a.disabled) { btn.disabled = true; btn.style.opacity = "0.45"; btn.style.background = "#f1f5f9"; }
       if (a.action === "drag") {
         btn.draggable = true;
         btn.setAttribute("aria-label", "Drag block");
@@ -592,6 +816,10 @@ export class CanvasController {
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (a.disabled) {
+          if (window.stratumToast) window.stratumToast("error", a.reason || "Action not allowed");
+          return;
+        }
         if (a.action === "edit") startInlineEdit(info.nodeId, info.instanceKey, this);
         if (a.action === "up" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, -1);
         if (a.action === "down" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, 1);
@@ -604,22 +832,38 @@ export class CanvasController {
     try {
       const def = window.__stratum_definitionFor ? window.__stratum_definitionFor({ block: "", version: 0 }) : null;
     } catch (_) {}
-    // Check if container
+    // Check if container -> Add inside with validation
     if (info.nodeId && window.__stratum_isContainer) {
       try {
         const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
         if (found && window.__stratum_isContainer(found.node)) {
+          const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
+          let canAdd = true; let reason = "";
+          if (def) {
+            const rule = def.schema.children;
+            if (rule.mode==="none") { canAdd=false; reason="Cannot contain blocks"; }
+            else if (rule.max!=null && found.node.children.length >= rule.max) { canAdd=false; reason=`Maximum ${rule.max} reached`; }
+          }
           const addBtn = document.createElement("button");
           addBtn.type = "button";
           addBtn.textContent = "+";
-          addBtn.title = "Add inside";
+          addBtn.title = canAdd ? "Add inside" : reason;
+          addBtn.disabled = !canAdd;
           addBtn.style.padding = "2px 6px";
           addBtn.style.border = "1px solid #e5e7eb";
           addBtn.style.borderRadius = "4px";
-          addBtn.style.background = "#f8fafc";
-          addBtn.addEventListener("click", () => {
-            // focus library? For now just highlight
-            const lib = document.querySelector(".block-library");
+          addBtn.style.background = canAdd ? "#f8fafc" : "#f1f5f9";
+          addBtn.style.opacity = canAdd ? "1" : "0.45";
+          addBtn.style.cursor = canAdd ? "pointer" : "not-allowed";
+          addBtn.addEventListener("click", (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (!canAdd) {
+              if (window.stratumToast) window.stratumToast("error", reason);
+              return;
+            }
+            if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(found.node.id, found.node.children.length);
+            document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+            const lib = document.querySelector(".block-library") || document.getElementById("block-catalog");
             if (lib) lib.scrollIntoView({ behavior: "smooth" });
           });
           bar.append(addBtn);
@@ -642,11 +886,46 @@ export class CanvasController {
     notice.style.borderRadius = "6px";
     notice.style.padding = "6px 8px";
     notice.style.fontSize = "12px";
-    notice.style.maxWidth = "260px";
+    notice.style.maxWidth = "320px";
     notice.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)";
-    const title = info.ownerType ? `${info.ownerType} ${info.ownerId}` : "External content";
-    notice.innerHTML = `<strong style="color:#b45309">${info.editable ? "" : "External:"} ${title}</strong><br><span style="color:#92400e">This content is read-only in this editor.</span> <button type="button" class="button button-small" style="margin-top:4px">Edit ${title || "source"}</button>`;
-    const btn = notice.querySelector("button");
+    let label = info.ownerLabel || "";
+    // Fallback lookup in bootstrap siteParts
+    if (!label && info.ownerId) {
+      try {
+        const bs = document.getElementById("editor-bootstrap") ? JSON.parse(document.getElementById("editor-bootstrap").textContent) : bootstrap;
+        const parts = bs.siteParts || bs.SiteParts || [];
+        if (Array.isArray(parts)) {
+          const found = parts.find(p=>p.id===info.ownerId || p.ID===info.ownerId);
+          if (found) label = found.name || found.Name || "";
+        } else if (parts && typeof parts === "object") {
+          for (const k in parts) if (k===info.ownerId) label = parts[k];
+        }
+        // layout template name fallback
+        if (!label && info.ownerType==="layout-template" && bs.resource && bs.resource.id===info.ownerId) label = bs.resource.label || "";
+      } catch (_) {}
+    }
+    if (!label) label = info.ownerId ? info.ownerId.slice(0,8) : "";
+    const typeLabel = info.ownerType === "site-part" ? "Site Part" : info.ownerType === "layout-template" ? "Template" : info.ownerType || "External";
+    const title = info.ownerLabel ? `${info.ownerLabel}` : (label ? `${label}` : (info.ownerType ? `${typeLabel} ${info.ownerId.slice(0,8)}` : "External content"));
+    const effectiveLabel = info.ownerLabel || label;
+    const sub = info.ownerType ? `Global content — changes affect the whole website.` : `This content is read-only here.`;
+    const strong = document.createElement("strong");
+    strong.style.color = "#b45309";
+    strong.textContent = title;
+    const spanSub = document.createElement("span");
+    spanSub.style.color = "#92400e";
+    spanSub.textContent = sub;
+    const meta = document.createElement("span");
+    meta.style.color = "#92400e";
+    meta.style.fontSize = "11px";
+    meta.textContent = info.ownerType? typeLabel+" • "+(info.ownerId?.slice(0,8) || ""):"";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "button button-small";
+    btn.style.marginTop = "6px";
+    btn.style.display = "block";
+    btn.textContent = `Edit ${effectiveLabel || typeLabel}`;
+    notice.append(strong, document.createElement("br"), spanSub, document.createElement("br"), meta, document.createElement("br"), btn);
     if (btn) {
       btn.addEventListener("click", () => {
         // Navigate to owner editor
