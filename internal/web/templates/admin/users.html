@@ -1,7 +1,7 @@
 {{ define "content" }}
-<header class="admin-page-header"><div><h1>Users</h1><p class="muted" style="margin:4px 0 0; font-size:13px;">Manage site accounts and roles.</p></div></header>
+<header class="admin-page-header"><div><h1>Users</h1><p>Manage site accounts and roles.</p></div></header>
 
-<section class="admin-section" style="max-width:640px;">
+<section class="admin-section admin-form-card">
   <h2>Add user</h2>
   <form method="post" action="/admin/users" class="field-grid">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
@@ -18,7 +18,7 @@
   <table class="data-table">
     <thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>{{ range .Content.Users }}
-      <tr><td class="data-table__primary">{{ .Email }}</td><td><select class="form-control" style="height:32px; max-width:140px;" form="user-{{ .ID }}" name="role"><option value="author" {{ if eq .Role "author" }}selected{{ end }}>Author</option><option value="editor" {{ if eq .Role "editor" }}selected{{ end }}>Editor</option><option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>Admin</option></select></td><td><select class="form-control" style="height:32px; max-width:130px;" form="user-{{ .ID }}" name="status"><option value="active" {{ if eq .Status "active" }}selected{{ end }}>Active</option><option value="disabled" {{ if eq .Status "disabled" }}selected{{ end }}>Disabled</option></select> {{ if eq .Status "active" }}<span class="status-badge status-badge--active">Active</span>{{ else }}<span class="status-badge status-badge--disabled">Disabled</span>{{ end }}</td><td class="muted" style="font-size:12.5px;">{{ .CreatedAt }}</td><td><div class="admin-page-actions" style="gap:6px;"><button class="button button-small" form="user-{{ .ID }}" type="submit">Save</button><input class="form-control" style="height:32px; max-width:160px;" form="password-{{ .ID }}" type="password" name="password" minlength="12" placeholder="New password"><button class="button button-small" form="password-{{ .ID }}" type="submit">Reset</button></div></td></tr>
+      <tr><td class="data-table__primary">{{ .Email }}</td><td><select class="form-control" form="user-{{ .ID }}" name="role"><option value="author" {{ if eq .Role "author" }}selected{{ end }}>Author</option><option value="editor" {{ if eq .Role "editor" }}selected{{ end }}>Editor</option><option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>Admin</option></select></td><td><select class="form-control" form="user-{{ .ID }}" name="status"><option value="active" {{ if eq .Status "active" }}selected{{ end }}>Active</option><option value="disabled" {{ if eq .Status "disabled" }}selected{{ end }}>Disabled</option></select> {{ if eq .Status "active" }}<span class="status-indicator status-indicator--success">● Active</span>{{ else }}<span class="status-indicator status-indicator--muted">● Disabled</span>{{ end }}</td><td class="muted">{{ .CreatedAt }}</td><td><div class="admin-page-actions"><button class="button button-small" form="user-{{ .ID }}" type="submit">Save</button><input class="form-control" form="password-{{ .ID }}" type="password" name="password" minlength="12" placeholder="New password"><button class="button button-small" form="password-{{ .ID }}" type="submit">Reset</button></div></td></tr>
     {{ end }}</tbody>
   </table>
 </div>

@@ -49,7 +49,8 @@
 .creator-presentation h4{margin:0;font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ui-text-muted)}
 .creator-presentation .field-row{display:grid;gap:10px}
 .creator-presentation label{font-size:13px;font-weight:600;display:grid;gap:6px}
-.creator-presentation select{height:38px;border:1px solid var(--ui-border);border-radius:8px;padding:0 12px;background:var(--ui-surface)}
+.creator-f-line{width:100%;height:1px;background:var(--ui-border)}
+.creator-group-filter{margin-bottom:6px;display:flex;gap:6px}
 .creator-presentation--layout{border-color:var(--ui-border)}
 .creator-presentation--site{border-color:var(--ui-border)}
 .creator-complete{max-width:680px;margin:0 auto;padding:40px 20px;display:grid;gap:18px}

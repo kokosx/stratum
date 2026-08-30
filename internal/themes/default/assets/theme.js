@@ -111,6 +111,7 @@
       button.setAttribute('tabindex', index === 0 ? '0' : '-1');
       button.addEventListener('click', () => select(index));
       nav.appendChild(button);
+      tab.setAttribute('aria-labelledby', button.id);
       return button;
     });
 

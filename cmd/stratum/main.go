@@ -23,13 +23,50 @@ import (
 	"github.com/kokosx/stratum/internal/search"
 	"github.com/kokosx/stratum/internal/storage"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
+	"github.com/kokosx/stratum/internal/version"
 	adminweb "github.com/kokosx/stratum/internal/web/admin"
 	"github.com/kokosx/stratum/internal/web/canonicalredirect"
 	publicweb "github.com/kokosx/stratum/internal/web/public"
 )
 
+func printHelp() {
+	fmt.Fprintln(os.Stdout, "usage: stratum [serve|migrate|seed|backup|search|import|doctor|version]")
+	fmt.Fprintln(os.Stdout, "  serve                    start server (default)")
+	fmt.Fprintln(os.Stdout, "  migrate                  run migrations")
+	fmt.Fprintln(os.Stdout, "  seed                     seed development data")
+	fmt.Fprintln(os.Stdout, "  backup create [--output path]")
+	fmt.Fprintln(os.Stdout, "  backup verify <archive>")
+	fmt.Fprintln(os.Stdout, "  backup restore <archive>")
+	fmt.Fprintln(os.Stdout, "  doctor [--production] [--json]")
+	fmt.Fprintln(os.Stdout, "  search rebuild")
+	fmt.Fprintln(os.Stdout, "  import wordpress <file.xml> [--dry-run]")
+	fmt.Fprintln(os.Stdout, "  version                  print version")
+}
+
 func main() {
 	ctx := context.Background()
+	// Version/help must exit before DB open or lock.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "version", "--version", "-V":
+			fmt.Fprintln(os.Stdout, version.Version)
+			os.Exit(0)
+		case "--help", "-h", "help":
+			printHelp()
+			os.Exit(0)
+		}
+		// also handle global --version/--help without subcommand position
+		for _, a := range os.Args[1:] {
+			if a == "--version" || a == "-V" {
+				fmt.Fprintln(os.Stdout, version.Version)
+				os.Exit(0)
+			}
+			if a == "--help" || a == "-h" {
+				printHelp()
+				os.Exit(0)
+			}
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "doctor" {
 		if err := runDoctor(ctx, os.Args[2:]); err != nil {
 			// runDoctor already handles exit codes; this is fallback

@@ -1,3 +1,4 @@
+{{/* public/layout.html — legacy minimal fallback template. Public rendering currently uses themes.Runtime (Entry → SDT → Blocks → Theme → HTML). This file is embedded but not executed in normal rendering; retained for reference/diagnostics and may be removed if themes remain canonical. */}}
 {{ define "menu-items" }}
   {{ range . }}
     <li class="{{ if .Children }}has-children{{ end }}">

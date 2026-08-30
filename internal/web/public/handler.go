@@ -1948,6 +1948,17 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	if rc.Archive != nil {
 		rc.Route = rendering.RouteContext{Path: path, IsArchive: true, ContentType: input.ContentTypeID, Archive: rc.Archive, Pagination: rc.Archive.Pagination, ArchiveTitle: rc.Archive.Title, ArchiveDescription: rc.Archive.Description}
 	}
+	if input.EditorCanvas != nil && input.EditorCanvas.Enabled {
+		ec := *input.EditorCanvas
+		if ec.InstanceScope == "" {
+			ec.InstanceScope = "root"
+		}
+		rc.Editor = &ec
+	}
+	// Guard: only allow editor instrumentation in preview mode (never on public)
+	if rc.Editor != nil && (rc.Mode != rendering.ModePreview || !rc.IsPreview) {
+		rc.Editor = nil
+	}
 	if rc.LCP == nil {
 		rc.LCP = &rendering.LCPState{}
 	}

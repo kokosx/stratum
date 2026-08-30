@@ -25,6 +25,21 @@ func TestPreviewValidatesAndUsesRegistryRenderer(t *testing.T) {
 	}
 }
 
+func TestPreviewRendersTableAsFirstRootBlock(t *testing.T) {
+	handler, _ := newTestHandler(t)
+	documentJSON := `{"version":1,"nodes":[{"id":"table-first","block":"core/table","version":1,"props":{"header":"Name|Value","body":"Alpha|1"},"settings":{"caption":"Results","striped":false,"variant":"bordered"},"children":[]},{"id":"heading-second","block":"core/heading","version":1,"props":{"text":"After table","level":2},"settings":{"align":"left"},"children":[]}]}`
+	response := previewRequest(handler, documentJSON)
+	if response.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	tableAt := strings.Index(body, `class="stratum-table"`)
+	headingAt := strings.Index(body, `After table`)
+	if tableAt < 0 || headingAt < 0 || tableAt > headingAt {
+		t.Fatalf("table-first preview rendered in the wrong order: table=%d heading=%d", tableAt, headingAt)
+	}
+}
+
 func previewRequest(handler *Handler, documentJSON string) *httptest.ResponseRecorder {
 	form := url.Values{"csrf_token": {"test-token"}, "document_json": {documentJSON}}
 	request := httptest.NewRequest(http.MethodPost, "/admin/editor/preview", strings.NewReader(form.Encode()))

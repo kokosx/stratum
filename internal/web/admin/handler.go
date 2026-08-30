@@ -159,6 +159,31 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		"subtract": func(a, b int) int { return a - b },
 		"multiply": func(a, b int) int { return a * b },
 		"lower":    strings.ToLower,
+		"statusTone": func(s string) string {
+			lower := strings.ToLower(strings.TrimSpace(s))
+			switch {
+			case strings.Contains(lower, "publish"):
+				return "success"
+			case lower == "active", lower == "read", lower == "approved":
+				return "success"
+			case strings.Contains(lower, "schedul"):
+				return "info"
+			case strings.Contains(lower, "new"):
+				return "info"
+			case strings.Contains(lower, "pending"):
+				return "warning"
+			case strings.Contains(lower, "trash"), strings.Contains(lower, "spam"):
+				return "danger"
+			case strings.Contains(lower, "private"), strings.Contains(lower, "archiv"):
+				return "muted"
+			case strings.Contains(lower, "draft"):
+				return "muted"
+			case lower == "disabled":
+				return "muted"
+			default:
+				return "muted"
+			}
+		},
 		"plural": func(n int, singular, plural string) string {
 			if n == 1 {
 				return "1 " + singular
@@ -182,7 +207,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	entryTemplate, err := template.New("entry_form").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "entry_form.html")
+	entryTemplate, err := template.New("entry_form").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor.html", "entry_form.html")
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +236,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
-	layoutTemplatesTemplate, err := template.ParseFS(templateFS, "layout.html", "layout_templates.html")
+	layoutTemplatesTemplate, err := template.New("layout_templates").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "layout_templates.html")
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +246,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
-	layoutTemplateEditorTemplate, err := template.ParseFS(templateFS, "layout.html", "layout_template_editor.html")
+	layoutTemplateEditorTemplate, err := template.New("layout_template_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor.html", "layout_template_editor.html")
 	if err != nil {
 		return nil, err
 	}
@@ -234,16 +259,16 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		sitePartFormTemplate = template.New("site_part_form")
 	}
-	sitePartEditorTemplate, err := template.ParseFS(templateFS, "layout.html", "site_part_editor.html")
+	sitePartEditorTemplate, err := template.New("site_part_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor.html", "site_part_editor.html")
 	if err != nil {
 		sitePartEditorTemplate = template.New("site_part_editor")
 	}
 
-	revisionsTemplate, err := template.ParseFS(templateFS, "layout.html", "revisions.html")
+	revisionsTemplate, err := template.New("revisions").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "revisions.html")
 	if err != nil {
 		revisionsTemplate = template.New("revisions")
 	}
-	revisionsCompareTemplate, err := template.ParseFS(templateFS, "layout.html", "revisions_compare.html")
+	revisionsCompareTemplate, err := template.New("revisions_compare").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "revisions_compare.html")
 	if err != nil {
 		revisionsCompareTemplate = template.New("revisions_compare")
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/rendering"
 	"github.com/kokosx/stratum/internal/siteparts"
 	db "github.com/kokosx/stratum/internal/storage/sqlc"
 )
@@ -206,20 +207,18 @@ func (h *Handler) renderSitePartEditor(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, "Invalid stored document", http.StatusInternalServerError)
 		return
 	}
-	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
-	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
-	sitePartsCatalog := []map[string]string{}
-	if parts, err := h.queries.ListSiteParts(r.Context()); err == nil {
-		for _, p := range parts {
-			if p.ID == part.ID {
-				continue
-			}
-			sitePartsCatalog = append(sitePartsCatalog, map[string]string{"id": p.ID, "name": p.Name})
-		}
+	kind := loc
+	if kind == "" {
+		kind = "generic"
 	}
-	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor("site-part"), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: "/admin/appearance/site-parts/" + part.ID + "/preview", ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("site-part"), ContextKind: "site-part", SiteParts: sitePartsCatalog, SitePartID: part.ID, Forms: h.formOptions(r.Context()),
-	})
+	resource := EditorResource{Type: "site-part", ID: part.ID, Kind: kind, Label: part.Name, Location: loc}
+	actions := EditorActions{PreviewURL: "/admin/appearance/site-parts/" + part.ID + "/preview", SaveURL: "/admin/appearance/site-parts/" + part.ID, PublishURL: "/admin/appearance/site-parts/" + part.ID + "/publish", BackURL: "/admin/appearance/site-parts"}
+	bs, berr := buildEditorBootstrap(r.Context(), h, resource, doc, "site-part", "/admin/appearance/site-parts/"+part.ID+"/preview", actions)
+	if berr != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	bootstrap, err := json.Marshal(bs)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -396,11 +395,19 @@ func (h *Handler) previewSitePart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if err := validateDocumentNodeIDsSafe(doc); err != nil {
+		http.Error(w, "Invalid node ID", http.StatusUnprocessableEntity)
+		return
+	}
 	if err := siteparts.ValidateSitePartDocument(h.blocks, doc); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 	input := h.sitePartPreviewInput(r, id, doc)
+	if r.FormValue("editor_canvas") == "1" || r.URL.Query().Get("editor_canvas") == "1" {
+		ids := collectDocumentNodeIDs(doc)
+		input.EditorCanvas = &rendering.EditorCanvas{Enabled: true, EditableNodeIDs: ids, InstanceScope: "root", PrimaryResourceType: "site-part", PrimaryResourceID: id}
+	}
 	if h.documentPreview == nil {
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)
 		return
@@ -595,7 +602,16 @@ func (h *Handler) previewSitePartRevision(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Invalid Site Part revision", http.StatusUnprocessableEntity)
 		return
 	}
-	page, err := h.documentPreview(r.Context(), h.sitePartPreviewInput(r, id, doc))
+	if err := validateDocumentNodeIDsSafe(doc); err != nil {
+		http.Error(w, "Invalid node ID", http.StatusUnprocessableEntity)
+		return
+	}
+	input := h.sitePartPreviewInput(r, id, doc)
+	if r.FormValue("editor_canvas") == "1" || r.URL.Query().Get("editor_canvas") == "1" {
+		ids := collectDocumentNodeIDs(doc)
+		input.EditorCanvas = &rendering.EditorCanvas{Enabled: true, EditableNodeIDs: ids, InstanceScope: "root", PrimaryResourceType: "site-part", PrimaryResourceID: id}
+	}
+	page, err := h.documentPreview(r.Context(), input)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return

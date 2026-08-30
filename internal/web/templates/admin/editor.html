@@ -1,0 +1,84 @@
+{{/* Shared Visual Editor Shell — StratumCMS unified editor */}}
+{{/* This file provides the single editor shell used by entry, layout template and site part editors. */}}
+
+{{define "editor_shell"}}
+<div class="editor-workbench editor-workbench--shared">
+  <div class="editor-workspace">
+    <aside class="editor-panel block-library" aria-label="Block library">
+      <h2>Library</h2>
+      <div class="library-tabs" role="tablist">
+        <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-tab="blocks">Blocks</button>
+        <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="patterns">Patterns</button>
+        <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="navigator">Navigator</button>
+      </div>
+      <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
+      <div id="block-catalog" data-library="blocks"></div>
+      <div id="pattern-catalog" data-library="patterns" hidden></div>
+      <div id="navigator-tree" data-library="navigator" hidden>
+        <div id="navigator-content"></div>
+        <p class="editor-empty navigator-empty" hidden>No blocks yet.</p>
+      </div>
+    </aside>
+    <section class="editor-panel editor-canvas-panel" aria-label="Canvas">
+      <div class="editor-canvas-toolbar">
+        <div class="editor-canvas-viewport">
+          <button class="editor-device-btn is-active" type="button" data-width="100%" title="Desktop">🖥</button>
+          <button class="editor-device-btn" type="button" data-width="768px" title="Tablet">📱</button>
+          <button class="editor-device-btn" type="button" data-width="375px" title="Mobile">📱</button>
+        </div>
+        <div class="editor-preview-context" id="archive-preview-context-wrap" style="margin-left:12px; display:none;">
+          <label for="archive-preview-context" style="font-size:0.85rem; margin-right:6px;">Preview:</label>
+          <select id="archive-preview-context" style="font-size:0.85rem; padding:4px;">
+            <option value="">Main archive</option>
+          </select>
+        </div>
+        <div class="editor-canvas-actions">
+          <button class="button button-small" type="button" id="canvas-undo" title="Undo (Ctrl+Z)">↶</button>
+          <button class="button button-small" type="button" id="canvas-redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+        </div>
+      </div>
+      <div class="editor-canvas-frame-wrap" id="editor-canvas-wrap">
+        <iframe id="editor-canvas" class="editor-canvas" sandbox="allow-same-origin" title="Visual canvas"></iframe>
+        <div id="editor-canvas-overlay" class="editor-canvas-overlay" aria-label="Canvas controls"></div>
+        <div id="editor-canvas-breadcrumbs" class="editor-canvas-breadcrumbs"></div>
+      </div>
+      <div class="editor-legacy-fallback" id="editor-legacy-fallback" hidden>
+        <div class="editor-panel-heading"><h2>Document</h2></div>
+        <div id="document-tree"></div>
+        <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
+      </div>
+    </section>
+    <aside class="editor-panel block-inspector" aria-label="Inspector">
+      <div class="inspector-tabs" role="tablist">
+        <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true" data-tab="block">Block</button>
+        <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-tab="document">Document</button>
+      </div>
+      <div id="inspector-block-panel">
+        <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
+      </div>
+      <div id="inspector-document-panel" hidden>
+        <div id="document-inspector-slot"></div>
+      </div>
+    </aside>
+  </div>
+  <section class="editor-preview-panel" id="legacy-preview-panel" hidden>
+    <div class="editor-preview-toolbar">
+      <div class="editor-mode-group">
+        <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
+        <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
+      </div>
+      <div class="editor-device-group">
+        <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
+        <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>
+        <button class="editor-device-btn" type="button" data-width="375px">Mobile</button>
+      </div>
+    </div>
+    <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
+  </section>
+</div>
+{{end}}
+
+{{define "editor_status_region"}}
+<span id="editor-dirty" class="editor-status {{ if eq .Dirty "Saved" }}is-saved{{ else if eq .Dirty "Published" }}is-published{{ else }}is-dirty{{ end }}">{{ .Dirty }}</span>
+<span id="editor-publish-state" class="editor-status editor-publish-state">{{ .Status }}</span>
+{{end}}

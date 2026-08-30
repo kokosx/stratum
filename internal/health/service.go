@@ -255,9 +255,10 @@ func (s *Service) loadMediaMap(ctx context.Context) (map[string]bool, error) {
 	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil {
-			m[id] = true
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		m[id] = true
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -274,9 +275,10 @@ func (s *Service) loadFormMap(ctx context.Context) (map[string]bool, error) {
 	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil {
-			m[id] = true
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		m[id] = true
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -293,9 +295,10 @@ func (s *Service) loadSitePartMap(ctx context.Context) (map[string]bool, error) 
 	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil {
-			m[id] = true
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		m[id] = true
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -312,9 +315,10 @@ func (s *Service) loadTemplateMap(ctx context.Context) (map[string]bool, error) 
 	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil {
-			m[id] = true
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		m[id] = true
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -331,9 +335,10 @@ func (s *Service) loadPublishedEntryMap(ctx context.Context) (map[string]bool, e
 	m := make(map[string]bool)
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err == nil {
-			m[id] = true
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		m[id] = true
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

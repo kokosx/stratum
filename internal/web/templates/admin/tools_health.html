@@ -1,84 +1,88 @@
 {{ define "content" }}
-<header class="admin-page-header"><div><h1>Site Health</h1><p>Diagnostics for public output. Good means no action needed.</p></div><div class="admin-page-actions"><span class="muted" style="font-size:12.5px;">Generated {{ .Content.Generated }}</span></div></header>
+<header class="admin-page-header"><div><h1>Site Health</h1><p>Check configuration and content issues that may need attention.</p></div><div class="admin-page-actions"><span class="muted">Generated {{ .Content.Generated }}</span></div></header>
 {{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
 
 {{ $report := .Content.Report }}
 {{ if $report }}
-<div style="margin-bottom:16px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;">
-  <div style="font-weight:600;margin-bottom:4px;">Overall:
-    {{ if eq $report.Status "PASS" }}<span style="color:#16a34a;">● Good</span>
-    {{ else if eq $report.Status "WARN" }}<span style="color:#d97706;">● Warnings</span>
-    {{ else }}<span style="color:#dc2626;">● Critical</span>{{ end }}
-    <span class="muted" style="margin-left:8px;font-size:12.5px;">{{ $report.Summary.Passed }} passed · {{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Failures }} failures</span>
-  </div>
-</div>
+<section class="admin-section health-summary">
+  {{ if eq $report.Status "PASS" }}<span class="status-indicator status-indicator--success">● Good</span> <span class="muted">{{ $report.Summary.Passed }} checks passed</span>
+  {{ else if eq $report.Status "WARN" }}<span class="status-indicator status-indicator--warning">● Attention needed</span> <span class="muted">{{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Passed }} passed</span>
+  {{ else }}<span class="status-indicator status-indicator--danger">● Critical</span> <span class="muted">{{ $report.Summary.Failures }} failures · {{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Passed }} passed</span>{{ end }}
+</section>
 
-{{ range .Content.Sections }}
-<h2 style="margin-top:20px;font-size:15px;font-weight:600;">{{ .Title }}</h2>
-<div style="border:1px solid #e5e7eb;background:#fff;margin-bottom:12px;">
-  {{ range .Checks }}
-  <div style="display:flex;align-items:flex-start;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #f3f4f6;">
-    <div style="flex:1;">
-      <div style="display:flex;gap:8px;align-items:center;">
-        {{ if eq .Status "PASS" }}<span style="color:#16a34a;">● Good</span>
-        {{ else if eq .Status "WARN" }}<span style="color:#d97706;">● Warning</span>
-        {{ else }}<span style="color:#dc2626;">● Critical</span>{{ end }}
-        <strong style="font-size:13px;">{{ .Title }}</strong>
-      </div>
-      <div class="muted" style="font-size:12.5px;margin-top:4px;">{{ .Message }}</div>
-      {{ if .Details }}
-      <div class="muted" style="font-size:12px;margin-top:4px;">
-        {{ range .Details }}<div>{{ . }}</div>{{ end }}
+{{ if or (gt $report.Summary.Warnings 0) (gt $report.Summary.Failures 0) .Content.Issues .Content.HealthError }}
+<section class="admin-section health-section">
+  <h2>Needs attention</h2>
+  {{ if .Content.HealthError }}<div class="notice notice-warning">{{ .Content.HealthError }}</div>{{ end }}
+  {{ range .Content.Sections }}
+    {{ range .Checks }}
+      {{ if ne .Status "PASS" }}
+      <div class="health-check">
+        <span class="health-check__status">{{ if eq .Status "WARN" }}<span class="status-indicator status-indicator--warning">●</span>{{ else if eq .Status "FAIL" }}<span class="status-indicator status-indicator--danger">●</span>{{ else }}<span class="status-indicator status-indicator--success">●</span>{{ end }}</span>
+        <div class="health-check__body">
+          <strong>{{ .Title }}</strong>
+          <div class="muted">{{ .Message }}</div>
+          {{ range .Details }}<div class="muted">{{ . }}</div>{{ end }}
+          {{ if .Hint }}<div class="muted"><em>{{ .Hint }}</em></div>{{ end }}
+        </div>
+        <div class="health-check__action">
+          {{ if eq .ID "site_configuration" }}{{ if or (eq .Status "WARN") (eq .Status "FAIL") }}<a class="button button-small" href="/admin/settings/general">Configure</a>{{ end }}
+          {{ else if eq .ID "seo" }}{{ if eq .Status "WARN" }}<a class="button button-small" href="/admin/settings/seo">Review indexing</a>{{ end }}
+          {{ else if eq .ID "search" }}{{ if ne .Status "PASS" }}<form method="post" action="/admin/tools/search/rebuild" class="inline-form"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button class="button button-small" type="submit">Rebuild index</button></form>{{ end }}
+          {{ else if eq .ID "media" }}{{ if eq .Status "WARN" }}<a class="button button-small" href="/admin/media">Open Media</a>{{ end }}
+          {{ else if eq .ID "backup" }}<a class="button button-small" href="/admin/tools/backups">Manage backups</a>
+          {{ else if eq .ID "routes" }}{{ if ne .Status "PASS" }}<a class="button button-small" href="/admin/tools/redirects">Review redirects</a>{{ end }}
+          {{ else if .Action }}<a class="button button-small" href="{{ .Action }}">{{ .Action }}</a>{{ end }}
+        </div>
       </div>
       {{ end }}
-      {{ if .Hint }}<div class="muted" style="font-size:12px;margin-top:4px;font-style:italic;">{{ .Hint }}</div>{{ end }}
-    </div>
-    <div style="margin-left:12px;min-width:140px;text-align:right;">
-      {{ if eq .ID "site_configuration" }}
-        {{ if eq .Status "WARN" }}<a class="button button-small" href="/admin/settings/general">Configure Site URL</a>
-        {{ else if eq .Status "FAIL" }}<a class="button button-small" href="/admin/settings/general">Configure Site URL</a>
-        {{ end }}
-      {{ else if eq .ID "seo" }}
-        {{ if eq .Status "WARN" }}<a class="button button-small" href="/admin/settings/seo">Review indexing</a>{{ end }}
-      {{ else if eq .ID "search" }}
-        {{ if ne .Status "PASS" }}
-        <form method="post" action="/admin/tools/search/rebuild" style="display:inline;">
-          <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
-          <button class="button button-small" type="submit" data-on:click__prevent="@post('/admin/tools/search/rebuild', {contentType: 'form'})">Rebuild search index</button>
-        </form>
-        {{ end }}
-      {{ else if eq .ID "media" }}
-        {{ if eq .Status "WARN" }}<a class="button button-small" href="/admin/media">Open Media</a>{{ end }}
-      {{ else if eq .ID "backup" }}
-        <a class="button button-small" href="/admin/tools/backups">Manage backups</a>
-      {{ else if eq .ID "routes" }}
-        {{ if ne .Status "PASS" }}<a class="button button-small" href="/admin/tools/redirects">Review redirects</a>{{ end }}
-      {{ else if .Action }}
-        <a class="button button-small" href="{{ .Action }}">{{ .Action }}</a>
-      {{ end }}
-    </div>
+    {{ end }}
+  {{ end }}
+  {{ if .Content.Issues }}
+  <div class="health-check">
+    <span class="health-check__status"><span class="status-indicator status-indicator--warning">●</span></span>
+    <div class="health-check__body"><strong>Content integrity</strong><div class="muted">{{ len .Content.Issues }} issue{{ if ne (len .Content.Issues) 1 }}s{{ end }} found — see details below.</div></div>
+    <div class="health-check__action"><a class="button button-small" href="#health-integrity">View</a></div>
   </div>
   {{ end }}
-</div>
+</section>
+{{ end }}
+
+<details class="admin-section health-section">
+  <summary>Passed checks ({{ $report.Summary.Passed }})</summary>
+  {{ range .Content.Sections }}
+    {{ $passCount := 0 }}{{ range .Checks }}{{ if eq .Status "PASS" }}{{ $passCount = add $passCount 1 }}{{ end }}{{ end }}
+    {{ if gt $passCount 0 }}
+    <h3>{{ .Title }} <span class="muted">· {{ $passCount }} passed</span></h3>
+    {{ range .Checks }}{{ if eq .Status "PASS" }}
+      <div class="health-check health-check--passed">
+        <span class="health-check__status"><span class="status-indicator status-indicator--success">●</span></span>
+        <div class="health-check__body"><strong>{{ .Title }}</strong><div class="muted">{{ .Message }}</div>
+          {{ range .Details }}<div class="muted">{{ . }}</div>{{ end }}
+          {{ if .Hint }}<div class="muted"><em>{{ .Hint }}</em></div>{{ end }}
+        </div>
+      </div>
+    {{ end }}{{ end }}
+    {{ end }}
+  {{ end }}
+</details>
+
+{{ if .Content.Issues }}
+<section class="admin-section health-section" id="health-integrity">
+  <h2>Content integrity</h2>
+  <p class="muted">Published entries, templates and site parts are scanned for missing references. Internal links with a redirect are considered valid.</p>
+  {{ range .Content.Issues }}
+  <div class="health-check">
+    <span class="health-check__status"><span class="status-indicator status-indicator--warning">●</span></span>
+    <div class="health-check__body"><strong>{{ .SourceType }}: {{ .SourceLabel }}</strong><div class="muted">{{ .Message }}</div><code class="muted">{{ .Target }}</code></div>
+    <div class="health-check__action"><a class="button button-small" href="{{ .EditURL }}">Edit</a></div>
+  </div>
+  {{ end }}
+</section>
 {{ end }}
 
 {{ else }}
 <p class="muted">Diagnostics unavailable.</p>
-{{ end }}
-
-{{ if .Content.Issues }}
-<h2 style="margin-top:24px;font-size:15px;font-weight:600;">Content integrity</h2>
-<p class="form-help">Published entries, templates and site parts are scanned for missing references. Internal links with a redirect are considered valid.</p>
-<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Source</th><th>Reference</th><th>Issue</th><th>Action</th></tr></thead><tbody>
-{{ range .Content.Issues }}
-<tr>
-  <td>{{ .SourceType }}<br><strong>{{ .SourceLabel }}</strong><br><span class="muted" style="font-size:11px;">{{ .SourceID }}</span></td>
-  <td>{{ .ReferenceType }}<br><code>{{ .Target }}</code></td>
-  <td class="muted" style="font-size:12.5px;">{{ .Message }}</td>
-  <td><a class="button button-small" href="{{ .EditURL }}">Edit</a></td>
-</tr>
-{{ end }}
-</tbody></table></div>
 {{ end }}
 
 <div id="admin-toast-region"></div>

@@ -145,11 +145,6 @@ func (s *Service) Preview(input Input) (Plan, error) {
 			return Plan{}, err
 		}
 		input.SiteURL = normalized
-		// Do not persist localhost/private host as canonical URL
-		lower := strings.ToLower(input.SiteURL)
-		if strings.Contains(lower, "localhost") || strings.Contains(lower, "127.0.0.1") || strings.Contains(lower, "192.168.") || strings.Contains(lower, "10.0.") || strings.Contains(lower, "10.1.") {
-			input.SiteURL = ""
-		}
 	}
 	return Plan{Input: input, Preset: preset}, nil
 }
@@ -356,10 +351,15 @@ type creationArtifacts struct {
 	entries                                                                      []entryArtifact
 	styles                                                                       map[string]any
 	pageCount                                                                    int
+	lang                                                                         string
 }
 
 func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts, error) {
-	a := creationArtifacts{now: time.Now().Unix(), homepageID: newID(), pageTemplateID: newID(), homepageTemplateID: newID(), menuID: newID()}
+	lang := plan.Input.Language
+	if lang == "" {
+		lang = "en"
+	}
+	a := creationArtifacts{now: time.Now().Unix(), homepageID: newID(), pageTemplateID: newID(), homepageTemplateID: newID(), menuID: newID(), lang: lang}
 	if spec.form != nil {
 		a.formID = newID()
 		def := forms.Definition{Fields: []forms.Field{{ID: newID(), Key: "name", Type: forms.FieldText, Label: "Name", Required: true}, {ID: newID(), Key: "email", Type: forms.FieldEmail, Label: "Email", Required: true}}, SubmitLabel: "Send message", SuccessMessage: "Thanks. Your message has been received."}
@@ -413,7 +413,12 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 		if page.Form {
 			formID = a.formID
 		}
-		a.entries = append(a.entries, entryArtifact{id: newID(), revisionID: newID(), contentType: "page", slug: page.Slug, title: page.Title, excerpt: page.Body, fields: "{}", doc: bodyDocument(newID(), page.Body, formID)})
+		// Page Body is SDT content; Excerpt is separate. Do not duplicate Body into Excerpt.
+		excerpt := ""
+		if page.Excerpt != "" {
+			excerpt = page.Excerpt
+		}
+		a.entries = append(a.entries, entryArtifact{id: newID(), revisionID: newID(), contentType: "page", slug: page.Slug, title: page.Title, excerpt: excerpt, fields: "{}", doc: bodyDocumentForLang(newID(), page.Body, formID, lang)})
 		a.pageCount++
 	}
 	for _, seed := range spec.seedEntries {
@@ -421,7 +426,7 @@ func (s *Service) buildArtifacts(plan Plan, spec presetSpec) (creationArtifacts,
 		if err != nil {
 			return a, err
 		}
-		a.entries = append(a.entries, entryArtifact{id: newID(), revisionID: newID(), contentType: dynamicType, slug: seed.Slug, title: seed.Title, excerpt: seed.Excerpt, fields: fieldsJSON, doc: bodyDocument(newID(), seed.Body, "")})
+		a.entries = append(a.entries, entryArtifact{id: newID(), revisionID: newID(), contentType: dynamicType, slug: seed.Slug, title: seed.Title, excerpt: seed.Excerpt, fields: fieldsJSON, doc: bodyDocumentForLang(newID(), seed.Body, "", lang)})
 	}
 	for _, entry := range a.entries {
 		if err := layouts.ValidateEntryDocument(s.blocks, entry.doc); err != nil {
@@ -510,15 +515,39 @@ func createMenu(ctx context.Context, q *db.Queries, a creationArtifacts, now int
 	type menuItem struct {
 		label, targetType, entryID, url string
 	}
+	lang := a.lang
+	if lang == "" {
+		lang = "en"
+	}
 	items := make([]menuItem, 0, 4)
 	for _, entry := range a.entries {
 		if entry.id == a.homepageID {
-			items = append(items, menuItem{label: "Home", targetType: "entry", entryID: entry.id})
+			homeLabel := copyFor(lang, "nav.home")
+			items = append(items, menuItem{label: homeLabel, targetType: "entry", entryID: entry.id})
 			break
 		}
 	}
 	if a.archiveContentType != "" {
 		label := map[string]string{"post": "Blog", "project": "Work", "product": "Products", "service": "Services", "case_study": "Case Studies", "article": "Knowledge Base"}[a.archiveContentType]
+		if lang == "pl" {
+			if pl := copyFor(lang, "contenttype."+a.archiveContentType+".plural"); pl != "contenttype."+a.archiveContentType+".plural" {
+				label = pl
+			} else {
+				// fallback via nav keys for known types
+				switch a.archiveContentType {
+				case "post":
+					label = copyFor(lang, "nav.blog")
+				case "project":
+					label = copyFor(lang, "nav.work")
+				case "product":
+					label = copyFor(lang, "nav.products")
+				case "service":
+					label = copyFor(lang, "nav.services")
+				}
+			}
+			// Special handling for case_study/article where plural key is Studia przypadków / Artykuły but nav expects Knowledge Base etc.
+			// For article we keep "Artykuły" which copyFor already provides via contenttype key.
+		}
 		path := map[string]string{"post": "/blog", "project": "/work", "product": "/products", "service": "/services", "case_study": "/case-studies", "article": "/knowledge"}[a.archiveContentType]
 		if label == "" {
 			label = a.archiveContentType

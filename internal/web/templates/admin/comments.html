@@ -18,7 +18,7 @@
     <label for="comment-search" class="screen-reader-text">Search comments</label>
     <input type="search" id="comment-search" name="q" value="{{ $search }}" placeholder="Search comments">
     <button type="submit" class="button">Search</button>
-    {{ if or $search (ne $cur "all") }}<a href="/admin/comments" class="button" style="margin-left:8px;">Clear filters</a>{{ end }}
+    {{ if or $search (ne $cur "all") }}<a href="/admin/comments" class="button">Clear filters</a>{{ end }}
   </form>
 </div>
 
@@ -72,7 +72,7 @@
         <td class="comment-author column-author"><strong>{{ .AuthorName }}</strong><br><span class="muted">{{ .AuthorEmail }}</span>{{ if .AuthorURL }}<br><a href="{{ .AuthorURL }}" target="_blank">{{ .AuthorURL }}</a>{{ end }}</td>
         <td class="comment-body column-comment">{{ .Body }}</td>
         <td class="comment-entry column-response">{{ if .EntryURL }}<a href="{{ .EntryURL }}">{{ .EntryTitle }}</a>{{ else }}{{ .EntryTitle }}{{ end }}<br><span class="muted">{{ .EntryID }}</span></td>
-        <td><span class="status-badge status-badge--{{ .Status }}">{{ .Status }}</span></td>
+        <td><span class="status-indicator status-indicator--{{ statusTone .Status }}">● {{ .Status }}</span></td>
         <td>{{ .CreatedAt }}</td>
       </tr>
       <tr class="row-actions-row">

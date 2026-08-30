@@ -1,9 +1,9 @@
 {{ define "quick_edit" }}
 <form method="post" action="{{ .Action }}" class="quick-edit-form">
   <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
-  <div style="display:grid; gap:14px; max-width:640px;">
-    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-      <span class="status-badge status-badge--draft">{{ .Status }}</span>
+  <div class="admin-form-card" style="display:grid; gap:14px;">
+    <div class="admin-page-actions">
+      <span class="status-indicator status-indicator--{{ statusTone .Status }}">● {{ .Status }}</span>
       <small class="muted">Quick Edit</small>
     </div>
     <div class="form-group"><label class="form-label" for="qe-title">Title</label><input class="form-control" type="text" id="qe-title" name="title" value="{{ .Title }}" required></div>

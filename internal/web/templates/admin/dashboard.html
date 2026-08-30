@@ -1,15 +1,59 @@
 {{ define "content" }}
-<header class="admin-page-header"><div><h1>Dashboard</h1></div></header>
-{{ if .Content.OnboardingIncomplete }}
-<div class="notice notice-info">Your site setup is not finished. <a href="/admin/creator">Choose a starter site</a> or skip it to begin empty.</div>
-{{ end }}
+<header class="admin-page-header"><div><h1>Dashboard</h1><p class="muted">Content operations overview.</p></div><div class="admin-page-actions"><a class="button button-secondary" href="/" target="_blank" rel="noopener">View site</a></div></header>
+{{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
+
 <section class="admin-section">
-  <h2>Welcome to Stratum</h2>
-  <p class="muted">Manage your site content from the Pages and Posts sections.</p>
+  <h2>Quick actions</h2>
   <div class="admin-page-actions">
     <a class="button button-primary" href="/admin/pages/new">Add page</a>
     <a class="button button-secondary" href="/admin/posts/new">Add post</a>
-    <a class="button button-secondary" href="/admin/media">Upload Media</a>
+    <a class="button button-secondary" href="/admin/media">Upload media</a>
+    <a class="button button-secondary" href="/admin/forms/new">New form</a>
   </div>
+</section>
+
+{{ if .Content.HasAttention }}
+<section class="admin-section">
+  <h2>Needs attention</h2>
+  <div class="card"><div class="card-body dashboard-grid">
+    {{ if .Content.OnboardingIncomplete }}<div><span class="status-indicator status-indicator--warning">● Onboarding incomplete</span> — <a href="/admin/creator">Choose a starter site</a></div>{{ end }}
+    {{ if gt .Content.NewSubmissionCount 0 }}<div><span class="status-indicator status-indicator--info">● {{ .Content.NewSubmissionCount }} new form submission{{ if ne .Content.NewSubmissionCount 1 }}s{{ end }}</span> — <a href="/admin/forms">Review submissions</a></div>{{ end }}
+    {{ if gt .Content.PendingCommentCount 0 }}<div><span class="status-indicator status-indicator--warning">● {{ .Content.PendingCommentCount }} comment{{ if ne .Content.PendingCommentCount 1 }}s{{ end }} awaiting moderation</span> — <a href="/admin/comments">Moderate</a></div>{{ end }}
+  </div></div>
+</section>
+{{ end }}
+
+<section class="admin-section">
+  <div class="admin-section-header"><h2>Recent content</h2></div>
+  {{ if .Content.RecentEntries }}
+  <div class="card"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>Updated</th><th></th></tr></thead><tbody>
+  {{ range .Content.RecentEntries }}
+    <tr>
+      <td class="data-table__primary">{{ .Title }}</td>
+      <td class="muted">{{ .ContentTypeLabel }}</td>
+      <td><span class="status-indicator status-indicator--{{ .StatusTone }}">● {{ .Status }}</span></td>
+      <td class="muted">{{ .UpdatedAt.Format "2 Jan 2006 15:04" }}</td>
+      <td><a href="{{ .EditURL }}">Edit</a></td>
+    </tr>
+  {{ end }}
+  </tbody></table></div></div>
+  {{ else }}
+  <div class="card"><div class="card-body muted">No content yet. <a href="/admin/pages/new">Add a page</a> or <a href="/admin/posts/new">add a post</a> to get started.</div></div>
+  {{ end }}
+</section>
+
+<section class="admin-section">
+  <h2>Content shortcuts</h2>
+  <div class="card"><div class="card-body dashboard-shortcuts">
+    <div class="dashboard-shortcuts__row"><span>Pages <span class="muted">{{ .Content.PageCount }}</span></span><span><a href="/admin/pages">Manage</a> · <a href="/admin/pages/new">Add</a></span></div>
+    <div class="dashboard-shortcuts__row"><span>Posts <span class="muted">{{ .Content.PostCount }}</span></span><span><a href="/admin/posts">Manage</a> · <a href="/admin/posts/new">Add</a></span></div>
+    {{ range .Content.CustomCounts }}
+    <div class="dashboard-shortcuts__row"><span>{{ .Label }} <span class="muted">{{ .Count }}</span></span><span><a href="/admin/content/{{ .ID }}">Manage</a> · <a href="/admin/content/{{ .ID }}/new">Add</a></span></div>
+    {{ end }}
+    <div class="dashboard-shortcuts__row"><span>Forms <span class="muted">{{ .Content.FormCount }}{{ if gt .Content.FormNewCount 0 }} · {{ .Content.FormNewCount }} new{{ end }}</span></span><span><a href="/admin/forms">Manage</a> · <a href="/admin/forms/new">New</a></span></div>
+    <div class="dashboard-shortcuts__row"><span>Media</span><span><a href="/admin/media">Open</a> · <a href="/admin/media">Upload</a></span></div>
+    <div class="dashboard-shortcuts__row"><span>Comments{{ if gt .Content.CommentPending 0 }} <span class="muted">{{ .Content.CommentPending }} pending</span>{{ end }}</span><span><a href="/admin/comments">Moderate</a></span></div>
+    <div class="dashboard-shortcuts__row"><span>Site health</span><span><a href="/admin/tools/site-health">Check</a></span></div>
+  </div></div>
 </section>
 {{ end }}

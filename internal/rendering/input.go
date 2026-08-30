@@ -28,4 +28,7 @@ type RenderInput struct {
 	// published theme region for a no-store editor preview.
 	HeaderDocument *document.Document
 	FooterDocument *document.Document
+	// EditorCanvas enables visual-editor instrumentation (HTML comment markers).
+	// Nil means public/preview without markers.
+	EditorCanvas *EditorCanvas
 }

@@ -16,7 +16,7 @@
       {{ range .Content.Revisions }}
       <tr>
         <td>Revision {{ .Number }}</td>
-        <td>{{ if eq .Status "Published" }}<span class="status-badge status-badge--published">Published</span>{{ else if eq .Status "Current draft" }}<span class="status-badge status-badge--draft">Current draft</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
+        <td>{{ if eq .Status "Published" }}<span class="status-indicator status-indicator--success">● Published</span>{{ else if eq .Status "Current draft" }}<span class="status-indicator status-indicator--muted">● Current draft</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
         <td>{{ if .Author }}{{ .Author }}{{ else }}<span class="muted">—</span>{{ end }}</td>
         <td><time>{{ .CreatedAt }}</time></td>
         <td><div class="admin-page-actions"><a class="button button-small" href="{{ .PreviewURL }}" target="_blank" rel="noopener">Preview</a>

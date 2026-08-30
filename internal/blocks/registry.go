@@ -347,6 +347,17 @@ func (r *Registry) EditorCatalogFor(mode string) []EditorDefinition {
 	if current == nil {
 		return nil
 	}
+	latest := make(map[string]int64, len(current.catalog))
+	for _, ed := range current.catalog {
+		key := BlockKey{Name: ed.Block, Version: ed.Version}
+		def := current.definitions[key]
+		if def == nil || !isEditorContextAllowed(def.EditorContexts, mode) {
+			continue
+		}
+		if version, ok := latest[ed.Block]; !ok || ed.Version > version {
+			latest[ed.Block] = ed.Version
+		}
+	}
 	filtered := make([]EditorDefinition, 0, len(current.catalog))
 	for _, ed := range current.catalog {
 		key := BlockKey{Name: ed.Block, Version: ed.Version}
@@ -355,6 +366,9 @@ func (r *Registry) EditorCatalogFor(mode string) []EditorDefinition {
 			continue
 		}
 		if !isEditorContextAllowed(def.EditorContexts, mode) {
+			continue
+		}
+		if ed.Version != latest[ed.Block] {
 			continue
 		}
 		filtered = append(filtered, ed)

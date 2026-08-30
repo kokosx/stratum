@@ -174,6 +174,28 @@ func TestDisabledOldVersionRendersButIsNotInsertable(t *testing.T) {
 	}
 }
 
+func TestEditorCatalogUsesLatestEnabledVersionPerBlock(t *testing.T) {
+	store := &definitionStore{definitions: []db.BlockDefinition{
+		customDefinition("test", "card", 1, true, cardSchema, `<p>v1 {{ .Props.title }}</p>`),
+		customDefinition("test", "card", 2, true, cardSchema, `<p>v2 {{ .Props.title }}</p>`),
+		customDefinition("test", "other", 1, true, cardSchema, `<p>other {{ .Props.title }}</p>`),
+	}}
+	registry, err := NewRegistry(context.Background(), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	catalog := registry.EditorCatalog()
+	if len(catalog) != 2 {
+		t.Fatalf("catalog = %#v, want one entry per block", catalog)
+	}
+	for _, definition := range catalog {
+		if definition.Block == "test/card" && definition.Version != 2 {
+			t.Fatalf("card catalog version = %d, want latest enabled version 2", definition.Version)
+		}
+	}
+}
+
 func customDefinition(namespace, name string, version int64, enabled bool, schema, blockTemplate string) db.BlockDefinition {
 	enabledValue := int64(0)
 	if enabled {

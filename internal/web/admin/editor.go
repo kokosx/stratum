@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"fmt"
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
@@ -14,6 +16,38 @@ import (
 // RenderInput is the shared preview contract (canonical in rendering). Admin
 // depends on rendering, not on the public HTTP package.
 type RenderInput = rendering.RenderInput
+
+type EditorResource struct {
+	Type          string `json:"type"`
+	ID            string `json:"id"`
+	Kind          string `json:"kind,omitempty"`
+	Label         string `json:"label"`
+	ContentTypeID string `json:"contentTypeId,omitempty"`
+	Location      string `json:"location,omitempty"`
+}
+
+type EditorCapabilities struct {
+	SaveDraft          bool `json:"saveDraft"`
+	Publish            bool `json:"publish"`
+	Preview            bool `json:"preview"`
+	SEO                bool `json:"seo"`
+	Slug               bool `json:"slug"`
+	FeaturedMedia      bool `json:"featuredMedia"`
+	CustomFields       bool `json:"customFields"`
+	Taxonomies         bool `json:"taxonomies"`
+	TemplateAssignment bool `json:"templateAssignment"`
+	Scheduling         bool `json:"scheduling"`
+	SitePartLocation   bool `json:"sitePartLocation"`
+	DynamicContent     bool `json:"dynamicContent"`
+}
+
+type EditorActions struct {
+	PreviewURL       string `json:"previewUrl,omitempty"`
+	SaveURL          string `json:"saveUrl,omitempty"`
+	PublishURL       string `json:"publishUrl,omitempty"`
+	BackURL          string `json:"backUrl,omitempty"`
+	PublicPreviewURL string `json:"publicPreviewUrl,omitempty"`
+}
 
 type editorBootstrap struct {
 	Document         json.RawMessage                         `json:"document"`
@@ -30,6 +64,120 @@ type editorBootstrap struct {
 	Forms            any                                     `json:"forms,omitempty"`
 	TemplateKind     string                                  `json:"templateKind,omitempty"`
 	SitePartID       string                                  `json:"sitePartId,omitempty"`
+	Resource         EditorResource                          `json:"resource"`
+	Capabilities     EditorCapabilities                      `json:"capabilities"`
+	Actions          EditorActions                           `json:"actions"`
+}
+
+func editorCapabilitiesForEntry(def content.ContentTypeDefinition) EditorCapabilities {
+	return EditorCapabilities{
+		SaveDraft:          true,
+		Publish:            true,
+		Preview:            true,
+		SEO:                def.Capabilities.HasSEO && def.Routing.Single,
+		Slug:               def.Routing.Single,
+		FeaturedMedia:      def.Capabilities.HasFeatured,
+		CustomFields:       len(def.Fields) > 0,
+		Taxonomies:         true,
+		TemplateAssignment: def.Routing.Single,
+		Scheduling:         true,
+		SitePartLocation:   false,
+		DynamicContent:     def.Capabilities.HasContent,
+	}
+}
+
+func editorCapabilitiesForLayoutTemplate(kind string) EditorCapabilities {
+	return EditorCapabilities{
+		SaveDraft:          true,
+		Publish:            true,
+		Preview:            true,
+		SEO:                false,
+		Slug:               false,
+		FeaturedMedia:      false,
+		CustomFields:       false,
+		Taxonomies:         false,
+		TemplateAssignment: false,
+		Scheduling:         false,
+		SitePartLocation:   false,
+		DynamicContent:     true,
+	}
+}
+
+func editorCapabilitiesForSitePart() EditorCapabilities {
+	return EditorCapabilities{
+		SaveDraft:        true,
+		Publish:          true,
+		Preview:          true,
+		SEO:              false,
+		Slug:             false,
+		FeaturedMedia:    false,
+		CustomFields:     false,
+		Taxonomies:       false,
+		Scheduling:       false,
+		SitePartLocation: true,
+		DynamicContent:   true,
+	}
+}
+
+func buildEditorBootstrap(ctx context.Context, h *Handler, resource EditorResource, doc *document.Document, contextKind string, previewURL string, actions EditorActions) (editorBootstrap, error) {
+	catalog := h.blocks.EditorCatalogFor(contextKind)
+	defs := h.blocks.EditorDefinitions(doc)
+	contentTypes, fieldCatalogs := h.editorOptions(ctx)
+	taxonomyCatalogs := h.taxonomyCatalogs(ctx)
+	patterns := h.patternsForContext(contextKind)
+	var caps EditorCapabilities
+	switch resource.Type {
+	case "entry":
+		def := content.DefinitionFor(resource.ContentTypeID)
+		if d, err := content.NewCatalog(h.queries).GetDefinition(ctx, resource.ContentTypeID); err == nil {
+			def = d
+		}
+		caps = editorCapabilitiesForEntry(def)
+	case "layout-template":
+		caps = editorCapabilitiesForLayoutTemplate(resource.Kind)
+	case "site-part":
+		caps = editorCapabilitiesForSitePart()
+	default:
+		caps = EditorCapabilities{SaveDraft: true, Publish: true, Preview: true}
+	}
+	if actions.PreviewURL == "" {
+		actions.PreviewURL = previewURL
+	}
+	// SiteParts catalog for template/site-part contexts
+	var sitePartsCatalog any
+	if contextKind == "layout-template" || contextKind == "single-template" || contextKind == "archive-template" || contextKind == "site-part" {
+		if parts, err := h.queries.ListSiteParts(ctx); err == nil {
+			catalogList := []map[string]string{}
+			for _, p := range parts {
+				// For site-part editor, exclude self
+				if resource.Type == "site-part" && p.ID == resource.ID {
+					continue
+				}
+				catalogList = append(catalogList, map[string]string{"id": p.ID, "name": p.Name})
+			}
+			sitePartsCatalog = catalogList
+		}
+	}
+	migratedJSON, _ := json.Marshal(doc)
+	return editorBootstrap{
+		Document:         json.RawMessage(migratedJSON),
+		Catalog:          catalog,
+		Definitions:      defs,
+		PreviewURL:       previewURL,
+		ContentTypeID:    resource.ContentTypeID,
+		ContentTypes:     contentTypes,
+		FieldCatalogs:    fieldCatalogs,
+		TaxonomyCatalogs: taxonomyCatalogs,
+		Patterns:         patterns,
+		ContextKind:      contextKind,
+		SiteParts:        sitePartsCatalog,
+		Forms:            h.formOptions(ctx),
+		TemplateKind:     resource.Kind,
+		SitePartID:       resource.ID,
+		Resource:         resource,
+		Capabilities:     caps,
+		Actions:          actions,
+	}, nil
 }
 
 func (h *Handler) formOptions(ctx context.Context) []editorOption {
@@ -159,6 +307,12 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = h.blocks.ValidateDocument(doc)
 	}
+	if err == nil {
+		if verr := validateDocumentNodeIDsSafe(doc); verr != nil {
+			http.Error(w, "Invalid node ID", http.StatusUnprocessableEntity)
+			return
+		}
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -205,7 +359,7 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	page, err := h.documentPreview(r.Context(), rendering.RenderInput{
+	renderInput := rendering.RenderInput{
 		Document:         doc,
 		Title:            payload.Title,
 		Slug:             payload.Slug,
@@ -218,7 +372,18 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 		ContentTypeID:    ct,
 		Fields:           fields,
 		FeaturedMediaID:  payload.FeaturedMediaID,
-	})
+	}
+	if r.FormValue("editor_canvas") == "1" || r.URL.Query().Get("editor_canvas") == "1" || r.Header.Get("X-Stratum-Editor-Canvas") == "1" {
+		ids := collectDocumentNodeIDs(doc)
+		renderInput.EditorCanvas = &rendering.EditorCanvas{
+			Enabled:             true,
+			EditableNodeIDs:     ids,
+			InstanceScope:       "root",
+			PrimaryResourceType: "entry",
+			PrimaryResourceID:   payload.EntryID,
+		}
+	}
+	page, err := h.documentPreview(r.Context(), renderInput)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -230,6 +395,69 @@ func (h *Handler) previewDocument(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(page)
 }
+
+func collectDocumentNodeIDs(doc *document.Document) map[string]struct{} {
+	if doc == nil {
+		return nil
+	}
+	ids := make(map[string]struct{})
+	var walk func([]document.Node)
+	walk = func(nodes []document.Node) {
+		for _, n := range nodes {
+			ids[n.ID] = struct{}{}
+			if len(n.Children) > 0 {
+				walk(n.Children)
+			}
+		}
+	}
+	walk(doc.Nodes)
+	return ids
+}
+
+func isSafeNodeID(id string) bool {
+	// Permissive check: only reject IDs that could break HTML comments or marker parsing.
+	// We allow legacy IDs with dots, but reject dangerous sequences.
+	if id == "" {
+		return false
+	}
+	if strings.Contains(id, "--") || strings.Contains(id, "<") || strings.Contains(id, ">") || strings.Contains(id, ":") || strings.Contains(id, "/") {
+		return false
+	}
+	for _, c := range id {
+		if c == '"' || c == '\'' {
+			return false
+		}
+	}
+	if len(id) > 128 {
+		return false
+	}
+	return true
+}
+
+func validateDocumentNodeIDsSafe(doc *document.Document) error {
+	if doc == nil {
+		return nil
+	}
+	var walk func([]document.Node) error
+	walk = func(nodes []document.Node) error {
+		for _, n := range nodes {
+			if !isSafeNodeID(n.ID) {
+				return fmt.Errorf("invalid node id %q", n.ID)
+			}
+			if len(n.Children) > 0 {
+				if err := walk(n.Children); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(doc.Nodes); err != nil {
+		return err
+	}
+	return nil
+}
+
 
 func trimSlashes(s string) string {
 	for len(s) > 0 && (s[0] == '/' || s[len(s)-1] == '/') {

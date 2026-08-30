@@ -61,12 +61,13 @@ type notFoundRow struct {
 }
 
 type siteHealthData struct {
-	Report    *doctor.Report
-	Sections  []healthSection
-	Issues    []health.IntegrityIssue
-	CSRFToken string
-	Flash     string
-	Generated string
+	Report      *doctor.Report
+	Sections    []healthSection
+	Issues      []health.IntegrityIssue
+	HealthError string
+	CSRFToken   string
+	Flash       string
+	Generated   string
 }
 
 type healthSection struct {
@@ -93,10 +94,38 @@ func (h *Handler) toolsSiteHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	// Content integrity issues via health service (reuse same DB)
 	healthSvc := health.New(h.database, h.queries)
-	_, issues, _ := healthSvc.Run(r.Context())
+	_, issues, healthErr := healthSvc.Run(r.Context())
+	healthErrorMsg := ""
+	if healthErr != nil {
+		log.Printf("health integrity scan failed: %v", healthErr)
+		healthErrorMsg = "Content integrity scan could not complete."
+	}
 
 	// Group doctor checks into product sections
 	sections := groupDoctorChecks(report.Checks)
+	// Deduplicate details identical to message and fix pluralization
+	for i := range sections {
+		for j := range sections[i].Checks {
+			c := &sections[i].Checks[j]
+			// fix plural
+			if strings.Contains(c.Message, "1 forms") {
+				c.Message = strings.ReplaceAll(c.Message, "1 forms", "1 form")
+			}
+			var cleaned []string
+			for _, d := range c.Details {
+				if strings.Contains(d, "1 forms") {
+					d = strings.ReplaceAll(d, "1 forms", "1 form")
+				}
+				if strings.TrimSpace(d) == strings.TrimSpace(c.Message) {
+					continue
+				}
+				if strings.TrimSpace(d) != "" {
+					cleaned = append(cleaned, d)
+				}
+			}
+			c.Details = cleaned
+		}
+	}
 
 	token, _ := h.csrfToken(w, r)
 	data := LayoutData{
@@ -108,11 +137,12 @@ func (h *Handler) toolsSiteHealth(w http.ResponseWriter, r *http.Request) {
 		Flash:         h.consumeFlash(w, r),
 		CSRFToken:     token,
 		Content: siteHealthData{
-			Report:    report,
-			Sections:  sections,
-			Issues:    issues,
-			CSRFToken: token,
-			Generated: time.Now().Format("2 Jan 2006, 15:04"),
+			Report:      report,
+			Sections:    sections,
+			Issues:      issues,
+			HealthError: healthErrorMsg,
+			CSRFToken:   token,
+			Generated:   time.Now().Format("2 Jan 2006, 15:04"),
 		},
 	}
 	if err := h.toolsHealthTemplate.ExecuteTemplate(w, "layout.html", data); err != nil {

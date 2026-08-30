@@ -4,9 +4,9 @@
 {{ $job := .Content.Job }}
 {{ if $job }}
   {{ $rep := $job.Report }}
-  <div style="border:1px solid #e5e7eb;background:#fff;padding:16px;margin-bottom:16px;">
-    <h2 style="font-size:14px;font-weight:600;margin-bottom:12px;">Summary</h2>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;font-size:13px;">
+  <div class="admin-section">
+    <h2>Summary</h2>
+    <div class="admin-detail-grid">
       <div>Posts: <strong>{{ $rep.Posts }}</strong></div>
       <div>Pages: <strong>{{ $rep.Pages }}</strong></div>
       <div>Published: <strong>{{ $rep.Published }}</strong></div>
@@ -20,26 +20,26 @@
       <div>Comments: <strong>{{ $rep.Comments }}</strong></div>
       <div>Media attachments: <strong>{{ $rep.MediaImported }}</strong></div>
     </div>
-    <div style="margin-top:12px;font-size:13px;">
+    <div>
       <div>Conflicts: <strong>{{ $rep.Conflicts }}</strong></div>
       <div>Skipped: <strong>{{ $rep.Skipped }}</strong></div>
       <div>Warnings: <strong>{{ $rep.Warnings }}</strong></div>
     </div>
     {{ if $rep.Issues }}
-    <div style="margin-top:12px;">
-      <h3 style="font-size:13px;font-weight:600;">Warnings</h3>
-      <ul style="font-size:12.5px;" class="muted">
+    <div>
+      <h3>Warnings</h3>
+      <ul class="muted">
         {{ range $rep.Issues }}<li>[{{ .Level }}:{{ .Source }}] {{ .Message }}</li>{{ end }}
       </ul>
     </div>
     {{ end }}
-    <p class="form-help" style="margin-top:12px;">A backup will be created automatically before importing.</p>
-    <div style="margin-top:12px;display:flex;gap:8px;">
-      <form method="post" action="/admin/tools/import/wordpress/{{ $job.ID }}/cancel" style="display:inline;">
+    <p class="form-help">A backup will be created automatically before importing.</p>
+    <div class="admin-page-actions">
+      <form method="post" action="/admin/tools/import/wordpress/{{ $job.ID }}/cancel" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
         <button class="button" type="submit">Cancel</button>
       </form>
-      <form method="post" action="/admin/tools/import/wordpress/{{ $job.ID }}/start" style="display:inline;">
+      <form method="post" action="/admin/tools/import/wordpress/{{ $job.ID }}/start" class="inline-form">
         <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
         <button class="button button-primary" type="submit" data-on:click__prevent="@post('/admin/tools/import/wordpress/{{ $job.ID }}/start', {contentType: 'form'})">Import content</button>
       </form>

@@ -132,21 +132,61 @@ func emptyDocument(prefix string) *document.Document {
 }
 
 func bodyDocument(prefix, body, formID string) *document.Document {
+	return bodyDocumentForLang(prefix, body, formID, "en")
+}
+
+func bodyDocumentForLang(prefix, body, formID, lang string) *document.Document {
+	if lang == "" {
+		lang = "en"
+	}
+	heading := copyFor(lang, "heading.get_in_touch")
 	b := &docBuilder{prefix: prefix}
-	nodes := []document.Node{}
-	if body != "" {
-		nodes = append(nodes, b.section("content", "sm", "default", b.text(body)))
+	hasBody := body != ""
+	hasForm := formID != ""
+	switch {
+	case hasBody && hasForm:
+		// One semantic content band: body + form grouped via Stack.
+		// Section owns band spacing (md); inner Stacks own group/content gaps.
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "md", "default",
+				b.stack("vertical", "lg", "stretch", "start",
+					b.text(body),
+					b.stack("vertical", "md", "stretch", "start",
+						b.heading(heading, 2),
+						b.node("core/form", 2, nil, map[string]any{"formId": formID}),
+					),
+				),
+			),
+		}}
+	case hasBody:
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "md", "default", b.text(body)),
+		}}
+	case hasForm:
+		return &document.Document{Version: 1, Nodes: []document.Node{
+			b.section("content", "md", "default",
+				b.stack("vertical", "md", "stretch", "start",
+					b.heading(heading, 2),
+					b.node("core/form", 2, nil, map[string]any{"formId": formID}),
+				),
+			),
+		}}
+	default:
+		return &document.Document{Version: 1, Nodes: []document.Node{}}
 	}
-	if formID != "" {
-		nodes = append(nodes, b.section("content", "md", "default", b.heading("Get in touch", 2), b.node("core/form", 2, nil, map[string]any{"formId": formID})))
-	}
-	return &document.Document{Version: 1, Nodes: nodes}
 }
 
 func pageTemplate(prefix string) *document.Document {
 	b := &docBuilder{prefix: prefix}
+	// Compact secondary page header: md rhythm, not hero. Title→content gap is owned by
+	// section bottom + next section top collapsed via theme CSS (adjacent rule).
 	return &document.Document{Version: 1, Nodes: []document.Node{
-		b.section("content", "md", "default", b.entryTitle(1, "lg"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "lg"})),
+		b.section("content", "md", "default",
+			b.stack("vertical", "md", "stretch", "start",
+				b.entryTitle(1, "lg"),
+				b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "lg"}),
+			),
+		),
 		b.node("core/content-slot", 1, nil, nil),
 	}}
 }
@@ -180,10 +220,7 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 			latestLimit = 8
 		}
 		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft)
-		linkText := "Read article"
-		if lang == "pl" {
-			linkText = "Czytaj artykuł"
-		}
+		linkText := copyFor(lang, "cta.read_article")
 		post := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		latestStack := b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.latest_posts"), 2), b.collection("post", "query", "list", 1, "lg", latestLimit, post))
 		editorial := b.stack("vertical", "2xl", "stretch", "start", heroStack, latestStack)
@@ -196,15 +233,12 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 			latestLimit = 5
 		}
 		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft)
-		linkText := "Read article"
-		if lang == "pl" {
-			linkText = "Czytaj artykuł"
-		}
+		linkText := copyFor(lang, "cta.read_article")
 		postCard := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 50vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "sm"}), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		latestListItem := b.stack("vertical", "xs", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("wide", "lg", "muted", heroStack),
-			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading("Featured", 2), b.collection("post", "query", "grid", 2, "lg", 2, postCard))),
+			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.featured"), 2), b.collection("post", "query", "grid", 2, "lg", 2, postCard))),
 			b.section("content", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.latest_posts"), 2), b.collection("post", "query", "list", 1, "lg", latestLimit, latestListItem))),
 		}}
 	case PresetPortfolio:
@@ -213,10 +247,7 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 			cols = 3
 		}
 		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft)
-		linkText := "View project"
-		if lang == "pl" {
-			linkText = "Zobacz projekt"
-		}
+		linkText := copyFor(lang, "cta.view_project")
 		project := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("wide", "lg", "default", heroStack),
@@ -241,10 +272,7 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 			cols = 4
 		}
 		heroStack := b.stack("vertical", "sm", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft)
-		linkText := "View product"
-		if lang == "pl" {
-			linkText = "Zobacz produkt"
-		}
+		linkText := copyFor(lang, "cta.view_product")
 		product := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 1100px) 30vw, (min-width: 640px) 50vw, 100vw", "standard", "cover"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("wide", "md", "muted", heroStack),
@@ -252,26 +280,23 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 		}}
 	case PresetSimpleSite:
 		return &document.Document{Version: 1, Nodes: []document.Node{
-			b.section("content", "xl", "muted", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text("A practical starting point you can shape into anything."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Get in touch", "/contact", "primary")))),
-			b.section("content", "lg", "default", b.stack("vertical", "md", "start", "start", b.heading("What we do", 2), b.text("Share a concise overview of your work, values and the outcomes you create for clients."))),
-			b.sectionAnchor("content", "lg", "default", "contact", b.stack("vertical", "md", "start", "start", b.heading("Contact", 2), b.node("core/form", 2, nil, map[string]any{"formId": formID}))),
+			b.section("content", "xl", "muted", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text(copyFor(lang, "text.home.simple_intro")), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(copyFor(lang, "cta.get_in_touch"), "/contact", "primary")))),
+			b.section("content", "lg", "default", b.stack("vertical", "md", "start", "start", b.heading(copyFor(lang, "heading.what_we_do"), 2), b.text(copyFor(lang, "text.home.simple_what")))),
+			b.sectionAnchor("content", "lg", "default", "contact", b.stack("vertical", "md", "start", "start", b.heading(copyFor(lang, "page.contact.title"), 2), b.node("core/form", 2, nil, map[string]any{"formId": formID}))),
 		}}
 	case PresetAgency:
 		cta := copyFor(lang, "cta.start_conversation")
-		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text("A focused agency that ships useful work — calmly and on time."), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(cta, "/contact", "primary")))
-		linkText := "Read case study"
-		if lang == "pl" {
-			linkText = "Zobacz case study"
-		}
+		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text(copyFor(lang, "text.home.agency_intro")), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(cta, "/contact", "primary")))
+		linkText := copyFor(lang, "cta.read_case_study")
 		caseCard := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("wide", "lg", "muted", heroStack),
-			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading("Selected cases", 2), b.collection("case_study", "query", "grid", 2, "xl", 6, caseCard))),
-			b.section("content", "md", "default", b.stack("vertical", "md", "start", "start", b.heading("Services at a glance", 2), b.text("Strategy, identity and site builds — delivered as one practical sequence. Details live on the Services page."))),
+			b.section("wide", "md", "default", b.stack("vertical", "lg", "stretch", "start", b.heading(copyFor(lang, "heading.selected_cases"), 2), b.collection("case_study", "query", "grid", 2, "xl", 6, caseCard))),
+			b.section("content", "md", "default", b.stack("vertical", "md", "start", "start", b.heading(copyFor(lang, "heading.services_glance"), 2), b.text(copyFor(lang, "text.home.agency_glance")))),
 		}}
 	case PresetKnowledgeBase:
-		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text("Quick answers and in-depth guides for everyday work. Search or browse by topic."), b.heading("Browse articles", 2))
-		articleCard := b.stack("vertical", "xs", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.text(copyFor(lang, "text.home.kb_intro")), b.heading(copyFor(lang, "heading.browse_articles"), 2))
+		articleCard := b.stack("vertical", "xs", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.read_article")}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("content", "lg", "muted", heroStack),
 			b.section("content", "md", "default", b.collection("article", "query", "list", 1, "md", 6, articleCard)),
@@ -282,10 +307,7 @@ func homepageEntryDocument(prefix string, preset PresetID, formID string, plan P
 			svcCols = 2
 		}
 		cta := copyFor(lang, "cta.request_consult")
-		linkText := "Learn more"
-		if lang == "pl" {
-			linkText = "Dowiedz się więcej"
-		}
+		linkText := copyFor(lang, "cta.learn_more")
 		heroStack := b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), siteTaglineLeft, b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(cta, "/contact", "primary")))
 		serviceInner := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": linkText}, nil))
 		service := b.node("core/card", 1, nil, map[string]any{"variant": "default", "padding": "sm", "radius": "md", "align": "start"}, serviceInner)
@@ -303,6 +325,10 @@ func singleTemplate(prefix string, preset PresetID) *document.Document {
 
 func singleTemplateForPlan(prefix string, preset PresetID, plan Plan) *document.Document {
 	b := &docBuilder{prefix: prefix}
+	lang := plan.Input.Language
+	if lang == "" {
+		lang = "en"
+	}
 	switch preset {
 	case PresetBlog, PresetMagazine:
 		return &document.Document{Version: 1, Nodes: []document.Node{
@@ -358,7 +384,7 @@ func singleTemplateForPlan(prefix string, preset PresetID, plan Plan) *document.
 		return &document.Document{Version: 1, Nodes: []document.Node{
 			b.section("content", "lg", "default", b.stack("vertical", "md", "start", "start", b.entryTitle(1, "lg"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "strong"))),
 			b.node("core/content-slot", 1, nil, nil),
-			b.section("content", "md", "muted", b.stack("vertical", "md", "start", "start", b.heading("Ready to talk?", 2), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button("Contact us", "/contact", "primary")))),
+			b.section("content", "md", "muted", b.stack("vertical", "md", "start", "start", b.heading(copyFor(lang, "heading.ready_to_talk"), 2), b.node("core/button-group", 1, nil, map[string]any{"direction": "horizontal", "gap": "md", "align": "start", "wrap": true}, b.button(copyFor(lang, "cta.contact_us"), "/contact", "primary")))),
 		}}
 	}
 }
@@ -369,14 +395,19 @@ func archiveTemplate(prefix string, preset PresetID) *document.Document {
 
 func archiveTemplateForPlan(prefix string, preset PresetID, plan Plan) *document.Document {
 	b := &docBuilder{prefix: prefix}
-	header := b.section("content", "lg", "default", b.stack("vertical", "sm", "start", "start", b.node("core/archive-title", 1, nil, map[string]any{"level": 1, "align": "left"}), b.node("core/archive-description", 1, nil, map[string]any{"align": "left"})))
+	lang := plan.Input.Language
+	if lang == "" {
+		lang = "en"
+	}
+	// Compact archive header: md not lg, to avoid hero gap. Collection top collapsed via theme.
+	header := b.section("content", "md", "default", b.stack("vertical", "md", "stretch", "start", b.node("core/archive-title", 1, nil, map[string]any{"level": 1, "align": "left"}), b.node("core/archive-description", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "lg"})))
 	switch preset {
 	case PresetBlog, PresetMagazine:
 		limit := 20
 		if plan.Input.BlogArchiveCount == 10 {
 			limit = 10
 		}
-		item := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		item := b.stack("vertical", "sm", "start", "start", b.node("core/entry-publish-date", 1, nil, map[string]any{"format": "long", "align": "left"}), b.entryTitle(2, "md"), b.node("core/entry-excerpt", 1, nil, map[string]any{"align": "left", "tone": "muted", "size": "md"}), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.read_article")}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("content", "md", "default", b.collection("post", "context", "list", 1, "lg", limit, item))}}
 	case PresetPortfolio, PresetAgency:
 		ct := "project"
@@ -391,9 +422,9 @@ func archiveTemplateForPlan(prefix string, preset PresetID, plan Plan) *document
 		}
 		var item document.Node
 		if preset == PresetAgency {
-			item = b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": "Read case study"}, nil))
+			item = b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.read_case_study")}, nil))
 		} else {
-			item = b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": "View project"}, nil))
+			item = b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 900px) 45vw, 100vw", "landscape", "cover"), b.entryTitle(2, "md"), b.stack("horizontal", "md", "center", "start", b.entryField("fields.client", "span"), b.entryField("fields.year", "span")), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.view_project")}, nil))
 		}
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "md", "default", b.collection(ct, "context", "grid", cols, "xl", 20, item))}}
 	case PresetProducts:
@@ -401,17 +432,17 @@ func archiveTemplateForPlan(prefix string, preset PresetID, plan Plan) *document
 		if plan.Input.ProductColumns == 4 {
 			cols = 4
 		}
-		item := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 1100px) 30vw, 100vw", "standard", "cover"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": "View product"}, nil))
+		item := b.stack("vertical", "sm", "start", "start", b.entryMediaAspect("(min-width: 1100px) 30vw, 100vw", "standard", "cover"), b.entryTitle(2, "md"), b.entryField("fields.price_display", "strong"), b.entryField("fields.short_description", "p"), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.view_product")}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "md", "default", b.collection("product", "context", "grid", cols, "lg", 20, item))}}
 	case PresetKnowledgeBase:
-		item := b.stack("vertical", "xs", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": "Read article"}, nil))
+		item := b.stack("vertical", "xs", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.summary", "p"), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.read_article")}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("content", "md", "default", b.collection("article", "context", "list", 1, "lg", 20, item))}}
 	default:
 		cols := 3
 		if plan.Input.ServiceColumns == 2 {
 			cols = 2
 		}
-		item := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": "Learn more"}, nil))
+		item := b.stack("vertical", "sm", "start", "start", b.entryTitle(2, "md"), b.entryField("fields.short_summary", "p"), b.entryField("fields.service_area", "span"), b.node("core/entry-link", 1, map[string]any{"text": copyFor(lang, "cta.learn_more")}, nil))
 		return &document.Document{Version: 1, Nodes: []document.Node{header, b.section("wide", "md", "default", b.collection("service", "context", "grid", cols, "lg", 20, item))}}
 	}
 }

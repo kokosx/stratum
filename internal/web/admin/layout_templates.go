@@ -259,24 +259,21 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Invalid stored document", http.StatusInternalServerError)
 		return
 	}
-	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
-	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
 	catalogMode := "layout-template"
 	if tmpl.Kind == "archive" {
 		catalogMode = "archive-template"
 	} else if tmpl.Kind == "single" {
 		catalogMode = "single-template"
 	}
-	previewURL := "/admin/appearance/templates/" + tmpl.ID + "/preview"
-	sitePartsCatalog := []map[string]string{}
-	if parts, err := h.queries.ListSiteParts(r.Context()); err == nil {
-		for _, p := range parts {
-			sitePartsCatalog = append(sitePartsCatalog, map[string]string{"id": p.ID, "name": p.Name})
-		}
+	previewURL := "/admin/appearance/templates/" + tmpl.ID + "/preview" 
+	resource := EditorResource{Type: "layout-template", ID: tmpl.ID, Kind: tmpl.Kind, Label: tmpl.Name, ContentTypeID: tmpl.ContentTypeID}
+	actions := EditorActions{PreviewURL: previewURL, SaveURL: "/admin/appearance/templates/" + tmpl.ID, PublishURL: "/admin/appearance/templates/" + tmpl.ID + "/publish", BackURL: "/admin/appearance/templates"}
+	bs, berr := buildEditorBootstrap(r.Context(), h, resource, doc, catalogMode, previewURL, actions)
+	if berr != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
-	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(rev.DocumentJson), Catalog: h.blocks.EditorCatalogFor(catalogMode), Definitions: h.blocks.EditorDefinitions(doc), PreviewURL: previewURL, ContentTypeID: tmpl.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext(catalogMode), ContextKind: catalogMode, SiteParts: sitePartsCatalog, TemplateKind: tmpl.Kind, Forms: h.formOptions(r.Context()),
-	})
+	bootstrap, err := json.Marshal(bs)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -488,6 +485,10 @@ func (h *Handler) previewLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if err := validateDocumentNodeIDsSafe(doc); err != nil {
+		http.Error(w, "Invalid node ID", http.StatusUnprocessableEntity)
+		return
+	}
 	if err := layouts.ValidateTemplateDocument(h.blocks, doc, tmpl.Kind, nil); err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -539,6 +540,10 @@ func (h *Handler) previewLayoutTemplate(w http.ResponseWriter, r *http.Request) 
 		EntryID:       "preview-layout-" + id,
 		ContentTypeID: tmpl.ContentTypeID,
 		Fields:        fieldValuesForPreview,
+	}
+	if r.FormValue("editor_canvas") == "1" || r.URL.Query().Get("editor_canvas") == "1" {
+		ids := collectDocumentNodeIDs(doc)
+		input.EditorCanvas = &rendering.EditorCanvas{Enabled: true, EditableNodeIDs: ids, InstanceScope: "root", PrimaryResourceType: "layout-template", PrimaryResourceID: tmpl.ID}
 	}
 	if h.documentPreview == nil {
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)
@@ -662,7 +667,12 @@ func (h *Handler) previewArchiveLayoutTemplate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Preview renderer is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	page, err := h.documentPreview(r.Context(), RenderInput{Document: doc, Title: archive.Title, Path: path, ContentTypeID: tmpl.ContentTypeID, Archive: archive})
+	renderInput := RenderInput{Document: doc, Title: archive.Title, Path: path, ContentTypeID: tmpl.ContentTypeID, Archive: archive}
+	if r.FormValue("editor_canvas") == "1" || r.URL.Query().Get("editor_canvas") == "1" {
+		ids := collectDocumentNodeIDs(doc)
+		renderInput.EditorCanvas = &rendering.EditorCanvas{Enabled: true, EditableNodeIDs: ids, InstanceScope: "root", PrimaryResourceType: "layout-template", PrimaryResourceID: tmpl.ID}
+	}
+	page, err := h.documentPreview(r.Context(), renderInput)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -853,6 +863,10 @@ func (h *Handler) previewLayoutTemplateRevision(w http.ResponseWriter, r *http.R
 	doc, err := document.Decode([]byte(revision.DocumentJson))
 	if err != nil || layouts.ValidateTemplateDocument(h.blocks, doc, tmpl.Kind, nil) != nil {
 		http.Error(w, "Invalid template revision", http.StatusUnprocessableEntity)
+		return
+	}
+	if err := validateDocumentNodeIDsSafe(doc); err != nil {
+		http.Error(w, "Invalid node ID", http.StatusUnprocessableEntity)
 		return
 	}
 	if tmpl.Kind == "archive" {

@@ -1,9 +1,9 @@
 {{ define "content" }}
 <header class="admin-page-header"><div><h1>New Form</h1><p>Start with Name, Email, and Message fields, then customize the form.</p></div></header>
 {{ if .Content.Error }}<div class="notice notice-danger" role="alert">{{ .Content.Error }}</div>{{ end }}
-<form method="post" action="/admin/forms" class="card admin-form-card">
+<form method="post" action="/admin/forms" class="admin-section admin-form-card">
   <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-  <div class="card-body"><div class="form-field"><label for="form-name">Name</label><input id="form-name" name="name" value="{{ .Content.Form.Name }}" required maxlength="200" placeholder="Contact Form"></div><p class="form-help">Use a clear internal name. Visitors will not see it unless your content displays it.</p></div>
-  <div class="card-footer"><a class="button button-secondary" href="/admin/forms">Cancel</a><button class="button button-primary" type="submit">Create form</button></div>
+  <div class="field-grid"><div class="form-field"><label class="form-label" for="form-name">Name</label><input class="form-control" id="form-name" name="name" value="{{ .Content.Form.Name }}" required maxlength="200" placeholder="Contact Form"></div><p class="form-help">Use a clear internal name. Visitors will not see it unless your content displays it.</p></div>
+  <div class="admin-page-actions"><a class="button button-secondary" href="/admin/forms">Cancel</a><button class="button button-primary" type="submit">Create form</button></div>
 </form>
 {{ end }}

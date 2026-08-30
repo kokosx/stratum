@@ -38,43 +38,7 @@
 
   <div id="tab-editor" role="tabpanel" aria-labelledby="tab-btn-editor">
     {{ if .Content.ShowContent }}
-    <div class="editor-workbench">
-      <div class="editor-workspace">
-        <aside class="editor-panel block-library" aria-label="Block library">
-          <h2>Library</h2>
-          <div class="library-tabs" role="tablist">
-            <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-tab="blocks">Blocks</button>
-            <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="patterns">Patterns</button>
-          </div>
-          <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
-          <div id="block-catalog" data-library="blocks"></div>
-          <div id="pattern-catalog" data-library="patterns" hidden></div>
-        </aside>
-        <section class="editor-panel document-canvas" aria-label="Document">
-          <div class="editor-panel-heading"><h2>Document</h2></div>
-          <div id="document-tree"></div>
-          <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
-        </section>
-        <aside class="editor-panel block-inspector" aria-label="Inspector">
-          <h2>Inspector</h2>
-          <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>
-        </aside>
-      </div>
-      <section class="editor-preview-panel">
-        <div class="editor-preview-toolbar">
-          <div class="editor-mode-group">
-            <button class="editor-mode-btn is-active" type="button" data-mode="edit">Edit</button>
-            <button class="editor-mode-btn" type="button" data-mode="preview">Preview</button>
-          </div>
-          <div class="editor-device-group">
-            <button class="editor-device-btn is-active" type="button" data-width="100%">Desktop</button>
-            <button class="editor-device-btn" type="button" data-width="768px">Tablet</button>
-            <button class="editor-device-btn" type="button" data-width="375px">Mobile</button>
-          </div>
-        </div>
-        <div id="editor-preview" class="editor-preview" aria-live="polite"></div>
-      </section>
-    </div>
+    {{template "editor_shell" .}}
     {{ else }}
     <section class="admin-section">
       <div class="notice notice-info" style="margin-bottom:12px;">This content type stores structured data only. Rich content editor is disabled.</div>
@@ -235,9 +199,9 @@
                   {{ if lt $idx 5 }}
                   <tr>
                     <td>Revision {{ .Number }}</td>
-                    <td>{{ if .Published }}<span class="status-badge status-badge--published">Published</span>{{ else }}<span class="muted">Draft</span>{{ end }}</td>
-                    <td class="muted" style="font-size:12.5px;">{{ .CreatedAt }}</td>
-                    <td><div class="admin-page-actions" style="gap:6px;"><a class="button button-small" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a>{{ if not .Published }}<button class="button button-small" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button>{{ end }}</div></td>
+                    <td>{{ if .Published }}<span class="status-indicator status-indicator--success">● Published</span>{{ else }}<span class="status-indicator status-indicator--muted">● Draft</span>{{ end }}</td>
+                    <td class="muted">{{ .CreatedAt }}</td>
+                    <td><div class="admin-page-actions"><a class="button button-small" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a>{{ if not .Published }}<button class="button button-small" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button>{{ end }}</div></td>
                   </tr>
                   {{ end }}
                 {{ end }}

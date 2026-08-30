@@ -29,7 +29,7 @@
     <button type="button" data-mobile-tab="controls" class="is-active">Controls</button>
     <button type="button" data-mobile-tab="preview">Preview</button>
   </div>
-  {{ if .Content.Error }}<div class="notice notice-danger" role="alert" style="margin:12px 18px 0">{{ .Content.Error }}</div>{{ end }}
+  {{ if .Content.Error }}<div class="notice notice-danger" role="alert">{{ .Content.Error }}</div>{{ end }}
   <div class="creator-studio__body">
     <section class="creator-studio__controls">
       <form method="post" action="/admin/creator" id="creator-form" novalidate>
@@ -38,7 +38,7 @@
         <fieldset class="creator-step is-active-step" data-step="1" aria-labelledby="step1-title">
           <legend id="step1-title">1 — Site type</legend>
           <p class="muted">Choose the structure that fits your goal. Colors and chrome can be changed afterwards.</p>
-          <div class="creator-group-filter" style="display:flex;gap:6px;margin-bottom:6px">
+          <div class="creator-group-filter admin-page-actions">
             <button type="button" class="button button-small creator-filter" data-filter="*">All</button>
             <button type="button" class="button button-small button-ghost creator-filter" data-filter="simple">Simple</button>
             <button type="button" class="button button-small button-ghost creator-filter" data-filter="content">Content</button>
@@ -88,7 +88,7 @@
                   {{ if eq .ID "centered" }}<span class="creator-preview-centered"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
                   {{ if eq .ID "stacked" }}<span class="creator-preview-stacked"><span class="bar-brand"></span><span class="bar-tagline"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
                   {{ if eq .ID "bold" }}<span class="creator-preview-bold"><span class="bar-brand bar-brand--bold"></span><span class="bar-nav"><i></i><i></i><i></i></span></span>{{ end }}
-                  {{ if eq .ID "editorial" }}<span class="creator-preview-editorial"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span><span class="f-line" style="width:100%;height:1px;background:var(--ui-border)"></span></span>{{ end }}
+                  {{ if eq .ID "editorial" }}<span class="creator-preview-editorial"><span class="bar-brand"></span><span class="bar-nav"><i></i><i></i><i></i></span><span class="f-line creator-f-line"></span></span>{{ end }}
                 </span>
                 <strong>{{ .Name }}</strong><small>{{ .Description }}</small>
               </span>
@@ -124,58 +124,58 @@
           <div class="creator-presentation creator-presentation--layout">
             <h4>Layout</h4>
             <div class="field-row" data-preset="blog">
-              <label>Services per row<select name="blog_latest"><option value="5" {{ if eq .Content.BlogLatest 5 }}selected{{ end }}>5</option><option value="8" {{ if eq .Content.BlogLatest 8 }}selected{{ end }}>8</option></select></label>
-              <label>Posts per archive page<select name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
+              <label class="form-label">Latest posts on homepage<select class="form-control" name="blog_latest"><option value="5" {{ if eq .Content.BlogLatest 5 }}selected{{ end }}>5</option><option value="8" {{ if eq .Content.BlogLatest 8 }}selected{{ end }}>8</option></select></label>
+              <label class="form-label">Posts per archive page<select class="form-control" name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
             </div>
             <div class="field-row" data-preset="portfolio">
-              <label>Projects per row<select name="portfolio_cols"><option value="2" {{ if eq .Content.PortfolioCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.PortfolioCols 3 }}selected{{ end }}>3</option></select></label>
+              <label class="form-label">Projects per row<select class="form-control" name="portfolio_cols"><option value="2" {{ if eq .Content.PortfolioCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.PortfolioCols 3 }}selected{{ end }}>3</option></select></label>
             </div>
             <div class="field-row" data-preset="products">
-              <label>Products per row<select name="product_cols"><option value="3" {{ if eq .Content.ProductCols 3 }}selected{{ end }}>3</option><option value="4" {{ if eq .Content.ProductCols 4 }}selected{{ end }}>4</option></select></label>
-              <label>Product detail<select name="product_media"><option value="left" {{ if eq .Content.ProductMedia "left" }}selected{{ end }}>Image left</option><option value="right" {{ if eq .Content.ProductMedia "right" }}selected{{ end }}>Image right</option></select></label>
+              <label class="form-label">Products per row<select class="form-control" name="product_cols"><option value="3" {{ if eq .Content.ProductCols 3 }}selected{{ end }}>3</option><option value="4" {{ if eq .Content.ProductCols 4 }}selected{{ end }}>4</option></select></label>
+              <label class="form-label">Product detail<select class="form-control" name="product_media"><option value="left" {{ if eq .Content.ProductMedia "left" }}selected{{ end }}>Image left</option><option value="right" {{ if eq .Content.ProductMedia "right" }}selected{{ end }}>Image right</option></select></label>
             </div>
             <div class="field-row" data-preset="landing">
-              <label>Testimonials<select name="testimonials_cols"><option value="1" {{ if eq .Content.TestimonialsCols 1 }}selected{{ end }}>1 column</option><option value="2" {{ if eq .Content.TestimonialsCols 2 }}selected{{ end }}>2 columns</option></select></label>
+              <label class="form-label">Testimonials<select class="form-control" name="testimonials_cols"><option value="1" {{ if eq .Content.TestimonialsCols 1 }}selected{{ end }}>1 column</option><option value="2" {{ if eq .Content.TestimonialsCols 2 }}selected{{ end }}>2 columns</option></select></label>
             </div>
             <div class="field-row" data-preset="local-business">
-              <label>Services per row<select name="service_cols"><option value="2" {{ if eq .Content.ServiceCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.ServiceCols 3 }}selected{{ end }}>3</option></select></label>
+              <label class="form-label">Services per row<select class="form-control" name="service_cols"><option value="2" {{ if eq .Content.ServiceCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.ServiceCols 3 }}selected{{ end }}>3</option></select></label>
             </div>
             <div class="field-row" data-preset="simple-site" hidden>
-              <label>Style hint<select disabled><option>Simple layout active</option></select></label>
+              <label class="form-label">Style hint<select class="form-control" disabled><option>Simple layout active</option></select></label>
             </div>
             <div class="field-row" data-preset="magazine">
-              <label>Latest posts on homepage<select name="blog_latest"><option value="5" {{ if eq .Content.BlogLatest 5 }}selected{{ end }}>5</option><option value="8" {{ if eq .Content.BlogLatest 8 }}selected{{ end }}>8</option></select></label>
-              <label>Posts per archive page<select name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
+              <label class="form-label">Latest posts on homepage<select class="form-control" name="blog_latest"><option value="5" {{ if eq .Content.BlogLatest 5 }}selected{{ end }}>5</option><option value="8" {{ if eq .Content.BlogLatest 8 }}selected{{ end }}>8</option></select></label>
+              <label class="form-label">Posts per archive page<select class="form-control" name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
             </div>
             <div class="field-row" data-preset="agency">
-              <label>Projects per row<select name="portfolio_cols"><option value="2" {{ if eq .Content.PortfolioCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.PortfolioCols 3 }}selected{{ end }}>3</option></select></label>
+              <label class="form-label">Projects per row<select class="form-control" name="portfolio_cols"><option value="2" {{ if eq .Content.PortfolioCols 2 }}selected{{ end }}>2</option><option value="3" {{ if eq .Content.PortfolioCols 3 }}selected{{ end }}>3</option></select></label>
             </div>
             <div class="field-row" data-preset="knowledge-base">
-              <label>Articles per archive<select name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
+              <label class="form-label">Articles per archive<select class="form-control" name="blog_archive"><option value="10" {{ if eq .Content.BlogArchive 10 }}selected{{ end }}>10</option><option value="20" {{ if eq .Content.BlogArchive 20 }}selected{{ end }}>20</option></select></label>
             </div>
-            <p class="muted" style="margin:4px 0 0">You can change these layouts later.</p>
+            <p class="form-help">You can change these layouts later.</p>
           </div>
           <div class="creator-presentation creator-presentation--site">
             <h4>Site details</h4>
             <div class="creator-details-grid">
-              <label>Site name<input type="text" name="site_name" maxlength="200" value="{{ .Content.SiteName }}" required></label>
-              <label>Tagline <small>optional</small><input type="text" name="tagline" maxlength="300" value="{{ .Content.Tagline }}" placeholder="A short promise"></label>
-              <label>Language<select name="language">{{ range .Content.LanguageOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Language }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>{{ end }}</select></label>
-              <label>Timezone<select name="timezone">{{ range .Content.TimezoneOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Timezone }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
-              <label>Site represents<select name="site_represents"><option value="organization" {{ if eq .Content.SiteRepresents "organization" }}selected{{ end }}>Organization</option><option value="person" {{ if eq .Content.SiteRepresents "person" }}selected{{ end }}>Person</option></select></label>
-              <label>Site URL <small>optional</small><input type="url" name="site_url" value="{{ .Content.SiteURL }}" placeholder="https://example.com"></label>
+              <label class="form-label">Site name<input class="form-control" type="text" name="site_name" maxlength="200" value="{{ .Content.SiteName }}" required></label>
+              <label class="form-label">Tagline <small>optional</small><input class="form-control" type="text" name="tagline" maxlength="300" value="{{ .Content.Tagline }}" placeholder="A short promise"></label>
+              <label class="form-label">Language<select class="form-control" name="language">{{ range .Content.LanguageOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Language }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>{{ end }}</select></label>
+              <label class="form-label">Timezone<select class="form-control" name="timezone">{{ range .Content.TimezoneOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Timezone }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
+              <label class="form-label">Site represents<select class="form-control" name="site_represents"><option value="organization" {{ if eq .Content.SiteRepresents "organization" }}selected{{ end }}>Organization</option><option value="person" {{ if eq .Content.SiteRepresents "person" }}selected{{ end }}>Person</option></select></label>
+              <label class="form-label">Site URL <small>optional</small><input class="form-control" type="url" name="site_url" value="{{ .Content.SiteURL }}" placeholder="https://example.com"></label>
             </div>
-              <label class="creator-checkbox"><input type="checkbox" name="indexing_enabled" value="on" {{ if not .Content.IndexingEnabled }}checked{{ end }}> Discourage search engines until site is ready</label>
+              <label class="creator-checkbox"><input type="checkbox" name="discourage_search_engines" value="on" {{ if not .Content.IndexingEnabled }}checked{{ end }}> Discourage search engines until site is ready</label>
           </div>
         </fieldset>
         <nav class="creator-nav">
           <button type="button" class="button button-secondary" id="creator-back" disabled>Back</button>
-          <div style="display:flex;gap:8px">
+          <div class="admin-page-actions">
             <button type="button" class="button button-secondary" id="creator-continue">Continue</button>
             <button type="submit" class="button button-primary" id="creator-submit" hidden>Create site</button>
           </div>
         </nav>
-        <p class="muted" style="font-size:12px">Creation can take a few seconds while starter images and search index are prepared.</p>
+        <p class="form-help">Creation can take a few seconds while starter images and search index are prepared.</p>
       </form>
     </section>
     <section class="creator-studio__preview" aria-label="Preview">
@@ -195,7 +195,7 @@
       <div class="creator-preview-frame" id="preview-frame">
         <iframe id="creator-preview" title="Site preview" sandbox="allow-same-origin allow-scripts" loading="lazy"></iframe>
       </div>
-      <p class="muted" style="font-size:12px;margin:0">Preview uses the real theme and block renderer. Forms cannot submit here.</p>
+      <p class="form-help">Preview uses the real theme and block renderer. Forms cannot submit here.</p>
     </section>
   </div>
 </div>

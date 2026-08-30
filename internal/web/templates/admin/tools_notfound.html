@@ -7,8 +7,8 @@
 <tr>
   <td><code>{{ .Path }}</code></td>
   <td>{{ .Hits }}</td>
-  <td class="muted" style="font-size:12.5px;">{{ .Age }} <span class="muted">({{ .LastSeen }})</span></td>
-  <td><div class="admin-page-actions" style="gap:6px;"><a class="button button-small" href="/admin/tools/redirects/new?source={{ .Path }}">Create redirect</a><form method="post" action="/admin/tools/not-found/delete" class="inline-form" onsubmit="return confirm('Delete record {{ .Path }}?')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><input type="hidden" name="path" value="{{ .Path }}"><button type="submit" class="row-action-link row-action-delete">Delete</button></form></div></td>
+  <td class="muted">{{ .Age }} <span class="muted">({{ .LastSeen }})</span></td>
+  <td><div class="admin-page-actions"><a class="button button-small" href="/admin/tools/redirects/new?source={{ .Path }}">Create redirect</a><form method="post" action="/admin/tools/not-found/delete" class="inline-form" onsubmit="return confirm('Delete record {{ .Path }}?')"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><input type="hidden" name="path" value="{{ .Path }}"><button type="submit" class="row-action-link row-action-delete">Delete</button></form></div></td>
 </tr>
 {{ end }}
 </tbody></table></div>

@@ -452,16 +452,14 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	}
 	// In-memory migration for editor: historical v1 text/heading get Rich Text control without mutating stored JSON.
 	migratedDoc := migrateDocumentForEditor(doc)
-	migratedJSON, err := json.Marshal(migratedDoc)
-	if err != nil {
-		migratedJSON = []byte(data.DocumentJSON)
-		migratedDoc = doc
+	resource := EditorResource{Type: "entry", ID: data.EntryID, Kind: data.ContentTypeID, Label: data.Title, ContentTypeID: data.ContentTypeID}
+	actions := EditorActions{PreviewURL: "/admin/editor/preview", SaveURL: data.Action, PublishURL: data.PublishAction, BackURL: data.BackURL, PublicPreviewURL: data.PublicURL}
+	bs, berr := buildEditorBootstrap(r.Context(), h, resource, migratedDoc, "entry", "/admin/editor/preview", actions)
+	if berr != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
 	}
-	contentTypes, fieldCatalogs := h.editorOptions(r.Context())
-	taxonomyCatalogs := h.taxonomyCatalogs(r.Context())
-	bootstrap, err := json.Marshal(editorBootstrap{
-		Document: json.RawMessage(migratedJSON), Catalog: h.blocks.EditorCatalog(), Definitions: h.blocks.EditorDefinitions(migratedDoc), PreviewURL: "/admin/editor/preview", ContentTypeID: data.ContentTypeID, ContentTypes: contentTypes, FieldCatalogs: fieldCatalogs, TaxonomyCatalogs: taxonomyCatalogs, Patterns: h.patternsForContext("entry"), ContextKind: "entry", Forms: h.formOptions(r.Context()),
-	})
+	bootstrap, err := json.Marshal(bs)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return

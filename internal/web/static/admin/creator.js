@@ -68,7 +68,11 @@
     var preset=sel?sel.value:'blog';
     form.querySelectorAll('.creator-presentation .field-row').forEach(function(row){
       var p=row.getAttribute('data-preset');
-      row.hidden = p!==preset;
+      var active = p===preset;
+      row.hidden = !active;
+      row.querySelectorAll('select,input,textarea').forEach(function(el){
+        el.disabled = !active;
+      });
     });
   }
   function isStepValid(n){
@@ -275,6 +279,8 @@
     }
   });
   filterPresentation();
+  // Ensure only active preset controls are successful on first load
+  (function(){ var sel=form.querySelector('input[name="preset"]:checked'); if(sel) filterPresentation(); })();
   showStep(1);
   syncSelected();
   doPreviewImmediate();

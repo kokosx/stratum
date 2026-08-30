@@ -265,10 +265,11 @@ type entrySpec struct {
 }
 
 type pageSpec struct {
-	Title string
-	Slug  string
-	Body  string
-	Form  bool
+	Title   string
+	Slug    string
+	Body    string
+	Excerpt string
+	Form    bool
 }
 
 type formSpec struct {
@@ -613,6 +614,16 @@ func specForPlan(plan Plan) presetSpec {
 	}
 	spec.seedEntries = localizedSeedEntries(plan.Preset.ID, lang)
 	spec.pages = localizedPages(plan.Preset.ID, lang)
+	// Localize Creator-owned content type labels for PL (IDs remain stable)
+	if spec.contentType != nil && lang == "pl" {
+		id := string(spec.contentType.ID)
+		if v := copyFor(lang, "contenttype."+id+".singular"); v != "contenttype."+id+".singular" {
+			spec.contentType.Name = v
+		}
+		if v := copyFor(lang, "contenttype."+id+".plural"); v != "contenttype."+id+".plural" {
+			spec.contentType.PluralName = v
+		}
+	}
 	// Localize form name via catalog
 	if spec.form != nil {
 		switch spec.preset.ID {
@@ -665,34 +676,34 @@ func localizedPages(preset PresetID, lang string) []pageSpec {
 	case PresetPortfolio:
 		return []pageSpec{
 			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
-			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Tell us what you are working on and what kind of help you need.", Form: true},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: copyFor(lang, "page.contact.body.portfolio"), Form: true},
 		}
 	case PresetLanding:
 		return []pageSpec{}
 	case PresetProducts:
 		return []pageSpec{
 			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
-			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Ask about specifications, availability or a custom requirement."},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: copyFor(lang, "page.contact.body.product")},
 		}
 	case PresetSimpleSite:
 		return []pageSpec{
 			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
-			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Tell us what you need and we will get back to you.", Form: true},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: copyFor(lang, "page.contact.body.simple"), Form: true},
 		}
 	case PresetMagazine:
 		return []pageSpec{{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl}}
 	case PresetAgency:
 		return []pageSpec{
-			{Title: copyFor(lang, "Services"), Slug: "services", Body: "We help teams clarify, design and ship useful work."},
+			{Title: copyFor(lang, "heading.services"), Slug: "services", Body: copyFor(lang, "page.services.body")},
 			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
-			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Tell us what you are building.", Form: true},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: copyFor(lang, "page.contact.body.agency"), Form: true},
 		}
 	case PresetKnowledgeBase:
 		return []pageSpec{{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl}}
 	default:
 		return []pageSpec{
 			{Title: copyFor(lang, "page.about.title"), Slug: "about", Body: baseBodyPl},
-			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: "Share a few details and we will respond with a practical next step.", Form: true},
+			{Title: copyFor(lang, "page.contact.title"), Slug: "contact", Body: copyFor(lang, "page.contact.body.local"), Form: true},
 		}
 	}
 }

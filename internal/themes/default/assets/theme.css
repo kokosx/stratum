@@ -166,7 +166,9 @@ p { margin: 0; line-height: var(--st-body-line-height); }
   max-width: 640px;
 }
 
-/* Vertical rhythm — container owns gap, not arbitrary margins */
+/* Vertical rhythm — container owns gap, not arbitrary margins.
+   SPACING OWNERSHIP: SECTION = band around group; STACK/GRID = between related groups; BLOCK = internal only.
+   Theme fallback flow only where no explicit container owns it. */
 .site-main > * + * { margin-top: var(--st-flow-major); }
 .site-main > .stratum-text + .stratum-text { margin-top: 1em; }
 .site-main > .stratum-heading + .stratum-text { margin-top: clamp(12px,1.2vw,20px); }
@@ -181,8 +183,19 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 .site-main > .stratum-callout + .stratum-btn-wrap { margin-top: clamp(24px,2vw,32px); }
 .site-main > .stratum-section + .stratum-section { margin-top: 0; }
 .site-main > .stratum-section--v2 + .stratum-section--v2 { margin-top: 0; }
+/* Structural blocks own spacing → do not double with fallback flow inside Stack/Grid/Collection/Card */
 .stratum-section > * + * { margin-top: var(--st-flow-content); }
 .stratum-section__inner > * + * { margin-top: var(--st-flow-content); }
+.stratum-section > .stratum-stack + *,
+.stratum-section > .stratum-grid + *,
+.stratum-section__inner > .stratum-stack + *,
+.stratum-section__inner > .stratum-grid + *,
+.stratum-section__inner > .stratum-collection + *,
+.stratum-stack + .stratum-section,
+.stratum-grid + .stratum-section { margin-top: 0; }
+.stratum-stack > .stratum-stack,
+.stratum-stack > .stratum-grid,
+.stratum-grid > .stratum-stack { margin-top: 0; }
 /* Tighter relationships — spec rhythm */
 .stratum-heading + .stratum-text,
 .stratum-entry-title + .stratum-entry-excerpt,
@@ -683,6 +696,17 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 .stratum-section--v2.stratum-section-vspace-md { padding-block: clamp(36px,4vw,56px); }
 .stratum-section--v2.stratum-section-vspace-lg { padding-block: clamp(56px,6vw,80px); }
 .stratum-section--v2.stratum-section-vspace-xl { padding-block: clamp(80px,8vw,112px); }
+/* Polish: secondary page rhythm — title header (md, default bg) followed by next section collapses top to avoid double padding. Heroes use muted/primary bg so they keep normal gap. */
+.stratum-section--v2.stratum-section-vspace-md.stratum-section-bg-default + .stratum-section--v2.stratum-section-vspace-md,
+.stratum-section--v2.stratum-section-vspace-md.stratum-section-bg-default + .stratum-section--v2.stratum-section-vspace-sm,
+.stratum-section--v2.stratum-section-vspace-md.stratum-section-bg-default + .stratum-section--v2.stratum-section-width-wide {
+  padding-top: 0;
+}
+/* First section in main (title header) gets tighter bottom and comfortable top for secondary pages */
+main > .stratum-section--v2.stratum-section-vspace-md.stratum-section-bg-default:first-child {
+  padding-top: clamp(48px,6vw,72px);
+  padding-bottom: clamp(32px,4vw,48px);
+}
 .stratum-section--v2.stratum-section-minh-auto { min-height: auto; }
 .stratum-section--v2.stratum-section-minh-small { min-height: 30vh; }
 .stratum-section--v2.stratum-section-minh-medium { min-height: 50vh; }
@@ -898,15 +922,17 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 
 /* ----------------------------------------------------------------------------
    Forms — 44-48px controls, clear labels
+   FORM RHYTHM: heading→first field 20-28 via Stack md; label→control 6-10 via field gap xs; field→field 18-24 via form gap lg; final→button 16-24 via Stack/button margin
+   No Section spacing inside Form — Stack/Field own it.
    ---------------------------------------------------------------------------- */
 .stratum-form {
   display: grid;
-  gap: 20px;
+  gap: var(--st-space-lg);
   max-width: 680px;
   width: 100%;
   text-align: left;
 }
-.stratum-form-field { display: grid; gap: 8px; }
+.stratum-form-field { display: grid; gap: var(--st-space-xs); }
 .stratum-form-field label {
   font-size: 0.9rem;
   font-weight: 600;
@@ -928,6 +954,8 @@ p { margin: 0; line-height: var(--st-body-line-height); }
   box-sizing: border-box;
 }
 .stratum-form-field textarea { min-height: 110px; resize: vertical; }
+.stratum-form .stratum-stack { gap: var(--st-space-md); }
+.stratum-form button[type="submit"] { margin-top: var(--st-space-sm); }
 .stratum-form-field input:focus,
 .stratum-form-field textarea:focus,
 .stratum-form-field select:focus {
@@ -1230,10 +1258,6 @@ p { margin: 0; line-height: var(--st-body-line-height); }
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-  }
-  .submenu-toggle span { transition: none; }
+  .skip-link, .site-header__custom .stratum-navigation a, .site-footer__main .stratum-navigation a, .submenu-toggle span, .stratum-button, .stratum-tab-btn, .nav-backdrop { transition: none !important; }
+  .toast, .stratum-tab { animation: none !important; }
 }

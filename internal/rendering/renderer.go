@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"net/url"
 	"strings"
 
 	"github.com/kokosx/stratum/internal/content"
@@ -149,6 +150,86 @@ type RenderContext struct {
 	// When set, entry-media and other image blocks resolve via this provider
 	// instead of the registry's global one. Used by Creator preview's synthetic media.
 	MediaProvider MediaProvider
+
+	// Editor enables visual-editor instrumentation (HTML comment boundaries).
+	// Nil or Disabled means public/preview without markers. The same renderer
+	// produces public HTML, preview HTML, and canvas HTML — only this field differs.
+	Editor *EditorCanvas
+}
+
+// EditorCanvas is the editor-only render context for visual canvas instrumentation.
+// It is never persisted and never appears on public renders.
+type EditorCanvas struct {
+	Enabled             bool
+	EditableNodeIDs     map[string]struct{}
+	PrimaryResourceType string
+	PrimaryResourceID   string
+	InstanceScope       string
+	// Owner tracking for external boundaries (optional, for toast CTA)
+	OwnerResourceType string
+	OwnerResourceID   string
+}
+
+func (e *EditorCanvas) IsEditable(nodeID string) bool {
+	if e == nil || !e.Enabled {
+		return false
+	}
+	// External owned content is never editable, even if ID happens to be in the set
+	// (prevents an attacker from marking a site-part node as editable by reusing its ID).
+	if e.OwnerResourceType != "" {
+		return false
+	}
+	if e.EditableNodeIDs == nil {
+		return true
+	}
+	_, ok := e.EditableNodeIDs[nodeID]
+	return ok
+}
+
+func (e *EditorCanvas) CloneWithScope(scope string) *EditorCanvas {
+	if e == nil {
+		return nil
+	}
+	clone := *e
+	clone.InstanceScope = scope
+	return &clone
+}
+
+func (e *EditorCanvas) CloneWithOwner(ownerType, ownerID string) *EditorCanvas {
+	if e == nil {
+		return nil
+	}
+	clone := *e
+	clone.OwnerResourceType = ownerType
+	clone.OwnerResourceID = ownerID
+	return &clone
+}
+
+func editorStartComment(nodeID, instanceKey string, editable bool, ownerType, ownerID string) string {
+	// Format: <!-- stratum-node-start:nodeID:instanceKey:editable[:ownerType:ownerId] -->
+	// nodeID and instanceKey are PathEscaped so they cannot break the comment or the colon delimiter.
+	// This prevents XSS via crafted IDs (e.g. "x--> <script>") and makes the marker parser robust.
+	safeID := url.PathEscape(sanitizeMarkerToken(nodeID))
+	safeKey := url.PathEscape(instanceKey)
+	s := "<!-- stratum-node-start:" + safeID + ":" + safeKey + ":" + fmt.Sprintf("%t", editable)
+	if ownerType != "" {
+		s += ":" + url.PathEscape(ownerType) + ":" + url.PathEscape(ownerID)
+	}
+	s += " -->"
+	return s
+}
+
+func editorEndComment(nodeID, instanceKey string) string {
+	return "<!-- stratum-node-end:" + url.PathEscape(sanitizeMarkerToken(nodeID)) + ":" + url.PathEscape(instanceKey) + " -->"
+}
+
+func sanitizeMarkerToken(s string) string {
+	// Replace comment terminator and angle brackets to prevent breaking HTML comments.
+	// Document IDs are expected to be "blk_<hex>" but we defensively sanitize POSTed IDs.
+	s = strings.ReplaceAll(s, "--", "__")
+	s = strings.ReplaceAll(s, "<", "_")
+	s = strings.ReplaceAll(s, ">", "_")
+	return s
 }
 
 type FormReader interface {
@@ -768,6 +849,12 @@ func (r *Renderer) RenderPreparedDocumentContext(ctx context.Context, pd *Prepar
 			rc.LCPNodeID = winner
 		}
 	}
+	// Ensure editor scope defaults to root when enabled
+	if rc.Editor != nil && rc.Editor.Enabled && rc.Editor.InstanceScope == "" {
+		ec := *rc.Editor
+		ec.InstanceScope = "root"
+		rc.Editor = &ec
+	}
 	var out strings.Builder
 	for i := range pd.Nodes {
 		rendered, err := r.renderPreparedNode(ctx, pd.Nodes[i], rc)
@@ -785,16 +872,58 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 	if !ok && r.runtimes[key] == nil {
 		return "", fmt.Errorf("block definition not found: %s@%d", node.Block, node.Version)
 	}
+	editorEnabled := rc.Editor != nil && rc.Editor.Enabled
+	var instanceKey string
+	var editable bool
+	var ownerType, ownerID string
+	var childScope string
+	if editorEnabled {
+		scope := rc.Editor.InstanceScope
+		if scope == "" {
+			scope = "root"
+		}
+		instanceKey = scope + "/node:" + node.ID
+		editable = rc.Editor.IsEditable(node.ID)
+		ownerType = rc.Editor.OwnerResourceType
+		ownerID = rc.Editor.OwnerResourceID
+		childScope = instanceKey
+	}
 	// Runtime blocks (Collection, future WASM) are dispatched via the registry
 	// table, not a per-node if-branch on concrete names. Adding a new runtime
 	// block only requires RegisterRuntime, not editing this function.
 	if rr, ok := r.runtimes[key]; ok {
-		return rr.Render(ctx, node, rc, r)
+		var html template.HTML
+		var err error
+		if editorEnabled {
+			// Pass editor with childScope for inner children
+			childRC := rc
+			ec := *rc.Editor
+			ec.InstanceScope = instanceKey
+			childRC.Editor = &ec
+			html, err = rr.Render(ctx, node, childRC, r)
+		} else {
+			html, err = rr.Render(ctx, node, rc, r)
+		}
+		if err != nil {
+			return "", err
+		}
+		if editorEnabled {
+			start := editorStartComment(node.ID, instanceKey, editable, ownerType, ownerID)
+			end := editorEndComment(node.ID, instanceKey)
+			return template.HTML(start + string(html) + end), nil
+		}
+		return html, nil
 	}
 
 	var children strings.Builder
+	childRC := rc
+	if editorEnabled {
+		ec := *rc.Editor
+		ec.InstanceScope = childScope
+		childRC.Editor = &ec
+	}
 	for i := range node.Children {
-		rendered, err := r.renderPreparedNode(ctx, node.Children[i], rc)
+		rendered, err := r.renderPreparedNode(ctx, node.Children[i], childRC)
 		if err != nil {
 			return "", err
 		}
@@ -803,9 +932,6 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 
 	priority := false
 	if node.ID == rc.LCPNodeID && rc.LCP != nil && !rc.LCP.Consumed {
-		// Only claim if this actual instance has a real image. For a
-		// Collection-embedded featured-image the first entry may be a
-		// placeholder while the second has media; the second should win.
 		if view, ok := r.hasActualImage(node, rc); ok {
 			priority = true
 			rc.LCP.Consumed = true
@@ -822,6 +948,11 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: priority}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
+	}
+	if editorEnabled {
+		start := editorStartComment(node.ID, instanceKey, editable, ownerType, ownerID)
+		end := editorEndComment(node.ID, instanceKey)
+		return template.HTML(start + out.String() + end), nil
 	}
 	return template.HTML(out.String()), nil
 }
@@ -1173,6 +1304,19 @@ func (s *sitePartRenderer) Render(ctx context.Context, node PreparedNode, rc Ren
 	nested.Route = rc.Route
 	nested.LCP = rc.LCP
 	nested.Dependencies = rc.Dependencies
+	if rc.Editor != nil && rc.Editor.Enabled {
+		ec := *rc.Editor
+		// Append sitepart segment to current scope
+		base := rc.Editor.InstanceScope
+		if base == "" {
+			base = "root"
+		}
+		ec.InstanceScope = base + "/sitepart:" + sitePartID
+		// Mark owner for external content
+		ec.OwnerResourceType = "site-part"
+		ec.OwnerResourceID = sitePartID
+		nested.Editor = &ec
+	}
 	inner, err := r.renderPreparedNodes(ctx, pd.Nodes, nested)
 	if err != nil {
 		return "", err
@@ -1308,6 +1452,22 @@ func (r *Renderer) renderCollectionNode(ctx context.Context, node PreparedNode, 
 			scoped.Route = rc.Route
 			scoped.QueryCache = rc.QueryCache
 			scoped.ContentReader = rc.ContentReader
+			scoped.LCP = rc.LCP
+			scoped.Dependencies = rc.Dependencies
+			scoped.CollectedSiteParts = rc.CollectedSiteParts
+			scoped.SitePartStack = rc.SitePartStack
+			scoped.SitePartReader = rc.SitePartReader
+			scoped.IsPreview = rc.IsPreview
+			scoped.Mode = rc.Mode
+			if rc.Editor != nil && rc.Editor.Enabled {
+				ec := *rc.Editor
+				base := rc.Editor.InstanceScope
+				if base == "" {
+					base = "root"
+				}
+				ec.InstanceScope = base + "/entry:" + entry.ID
+				scoped.Editor = &ec
+			}
 			rendered, err := r.renderPreparedNodes(ctx, node.Children, scoped)
 			if err != nil {
 				return "", err

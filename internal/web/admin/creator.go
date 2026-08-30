@@ -86,9 +86,7 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 	if data.Timezone == "" {
 		data.Timezone = "UTC"
 	}
-	if strings.Contains(strings.ToLower(data.SiteURL), "localhost") || strings.Contains(data.SiteURL, "127.0.0.1") || strings.Contains(data.SiteURL, "192.168.") {
-		data.SiteURL = ""
-	}
+	// No silent SiteURL mutation — canonical validation shared with Settings is in creator.Service.Preview.
 	if r.Method == http.MethodPost {
 		data.Selected = creator.PresetID(strings.TrimSpace(r.FormValue("preset")))
 		data.SelectedPalette = creator.PaletteID(strings.TrimSpace(r.FormValue("palette")))
@@ -100,9 +98,14 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		data.Timezone = strings.TrimSpace(r.FormValue("timezone"))
 		data.SiteRepresents = strings.TrimSpace(r.FormValue("site_represents"))
 		data.SiteURL = strings.TrimSpace(r.FormValue("site_url"))
-		// Checkbox is "Discourage search engines" — when checked, indexing should be DISABLED.
-		// So invert: checked => IndexingEnabled=false, unchecked => true.
-		if v := strings.TrimSpace(r.FormValue("indexing_enabled")); v == "on" || v == "1" || v == "true" {
+		// Form uses "discourage_search_engines" — when checked, indexing is DISABLED.
+		// Translate once at HTTP boundary; domain keeps positive IndexingEnabled.
+		discourage := strings.TrimSpace(r.FormValue("discourage_search_engines"))
+		// Backward compat: accept legacy "indexing_enabled" as fallback until fully migrated.
+		if discourage == "" {
+			discourage = strings.TrimSpace(r.FormValue("indexing_enabled"))
+		}
+		if discourage == "on" || discourage == "1" || discourage == "true" {
 			data.IndexingEnabled = false
 		} else {
 			data.IndexingEnabled = true
