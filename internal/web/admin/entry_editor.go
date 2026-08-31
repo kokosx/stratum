@@ -109,6 +109,7 @@ type entryFormData struct {
 	Dirty                 string
 	Status                string
 	PublicURL             string
+	V2URL                 string
 	ShowExcerpt           bool
 	ShowSEO               bool
 	ShowFeatured          bool

@@ -181,6 +181,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		Dirty:                 "Saved",
 		Status:                status,
 		PublicURL:             publicURL,
+		V2URL:                 "/admin/pages/" + entry.ID + "/edit?editor=v2",
 		ShowSEO:               true,
 		ShowFeatured:          true,
 		IsPostsPage:           isPostsPage,

@@ -124,6 +124,7 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		Dirty:            "Saved",
 		Status:           status,
 		PublicURL:        publicURL,
+		V2URL:            "/admin/posts/" + entry.ID + "/edit?editor=v2",
 		ShowExcerpt:      true,
 		ShowSEO:          true,
 		ShowFeatured:     true,

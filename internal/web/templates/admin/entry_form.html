@@ -24,6 +24,7 @@
     </div>
     <div class="editor-app-topbar__right">
       {{ if .Content.PublicURL }}<a class="button button-small" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener" title="View public">View</a>{{ end }}
+      {{ if .Content.V2URL }}<a class="button button-small" href="{{ .Content.V2URL }}" title="Open Visual Editor V2">Open V2</a>{{ end }}
       <button class="button button-small" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
       <button class="button button-small button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
       <div style="width:1px;height:24px;background:var(--ui-border);margin:0 4px" aria-hidden="true"></div>
