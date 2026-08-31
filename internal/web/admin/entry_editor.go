@@ -151,12 +151,13 @@ type entryFormData struct {
 }
 
 type revisionHistoryItem struct {
-	ID        string
-	Number    int64
-	Title     string
-	Slug      string
-	CreatedAt int64
-	Published bool
+	ID                 string
+	Number             int64
+	Title              string
+	Slug               string
+	CreatedAt          int64
+	CreatedAtFormatted string
+	Published          bool
 }
 
 type hierarchyParentOption struct {
@@ -468,7 +469,7 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	data.EditorJSON = template.JS(bootstrap)
 	data.CSRFToken = token
 	state := ResolveNav(r.URL.Path)
-	if err := h.entryTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: data.Heading, ActiveMenu: activeMenu, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
+	if err := h.entryTemplate.ExecuteTemplate(w, "editor_layout.html", LayoutData{Title: data.Heading, ActiveMenu: activeMenu, ActiveSection: state.ActiveSection, ActiveItem: state.ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render entry form: %v", err)
 	}
 }
@@ -1001,9 +1002,19 @@ func (h *Handler) revisionHistory(ctx context.Context, entry db.Entry) []revisio
 	if err != nil {
 		return nil
 	}
+	// Load site timezone for readable dates (AC: not raw Unix)
+	timezone := "UTC"
+	if settings, err := h.queries.GetSiteSettings(ctx); err == nil && strings.TrimSpace(settings.Timezone) != "" {
+		timezone = settings.Timezone
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		loc = time.UTC
+	}
 	items := make([]revisionHistoryItem, 0, len(revisions))
 	for _, revision := range revisions {
-		items = append(items, revisionHistoryItem{ID: revision.ID, Number: revision.RevisionNumber, Title: revision.Title, Slug: revision.Slug, CreatedAt: revision.CreatedAt, Published: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String == revision.ID})
+		formatted := time.Unix(revision.CreatedAt, 0).In(loc).Format("02 Jan 2006, 15:04")
+		items = append(items, revisionHistoryItem{ID: revision.ID, Number: revision.RevisionNumber, Title: revision.Title, Slug: revision.Slug, CreatedAt: revision.CreatedAt, CreatedAtFormatted: formatted, Published: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String == revision.ID})
 	}
 	return items
 }

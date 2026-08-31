@@ -108,7 +108,7 @@ type LayoutData struct {
 }
 
 func parseAdminTemplate(templateFS fs.FS, funcs template.FuncMap, name, page string) (*template.Template, error) {
-	return template.New(name).Funcs(funcs).ParseFS(templateFS, "layout.html", "admin_components.html", page)
+	return template.New(name).Funcs(funcs).ParseFS(templateFS, "layout.html", "admin_components.html", "admin_nav_icon.html", page)
 }
 
 func (h *Handler) navStateFor(r *http.Request) NavState { return ResolveNav(r.URL.Path) }
@@ -207,7 +207,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
-	entryTemplate, err := template.New("entry_form").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor.html", "entry_form.html")
+	entryTemplate, err := template.New("entry_form").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor_layout.html", "editor.html", "entry_form.html")
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +246,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 
-	layoutTemplateEditorTemplate, err := template.New("layout_template_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor.html", "layout_template_editor.html")
+	layoutTemplateEditorTemplate, err := template.New("layout_template_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor_layout.html", "editor.html", "layout_template_editor.html")
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		sitePartFormTemplate = template.New("site_part_form")
 	}
-	sitePartEditorTemplate, err := template.New("site_part_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor.html", "site_part_editor.html")
+	sitePartEditorTemplate, err := template.New("site_part_editor").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor_layout.html", "editor.html", "site_part_editor.html")
 	if err != nil {
 		sitePartEditorTemplate = template.New("site_part_editor")
 	}

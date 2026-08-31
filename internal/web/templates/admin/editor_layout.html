@@ -1,0 +1,22 @@
+{{ define "editor_layout.html" }}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ .Title }} · Stratum</title>
+  <meta name="csrf-token" content="{{ .CSRFToken }}">
+  <link rel="stylesheet" href="/admin/static/admin.css">
+  <link rel="stylesheet" href="/admin/static/editor/editor.css?v=3">
+  <script type="module" src="/admin/static/admin/datastar.js"></script>
+  <style>body #tab-editor{flex:1 1 0 !important;min-height:0 !important;height:0 !important;max-height:100% !important;display:flex !important;flex-direction:column !important;overflow:hidden !important;flex-basis:0 !important}body #tab-editor > .editor-workbench{flex:1 1 0 !important;min-height:0 !important;height:0 !important;max-height:100% !important;flex-basis:0 !important}</style>
+</head>
+<body class="editor-layout">
+  {{ template "content" . }}
+  <div id="admin-toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="/admin/static/admin/toast.js"></script>
+  <script src="/admin/static/admin/interactions.js" defer></script>
+  <script src="/admin/static/admin/media-picker.js" defer></script>
+</body>
+</html>
+{{ end }}

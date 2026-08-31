@@ -5,9 +5,9 @@
 {{ $report := .Content.Report }}
 {{ if $report }}
 <section class="admin-section health-summary">
-  {{ if eq $report.Status "PASS" }}<span class="status-indicator status-indicator--success">● Good</span> <span class="muted">{{ $report.Summary.Passed }} checks passed</span>
-  {{ else if eq $report.Status "WARN" }}<span class="status-indicator status-indicator--warning">● Attention needed</span> <span class="muted">{{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Passed }} passed</span>
-  {{ else }}<span class="status-indicator status-indicator--danger">● Critical</span> <span class="muted">{{ $report.Summary.Failures }} failures · {{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Passed }} passed</span>{{ end }}
+  {{ if eq $report.Status "PASS" }}<span class="status-indicator status-indicator--success">Good</span> <span class="muted">{{ $report.Summary.Passed }} checks passed</span>
+  {{ else if eq $report.Status "WARN" }}<span class="status-indicator status-indicator--warning">Attention needed</span> <span class="muted">{{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Passed }} passed</span>
+  {{ else }}<span class="status-indicator status-indicator--danger">Critical</span> <span class="muted">{{ $report.Summary.Failures }} failures · {{ $report.Summary.Warnings }} warnings · {{ $report.Summary.Passed }} passed</span>{{ end }}
 </section>
 
 {{ if or (gt $report.Summary.Warnings 0) (gt $report.Summary.Failures 0) .Content.Issues .Content.HealthError }}
@@ -18,7 +18,7 @@
     {{ range .Checks }}
       {{ if ne .Status "PASS" }}
       <div class="health-check">
-        <span class="health-check__status">{{ if eq .Status "WARN" }}<span class="status-indicator status-indicator--warning">●</span>{{ else if eq .Status "FAIL" }}<span class="status-indicator status-indicator--danger">●</span>{{ else }}<span class="status-indicator status-indicator--success">●</span>{{ end }}</span>
+        <span class="health-check__status">{{ if eq .Status "WARN" }}<span class="status-indicator status-indicator--warning"></span>{{ else if eq .Status "FAIL" }}<span class="status-indicator status-indicator--danger"></span>{{ else }}<span class="status-indicator status-indicator--success"></span>{{ end }}</span>
         <div class="health-check__body">
           <strong>{{ .Title }}</strong>
           <div class="muted">{{ .Message }}</div>
@@ -40,7 +40,7 @@
   {{ end }}
   {{ if .Content.Issues }}
   <div class="health-check">
-    <span class="health-check__status"><span class="status-indicator status-indicator--warning">●</span></span>
+    <span class="health-check__status"><span class="status-indicator status-indicator--warning"></span></span>
     <div class="health-check__body"><strong>Content integrity</strong><div class="muted">{{ len .Content.Issues }} issue{{ if ne (len .Content.Issues) 1 }}s{{ end }} found — see details below.</div></div>
     <div class="health-check__action"><a class="button button-small" href="#health-integrity">View</a></div>
   </div>
@@ -56,7 +56,7 @@
     <h3>{{ .Title }} <span class="muted">· {{ $passCount }} passed</span></h3>
     {{ range .Checks }}{{ if eq .Status "PASS" }}
       <div class="health-check health-check--passed">
-        <span class="health-check__status"><span class="status-indicator status-indicator--success">●</span></span>
+        <span class="health-check__status"><span class="status-indicator status-indicator--success"></span></span>
         <div class="health-check__body"><strong>{{ .Title }}</strong><div class="muted">{{ .Message }}</div>
           {{ range .Details }}<div class="muted">{{ . }}</div>{{ end }}
           {{ if .Hint }}<div class="muted"><em>{{ .Hint }}</em></div>{{ end }}
@@ -73,7 +73,7 @@
   <p class="muted">Published entries, templates and site parts are scanned for missing references. Internal links with a redirect are considered valid.</p>
   {{ range .Content.Issues }}
   <div class="health-check">
-    <span class="health-check__status"><span class="status-indicator status-indicator--warning">●</span></span>
+    <span class="health-check__status"><span class="status-indicator status-indicator--warning"></span></span>
     <div class="health-check__body"><strong>{{ .SourceType }}: {{ .SourceLabel }}</strong><div class="muted">{{ .Message }}</div><code class="muted">{{ .Target }}</code></div>
     <div class="health-check__action"><a class="button button-small" href="{{ .EditURL }}">Edit</a></div>
   </div>

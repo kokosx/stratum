@@ -17,6 +17,9 @@ type creatorPageData struct {
 	SiteName         string
 	Tagline          string
 	Error            string
+	FieldErrors      map[string]string
+	InitialStep      int
+	HasValidationErr bool
 	Result           *creator.Result
 	Palettes         []creator.Palette
 	Headers          []creator.HeaderOption
@@ -82,12 +85,22 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 		ProductMedia:     "left",
 		TestimonialsCols: 2,
 		ServiceCols:      3,
+		InitialStep:      1,
+		FieldErrors:      map[string]string{},
 	}
 	if data.Timezone == "" {
 		data.Timezone = "UTC"
 	}
-	// No silent SiteURL mutation — canonical validation shared with Settings is in creator.Service.Preview.
+	// Capture submitted wizard step (1..5) for validation error preservation.
+	submittedStep := 1
+	if v := strings.TrimSpace(r.FormValue("wizard_step")); v != "" {
+		if iv, err := strconv.Atoi(v); err == nil && iv >= 1 && iv <= 5 {
+			submittedStep = iv
+		}
+	}
 	if r.Method == http.MethodPost {
+		// Preserve submitted step for re-render on validation error.
+		data.InitialStep = submittedStep
 		data.Selected = creator.PresetID(strings.TrimSpace(r.FormValue("preset")))
 		data.SelectedPalette = creator.PaletteID(strings.TrimSpace(r.FormValue("palette")))
 		data.SelectedHeader = creator.HeaderStyleID(strings.TrimSpace(r.FormValue("header_style")))
@@ -187,7 +200,26 @@ func (h *Handler) siteCreator(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("create starter site: %v", previewErr)
-		data.Error = previewErr.Error()
+		// Map error to field-level when possible (site_url authoritative validation)
+		data.FieldErrors = map[string]string{}
+		msgLower := strings.ToLower(previewErr.Error())
+		if strings.Contains(msgLower, "site url") {
+			data.FieldErrors["site_url"] = previewErr.Error()
+			// Show localized helper near field but keep global error empty for clean UX
+			// Keep Error empty when we have a field error to avoid duplicate global notice
+		} else {
+			data.Error = previewErr.Error()
+		}
+		data.HasValidationErr = true
+		// On validation error, honor the submitted step (usually 5 for final Create)
+		// submittedStep already stored in data.InitialStep; if it was 1 due to missing param, force 5 for Create path
+		if data.InitialStep < 1 || data.InitialStep > 5 {
+			data.InitialStep = 5
+		}
+		// If the error is site_url related, ensure we stay on step 5 where Site URL lives
+		if _, ok := data.FieldErrors["site_url"]; ok {
+			data.InitialStep = 5
+		}
 		if data.SelectedPalette == "" {
 			data.SelectedPalette = creator.DefaultPaletteForPreset(data.Selected)
 		}

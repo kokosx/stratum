@@ -4,12 +4,15 @@
 {{define "editor_shell"}}
 <div class="editor-workbench editor-workbench--shared">
   <div class="editor-workspace">
-    <aside class="editor-panel block-library" aria-label="Block library">
-      <h2>Library</h2>
-      <div class="library-tabs" role="tablist">
-        <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-tab="blocks">Blocks</button>
-        <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="patterns">Patterns</button>
-        <button class="library-tab" type="button" role="tab" aria-selected="false" data-tab="navigator">Navigator</button>
+    <aside class="editor-panel block-library" aria-label="Block library" data-library-tabs>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <h2>Library</h2>
+        <button class="panel-collapse-btn" type="button" data-collapse="library" title="Collapse library" aria-label="Collapse library">×</button>
+      </div>
+      <div class="library-tabs" role="tablist" data-library-tablist>
+        <button class="library-tab is-active" type="button" role="tab" aria-selected="true" data-library-tab="blocks">Blocks</button>
+        <button class="library-tab" type="button" role="tab" aria-selected="false" data-library-tab="patterns">Patterns</button>
+        <button class="library-tab" type="button" role="tab" aria-selected="false" data-library-tab="navigator">Navigator</button>
       </div>
       <input id="block-search" class="editor-search" type="search" placeholder="Search blocks" aria-label="Search blocks">
       <div id="block-catalog" data-library="blocks"></div>
@@ -21,10 +24,16 @@
     </aside>
     <section class="editor-panel editor-canvas-panel" aria-label="Canvas">
       <div class="editor-canvas-toolbar">
-        <div class="editor-canvas-viewport">
-          <button class="editor-device-btn is-active" type="button" data-width="100%" title="Desktop">🖥</button>
-          <button class="editor-device-btn" type="button" data-width="768px" title="Tablet">📱</button>
-          <button class="editor-device-btn" type="button" data-width="375px" title="Mobile">📱</button>
+        <div class="editor-canvas-viewport" role="group" aria-label="Viewport">
+          <button class="editor-device-btn is-active" type="button" data-width="100%" title="Desktop" aria-label="Desktop">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          </button>
+          <button class="editor-device-btn" type="button" data-width="768px" title="Tablet" aria-label="Tablet">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 17h.01"/></svg>
+          </button>
+          <button class="editor-device-btn" type="button" data-width="375px" title="Mobile" aria-label="Mobile">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+          </button>
         </div>
         <div class="editor-preview-context" id="archive-preview-context-wrap" style="margin-left:12px; display:none;">
           <label for="archive-preview-context" style="font-size:0.85rem; margin-right:6px;">Preview:</label>
@@ -33,14 +42,18 @@
           </select>
         </div>
         <div class="editor-canvas-actions">
+          <button class="button button-small" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library">◧</button>
+          <button class="button button-small" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector">◨</button>
           <button class="button button-small" type="button" id="canvas-undo" title="Undo (Ctrl+Z)">↶</button>
           <button class="button button-small" type="button" id="canvas-redo" title="Redo (Ctrl+Shift+Z)">↷</button>
         </div>
       </div>
-      <div class="editor-canvas-frame-wrap" id="editor-canvas-wrap">
-        <iframe id="editor-canvas" class="editor-canvas" sandbox="allow-same-origin" title="Visual canvas"></iframe>
-        <div id="editor-canvas-overlay" class="editor-canvas-overlay" aria-label="Canvas controls"></div>
-        <div id="editor-canvas-breadcrumbs" class="editor-canvas-breadcrumbs"></div>
+      <div class="editor-canvas-scroller editor-canvas-frame-wrap" id="editor-canvas-wrap">
+        <div class="editor-canvas-stage" id="editor-canvas-stage">
+          <iframe id="editor-canvas" class="editor-canvas" sandbox="allow-same-origin" title="Visual canvas"></iframe>
+          <div id="editor-canvas-overlay" class="editor-canvas-overlay" aria-label="Canvas controls"></div>
+          <div id="editor-canvas-breadcrumbs" class="editor-canvas-breadcrumbs"></div>
+        </div>
       </div>
       <div class="editor-legacy-fallback" id="editor-legacy-fallback" hidden>
         <div class="editor-panel-heading"><h2>Document</h2></div>
@@ -48,10 +61,13 @@
         <p id="empty-document" class="editor-empty">Choose a block from the library to begin.</p>
       </div>
     </section>
-    <aside class="editor-panel block-inspector" aria-label="Inspector">
-      <div class="inspector-tabs" role="tablist">
-        <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true" data-tab="block">Block</button>
-        <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-tab="document">Document</button>
+    <aside class="editor-panel block-inspector" aria-label="Inspector" data-inspector-tabs>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <div class="inspector-tabs" role="tablist" data-inspector-tablist style="flex:1;">
+          <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true" data-inspector-tab="block">Block</button>
+          <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-inspector-tab="document">Document</button>
+        </div>
+        <button class="panel-collapse-btn" type="button" data-collapse="inspector" title="Collapse inspector" aria-label="Collapse inspector">×</button>
       </div>
       <div id="inspector-block-panel">
         <div id="block-inspector"><p class="editor-empty">Select a block to edit it.</p></div>

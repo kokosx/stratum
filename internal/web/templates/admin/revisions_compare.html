@@ -26,7 +26,7 @@
     <ul style="list-style:none; padding:0; display:grid; gap:8px;">
       {{ range .Content.Revisions }}
       <li style="padding:8px; border:1px solid var(--ui-border);">
-        <div style="font-size:13px;"><strong>Revision {{ .Number }}</strong> {{ if .Status }}<span class="status-indicator status-indicator--{{ statusTone .Status }}">● {{ .Status }}</span>{{ end }}</div>
+        <div style="font-size:13px;"><strong>Revision {{ .Number }}</strong> {{ if .Status }}<span class="status-indicator status-indicator--{{ statusTone .Status }}">{{ .Status }}</span>{{ end }}</div>
         <div style="font-size:12px; color:var(--text-muted);">{{ .CreatedAt }} {{ if .Author }}· {{ .Author }}{{ end }}</div>
       </li>
       {{ end }}

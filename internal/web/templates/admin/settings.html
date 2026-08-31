@@ -3,74 +3,86 @@
   <form id="settings-form-general" class="settings-section" method="post" action="/admin/settings/general" data-on:submit__prevent="@post('/admin/settings/general', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>General</h2>
-        <div class="form-group">
-          <label class="form-label" for="site_title">Site title</label>
-          <input class="form-control" type="text" id="site_title" name="site_title" value="{{ .Content.Form.SiteTitle }}" maxlength="200" autocomplete="off">
-          <p class="form-help">The name of the site, used by the theme and SEO.</p>
-          {{ $e := index .Content.Errors "site_title" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="tagline">Tagline</label>
-          <input class="form-control" type="text" id="tagline" name="tagline" value="{{ .Content.Form.Tagline }}" maxlength="200" autocomplete="off">
-          <p class="form-help">An optional one-line description.</p>
-          {{ $e := index .Content.Errors "tagline" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="site_url">Site URL</label>
-          <input class="form-control" type="url" id="site_url" name="site_url" value="{{ .Content.Form.SiteURL }}" placeholder="https://example.com" autocomplete="off">
-          <p class="form-help">The public canonical base URL. Used for canonical links, the sitemap and robots.</p>
-          {{ if .Content.SiteURLWarning }}<div class="notice notice-warning" role="alert">Configure the Site URL so canonical links, the sitemap and robots.txt can use absolute URLs.</div>{{ end }}
-          {{ $e := index .Content.Errors "site_url" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="language">Language</label>
-          <select class="form-control" id="language" name="language">
-            {{ $curLang := .Content.Form.Language }}
-            {{ range .Content.LanguageOptions }}
-              <option value="{{ .Value }}" {{ if eq .Value $curLang }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>
-            {{ end }}
-            {{ if not .Content.LanguageIsInOptions }}<option value="{{ $curLang }}" selected>{{ $curLang }} — custom</option>{{ end }}
-          </select>
-          <p class="form-help">Sets <code>&lt;html lang&gt;</code>.</p>
-          {{ $e := index .Content.Errors "language" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="timezone">Timezone</label>
-          <select class="form-control" id="timezone" name="timezone">
-            {{ $curTZ := .Content.Form.Timezone }}
-            {{ range .Content.TimezoneOptions }}
-              <option value="{{ .Value }}" {{ if eq .Value $curTZ }}selected{{ end }}>{{ .Label }}</option>
-            {{ end }}
-            {{ if not .Content.TimezoneIsInOptions }}<option value="{{ $curTZ }}" selected>{{ $curTZ }} — custom</option>{{ end }}
-          </select>
-          <p class="form-help">IANA timezone, e.g. <code>Europe/Warsaw</code>.</p>
-          {{ $e := index .Content.Errors "timezone" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="site_represents">Site represents</label>
-          <select class="form-control" id="site_represents" name="site_represents">
-            <option value="organization" {{ if ne .Content.Form.SiteRepresents "person" }}selected{{ end }}>Organization</option>
-            <option value="person" {{ if eq .Content.Form.SiteRepresents "person" }}selected{{ end }}>Person</option>
-          </select>
-          <p class="form-help">Who the site stands for, used as the publisher in structured data (JSON-LD).</p>
-          {{ $e := index .Content.Errors "site_represents" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <span class="form-label">Site Icon (favicon)</span>
-          <input type="hidden" name="site_icon_media_id" id="site_icon_media_id" value="{{ .Content.Form.SiteIconMediaID }}">
-          <div class="settings-media">
-            <div class="settings-media__preview settings-media__preview--favicon" id="site-icon-preview">
-              {{ if .Content.SiteIconPreview }}<img src="{{ .Content.SiteIconPreview }}" alt="">{{ end }}
-            </div>
-            <div class="settings-media__actions">
-              <button type="button" class="button button-secondary" id="site-icon-choose">Choose image</button>
-              <button type="button" class="button button-secondary" id="site-icon-remove" {{ if not .Content.Form.SiteIconMediaID }}hidden{{ end }}>Remove</button>
-            </div>
+    <div class="admin-section" style="max-width:900px;display:grid;gap:20px">
+      <div class="admin-card">
+        <div class="card-header"><h2>Site identity</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <label class="form-label" for="site_title">Site title</label>
+            <input class="form-control" type="text" id="site_title" name="site_title" value="{{ .Content.Form.SiteTitle }}" maxlength="200" autocomplete="off">
+            <p class="form-help">The name of the site, used by the theme and SEO.</p>
+            {{ $e := index .Content.Errors "site_title" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
           </div>
-          <p class="form-help">Pick a square image of at least 512×512 px. The CMS generates every favicon size automatically.</p>
-          {{ if .Content.SiteIconWarning }}<div class="notice notice-warning">{{ .Content.SiteIconWarning }}</div>{{ end }}
-          {{ $e := index .Content.Errors "site_icon_media_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          <div class="form-group">
+            <label class="form-label" for="tagline">Tagline</label>
+            <input class="form-control" type="text" id="tagline" name="tagline" value="{{ .Content.Form.Tagline }}" maxlength="200" autocomplete="off">
+            <p class="form-help">An optional one-line description.</p>
+            {{ $e := index .Content.Errors "tagline" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="site_url">Site URL</label>
+            <input class="form-control {{ if index .Content.Errors "site_url" }}is-invalid{{ end }}" type="url" id="site_url" name="site_url" value="{{ .Content.Form.SiteURL }}" placeholder="https://example.com" autocomplete="off" aria-describedby="site-url-help">
+            <p class="form-help" id="site-url-help">The public canonical base URL. Used for canonical links, the sitemap and robots.</p>
+            {{ if .Content.SiteURLWarning }}<div class="notice notice-warning" role="alert">Configure the Site URL so canonical links, the sitemap and robots.txt can use absolute URLs.</div>{{ end }}
+            {{ $e := index .Content.Errors "site_url" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="site_represents">Site represents</label>
+            <select class="form-control" id="site_represents" name="site_represents">
+              <option value="organization" {{ if ne .Content.Form.SiteRepresents "person" }}selected{{ end }}>Organization</option>
+              <option value="person" {{ if eq .Content.Form.SiteRepresents "person" }}selected{{ end }}>Person</option>
+            </select>
+            <p class="form-help">Who the site stands for, used as the publisher in structured data (JSON-LD).</p>
+            {{ $e := index .Content.Errors "site_represents" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <span class="form-label">Site Icon (favicon)</span>
+            <input type="hidden" name="site_icon_media_id" id="site_icon_media_id" value="{{ .Content.Form.SiteIconMediaID }}">
+            <div class="settings-media">
+              <div class="settings-media__preview settings-media__preview--favicon" id="site-icon-preview">
+                {{ if .Content.SiteIconPreview }}<img src="{{ .Content.SiteIconPreview }}" alt="">{{ end }}
+              </div>
+              <div class="settings-media__actions">
+                <button type="button" class="button button-secondary" id="site-icon-choose">Choose image</button>
+                <button type="button" class="button button-secondary" id="site-icon-remove" {{ if not .Content.Form.SiteIconMediaID }}hidden{{ end }}>Remove</button>
+              </div>
+            </div>
+            <p class="form-help">Pick a square image of at least 512×512 px. The CMS generates every favicon size automatically.</p>
+            {{ if .Content.SiteIconWarning }}<div class="notice notice-warning">{{ .Content.SiteIconWarning }}</div>{{ end }}
+            {{ $e := index .Content.Errors "site_icon_media_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
         </div>
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>Locale</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <label class="form-label" for="language">Language</label>
+            <select class="form-control" id="language" name="language">
+              {{ $curLang := .Content.Form.Language }}
+              {{ range .Content.LanguageOptions }}
+                <option value="{{ .Value }}" {{ if eq .Value $curLang }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>
+              {{ end }}
+              {{ if not .Content.LanguageIsInOptions }}<option value="{{ $curLang }}" selected>{{ $curLang }} — custom</option>{{ end }}
+            </select>
+            <p class="form-help">Sets <code>&lt;html lang&gt;</code>.</p>
+            {{ $e := index .Content.Errors "language" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="timezone">Timezone</label>
+            <select class="form-control" id="timezone" name="timezone">
+              {{ $curTZ := .Content.Form.Timezone }}
+              {{ range .Content.TimezoneOptions }}
+                <option value="{{ .Value }}" {{ if eq .Value $curTZ }}selected{{ end }}>{{ .Label }}</option>
+              {{ end }}
+              {{ if not .Content.TimezoneIsInOptions }}<option value="{{ $curTZ }}" selected>{{ $curTZ }} — custom</option>{{ end }}
+            </select>
+            <p class="form-help">IANA timezone, e.g. <code>Europe/Warsaw</code>.</p>
+            {{ $e := index .Content.Errors "timezone" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="settings-savebar">
       <span id="settings-save-state" class="editor-status {{ if .Content.Errored }}is-dirty{{ else }}is-saved{{ end }}">{{ if .Content.Errored }}Unsaved{{ else }}Saved{{ end }}</span>
       <button type="submit" class="button button-primary" {{ if not .Content.Errored }}disabled{{ end }}>Save changes</button>
@@ -80,50 +92,56 @@
   <form id="settings-form-reading" class="settings-section" method="post" action="/admin/settings/reading" data-on:submit__prevent="@post('/admin/settings/reading', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>Reading</h2>
-        <div class="form-group">
-          <span class="form-label">Homepage displays</span>
-          <label class="check-row">
-            <input type="radio" name="homepage_mode_choice" value="latest" {{ if eq .Content.Form.HomepageEntryID "" }}checked{{ end }} id="homepage-mode-latest">
-            Latest posts
-          </label>
-          <label class="check-row">
-            <input type="radio" name="homepage_mode_choice" value="page" {{ if ne .Content.Form.HomepageEntryID "" }}checked{{ end }} id="homepage-mode-page">
-            A static page
-          </label>
+    <div class="admin-section" style="max-width:900px;display:grid;gap:20px">
+      <div class="admin-card">
+        <div class="card-header"><h2>Homepage</h2><p class="form-help">Choose what visitors see at <code>/</code>.</p></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <span class="form-label">Homepage displays</span>
+            <label class="admin-choice-row" for="homepage-mode-latest"><input class="admin-choice-row__control" type="radio" name="homepage_mode_choice" value="latest" {{ if eq .Content.Form.HomepageEntryID "" }}checked{{ end }} id="homepage-mode-latest"><span class="admin-choice-row__content"><span class="admin-choice-row__title">Latest posts</span><span class="admin-choice-row__description">Show the posts archive at the homepage.</span></span></label>
+            <label class="admin-choice-row" for="homepage-mode-page"><input class="admin-choice-row__control" type="radio" name="homepage_mode_choice" value="page" {{ if ne .Content.Form.HomepageEntryID "" }}checked{{ end }} id="homepage-mode-page"><span class="admin-choice-row__content"><span class="admin-choice-row__title">A static page</span><span class="admin-choice-row__description">Select a Page to show at <code>/</code>.</span></span></label>
+          </div>
+          <div class="form-group" {{ if eq .Content.Form.HomepageEntryID "" }}hidden{{ end }} id="homepage-page-field">
+            <label class="form-label" for="homepage_entry_id">Homepage</label>
+            <select class="form-control" id="homepage_entry_id" name="homepage_entry_id">
+              <option value="">— Select —</option>
+              {{ range .Content.Pages }}
+              <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.HomepageEntryID }}selected{{ end }} {{ if .Disabled }}disabled{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}{{ if .Disabled }} — draft{{ end }}</option>
+              {{ end }}
+            </select>
+            <p class="form-help">Published page shown at <code>/</code>.</p>
+            {{ $e := index .Content.Errors "homepage_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
         </div>
-        <div class="form-group" {{ if eq .Content.Form.HomepageEntryID "" }}hidden{{ end }} id="homepage-page-field">
-          <label class="form-label" for="homepage_entry_id">Homepage</label>
-          <select class="form-control" id="homepage_entry_id" name="homepage_entry_id">
-            <option value="">— Select —</option>
-            {{ range .Content.Pages }}
-            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.HomepageEntryID }}selected{{ end }} {{ if .Disabled }}disabled{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}{{ if .Disabled }} — draft{{ end }}</option>
-            {{ end }}
-          </select>
-          <p class="form-help">Published page shown at <code>/</code>.</p>
-          {{ $e := index .Content.Errors "homepage_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>Posts</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <label class="form-label" for="posts_page_entry_id">Posts page</label>
+            <select class="form-control" id="posts_page_entry_id" name="posts_page_entry_id">
+              <option value="">— None —</option>
+              {{ range .Content.Pages }}
+              <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.PostsPageEntryID }}selected{{ end }} {{ if .Disabled }}disabled{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}{{ if .Disabled }} — draft{{ end }}</option>
+              {{ end }}
+            </select>
+            <p class="form-help">The selected Page becomes the editable layout for your Posts archive. Add a Posts block to choose where the listing appears.</p>
+            {{ $e := index .Content.Errors "posts_page_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="posts_base_path">Posts URL base</label>
+            <input class="form-control" type="text" id="posts_base_path" name="posts_base_path" value="{{ .Content.Form.PostsBasePath }}" placeholder="/blog" maxlength="64">
+            <p class="form-help">Archive and Post prefix. Must start with /, no trailing slash.</p>
+            {{ $e := index .Content.Errors "posts_base_path" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="posts_per_page">Posts per page</label>
+            <input class="form-control" type="number" id="posts_per_page" name="posts_per_page" value="{{ .Content.Form.PostsPerPage }}" min="1" max="100" step="1">
+            {{ $e := index .Content.Errors "posts_per_page" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="posts_page_entry_id">Posts page</label>
-          <select class="form-control" id="posts_page_entry_id" name="posts_page_entry_id">
-            <option value="">— None —</option>
-            {{ range .Content.Pages }}
-            <option value="{{ .ID }}" {{ if eq .ID $.Content.Form.PostsPageEntryID }}selected{{ end }} {{ if .Disabled }}disabled{{ end }}>{{ .Title }}{{ if .Path }} ({{ .Path }}){{ end }}{{ if .Disabled }} — draft{{ end }}</option>
-            {{ end }}
-          </select>
-          <p class="form-help">The selected Page becomes the editable layout for your Posts archive. Add a Posts block to choose where the listing appears.</p>
-          {{ $e := index .Content.Errors "posts_page_entry_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="posts_base_path">Posts URL base</label>
-          <input class="form-control" type="text" id="posts_base_path" name="posts_base_path" value="{{ .Content.Form.PostsBasePath }}" placeholder="/blog" maxlength="64">
-          <p class="form-help">Archive and Post prefix. Must start with /, no trailing slash.</p>
-          {{ $e := index .Content.Errors "posts_base_path" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="posts_per_page">Posts per page</label>
-          <input class="form-control" type="number" id="posts_per_page" name="posts_per_page" value="{{ .Content.Form.PostsPerPage }}" min="1" max="100" step="1">
-          {{ $e := index .Content.Errors "posts_per_page" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
+      </div>
+    </div>
     <div class="settings-savebar">
       <span class="editor-status {{ if .Content.Errored }}is-dirty{{ else }}is-saved{{ end }}">{{ if .Content.Errored }}Unsaved{{ else }}Saved{{ end }}</span>
       <button type="submit" class="button button-primary" {{ if not .Content.Errored }}disabled{{ end }}>Save changes</button>
@@ -133,70 +151,65 @@
   <form id="settings-form-seo" class="settings-section" method="post" action="/admin/settings/seo" data-on:submit__prevent="@post('/admin/settings/seo', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>SEO &amp; Crawling</h2>
-        <div class="form-group">
-          <label class="check-row">
-            <input type="checkbox" name="indexing_enabled" value="on" {{ if .Content.Form.IndexingEnabled }}checked{{ end }}>
-            Allow search engines to index this site
-          </label>
-          <div class="notice notice-info">This does not make the site private. It only asks search engines not to index it.</div>
+    <div class="admin-section" style="max-width:900px;display:grid;gap:20px">
+      <div class="admin-card">
+        <div class="card-header"><h2>Search visibility</h2></div>
+        <div class="card-body" style="display:grid;gap:12px">
+          <label class="admin-choice-row"><input class="admin-choice-row__control" type="checkbox" name="indexing_enabled" value="on" {{ if .Content.Form.IndexingEnabled }}checked{{ end }}><span class="admin-choice-row__content"><span class="admin-choice-row__title">Allow search engines to index this site</span><span class="admin-choice-row__description">This does not make the site private. It only asks search engines not to index it.</span></span></label>
+          <label class="admin-choice-row"><input class="admin-choice-row__control" type="checkbox" name="sitemap_enabled" value="on" {{ if .Content.Form.SitemapEnabled }}checked{{ end }}><span class="admin-choice-row__content"><span class="admin-choice-row__title">Enable XML Sitemap</span><span class="admin-choice-row__description">{{ if .Content.SitemapPublicURL }}Public URL: <a class="view-link" href="{{ .Content.SitemapPublicURL }}" target="_blank" rel="noopener">{{ .Content.SitemapPublicURL }}</a>{{ else }}Configure the Site URL to generate canonical sitemap URLs.{{ end }}</span></span></label>
         </div>
-        <div class="form-group">
-          <label class="check-row">
-            <input type="checkbox" name="sitemap_enabled" value="on" {{ if .Content.Form.SitemapEnabled }}checked{{ end }}>
-            Enable XML Sitemap
-          </label>
-          {{ if .Content.SitemapPublicURL }}
-          <p class="form-help">Public URL: <a class="view-link" href="{{ .Content.SitemapPublicURL }}" target="_blank" rel="noopener">{{ .Content.SitemapPublicURL }}</a></p>
-          {{ else }}
-          <div class="notice notice-warning">Configure the Site URL to generate canonical sitemap URLs.</div>
-          {{ end }}
-        </div>
-        <div class="form-group">
-          <span class="form-label">Robots.txt mode</span>
-          <label class="check-row">
-            <input type="radio" name="robots_mode" value="managed" {{ if eq .Content.Form.RobotsMode "managed" }}checked{{ end }}>
-            Managed
-          </label>
-          <label class="check-row">
-            <input type="radio" name="robots_mode" value="custom" {{ if eq .Content.Form.RobotsMode "custom" }}checked{{ end }}>
-            Custom
-          </label>
-        </div>
-        <div class="form-group robots-custom-field" {{ if ne .Content.Form.RobotsMode "custom" }}hidden{{ end }}>
-          <label class="form-label" for="robots_custom">Custom robots.txt</label>
-          <textarea class="form-control" id="robots_custom" name="robots_custom" rows="6">{{ .Content.Form.RobotsCustom }}</textarea>
-          <p class="form-help">Plain text served verbatim. Max 32 KB. Changes apply only after saving.</p>
-          <button type="button" class="button button-secondary" data-on:click__prevent="@post('/admin/settings/seo/robots-preview', {contentType:'form'})">Preview robots.txt</button>
-          <pre id="robots-preview" class="robots-preview"></pre>
-          {{ $e := index .Content.Errors "robots_custom" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="title_separator">Default title separator</label>
-          <input class="form-control" type="text" id="title_separator" name="title_separator" value="{{ .Content.Form.TitleSeparator }}" maxlength="8" autocomplete="off">
-          <p class="form-help">Used by the theme to build titles like <code>Page Title – Site Name</code>.</p>
-        </div>
-        <div class="form-group">
-          <span class="form-label">Default social image</span>
-          <input type="hidden" name="site_social_media_id" id="site_social_media_id" value="{{ .Content.Form.SiteSocialMediaID }}">
-          <div class="settings-media">
-            <div class="settings-media__preview" id="site-social-preview">
-              {{ if .Content.SiteSocialPreview }}<img src="{{ .Content.SiteSocialPreview }}" alt="">{{ end }}
-            </div>
-            <div class="settings-media__actions">
-              <button type="button" class="button button-secondary" id="site-social-choose">Choose image</button>
-              <button type="button" class="button button-secondary" id="site-social-remove" {{ if not .Content.Form.SiteSocialMediaID }}hidden{{ end }}>Remove</button>
-            </div>
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>Robots.txt</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <span class="form-label">Robots.txt mode</span>
+            <label class="admin-choice-row"><input class="admin-choice-row__control" type="radio" name="robots_mode" value="managed" {{ if eq .Content.Form.RobotsMode "managed" }}checked{{ end }}><span class="admin-choice-row__content"><span class="admin-choice-row__title">Managed</span><span class="admin-choice-row__description">Automatically generated based on indexing and sitemap settings.</span></span></label>
+            <label class="admin-choice-row"><input class="admin-choice-row__control" type="radio" name="robots_mode" value="custom" {{ if eq .Content.Form.RobotsMode "custom" }}checked{{ end }}><span class="admin-choice-row__content"><span class="admin-choice-row__title">Custom</span><span class="admin-choice-row__description">Serve your own robots.txt verbatim.</span></span></label>
           </div>
-          <p class="form-help">Fallback used when an entry has no Social Image or Featured Image. The CMS crops it to 1200×630.</p>
-          {{ if .Content.SiteSocialWarning }}<div class="notice notice-warning">{{ .Content.SiteSocialWarning }}</div>{{ end }}
-          {{ $e := index .Content.Errors "site_social_media_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          <div class="form-group robots-custom-field" {{ if ne .Content.Form.RobotsMode "custom" }}hidden{{ end }}>
+            <label class="form-label" for="robots_custom">Custom robots.txt</label>
+            <textarea class="form-control" id="robots_custom" name="robots_custom" rows="6">{{ .Content.Form.RobotsCustom }}</textarea>
+            <p class="form-help">Plain text served verbatim. Max 32 KB. Changes apply only after saving.</p>
+            <button type="button" class="button button-secondary" data-on:click__prevent="@post('/admin/settings/seo/robots-preview', {contentType:'form'})">Preview robots.txt</button>
+            <pre id="robots-preview" class="robots-preview"></pre>
+            {{ $e := index .Content.Errors "robots_custom" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="twitter_site">X (Twitter) handle</label>
-          <input class="form-control" type="text" id="twitter_site" name="twitter_site" value="{{ .Content.Form.TwitterSite }}" placeholder="@handle" autocomplete="off">
-          <p class="form-help">Optional. Used for <code>twitter:site</code>. Leave empty to omit.</p>
-          {{ $e := index .Content.Errors "twitter_site" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>Search metadata defaults</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <label class="form-label" for="title_separator">Default title separator</label>
+            <input class="form-control" type="text" id="title_separator" name="title_separator" value="{{ .Content.Form.TitleSeparator }}" maxlength="8" autocomplete="off">
+            <p class="form-help">Used by the theme to build titles like <code>Page Title – Site Name</code>.</p>
+          </div>
+          <div class="form-group">
+            <span class="form-label">Default social image</span>
+            <input type="hidden" name="site_social_media_id" id="site_social_media_id" value="{{ .Content.Form.SiteSocialMediaID }}">
+            <div class="settings-media">
+              <div class="settings-media__preview" id="site-social-preview">
+                {{ if .Content.SiteSocialPreview }}<img src="{{ .Content.SiteSocialPreview }}" alt="">{{ end }}
+              </div>
+              <div class="settings-media__actions">
+                <button type="button" class="button button-secondary" id="site-social-choose">Choose image</button>
+                <button type="button" class="button button-secondary" id="site-social-remove" {{ if not .Content.Form.SiteSocialMediaID }}hidden{{ end }}>Remove</button>
+              </div>
+            </div>
+            <p class="form-help">Fallback used when an entry has no Social Image or Featured Image. The CMS crops it to 1200×630.</p>
+            {{ if .Content.SiteSocialWarning }}<div class="notice notice-warning">{{ .Content.SiteSocialWarning }}</div>{{ end }}
+            {{ $e := index .Content.Errors "site_social_media_id" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="twitter_site">X (Twitter) handle</label>
+            <input class="form-control" type="text" id="twitter_site" name="twitter_site" value="{{ .Content.Form.TwitterSite }}" placeholder="@handle" autocomplete="off">
+            <p class="form-help">Optional. Used for <code>twitter:site</code>. Leave empty to omit.</p>
+            {{ $e := index .Content.Errors "twitter_site" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
         </div>
+      </div>
+    </div>
     <div class="settings-savebar">
       <span class="editor-status {{ if .Content.Errored }}is-dirty{{ else }}is-saved{{ end }}">{{ if .Content.Errored }}Unsaved{{ else }}Saved{{ end }}</span>
       <button type="submit" class="button button-primary" {{ if not .Content.Errored }}disabled{{ end }}>Save changes</button>
@@ -206,30 +219,31 @@
   <form id="settings-form-performance" class="settings-section" method="post" action="/admin/settings/performance" data-on:submit__prevent="@post('/admin/settings/performance', {contentType:'form'})">
     <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
     <h2>Performance</h2>
-        <div class="form-group">
-          <label class="check-row">
-            <input type="checkbox" name="speculation_enabled" value="on" {{ if .Content.Form.SpeculationEnabled }}checked{{ end }}>
-            Enable Speculation Rules (Navigation Preloading)
-          </label>
-          <p class="form-help">Lets supporting browsers preload likely next pages, making navigation feel faster.</p>
+    <div class="admin-section" style="max-width:900px;display:grid;gap:20px">
+      <div class="admin-card">
+        <div class="card-header"><h2>Performance</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <label class="admin-choice-row"><input class="admin-choice-row__control" type="checkbox" name="speculation_enabled" value="on" {{ if .Content.Form.SpeculationEnabled }}checked{{ end }} id="speculation-enabled"><span class="admin-choice-row__content"><span class="admin-choice-row__title">Enable Speculation Rules</span><span class="admin-choice-row__description">Lets supporting browsers preload likely next pages, making navigation feel faster.</span></span></label>
+          <div class="form-group speculation-dependent" {{ if not .Content.Form.SpeculationEnabled }}hidden{{ end }} id="speculation-strategy-group">
+            <label class="form-label" for="speculation_mode">Strategy</label>
+            <select class="form-control" id="speculation_mode" name="speculation_mode" {{ if not .Content.Form.SpeculationEnabled }}disabled{{ end }}>
+              <option value="prefetch" {{ if eq .Content.Form.SpeculationMode "prefetch" }}selected{{ end }}>Prefetch</option>
+              <option value="prerender" {{ if eq .Content.Form.SpeculationMode "prerender" }}selected{{ end }}>Prerender</option>
+            </select>
+            {{ $e := index .Content.Errors "speculation_mode" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
+          <div class="form-group speculation-dependent" {{ if not .Content.Form.SpeculationEnabled }}hidden{{ end }} id="speculation-eagerness-group">
+            <label class="form-label" for="speculation_eagerness">Eagerness</label>
+            <select class="form-control" id="speculation_eagerness" name="speculation_eagerness" {{ if not .Content.Form.SpeculationEnabled }}disabled{{ end }}>
+              <option value="conservative" {{ if eq .Content.Form.SpeculationEagerness "conservative" }}selected{{ end }}>Conservative</option>
+              <option value="moderate" {{ if eq .Content.Form.SpeculationEagerness "moderate" }}selected{{ end }}>Moderate</option>
+              <option value="eager" {{ if eq .Content.Form.SpeculationEagerness "eager" }}selected{{ end }}>Eager</option>
+            </select>
+            {{ $e := index .Content.Errors "speculation_eagerness" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="speculation_mode">Strategy</label>
-          <select class="form-control" id="speculation_mode" name="speculation_mode">
-            <option value="prefetch" {{ if eq .Content.Form.SpeculationMode "prefetch" }}selected{{ end }}>Prefetch</option>
-            <option value="prerender" {{ if eq .Content.Form.SpeculationMode "prerender" }}selected{{ end }}>Prerender</option>
-          </select>
-          {{ $e := index .Content.Errors "speculation_mode" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="speculation_eagerness">Eagerness</label>
-          <select class="form-control" id="speculation_eagerness" name="speculation_eagerness">
-            <option value="conservative" {{ if eq .Content.Form.SpeculationEagerness "conservative" }}selected{{ end }}>Conservative</option>
-            <option value="moderate" {{ if eq .Content.Form.SpeculationEagerness "moderate" }}selected{{ end }}>Moderate</option>
-            <option value="eager" {{ if eq .Content.Form.SpeculationEagerness "eager" }}selected{{ end }}>Eager</option>
-          </select>
-          {{ $e := index .Content.Errors "speculation_eagerness" }}{{ if $e }}<p class="form-error" role="alert">{{ $e }}</p>{{ end }}
-        </div>
+      </div>
+    </div>
     <div class="settings-savebar">
       <span class="editor-status {{ if .Content.Errored }}is-dirty{{ else }}is-saved{{ end }}">{{ if .Content.Errored }}Unsaved{{ else }}Saved{{ end }}</span>
       <button type="submit" class="button button-primary" {{ if not .Content.Errored }}disabled{{ end }}>Save changes</button>
@@ -240,7 +254,7 @@
 
 {{ define "content" }}
 <section class="settings-shell">
-  <header class="admin-page-header"><div><h1>Settings</h1></div></header>
+  <header class="admin-page-header"><div><h1>Settings</h1><p>Manage how your site behaves.</p></div></header>
 
   <nav class="settings-nav" aria-label="Settings sections">
     <a href="/admin/settings/general" class="settings-nav__link {{ if eq .Content.Section "general" }}is-active{{ end }}" {{ if eq .Content.Section "general" }}aria-current="page"{{ end }}>General</a>
@@ -300,8 +314,33 @@
   const hpPage = document.getElementById('homepage-mode-page');
   const hpField = document.getElementById('homepage-page-field');
   if (hpLatest && hpPage && hpField) {
-    function sync(){ hpField.hidden = hpLatest.checked; }
+    function sync(){ hpField.hidden = hpLatest.checked; if(form) form.dispatchEvent(new Event('change', {bubbles:true})); }
     hpLatest.addEventListener('change', sync); hpPage.addEventListener('change', sync);
+  }
+  // Robots mode
+  const robotsRadios = document.querySelectorAll('input[name="robots_mode"]');
+  const robotsField = document.querySelector('.robots-custom-field');
+  if(robotsRadios.length && robotsField){
+    function syncRobots(){
+      const custom = document.querySelector('input[name="robots_mode"][value="custom"]')?.checked;
+      robotsField.hidden = !custom;
+      if(form) form.dispatchEvent(new Event('change', {bubbles:true}));
+    }
+    robotsRadios.forEach(r=> r.addEventListener('change', syncRobots));
+  }
+  // Speculation toggle
+  const specToggle = document.getElementById('speculation-enabled');
+  const specGroups = document.querySelectorAll('.speculation-dependent');
+  if(specToggle){
+    function syncSpec(){
+      const on = specToggle.checked;
+      specGroups.forEach(el=>{
+        el.hidden = !on;
+        el.querySelectorAll('select,input').forEach(i=>{ i.disabled = !on; });
+      });
+      if(form) form.dispatchEvent(new Event('change', {bubbles:true}));
+    }
+    specToggle.addEventListener('change', syncSpec);
   }
 })();
 </script>

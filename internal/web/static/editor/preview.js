@@ -103,14 +103,35 @@ export async function updatePreview() {
     }
     const canvas = document.getElementById("editor-canvas");
     if (canvas) {
+      const scroller = document.getElementById("editor-canvas-wrap") || document.getElementById("editor-canvas-scroller");
+      const savedTop = scroller ? scroller.scrollTop : 0;
+      const savedLeft = scroller ? scroller.scrollLeft : 0;
       canvas.dataset.previewLoaded = "0";
       canvas.onload = () => {
         canvas.dataset.previewLoaded = "1";
         try {
-          if (canvas.contentDocument && canvas.contentDocument.body) {}
+          if (canvas.contentDocument && canvas.contentDocument.body) {
+            try { canvas.contentDocument.documentElement.style.overflow = "hidden"; } catch(_) {}
+            try { canvas.contentDocument.body.style.overflow = "hidden"; } catch(_) {}
+          }
         } catch (_) {}
         if (window.__stratum_canvasController) {
-          setTimeout(() => window.__stratum_canvasController.refresh(), 50);
+          setTimeout(() => {
+            window.__stratum_canvasController.refresh();
+            if (scroller) {
+              const pendingAtLoad = state.__pendingScrollToId || null;
+              if (pendingAtLoad) {
+                window.__stratum_canvasController.scrollToNode(pendingAtLoad, "auto");
+                delete state.__pendingScrollToId;
+              } else {
+                scroller.scrollTop = savedTop;
+                scroller.scrollLeft = savedLeft;
+              }
+              window.__stratum_canvasController.updateOverlayPositions();
+            } else if (window.__stratum_canvasController.refresh) {
+              window.__stratum_canvasController.refresh();
+            }
+          }, 50);
         }
         if (state.selectedNodeId && window.__stratum_canvasController) {
           const inst = state.selectedInstanceKey;
@@ -122,6 +143,7 @@ export async function updatePreview() {
         if (canvas.contentDocument && canvas.contentDocument.body && canvas.dataset.previewLoaded === "0") {
           canvas.dataset.previewLoaded = "1";
           if (window.__stratum_canvasController) window.__stratum_canvasController.refresh();
+          if (scroller) { scroller.scrollTop = savedTop; scroller.scrollLeft = savedLeft; }
         }
       }, 300);
     }

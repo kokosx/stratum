@@ -2,31 +2,46 @@
 <header class="admin-page-header"><div><h1>Import content</h1><p>Import posts, pages, categories, tags, comments and media from a WordPress WXR export file.</p></div></header>
 {{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
 
-<div class="admin-section">
-  <h2>WordPress</h2>
-  <p class="form-help">Import posts, pages, categories, tags, comments and media from a WordPress WXR export file.</p>
-  <form method="post" action="/admin/tools/import/wordpress/analyze" enctype="multipart/form-data">
-    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-    <div class="form-group">
-      <label class="form-label">WordPress export (.xml)</label>
-      <input class="form-control" type="file" name="wxr_file" accept=".xml" required>
-      <p class="form-help">Max 256 MB. The file is streamed to a temporary location and removed after import.</p>
-    </div>
-    <div class="form-group">
-      <label><input type="checkbox" name="download_media" value="true" checked> Download media</label>
-      <p class="form-help">Checked by default. Uncheck to skip downloading attachments.</p>
-    </div>
-    <div class="form-group">
-      <label class="form-label">Fallback author (optional)</label>
-      <select class="form-control" name="fallback_author">
-        <option value="">— No fallback —</option>
-        {{ range .Content.Users }}<option value="{{ .Email }}">{{ .Email }}</option>{{ end }}
-      </select>
-      <p class="form-help">Used when the WordPress author does not exist in Stratum.</p>
-    </div>
-    <button class="button button-primary" type="submit">Start WordPress import</button>
-  </form>
+<div class="admin-card" style="max-width:900px">
+  <div class="card-header"><h2>WordPress</h2><p class="form-help">Import a WordPress WXR export.</p></div>
+  <div class="card-body" style="display:grid;gap:20px">
+    <form method="post" action="/admin/tools/import/wordpress/analyze" enctype="multipart/form-data" style="display:grid;gap:20px">
+      <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+      <div class="form-group">
+        <label class="form-label" for="wxr_file">Export file</label>
+        <label class="file-picker" for="wxr_file" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:32px 16px;border:2px dashed var(--ui-border);border-radius:var(--ui-radius-md);background:var(--ui-surface-subtle);cursor:pointer;text-align:center;transition:border-color 140ms">
+          <span style="font-weight:600;color:var(--ui-text)">Drop XML here or Choose file</span>
+          <span class="button button-secondary button-small">Choose file</span>
+          <input id="wxr_file" class="form-control" type="file" name="wxr_file" accept=".xml" required hidden>
+        </label>
+        <p class="form-help">Max 256 MB</p>
+      </div>
+      <label class="admin-choice-row"><input class="admin-choice-row__control" type="checkbox" name="download_media" value="true" checked><span class="admin-choice-row__content"><span class="admin-choice-row__title">Download media</span><span class="admin-choice-row__description">Import attachment files as well.</span></span></label>
+      <div class="form-group">
+        <label class="form-label" for="fallback_author">Fallback author</label>
+        <select class="form-control" id="fallback_author" name="fallback_author">
+          <option value="">— No fallback —</option>
+          {{ range .Content.Users }}<option value="{{ .Email }}">{{ .Email }}</option>{{ end }}
+        </select>
+        <p class="form-help">Used when the WordPress author does not exist in Stratum.</p>
+      </div>
+      <div class="admin-page-actions" style="justify-content:flex-end">
+        <button class="button button-primary" type="submit">Start import</button>
+      </div>
+    </form>
+  </div>
 </div>
+<script>
+(function(){
+  var picker=document.getElementById('wxr_file');
+  var label=document.querySelector('.file-picker');
+  if(!picker||!label) return;
+  label.addEventListener('dragover', function(e){ e.preventDefault(); label.style.borderColor='var(--ui-primary)'; label.style.background='var(--ui-primary-subtle)'; });
+  label.addEventListener('dragleave', function(){ label.style.borderColor=''; label.style.background=''; });
+  label.addEventListener('drop', function(e){ e.preventDefault(); label.style.borderColor=''; label.style.background=''; if(e.dataTransfer.files.length){ picker.files=e.dataTransfer.files; picker.dispatchEvent(new Event('change', {bubbles:true})); var txt=label.querySelector('span'); if(txt) txt.textContent=e.dataTransfer.files[0].name; } });
+  picker.addEventListener('change', function(){ var txt=label.querySelector('span'); if(picker.files[0] && txt) txt.textContent=picker.files[0].name; });
+})();
+</script>
 
 <div id="admin-toast-region"></div>
 {{ end }}

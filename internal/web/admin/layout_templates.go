@@ -265,7 +265,7 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 	} else if tmpl.Kind == "single" {
 		catalogMode = "single-template"
 	}
-	previewURL := "/admin/appearance/templates/" + tmpl.ID + "/preview" 
+	previewURL := "/admin/appearance/templates/" + tmpl.ID + "/preview"
 	resource := EditorResource{Type: "layout-template", ID: tmpl.ID, Kind: tmpl.Kind, Label: tmpl.Name, ContentTypeID: tmpl.ContentTypeID}
 	actions := EditorActions{PreviewURL: previewURL, SaveURL: "/admin/appearance/templates/" + tmpl.ID, PublishURL: "/admin/appearance/templates/" + tmpl.ID + "/publish", BackURL: "/admin/appearance/templates"}
 	bs, berr := buildEditorBootstrap(r.Context(), h, resource, doc, catalogMode, previewURL, actions)
@@ -320,7 +320,7 @@ func (h *Handler) renderLayoutTemplateEditor(w http.ResponseWriter, r *http.Requ
 		CanSetDefault:        canSetDefault,
 		CanSetArchiveDefault: canSetArchiveDefault,
 	}
-	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit template - " + tmpl.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
+	if err := h.layoutTemplateEditorTemplate.ExecuteTemplate(w, "editor_layout.html", LayoutData{Title: "Edit template - " + tmpl.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render layout editor: %v", err)
 	}
 }

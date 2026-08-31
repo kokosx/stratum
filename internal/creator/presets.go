@@ -226,12 +226,7 @@ func DefaultFooterForPreset(p PresetID) FooterStyleID {
 }
 
 func DefaultRepresentsForPreset(p PresetID) string {
-	switch p {
-	case PresetBlog:
-		return "person"
-	default:
-		return "organization"
-	}
+	return "organization"
 }
 
 func DefaultLanguageForPreset(p PresetID) string {

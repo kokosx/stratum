@@ -1,9 +1,9 @@
 package admin
 
 import (
-	"fmt"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -457,7 +457,6 @@ func validateDocumentNodeIDsSafe(doc *document.Document) error {
 	}
 	return nil
 }
-
 
 func trimSlashes(s string) string {
 	for len(s) > 0 && (s[0] == '/' || s[len(s)-1] == '/') {

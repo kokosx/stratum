@@ -83,7 +83,7 @@
             {{ end }}
           </div>
         </td>
-        <td><span class="status-indicator status-indicator--{{ statusTone .Status }}">● {{ .Status }}</span></td>
+        <td><span class="status-indicator status-indicator--{{ statusTone .Status }}">{{ .Status }}</span></td>
         <td>{{ .Slug }}</td>
         <td>{{ .UpdatedAt }}</td>
       </tr>

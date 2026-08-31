@@ -56,7 +56,7 @@ func AdminNav() []AdminNavItem {
 			{ID: "settings-seo", Label: "SEO & Crawling", Href: "/admin/settings/seo"},
 			{ID: "settings-performance", Label: "Performance", Href: "/admin/settings/performance"},
 		}},
-		{ID: "tools", Label: "Tools", Href: "/admin/tools/site-health", Icon: "settings", Children: []AdminNavItem{
+		{ID: "tools", Label: "Tools", Href: "/admin/tools/site-health", Icon: "tools", Children: []AdminNavItem{
 			{ID: "tools-site-health", Label: "Site Health", Href: "/admin/tools/site-health"},
 			{ID: "tools-import", Label: "Import", Href: "/admin/tools/import"},
 			{ID: "tools-backups", Label: "Backups", Href: "/admin/tools/backups"},

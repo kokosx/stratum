@@ -1,6 +1,8 @@
 // canvas.js — CanvasController for visual editor (marker parsing, Range, geometry, selection)
 import { state, bootstrap } from "./state.js";
 import { isInlineEditable, startInlineEdit } from "./inline-edit.js";
+import { openContextMenu } from "./context-menu.js";
+import { hasLegalInsertion } from "./mutations.js";
 
 export class CanvasController {
   constructor(iframe, overlay) {
@@ -8,6 +10,9 @@ export class CanvasController {
     this.overlay = overlay || document.getElementById("editor-canvas-overlay");
     this.breadcrumbs = document.getElementById("editor-canvas-breadcrumbs");
     this.wrap = document.getElementById("editor-canvas-wrap");
+    // scroller is wrap (now .editor-canvas-scroller) ; stage is inner
+    this.scroller = this.wrap;
+    this.stage = document.getElementById("editor-canvas-stage") || this.wrap;
     this.hoverKey = null;
     this.selectedKey = null;
     this.index = new Map(); // instanceKey -> {nodeId, editable, range, rects, ownerType, ownerId}
@@ -25,6 +30,8 @@ export class CanvasController {
         this.updateOverlayPositions();
       });
     };
+    this._autoScrollRAF = null;
+    this._autoScrollDir = 0;
     this.init();
   }
 
@@ -34,6 +41,7 @@ export class CanvasController {
       setTimeout(() => this.refresh(), 30);
     });
     window.addEventListener("resize", this._onResize);
+    if (this.scroller) this.scroller.addEventListener("scroll", this._onScroll, { passive: true });
     // delegate hover/selection via overlay
     if (this.overlay) {
       this.overlay.addEventListener("mousemove", (e) => this.onOverlayMouseMove(e));
@@ -49,6 +57,11 @@ export class CanvasController {
     const doc = this.iframe.contentDocument;
     if (!doc.body) return;
     try {
+      // prevent double scroll: iframe content should not scroll internally, outer scroller does
+      try {
+        if (doc.documentElement) doc.documentElement.style.overflow = "hidden";
+        if (doc.body) doc.body.style.overflow = "hidden";
+      } catch (_) {}
       this.buildIndex(doc);
       this.renderOverlays();
       this.updateOverlayPositions();
@@ -60,6 +73,9 @@ export class CanvasController {
         const html = doc.documentElement;
         const h = Math.max(body.scrollHeight, html ? html.scrollHeight : 0, body.offsetHeight, 600);
         this.iframe.style.height = Math.max(400, h + 32) + "px";
+        if (this.stage && this.stage !== this.scroller) {
+          this.stage.style.minHeight = this.iframe.style.height;
+        }
       } catch (_) {}
     } catch (e) {
       console.error("canvas refresh failed", e);
@@ -174,13 +190,46 @@ export class CanvasController {
                 if (probe && probe.getBoundingClientRect) {
                   const pr = probe.getBoundingClientRect();
                   if (pr.width > 0 || pr.height > 0) rects = [pr];
-                  else rects = [{ top: 0, left: 0, width: 100, height: 60, _empty: true }];
+                  else rects = [{ top: 0, left: 0, width: 120, height: 64, _empty: true, _interactive: true }];
                 } else {
-                  rects = [{ top: 0, left: 0, width: 100, height: 60, _empty: true }];
+                  rects = [{ top: 0, left: 0, width: 120, height: 64, _empty: true, _interactive: true }];
                 }
               }
             } catch (_) {}
           }
+          // Build interactiveRects: ensure minimum 44px height, empty 64-80px
+          const interactiveRects = rects.map(r => {
+            const isEmpty = !!r._empty;
+            const w = r.width || 120;
+            const h = r.height || (isEmpty ? 64 : 44);
+            const minH = isEmpty ? 64 : 44;
+            const minW = isEmpty ? 120 : 44;
+            const expW = Math.max(w, minW);
+            const expH = Math.max(h, minH);
+            // For empty, ensure at least 64-80px height if container empty
+            let finalH = expH;
+            if(isEmpty){
+              const found = window.__stratum_findNode ? window.__stratum_findNode(startInfo.nodeId)?.node : null;
+              if(found && window.__stratum_isContainer && window.__stratum_isContainer(found)){
+                finalH = Math.max(expH, 72);
+                if(found.block==="core/section" || found.block==="core/stack" || found.block==="core/grid") finalH = Math.max(finalH, 80);
+              }
+            }
+            // Center expanded rect on original if original small
+            const dx = (expW - w)/2;
+            const dy = (finalH - h)/2;
+            return {
+              left: (r.left||0) - (isNaN(dx)?0:dx),
+              top: (r.top||0) - (isNaN(dy)?0:dy),
+              width: expW,
+              height: finalH,
+              right: (r.left||0) - (isNaN(dx)?0:dx) + expW,
+              bottom: (r.top||0) - (isNaN(dy)?0:dy) + finalH,
+              _empty: !!r._empty,
+              _interactive: true,
+              _visual: r
+            };
+          });
           const key = instanceKey;
           this.index.set(key, {
             nodeId: startInfo.nodeId,
@@ -191,6 +240,7 @@ export class CanvasController {
             ownerLabel: startInfo.ownerLabel || "",
             range,
             rects,
+            interactiveRects,
             startComment: startInfo.startComment,
             endComment: node,
           });
@@ -276,17 +326,22 @@ export class CanvasController {
   }
 
   hitTest(clientX, clientY) {
-    // Find deepest (smallest area) rect containing point
+    // Find deepest (smallest visual area) using interactiveRects — empty nodes participate via expanded hit target
     let best = null;
     let bestArea = Infinity;
     for (const [key, info] of this.index.entries()) {
-      for (const r of info.rects) {
-        if (r._empty) continue;
+      const testRects = info.interactiveRects || info.rects;
+      const visualRects = info.rects;
+      for (let idx=0; idx<testRects.length; idx++){
+        const r = testRects[idx];
+        const v = visualRects[idx] || r;
         const left = r.left, top = r.top, right = r.right ?? (r.left + r.width), bottom = r.bottom ?? (r.top + r.height);
         if (clientX >= left && clientX <= right && clientY >= top && clientY <= bottom) {
-          const area = (r.width || 0) * (r.height || 0);
-          if (area < bestArea) {
-            bestArea = area;
+          const area = (v.width || 0) * (v.height || 0);
+          // Prefer smaller visual area; for empty, use interactive size but still prefer smallest
+          const score = area > 0 ? area : (r.width * r.height);
+          if (score < bestArea) {
+            bestArea = score;
             best = info;
           }
         }
@@ -433,17 +488,35 @@ export class CanvasController {
 
   selectNode(nodeId, instanceKey, opts = {}) {
     this.selectedKey = instanceKey || (this.nodeToKeys.get(nodeId) ? this.nodeToKeys.get(nodeId)[0] : null);
-    if (opts.scroll !== false && instanceKey && this.index.has(instanceKey)) {
+    if (opts.scroll !== false && this.selectedKey && this.index.has(this.selectedKey)) {
       try {
-        const info = this.index.get(instanceKey);
-        if (info.range) {
-          const el = info.range.startContainer;
-          // Try to scroll into view inside iframe
-          const doc = this.iframe.contentDocument;
+        const info = this.index.get(this.selectedKey);
+        if (info && info.rects && info.rects.length) {
+          // scroll outer scroller to show selection (nearest)
+          const scroller = this.scroller;
+          if (scroller) {
+            const first = info.rects[0];
+            const scRect = scroller.getBoundingClientRect();
+            const stageRect = this.stage ? this.stage.getBoundingClientRect() : scRect;
+            // first.top is iframe viewport coordinate (0 = top of visible iframe content)
+            // Convert to scroller scroll offset: scroller.scrollTop + first.top - scRect.top + offset
+            // Simpler: compute overlay position: info rect is already relative to overlay (which is at 0,0 of stage)
+            // We can scroll scroller so that rect is visible with block:nearest
+            const overlayTop = first.top; // overlay is at stage 0,0
+            const visibleTop = scroller.scrollTop;
+            const visibleBottom = visibleTop + scroller.clientHeight;
+            const targetTop = overlayTop;
+            const targetBottom = overlayTop + (first.height || 44);
+            if (targetTop < visibleTop + 16) {
+              scroller.scrollTo({ top: Math.max(0, targetTop - 24), behavior: opts.behavior || "smooth" });
+            } else if (targetBottom > visibleBottom - 16) {
+              scroller.scrollTo({ top: targetBottom - scroller.clientHeight + 24, behavior: opts.behavior || "smooth" });
+            }
+          }
+        } else if (info && info.range) {
           let target = info.startComment.nextSibling;
           while (target && target.nodeType !== 1) target = target.nextSibling;
-          if (target && target.scrollIntoView) target.scrollIntoView({ block: "center", behavior: "smooth" });
-          else if (info.range.startContainer && info.range.startContainer.scrollIntoView) info.range.startContainer.scrollIntoView({block:"center"});
+          if (target && target.scrollIntoView) target.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
       } catch (_) {}
     }
@@ -452,20 +525,66 @@ export class CanvasController {
     if (window.__stratum_updateBreadcrumbs) window.__stratum_updateBreadcrumbs();
   }
 
+  // Scroll scroller to show a specific node (used after insertion)
+  scrollToNode(nodeId, behavior = "smooth") {
+    const keys = this.nodeToKeys.get(nodeId) || [];
+    if (!keys.length) return;
+    const info = this.index.get(keys[0]);
+    if (!info || !info.rects || !info.rects.length) return;
+    const scroller = this.scroller;
+    if (!scroller) return;
+    const first = info.rects[0];
+    const targetTop = first.top;
+    const targetBottom = targetTop + (first.height || 64);
+    const visibleTop = scroller.scrollTop;
+    const visibleBottom = visibleTop + scroller.clientHeight;
+    if (targetTop < visibleTop || targetBottom > visibleBottom) {
+      scroller.scrollTo({ top: Math.max(0, targetTop - 80), behavior });
+    }
+  }
+
+  // Return representative instanceKey for a nodeId (dedup Collection repeats)
+  representativeKeyFor(nodeId) {
+    const keys = this.nodeToKeys.get(nodeId) || [];
+    if (!keys.length) return null;
+    // Prefer selectedInstanceKey if it belongs to this node
+    if (state.selectedNodeId === nodeId && state.selectedInstanceKey && keys.includes(state.selectedInstanceKey)) {
+      return state.selectedInstanceKey;
+    }
+    // Otherwise first editable, else first
+    for (const k of keys) {
+      const inf = this.index.get(k);
+      if (inf && inf.editable) return k;
+    }
+    return keys[0];
+  }
+
+  // Set of nodeIds that are repeated via Collection (more than one instanceKey)
+  isRepeatedNode(nodeId) {
+    const keys = this.nodeToKeys.get(nodeId) || [];
+    return keys.length > 1;
+  }
+
   renderOverlays() {
     if (!this.overlay || !this.iframe.contentDocument) return;
     const doc = this.iframe.contentDocument;
     const iframeRect = this.iframe.getBoundingClientRect();
     // Clear
     this.overlay.replaceChildren();
-    this.overlay.style.pointerEvents = "auto";
-    // Hover outline (thin)
+    // overlay itself is pointer-events:none via CSS; children manage themselves
+    // Hover outline (thin) – only for representative
     if (this.hoverKey && this.index.has(this.hoverKey) && this.hoverKey !== this.selectedKey) {
       const info = this.index.get(this.hoverKey);
-      this.renderRects(info, "hover", doc, iframeRect);
-      // label
-      const label = this.labelFor(info);
-      this.renderLabel(info, label, "hover", doc, iframeRect);
+      // For repeated nodes, only show hover for representative
+      const rep = this.representativeKeyFor(info.nodeId);
+      if (rep === this.hoverKey || !this.isRepeatedNode(info.nodeId)) {
+        this.renderRects(info, "hover", doc, iframeRect);
+        const label = this.labelFor(info);
+        this.renderLabel(info, label, "hover", doc, iframeRect);
+      } else {
+        // Hovered non-representative occurrence: show very subtle related highlight
+        this.renderRects(info, "related", doc, iframeRect);
+      }
     }
     // Selection outline (strong) + toolbar
     if (this.selectedKey && this.index.has(this.selectedKey)) {
@@ -474,7 +593,7 @@ export class CanvasController {
       const label = this.labelFor(info);
       this.renderLabel(info, label, "selected", doc, iframeRect);
       this.renderToolbar(info, doc, iframeRect);
-      // Also subtle highlight other occurrences of same nodeId
+      // Also subtle highlight other occurrences of same nodeId (related)
       const keys = this.nodeToKeys.get(info.nodeId) || [];
       for (const k of keys) {
         if (k === this.selectedKey) continue;
@@ -483,14 +602,15 @@ export class CanvasController {
         this.renderRects(other, "related", doc, iframeRect);
       }
     } else if (state.selectedNodeId && !this.selectedKey) {
-      // No instance yet (maybe empty block) — try first occurrence
-      const keys = this.nodeToKeys.get(state.selectedNodeId) || [];
-      if (keys.length) {
-        this.selectedKey = keys[0];
-        const info = this.index.get(keys[0]);
+      // No instance yet (maybe empty block) — try representative
+      const rep = this.representativeKeyFor(state.selectedNodeId);
+      if (rep && this.index.has(rep)) {
+        this.selectedKey = rep;
+        const info = this.index.get(rep);
         if (info) {
           this.renderRects(info, "selected", doc, iframeRect);
           this.renderLabel(info, this.labelFor(info), "selected", doc, iframeRect);
+          this.renderToolbar(info, doc, iframeRect);
         }
       }
     }
@@ -501,120 +621,416 @@ export class CanvasController {
         this.renderExternalNotice(info, doc, iframeRect);
       }
     }
-    // Insertion affordances & empty containers
+    // Insertion affordances & empty containers – contextual, legal only
     this.renderInsertionAffordances(doc, iframeRect);
     this.renderEmptyPlaceholders(doc, iframeRect);
   }
 
-  renderInsertionAffordances(doc, iframeRect) {
-    // Root affordances: between blocks and before/after
-    try {
-      const rootNodes = (window.__stratum_findNode ? null : null);
-    } catch (_) {}
-    // Show subtle + buttons for selected container and for empty containers
-    // Iterate over all editable nodes that are containers
-    for (const info of this.index.values()) {
-      if (!info.editable) continue;
-      const nodeId = info.nodeId;
-      let found = null;
-      try { found = window.__stratum_findNode ? window.__stratum_findNode(nodeId) : null; } catch (_) {}
-      if (!found) continue;
-      if (!window.__stratum_isContainer || !window.__stratum_isContainer(found.node)) continue;
-      // Empty container placeholder is handled separately, but also show + button centered
-      const isEmpty = !found.node.children || found.node.children.length===0;
-      if (isEmpty) continue; // handled in renderEmptyPlaceholders
-      // Show Add button at bottom of container
-      const rect = this.boundsForInfo(info);
-      if (!rect) continue;
-      const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
-      const canAdd = (() => {
-        if (!def) return false;
-        const rule = def.schema.children;
-        if (rule.mode==="none") return false;
-        if (rule.max!=null && found.node.children.length >= rule.max) return false;
-        return true;
-      })();
-      if (!canAdd) continue;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "canvas-insertion-btn";
-      // Label: specific when single allowed type
-      let label = "+ Add block";
-      if (def && def.schema.children.mode==="allowed" && def.schema.children.blocks.length===1) {
-        const childBlock = def.schema.children.blocks[0];
-        let childName = childBlock;
-        try {
-          for (const d of (window.__stratum_catalog||[])) if (d.block===childBlock) { childName = d.displayName; break; }
-          if (childName===childBlock && def) {
-            // try bootstrap catalog
-            const cat = document.getElementById("editor-bootstrap") ? JSON.parse(document.getElementById("editor-bootstrap").textContent).catalog||[] : [];
-            for (const d of cat) if (d.block===childBlock) childName = d.displayName;
-          }
-        } catch (_) {}
-        label = `+ Add ${childName}`;
-      }
-      btn.textContent = label;
-      btn.title = label;
-      btn.style.position = "absolute";
-      btn.style.left = (rect.left + rect.width/2 - 60) + "px";
-      btn.style.top = (rect.bottom - 12) + "px";
-      btn.style.transform = "translateY(-50%)";
-      btn.style.padding = "4px 10px";
-      btn.style.fontSize = "11px";
-      btn.style.border = "1px solid #cbd5e1";
-      btn.style.borderRadius = "14px";
-      btn.style.background = "white";
-      btn.style.boxShadow = "0 1px 4px rgba(0,0,0,0.12)";
-      btn.style.cursor = "pointer";
-      btn.style.opacity = "0.88";
-      btn.style.zIndex = "5";
-      btn.addEventListener("click", (e)=>{
+  // Resolve representative rect for a nodeId (for insertion lane positioning)
+  representativeRect(nodeId) {
+    const rep = this.representativeKeyFor(nodeId);
+    if (!rep) return null;
+    return this.boundsForInfo(this.index.get(rep));
+  }
+
+  createLane({ parentId, index, top, left, width, legal, reason }) {
+    const lane = document.createElement("div");
+    lane.className = "canvas-insertion-lane" + (legal ? "" : " canvas-insertion-lane--disabled");
+    lane.tabIndex = legal ? 0 : -1;
+    lane.setAttribute("role", "button");
+    lane.dataset.parentId = parentId || "root";
+    lane.dataset.index = String(index);
+    const label = legal ? `Add block here` : (reason || "Cannot add here");
+    lane.setAttribute("aria-label", label);
+    lane.title = label;
+    lane.style.position = "absolute";
+    lane.style.left = (left || 8) + "px";
+    lane.style.top = (top - 16) + "px";
+    lane.style.width = Math.max(80, width || 260) + "px";
+    lane.style.height = "32px";
+    const plus = document.createElement("button");
+    plus.type = "button";
+    plus.className = "canvas-insertion-plus";
+    plus.textContent = "+";
+    plus.tabIndex = -1;
+    plus.style.pointerEvents = "none";
+    lane.append(plus);
+    if (legal) {
+      lane.addEventListener("click", (e) => {
         e.preventDefault(); e.stopPropagation();
-        if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(found.node.id, found.node.children.length);
-        // Switch to library blocks tab
-        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
-        const lib = document.querySelector(".block-library") || document.getElementById("block-catalog");
-        if (lib) lib.scrollIntoView({behavior:"smooth"});
+        if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(parentId, index);
+        document.querySelectorAll("[data-library-tab]").forEach(t => { if ((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
+        if (window.__stratum_renderCatalog) window.__stratum_renderCatalog();
       });
-      // Hide when not hovered over container (show on hover)
-      btn.style.opacity = "0";
-      // Use parent hover via overlay mousemove already handles hoverKey; show only when hovered or selected
-      const isHovered = this.hoverKey && this.index.get(this.hoverKey)?.nodeId === nodeId;
-      const isSelected = this.selectedKey && this.index.get(this.selectedKey)?.nodeId === nodeId;
-      if (isHovered || isSelected) btn.style.opacity = "0.95";
-      this.overlay.append(btn);
-    }
-    // Root insertion: show before first, between, after last when hovering canvas
-    // Only show if there is at least one node
-    const hasNodes = this.nodeToKeys.size > 0;
-    if (hasNodes) {
-      // Between logic handled via drop indicator; insertion affordances for root are subtle dots visible on overlay hover
+      lane.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); lane.click(); }
+      });
     } else {
-      // Empty document handled in editor.js tree, but also show centered CTA in canvas when no nodes
-      const canvasRect = this.iframe.getBoundingClientRect();
-      // Don't duplicate if tree already shows empty; just ensure canvas shows placeholder
-      const isEmptyDoc = (()=>{ try{ const docState = window.__stratum_findNode? null : null; return document.querySelectorAll(".empty-document-state").length===0; } catch(_){return true;} })();
-      // We will not render duplicate; tree already handles empty. Canvas placeholder only if needed.
+      lane.addEventListener("click", (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (reason && window.stratumToast) window.stratumToast("error", reason);
+      });
     }
+    return lane;
+  }
+
+  renderInsertionAffordances(doc, iframeRect) {
+    const rootNodes = state.document.nodes || [];
+    // Empty document: centered CTA
+    if (!rootNodes.length) {
+      const scW = this.scroller ? this.scroller.clientWidth : 600;
+      const box = document.createElement("div");
+      box.className = "canvas-empty-document";
+      box.style.position = "absolute";
+      box.style.left = Math.max(16, (scW - 320)/2) + "px";
+      box.style.top = "40px";
+      box.style.width = "320px";
+      box.style.minHeight = "120px";
+      box.style.border = "1px dashed #cbd5e1";
+      box.style.borderRadius = "8px";
+      box.style.background = "#f8fafc";
+      box.style.display = "flex";
+      box.style.flexDirection = "column";
+      box.style.alignItems = "center";
+      box.style.justifyContent = "center";
+      box.style.gap = "8px";
+      box.style.padding = "16px";
+      box.style.pointerEvents = "auto";
+      const title = document.createElement("div");
+      title.textContent = "Start building this page";
+      title.style.fontWeight = "600";
+      title.style.fontSize = "14px";
+      const sub = document.createElement("div");
+      sub.textContent = "Add your first block to get started.";
+      sub.style.fontSize = "12px";
+      sub.style.color = "#64748b";
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "8px";
+      const addBtn = document.createElement("button");
+      addBtn.type = "button";
+      addBtn.className = "button button-primary";
+      addBtn.textContent = "+ Add block";
+      addBtn.style.padding = "6px 12px";
+      addBtn.addEventListener("click", (e)=>{
+        e.preventDefault();
+        if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(null, 0);
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
+        if (window.__stratum_renderCatalog) window.__stratum_renderCatalog();
+      });
+      const patBtn = document.createElement("button");
+      patBtn.type = "button";
+      patBtn.className = "button";
+      patBtn.textContent = "Browse patterns";
+      patBtn.addEventListener("click", ()=>{
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="patterns") t.click(); });
+      });
+      actions.append(addBtn, patBtn);
+      box.append(title, sub, actions);
+      this.overlay.append(box);
+      return;
+    }
+
+    // Determine contextual target: which container's boundaries to show?
+    // Default: 0 lanes. Show only for relevant context.
+    let contextParentId = null;
+    let contextIndex = null;
+    let showMode = "none"; // none | hover | selected
+
+    // If insertionTarget is set, highlight its lane
+    if (state.insertionTarget) {
+      contextParentId = state.insertionTarget.parentId;
+      contextIndex = state.insertionTarget.index;
+      showMode = "selected";
+    } else if (this.hoverKey && this.index.has(this.hoverKey)) {
+      const hoverInfo = this.index.get(this.hoverKey);
+      const found = window.__stratum_findNode ? window.__stratum_findNode(hoverInfo.nodeId) : null;
+      if (found) {
+        // For leaf: lane belongs to its parent, near leaf boundary
+        const isCont = window.__stratum_isContainer ? window.__stratum_isContainer(found.node) : false;
+        if (isCont) {
+          contextParentId = found.node.id;
+          showMode = "hover";
+        } else {
+          // Hovering leaf – show lane before/after leaf within parent
+          contextParentId = found.parent ? found.parent.id : null;
+          showMode = "hover";
+        }
+      }
+    } else if (this.selectedKey && this.index.has(this.selectedKey)) {
+      const selInfo = this.index.get(this.selectedKey);
+      const found = window.__stratum_findNode ? window.__stratum_findNode(selInfo.nodeId) : null;
+      if (found) {
+        const isCont = window.__stratum_isContainer ? window.__stratum_isContainer(found.node) : false;
+        if (isCont && hasLegalInsertion(found.node, found.node.children.length)) {
+          contextParentId = found.node.id;
+          showMode = "selected";
+        } else if (found.parent) {
+          contextParentId = found.parent.id;
+          showMode = "selected";
+        } else {
+          contextParentId = null;
+          showMode = "selected";
+        }
+      }
+    } else if (state.selectedNodeId) {
+      const found = window.__stratum_findNode ? window.__stratum_findNode(state.selectedNodeId) : null;
+      if (found) {
+        const isCont = window.__stratum_isContainer ? window.__stratum_isContainer(found.node) : false;
+        if (isCont && hasLegalInsertion(found.node, found.node.children.length)) {
+          contextParentId = found.node.id;
+          showMode = "selected";
+        } else if (found.parent) {
+          contextParentId = found.parent.id;
+          showMode = "selected";
+        } else {
+          contextParentId = null;
+          showMode = "selected";
+        }
+      }
+    }
+
+    if (showMode === "none" || contextParentId === undefined) return;
+
+    // Resolve parent node object
+    let parentNode = null;
+    if (contextParentId !== null) {
+      const pf = window.__stratum_findNode ? window.__stratum_findNode(contextParentId) : null;
+      parentNode = pf ? pf.node : null;
+      if (!parentNode) return;
+    }
+
+    // Only render lanes for this single parent (contextual)
+    const siblings = parentNode ? parentNode.children : rootNodes;
+    const legal = hasLegalInsertion(parentNode, 0); // quick guard – if root/container illegal, still show disabled lane with reason?
+    // Collect boundaries for this parent only
+    const boundaries = [];
+    for (let i = 0; i <= siblings.length; i++) {
+      const ok = hasLegalInsertion(parentNode, i);
+      let reason = "";
+      if (!ok) {
+        if (parentNode) {
+          const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(parentNode) : null;
+          if (def) {
+            const rule = def.schema.children;
+            if (rule.mode === "none") reason = `${def.displayName} does not allow child blocks.`;
+            else if (rule.max != null && siblings.length >= rule.max) reason = `${def.displayName} allows at most ${rule.max} child blocks.`;
+            else if (rule.mode === "allowed" && rule.blocks && rule.blocks.length) reason = `${def.displayName} allows only ${rule.blocks.length} block type(s).`;
+            else reason = "Cannot add here.";
+          }
+        } else {
+          reason = "Cannot add here.";
+        }
+      }
+      boundaries.push({ parentId: contextParentId, index: i, legal: ok, reason });
+    }
+
+    // For selected/hover context, show before-hover and after-hover logic for leaves vs general
+    // For simplicity in this pass: show lane(s) that are hover-adjacent or all for selected container.
+    // Decide which indices to actually render:
+    let indicesToShow = [];
+    if (showMode === "hover" && this.hoverKey) {
+      const hoverInfo = this.index.get(this.hoverKey);
+      const hoverFound = window.__stratum_findNode ? window.__stratum_findNode(hoverInfo.nodeId) : null;
+      if (hoverFound) {
+        const isCont = window.__stratum_isContainer ? window.__stratum_isContainer(hoverFound.node) : false;
+        if (isCont && hoverFound.node.id === contextParentId) {
+          // Hovering container itself – show inside? For non-empty container show lane at bottom (index = len)
+          // and also maybe between? Keep single "inside at end" for clarity
+          indicesToShow = [siblings.length];
+        } else {
+          // Hovering a child/leaf – show before and after that child within its parent
+          // But contextParentId is its parent, so find child's index
+          const idx = hoverFound.index;
+          if (typeof idx === "number") {
+            // Determine if near top or bottom edge – use vertical split 40%
+            const hoverRect = this.boundsForInfo(hoverInfo);
+            let y = null;
+            // Approximate cursor is centered on rect; always show both before/after as two lanes
+            // Instead show single lane closest to cursor: we use hoverRect top/bottom heuristic
+            // For now show both lanes for that sibling gap
+            indicesToShow = [idx, idx+1];
+          } else {
+            indicesToShow = boundaries.map(b=>b.index);
+          }
+        }
+      }
+    } else if (showMode === "selected") {
+      // For selected container: show lane at end (inside) + maybe before/after if contextual
+      if (parentNode && window.__stratum_isContainer && window.__stratum_isContainer(parentNode)) {
+        // If selected node itself is this container, show only inside-end lane
+        if (state.selectedNodeId === contextParentId) {
+          indicesToShow = [siblings.length];
+        } else {
+          // Selected is child – show before/after selected child
+          const selFound = window.__stratum_findNode ? window.__stratum_findNode(state.selectedNodeId) : null;
+          if (selFound && selFound.parent && selFound.parent.id === contextParentId) {
+            indicesToShow = [selFound.index, selFound.index+1];
+          } else {
+            indicesToShow = [siblings.length];
+          }
+        }
+      } else {
+        // Root selected
+        const selFound = state.selectedNodeId ? (window.__stratum_findNode ? window.__stratum_findNode(state.selectedNodeId) : null) : null;
+        if (selFound && !selFound.parent) {
+          indicesToShow = [selFound.index, selFound.index+1];
+        } else {
+          indicesToShow = boundaries.map(b=>b.index);
+        }
+      }
+      // If insertionTarget set, highlight only that index plus ensure it's visible
+      if (state.insertionTarget && state.insertionTarget.parentId === contextParentId) {
+        if (!indicesToShow.includes(state.insertionTarget.index)) indicesToShow.push(state.insertionTarget.index);
+      }
+    }
+
+    // De-duplicate and clamp
+    indicesToShow = [...new Set(indicesToShow)].filter(i => i>=0 && i<=siblings.length).sort((a,b)=>a-b);
+    // Limit to max 2 lanes for hover, 3 for selected to avoid christmas tree
+    if (showMode === "hover") indicesToShow = indicesToShow.slice(0,2);
+    if (showMode === "selected") indicesToShow = indicesToShow.slice(0,3);
+
+    for (const idx of indicesToShow) {
+      const b = boundaries.find(x=>x.index===idx);
+      if (!b) continue;
+      // Compute lane geometry from neighboring rects (use representative)
+      const beforeRect = idx>0 ? this.representativeRect(siblings[idx-1]?.id) : null;
+      const afterRect = idx < siblings.length ? this.representativeRect(siblings[idx]?.id) : null;
+      let top = 8;
+      let left = 16;
+      let width = this.iframe ? this.iframe.clientWidth - 32 : 300;
+      if (beforeRect && afterRect) {
+        top = (beforeRect.bottom + afterRect.top)/2;
+        left = Math.min(beforeRect.left, afterRect.left);
+        width = Math.max(beforeRect.width, afterRect.width);
+      } else if (beforeRect) {
+        top = beforeRect.bottom + 6;
+        left = beforeRect.left;
+        width = beforeRect.width;
+      } else if (afterRect) {
+        top = afterRect.top - 16;
+        left = afterRect.left;
+        width = afterRect.width;
+      } else {
+        // Parent bounds fallback (e.g. empty container but handled elsewhere)
+        const parentRep = parentNode ? this.representativeRect(parentNode.id) : null;
+        if (parentRep) {
+          top = parentRep.top + parentRep.height/2;
+          left = parentRep.left;
+          width = parentRep.width;
+        } else {
+          top = 40 + idx*32;
+        }
+      }
+      // Clamp to scroller viewport so lane stays visible
+      const scrollerRect = this.scroller ? this.scroller.getBoundingClientRect() : null;
+      // Lane is positioned inside overlay which is inside stage – already matches scroller coords
+      const lane = this.createLane({ parentId: contextParentId, index: idx, top, left, width, legal: b.legal, reason: b.reason });
+      // Highlight if this is current insertionTarget
+      if (state.insertionTarget && state.insertionTarget.parentId === contextParentId && state.insertionTarget.index === idx) {
+        lane.style.outline = "2px solid #2563eb";
+        lane.style.background = "rgba(37,99,235,0.08)";
+        lane.style.borderRadius = "6px";
+      }
+      this.overlay.append(lane);
+    }
+
+    // For empty parent, placeholder handles Add – no lane needed (avoid duplicate)
+    // If parent empty and legal, we already have placeholder; skip lane if both null rects
   }
 
   renderEmptyPlaceholders(doc, iframeRect) {
+    // Empty containers (Section, Stack, Grid, Card, Accordion Item, etc.)
+    const seenEmpty = new Set();
     for (const info of this.index.values()) {
       if (!info.editable) continue;
+      if (seenEmpty.has(info.nodeId)) continue;
+      // Dedup Collection repeats – only representative
+      if (this.isRepeatedNode(info.nodeId) && info.instanceKey !== this.representativeKeyFor(info.nodeId)) continue;
       if (!info.rects.some(r=>r._empty)) continue;
-      const r = info.rects.find(x=>x._empty) || info.rects[0];
+      let r = info.rects.find(x=>x._empty) || info.rects[0];
       if (!r) continue;
       const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
-      if (!found || !window.__stratum_isContainer || !window.__stratum_isContainer(found.node)) continue;
+      if (!found) continue;
+      const isContainer = window.__stratum_isContainer ? window.__stratum_isContainer(found.node) : false;
+      if (!isContainer) continue;
+      // Skip if node actually has children but rendered empty due to collection zero? handled below
+      // Improve placement for collapsed empty rect at 0,0: try parent bounds, previous sibling, or flow position
+      let placeLeft = r.left;
+      let placeTop = r.top;
+      let placeWidth = Math.max(160, r.width);
+      let placeHeight = 72;
+      const isFallback = r._empty && r.left===0 && r.top===0;
+      if(isFallback){
+        let parentRect=null;
+        try{
+          if(found.parent && this.boundsForNode(found.parent.id)) parentRect=this.boundsForNode(found.parent.id);
+        }catch(e){}
+        // Also try previous sibling bottom
+        let siblingRect = null;
+        try {
+          if (found.parent) {
+            for (let i = found.index - 1; i >= 0; i--) {
+              const sib = found.siblings[i];
+              const br = this.boundsForNode(sib.id);
+              if (br) { siblingRect = br; break; }
+            }
+          } else {
+            // root: try previous root node
+            const idx = (found.index !== undefined ? found.index : -1);
+            if (idx > 0) {
+              for (let i = idx - 1; i >= 0; i--) {
+                const n = window.__stratum_findNode ? null : null;
+              }
+            }
+          }
+        } catch(_) {}
+        if(parentRect){
+          placeLeft = parentRect.left + 16;
+          // Prefer below sibling if exists
+          if (siblingRect) {
+            placeTop = siblingRect.bottom + 8;
+            // clamp inside parent
+            if (placeTop + placeHeight > parentRect.bottom - 8) placeTop = parentRect.top + 16;
+          } else {
+            placeTop = parentRect.top + 16;
+            // if parent tall, center
+            if (parentRect.height > 120) placeTop = parentRect.top + parentRect.height/2 - 36;
+          }
+          placeWidth = Math.max(160, Math.min(parentRect.width - 32, 360));
+        } else if (siblingRect) {
+          placeLeft = siblingRect.left;
+          placeTop = siblingRect.bottom + 8;
+          placeWidth = Math.max(160, siblingRect.width);
+        } else {
+          const scW = this.scroller ? this.scroller.clientWidth : (this.iframe ? this.iframe.clientWidth : 600);
+          placeLeft = Math.max(16, (scW - 260)/2);
+          placeTop = 40;
+          placeWidth = 260;
+        }
+        // also update interactive rect for hit test consistency (centered)
+        if(info.interactiveRects && info.interactiveRects[0]){
+          info.interactiveRects[0].left = placeLeft;
+          info.interactiveRects[0].top = placeTop;
+          info.interactiveRects[0].width = placeWidth;
+          info.interactiveRects[0].height = placeHeight;
+          info.interactiveRects[0].right = placeLeft + placeWidth;
+          info.interactiveRects[0].bottom = placeTop + placeHeight;
+          info.interactiveRects[0]._empty = true;
+        }
+        r = {left: placeLeft, top: placeTop, width: placeWidth, height: placeHeight, _empty:true};
+      }
       const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
-      const label = def ? def.displayName : info.nodeId;
+      const label = def ? `Empty ${def.displayName}` : `Empty ${info.nodeId.slice(0,8)}`;
       const box = document.createElement("div");
       box.className = "canvas-empty-placeholder";
+      box.dataset.nodeId = info.nodeId;
       box.style.position = "absolute";
-      box.style.left = (r.left) + "px";
-      box.style.top = (r.top) + "px";
-      box.style.width = Math.max(120, r.width) + "px";
-      box.style.minHeight = "60px";
+      box.style.left = placeLeft + "px";
+      box.style.top = placeTop + "px";
+      box.style.width = placeWidth + "px";
+      box.style.minHeight = placeHeight + "px";
       box.style.border = "1px dashed #cbd5e1";
       box.style.borderRadius = "6px";
       box.style.background = "#f8fafc";
@@ -629,6 +1045,10 @@ export class CanvasController {
       span.style.fontSize = "11px";
       span.style.color = "#64748b";
       span.textContent = label;
+      const hint = document.createElement("span");
+      hint.style.fontSize = "10px";
+      hint.style.color = "#94a3b8";
+      hint.textContent = "Empty container";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "+ Add block";
@@ -638,22 +1058,133 @@ export class CanvasController {
       btn.style.borderRadius = "14px";
       btn.style.fontSize = "11px";
       btn.style.cursor = "pointer";
-      box.append(span, btn);
+      box.append(span, hint, btn);
       box.addEventListener("click", (e)=>{
         e.preventDefault(); e.stopPropagation();
+        state.selectedNodeId = info.nodeId;
+        state.selectedInstanceKey = info.instanceKey;
+        if (window.__stratum_onSelectionChange) window.__stratum_onSelectionChange(info.nodeId, info.instanceKey);
+        if (window.__stratum_renderInspector) window.__stratum_renderInspector();
+        this.selectNode(info.nodeId, info.instanceKey, { scroll: false });
+        this.renderOverlays();
         if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(info.nodeId, 0);
-        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
       });
       btn.addEventListener("click", (e)=>{
         e.stopPropagation();
         if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(info.nodeId, 0);
-        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
       });
+      seenEmpty.add(info.nodeId);
+      this.overlay.append(box);
+    }
+    // Empty leaf placeholders (Heading without text, Text without text, Button without label, Image without media)
+    const seenLeaf = new Set();
+    for (const info of this.index.values()) {
+      if (!info.editable) continue;
+      if (seenLeaf.has(info.nodeId)) continue;
+      if (this.isRepeatedNode(info.nodeId) && info.instanceKey !== this.representativeKeyFor(info.nodeId)) continue;
+      const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
+      if (!found) continue;
+      const isContainer = window.__stratum_isContainer ? window.__stratum_isContainer(found.node) : false;
+      if (isContainer) continue;
+      // Detect empty leaf: check props emptiness
+      const node = found.node;
+      let isEmptyLeaf = false;
+      let label = "";
+      // Use _empty flag or explicit prop check
+      const hasEmptyRect = info.rects.some(r=>r._empty) || info.rects.length===0 || info.rects.every(r=> (r.height||0) < 4);
+      // Also check props for these block types
+      if (node.block === "core/heading") {
+        const txt = node.props.text;
+        const empty = !txt || (typeof txt === "string" && !txt.trim()) || (txt && txt.version===1 && Array.isArray(txt.content) && txt.content.map(c=>c.text||"").join("").trim()==="");
+        if (empty) { isEmptyLeaf = true; label = "Heading — Add text"; }
+      } else if (node.block === "core/text") {
+        const txt = node.props.text;
+        const str = typeof txt === "string" ? txt : (txt && txt.version===1 && Array.isArray(txt.content) ? txt.content.map(c=>c.text||"").join("") : "");
+        if (!str || !str.trim()) { isEmptyLeaf = true; label = "Text — Start typing"; }
+      } else if (node.block === "core/button") {
+        if (!node.props.label || !String(node.props.label).trim()) { isEmptyLeaf = true; label = "Button — Add label"; }
+      } else if (node.block === "core/image") {
+        if (!node.props.mediaId) { isEmptyLeaf = true; label = "Image — Choose image"; }
+      } else if (node.block === "core/accordion-item") {
+        // Item title may be default "Item" -> not empty, but body empty container already handled via container placeholder?
+        // Leaf placeholder for item with no children already covered; skip generic
+        continue;
+      } else {
+        // Generic leaf empty if height tiny
+        if (hasEmptyRect) { isEmptyLeaf = true; const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(node) : null; label = def ? `${def.displayName} — Empty` : `${node.block} — Empty`; }
+      }
+      if (!isEmptyLeaf) continue;
+      // Determine placement: use existing rect if not 0,0 else fallback near parent
+      let r = info.rects.find(x=>!x._empty) || info.rects.find(x=>x._empty) || info.rects[0];
+      let placeLeft = r ? r.left : 0;
+      let placeTop = r ? r.top : 0;
+      let placeWidth = r ? Math.max(120, r.width) : 200;
+      let placeHeight = 44;
+      const isFallback = !r || (r._empty && r.left===0 && r.top===0) || (r && r.height < 4);
+      if (isFallback) {
+        let parentRect=null;
+        try{ if(found.parent && this.boundsForNode(found.parent.id)) parentRect=this.boundsForNode(found.parent.id); }catch(_){}
+        if(parentRect){
+          placeLeft = parentRect.left + 12;
+          placeTop = parentRect.top + 12;
+          // try to offset by index to avoid stacking
+          if (found.index !== undefined) placeTop += found.index * 48;
+          placeWidth = Math.max(180, Math.min(parentRect.width - 24, 320));
+        } else {
+          const scW = this.scroller ? this.scroller.clientWidth : 600;
+          placeLeft = Math.max(12, (scW - 220)/2);
+          placeTop = 40 + (found.index||0)*48;
+          placeWidth = 220;
+        }
+        if (info.interactiveRects && info.interactiveRects[0]) {
+          info.interactiveRects[0].left = placeLeft;
+          info.interactiveRects[0].top = placeTop;
+          info.interactiveRects[0].width = placeWidth;
+          info.interactiveRects[0].height = placeHeight;
+          info.interactiveRects[0].right = placeLeft + placeWidth;
+          info.interactiveRects[0].bottom = placeTop + placeHeight;
+        }
+      }
+      const box = document.createElement("div");
+      box.className = "canvas-leaf-placeholder";
+      box.dataset.nodeId = info.nodeId;
+      box.style.position = "absolute";
+      box.style.left = placeLeft + "px";
+      box.style.top = placeTop + "px";
+      box.style.width = placeWidth + "px";
+      box.style.minHeight = placeHeight + "px";
+      box.style.border = "1px dashed #cbd5e1";
+      box.style.borderRadius = "6px";
+      box.style.background = "#f8fafc";
+      box.style.display = "flex";
+      box.style.alignItems = "center";
+      box.style.justifyContent = "center";
+      box.style.padding = "6px 10px";
+      box.style.cursor = "pointer";
+      box.style.fontSize = "11px";
+      box.style.color = "#94a3b8";
+      box.textContent = label;
+      box.title = "Click to edit";
+      box.addEventListener("click", (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        state.selectedNodeId = info.nodeId;
+        state.selectedInstanceKey = info.instanceKey;
+        if (window.__stratum_onSelectionChange) window.__stratum_onSelectionChange(info.nodeId, info.instanceKey);
+        if (window.__stratum_renderInspector) window.__stratum_renderInspector();
+        this.selectNode(info.nodeId, info.instanceKey, { scroll: false });
+        this.renderOverlays();
+      });
+      seenLeaf.add(info.nodeId);
       this.overlay.append(box);
     }
     // Collection empty state (has SDT children but no rendered child markers)
+    const seenColl = new Set();
     for (const info of this.index.values()) {
       if (!info.editable) continue;
+      if (seenColl.has(info.nodeId)) continue;
+      if (this.isRepeatedNode(info.nodeId) && info.instanceKey !== this.representativeKeyFor(info.nodeId)) continue;
       const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
       if (!found) continue;
       if (found.node.block !== "core/collection") continue;
@@ -683,18 +1214,56 @@ export class CanvasController {
       banner.style.background = "#fffbeb";
       banner.style.border = "1px solid #fde68a";
       banner.style.borderRadius = "6px";
-      banner.style.padding = "8px 10px";
-      banner.style.fontSize = "11px";
+      banner.style.padding = "10px 12px";
+      banner.style.fontSize = "12px";
       banner.style.color = "#92400e";
-      banner.style.maxWidth = Math.max(200, rect.width) + "px";
+      banner.style.maxWidth = Math.max(220, rect.width) + "px";
       banner.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)";
+      banner.style.display = "grid";
+      banner.style.gap = "4px";
+      const title = document.createElement("div");
+      title.style.fontWeight = "600";
+      title.textContent = "Collection";
       const b1 = document.createElement("div");
-      b1.textContent = "No entries match this collection.";
-      const b2 = document.createElement("span");
+      b1.textContent = "No matching entries";
+      const b2 = document.createElement("div");
       b2.style.fontSize = "11px";
       b2.style.color = "#a16207";
-      b2.textContent = "Edit item layout via Navigator";
-      banner.append(b1, document.createElement("br"), b2);
+      b2.textContent = "The item layout can still be edited.";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Edit item layout";
+      btn.style.padding = "6px 10px";
+      btn.style.fontSize = "11px";
+      btn.style.border = "1px solid #fde68a";
+      btn.style.background = "white";
+      btn.style.borderRadius = "14px";
+      btn.style.cursor = "pointer";
+      btn.style.justifySelf = "start";
+      btn.addEventListener("click", (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        // Switch left panel to Navigator, expand Collection, select first child
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="navigator") t.click(); });
+        // Expand ancestors
+        try {
+          if (state.collapsed.has(info.nodeId)) state.collapsed.delete(info.nodeId);
+          if (window.__stratum_renderNavigator) window.__stratum_renderNavigator();
+          // Select collection or first child
+          const firstChild = found.node.children[0];
+          const targetId = firstChild ? firstChild.id : info.nodeId;
+          state.selectedNodeId = targetId;
+          if (window.__stratum_onSelectionChange) window.__stratum_onSelectionChange(targetId, null);
+          // Scroll navigator to target
+          setTimeout(()=>{
+            const el = document.querySelector(`[data-node-id="${targetId}"]`);
+            if (el) el.scrollIntoView({ block:"nearest", inline:"nearest" });
+          }, 50);
+          if (window.__stratum_canvasController) window.__stratum_canvasController.selectNode(targetId, null, { scroll: false });
+          if (window.__stratum_renderInspector) window.__stratum_renderInspector();
+        } catch(_) {}
+      });
+      banner.append(title, b1, b2, btn);
+      seenColl.add(info.nodeId);
       this.overlay.append(banner);
     }
   }
@@ -759,16 +1328,26 @@ export class CanvasController {
     if (!first) return;
     const bar = document.createElement("div");
     bar.className = "canvas-toolbar";
+    // Clamp to scroller viewport
+    const scrollerRect = this.scroller ? this.scroller.getBoundingClientRect() : { left:0, right:window.innerWidth, top:0, bottom:window.innerHeight };
+    const barW = 220; // approx
+    const barH = 34;
+    let left = first.left;
+    let top = first.top - barH - 6;
+    if (left + barW > scrollerRect.right - 8) left = scrollerRect.right - barW - 8;
+    if (left < scrollerRect.left + 8) left = scrollerRect.left + 8;
+    if (top < scrollerRect.top + 8) top = first.bottom + 6;
+    if (top + barH > scrollerRect.bottom - 8) top = scrollerRect.bottom - barH - 8;
     bar.style.position = "absolute";
-    bar.style.left = (first.left) + "px";
-    bar.style.top = Math.max(0, first.top - 28) + "px";
+    bar.style.left = (left) + "px";
+    bar.style.top = Math.max(0, top) + "px";
     bar.style.display = "flex";
     bar.style.gap = "4px";
     bar.style.background = "white";
     bar.style.border = "1px solid #e5e7eb";
-    bar.style.borderRadius = "6px";
+    bar.style.borderRadius = "8px";
     bar.style.padding = "2px 4px";
-    bar.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)";
+    bar.style.boxShadow = "0 4px 12px rgba(0,0,0,0.12)";
     bar.style.fontSize = "11px";
     let inlineNode = null;
     try {
@@ -780,13 +1359,13 @@ export class CanvasController {
       if (window.__stratum_canDuplicate) canDup = window.__stratum_canDuplicate(info.nodeId);
       if (window.__stratum_canRemove) canDel = window.__stratum_canRemove(info.nodeId);
     } catch (_) {}
+    // Preferred toolbar: [Drag] [↑] [↓] [⋯] [+] — Duplicate/Delete inside ⋯
     const actions = [
       ...(inlineNode && isInlineEditable(inlineNode) ? [{ label: "Edit", title: "Edit text", action: "edit" }] : []),
       { label: "Drag", title: "Drag", action: "drag" },
       { label: "↑", title: "Move up", action: "up" },
       { label: "↓", title: "Move down", action: "down" },
-      { label: "⧉", title: canDup.ok ? "Duplicate" : canDup.reason, action: "duplicate", disabled: !canDup.ok, reason: canDup.reason },
-      { label: "✕", title: canDel.ok ? "Delete" : canDel.reason, action: "delete", disabled: !canDel.ok, reason: canDel.reason },
+      { label: "⋯", title: "More actions", action: "more" },
     ];
     actions.forEach(a => {
       const btn = document.createElement("button");
@@ -825,6 +1404,9 @@ export class CanvasController {
         if (a.action === "down" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, 1);
         if (a.action === "duplicate" && window.__stratum_duplicateNode) window.__stratum_duplicateNode(info.nodeId);
         if (a.action === "delete" && window.__stratum_removeNode) window.__stratum_removeNode(info.nodeId);
+        if (a.action === "more") {
+          try { openContextMenu({ anchor: btn, nodeId: info.nodeId }); } catch(_) { if (window.__stratum_openContextMenu) window.__stratum_openContextMenu({ anchor: btn, nodeId: info.nodeId }); }
+        }
       });
       bar.append(btn);
     });
@@ -832,17 +1414,22 @@ export class CanvasController {
     try {
       const def = window.__stratum_definitionFor ? window.__stratum_definitionFor({ block: "", version: 0 }) : null;
     } catch (_) {}
-    // Check if container -> Add inside with validation
+    // Check if container -> Add inside with validation (use hasLegalInsertion)
     if (info.nodeId && window.__stratum_isContainer) {
       try {
         const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
         if (found && window.__stratum_isContainer(found.node)) {
-          const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
-          let canAdd = true; let reason = "";
-          if (def) {
-            const rule = def.schema.children;
-            if (rule.mode==="none") { canAdd=false; reason="Cannot contain blocks"; }
-            else if (rule.max!=null && found.node.children.length >= rule.max) { canAdd=false; reason=`Maximum ${rule.max} reached`; }
+          let canAdd = hasLegalInsertion(found.node, found.node.children.length);
+          let reason = "";
+          if (!canAdd) {
+            const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
+            if (def) {
+              const rule = def.schema.children;
+              if (rule.mode==="none") reason="Cannot contain blocks";
+              else if (rule.max!=null && found.node.children.length >= rule.max) reason=`Maximum ${rule.max} reached`;
+              else if (rule.mode==="allowed" && rule.blocks) reason=`${def.displayName} allows only ${rule.blocks.length} type(s).`;
+              else reason="Cannot add inside";
+            } else reason="Cannot add inside";
           }
           const addBtn = document.createElement("button");
           addBtn.type = "button";
@@ -862,7 +1449,7 @@ export class CanvasController {
               return;
             }
             if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(found.node.id, found.node.children.length);
-            document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+            document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
             const lib = document.querySelector(".block-library") || document.getElementById("block-catalog");
             if (lib) lib.scrollIntoView({ behavior: "smooth" });
           });

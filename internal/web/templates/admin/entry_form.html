@@ -21,19 +21,21 @@
         {{ if .Content.IsPostsPage }}<div class="notice notice-info" style="padding:8px 12px;">Posts Page — Public archive: <a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener">{{ .Content.PostsPagePath }}</a></div>{{ end }}
         {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert">{{ .Content.PostsPageWarning }}</p>{{ end }}
       </div>
-      <div class="admin-page-actions" style="align-self:flex-start;">
+      <div class="admin-page-actions" style="align-self:flex-start; flex-wrap:wrap;">
         {{ if .Content.PublicURL }}<a class="button" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View</a>{{ end }}
         <a class="button" href="{{ .Content.BackURL }}">Back</a>
         <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
         <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+        <button class="button button-small" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library" style="margin-left:8px; min-width:32px;">◧</button>
+        <button class="button button-small" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector" style="min-width:32px;">◨</button>
       </div>
     </div>
   </header>
 
-  <div role="tablist" aria-label="Entry sections" class="entry-tabs" style="display:flex; gap:0; border-bottom:1px solid var(--ui-border); margin-bottom:16px;">
-    <button type="button" role="tab" id="tab-btn-editor" aria-selected="true" aria-controls="tab-editor" data-tab="editor" class="entry-tab is-active">Editor</button>
-    <button type="button" role="tab" id="tab-btn-settings" aria-selected="false" aria-controls="tab-settings" data-tab="settings" class="entry-tab">Settings</button>
-    <button type="button" role="tab" id="tab-btn-seo" aria-selected="false" aria-controls="tab-seo" data-tab="seo" class="entry-tab">SEO</button>
+  <div role="tablist" aria-label="Entry sections" class="entry-tabs" data-entry-tabs style="display:flex; gap:0; border-bottom:1px solid var(--ui-border); margin-bottom:16px;">
+    <button type="button" role="tab" id="tab-btn-editor" aria-selected="true" aria-controls="tab-editor" data-entry-tab="editor" class="entry-tab is-active">Editor</button>
+    <button type="button" role="tab" id="tab-btn-settings" aria-selected="false" aria-controls="tab-settings" data-entry-tab="settings" class="entry-tab">Settings</button>
+    <button type="button" role="tab" id="tab-btn-seo" aria-selected="false" aria-controls="tab-seo" data-entry-tab="seo" class="entry-tab">SEO</button>
   </div>
 
   <div id="tab-editor" role="tabpanel" aria-labelledby="tab-btn-editor">
@@ -122,6 +124,7 @@
           {{ end }}
         </div>
       </section>
+      {{ if .Content.TaxonomyPanels }}
       <hr style="border:0; border-top:1px solid var(--ui-border);">
       <section>
         <h3>Classification</h3>
@@ -142,6 +145,7 @@
         </div>
         {{ end }}
       </section>
+      {{ end }}
       {{ if .Content.SupportsComments }}
       <hr style="border:0; border-top:1px solid var(--ui-border);">
       <section>
@@ -191,22 +195,18 @@
       <section>
         <h3>Revisions</h3>
         {{ if .Content.Revisions }}
-          <div class="data-table-wrap">
-            <table class="data-table">
-              <thead><tr><th>Revision</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
-              <tbody>
-                {{ range $idx, $rev := .Content.Revisions }}
-                  {{ if lt $idx 5 }}
-                  <tr>
-                    <td>Revision {{ .Number }}</td>
-                    <td>{{ if .Published }}<span class="status-indicator status-indicator--success">● Published</span>{{ else }}<span class="status-indicator status-indicator--muted">● Draft</span>{{ end }}</td>
-                    <td class="muted">{{ .CreatedAt }}</td>
-                    <td><div class="admin-page-actions"><a class="button button-small" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a>{{ if not .Published }}<button class="button button-small" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button>{{ end }}</div></td>
-                  </tr>
-                  {{ end }}
-                {{ end }}
-              </tbody>
-            </table>
+          <div style="display:grid;gap:8px">
+            {{ range $idx, $rev := .Content.Revisions }}
+              {{ if lt $idx 5 }}
+              <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 10px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md);background:var(--ui-surface)">
+                <div style="display:grid;gap:2px;min-width:0">
+                  <span style="font-weight:600;font-size:13px">Revision {{ .Number }} {{ if .Published }}<span class="status-indicator status-indicator--success">Published</span>{{ else }}<span class="status-indicator status-indicator--muted">Draft</span>{{ end }}</span>
+                  <span class="muted" style="font-size:12px">{{ .CreatedAtFormatted }}</span>
+                </div>
+                <div class="admin-page-actions"><a class="button button-small" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a>{{ if not .Published }}<button class="button button-small" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button>{{ end }}</div>
+              </div>
+              {{ end }}
+            {{ end }}
           </div>
           {{ if gt (len .Content.Revisions) 5 }}<p style="margin:8px 0 0;"><a href="{{ .Content.Action }}/revisions" class="button button-small">View all {{ len .Content.Revisions }} revisions</a></p>{{ end }}
           <p style="margin:8px 0 0;"><a href="{{ .Content.Action }}/revisions/compare" class="button button-small">Compare revisions</a></p>
@@ -219,29 +219,57 @@
 
   <div id="tab-seo" role="tabpanel" aria-labelledby="tab-btn-seo" hidden>
     {{ if .Content.ShowSEO }}
-    <section class="editor-seo-panel" data-site-url="{{ .Content.SiteURL }}" data-public-path="{{ .Content.PublicPath }}">
-      <details class="editor-seo-details" {{ if or .Content.SEOTitle .Content.SEODescription .Content.CanonicalURL }}open{{ end }}>
-        <summary>SEO</summary>
-        <div class="editor-seo-fields">
-          <label class="editor-field"><span class="editor-field-label">SEO Title</span><input class="form-control" id="entry-seo-title" name="seo_title" value="{{ .Content.SEOTitle }}" maxlength="120"><span class="editor-field-meta"><span id="seo-title-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~50–60 characters.</span></span></label>
-          <label class="editor-field"><span class="editor-field-label">Meta Description</span><textarea class="form-control" id="entry-seo-description" name="seo_description" rows="3" maxlength="320">{{ .Content.SEODescription }}</textarea><span class="editor-field-meta"><span id="seo-desc-count" class="seo-counter"></span> <span class="seo-hint">Recommended ~150–160 characters.</span></span></label>
-          <label class="editor-field"><span class="editor-field-label">Canonical URL</span><input class="form-control" id="entry-canonical-url" name="canonical_url" value="{{ .Content.CanonicalURL }}" placeholder="https://example.com/path or /path"><span class="editor-field-meta"><span class="seo-hint">Optional. Absolute http(s) URL or a root-relative path.</span></span></label>
-          <p id="canonical-warning" class="form-warning" role="alert" hidden>This canonical URL points to a different domain.</p>
-          <div class="editor-field editor-field-row">
-            <label class="editor-field"><span class="editor-field-label">Indexing</span><select class="form-control" id="entry-seo-robots-index" name="seo_robots_index"><option value="inherit" {{ if eq .Content.RobotsIndex "inherit" }}selected{{ end }}>Inherit</option><option value="1" {{ if eq .Content.RobotsIndex "1" }}selected{{ end }}>Index</option><option value="0" {{ if eq .Content.RobotsIndex "0" }}selected{{ end }}>Noindex</option></select></label>
-            <label class="editor-field"><span class="editor-field-label">Links</span><select class="form-control" id="entry-seo-robots-follow" name="seo_robots_follow"><option value="inherit" {{ if eq .Content.RobotsFollow "inherit" }}selected{{ end }}>Inherit</option><option value="1" {{ if eq .Content.RobotsFollow "1" }}selected{{ end }}>Follow</option><option value="0" {{ if eq .Content.RobotsFollow "0" }}selected{{ end }}>Nofollow</option></select></label>
-          </div>
-          <label class="editor-field"><span class="editor-field-label">Structured Data</span><select class="form-control" id="entry-schema-mode" name="schema_mode"><option value="" {{ if eq .Content.SchemaMode "" }}selected{{ end }}>Automatic</option><option value="disabled" {{ if eq .Content.SchemaMode "disabled" }}selected{{ end }}>Disabled</option><option value="webpage" {{ if eq .Content.SchemaMode "webpage" }}selected{{ end }}>WebPage</option><option value="aboutpage" {{ if eq .Content.SchemaMode "aboutpage" }}selected{{ end }}>AboutPage</option><option value="contactpage" {{ if eq .Content.SchemaMode "contactpage" }}selected{{ end }}>ContactPage</option></select><span class="editor-field-meta"><span class="seo-hint">Automatic: Page → WebPage, Post → BlogPosting.</span></span></label>
+    <section class="editor-seo-panel admin-section" data-site-url="{{ .Content.SiteURL }}" data-public-path="{{ .Content.PublicPath }}" style="display:grid;gap:16px;max-width:900px">
+      <div class="admin-card">
+        <div class="card-header"><h2>Search appearance</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
           <div class="seo-serp" aria-label="Search result preview"><div class="seo-serp-title" id="serp-title"></div><div class="seo-serp-url" id="serp-url"></div><div class="seo-serp-description" id="serp-description"></div></div>
+          <div class="form-group">
+            <label class="form-label" for="entry-seo-title">SEO title</label>
+            <input class="form-control" id="entry-seo-title" name="seo_title" value="{{ .Content.SEOTitle }}" maxlength="120">
+            <span class="form-help"><span id="seo-title-count" class="seo-counter"></span> Recommended ~50–60 characters.</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="entry-seo-description">Meta description</label>
+            <textarea class="form-control" id="entry-seo-description" name="seo_description" rows="3" maxlength="320">{{ .Content.SEODescription }}</textarea>
+            <span class="form-help"><span id="seo-desc-count" class="seo-counter"></span> Recommended ~150–160 characters.</span>
+          </div>
         </div>
-      </details>
-      <details class="editor-social-details" open><summary>Social</summary><div class="editor-social-fields">
-        <div class="form-group"><span class="form-label">Social Image</span><div class="social-image-field"><div class="social-image-preview" id="entry-social-preview">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="form-help">No Social Image selected</span>{{ end }}</div><div class="admin-page-actions"><button type="button" class="button button-small" id="entry-social-choose">Choose image</button><button type="button" class="button button-small button-danger" id="entry-social-remove" {{ if not .Content.SocialMediaID }}hidden{{ end }}>Remove</button></div></div><p class="form-help">Without selection the Featured Image is used.</p></div>
-        <div class="social-previews" aria-label="Social previews">
-          <div class="social-preview social-preview--facebook"><h4>Facebook / LinkedIn</h4><div class="social-card" style="border:1px solid #dadde1;border-radius:8px;overflow:hidden;max-width:500px;background:#fff;"><div id="social-preview-fb-image" style="width:100%;aspect-ratio:1200/630;background:#f0f2f5;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}</div><div style="padding:10px 12px;background:#f0f2f5;"><div id="social-preview-fb-url" class="social-card__url" style="font-size:12px;color:#606770;text-transform:uppercase;"></div><div id="social-preview-fb-title" class="social-card__title" style="font-size:16px;font-weight:600;color:#1d2129;"></div><div id="social-preview-fb-desc" class="social-card__desc" style="font-size:14px;color:#606770;"></div></div></div></div>
-          <div class="social-preview social-preview--twitter" style="margin-top:16px;"><h4>X (Twitter)</h4><div class="social-card social-card--twitter" style="border:1px solid #e1e8ed;border-radius:12px;overflow:hidden;max-width:500px;background:#fff;"><div id="social-preview-tw-image" style="width:100%;aspect-ratio:1200/630;background:#f7f9f9;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}</div><div style="padding:12px;"><div id="social-preview-tw-title" style="font-size:15px;font-weight:700;"></div><div id="social-preview-tw-desc" style="font-size:14px;"></div><div id="social-preview-tw-url" style="font-size:13px;"></div></div></div></div>
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>URL / Crawling</h2></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group">
+            <label class="form-label" for="entry-canonical-url">Canonical URL</label>
+            <input class="form-control" id="entry-canonical-url" name="canonical_url" value="{{ .Content.CanonicalURL }}" placeholder="https://example.com/path or /path">
+            <span class="form-help">Optional. Absolute http(s) URL or a root-relative path.</span>
+            <p id="canonical-warning" class="form-warning" role="alert" hidden>This canonical URL points to a different domain.</p>
+          </div>
+          <div class="field-row">
+            <div class="form-group"><label class="form-label" for="entry-seo-robots-index">Indexing</label><select class="form-control" id="entry-seo-robots-index" name="seo_robots_index"><option value="inherit" {{ if eq .Content.RobotsIndex "inherit" }}selected{{ end }}>Inherit</option><option value="1" {{ if eq .Content.RobotsIndex "1" }}selected{{ end }}>Index</option><option value="0" {{ if eq .Content.RobotsIndex "0" }}selected{{ end }}>Noindex</option></select></div>
+            <div class="form-group"><label class="form-label" for="entry-seo-robots-follow">Links</label><select class="form-control" id="entry-seo-robots-follow" name="seo_robots_follow"><option value="inherit" {{ if eq .Content.RobotsFollow "inherit" }}selected{{ end }}>Inherit</option><option value="1" {{ if eq .Content.RobotsFollow "1" }}selected{{ end }}>Follow</option><option value="0" {{ if eq .Content.RobotsFollow "0" }}selected{{ end }}>Nofollow</option></select></div>
+          </div>
         </div>
-      </div></details>
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>Structured data</h2><p class="form-help">Automatic: Page → WebPage, Post → BlogPosting.</p></div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label" for="entry-schema-mode">Schema</label>
+            <select class="form-control" id="entry-schema-mode" name="schema_mode"><option value="" {{ if eq .Content.SchemaMode "" }}selected{{ end }}>Automatic</option><option value="disabled" {{ if eq .Content.SchemaMode "disabled" }}selected{{ end }}>Disabled</option><option value="webpage" {{ if eq .Content.SchemaMode "webpage" }}selected{{ end }}>WebPage</option><option value="aboutpage" {{ if eq .Content.SchemaMode "aboutpage" }}selected{{ end }}>AboutPage</option><option value="contactpage" {{ if eq .Content.SchemaMode "contactpage" }}selected{{ end }}>ContactPage</option></select>
+          </div>
+        </div>
+      </div>
+      <div class="admin-card">
+        <div class="card-header"><h2>Social</h2><p class="form-help">Without selection the Featured Image is used.</p></div>
+        <div class="card-body" style="display:grid;gap:16px">
+          <div class="form-group"><span class="form-label">Social Image</span><div class="social-image-field"><div class="social-image-preview" id="entry-social-preview">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="max-width:100%;height:auto;">{{ else }}<span class="form-help">No Social Image selected</span>{{ end }}</div><div class="admin-page-actions"><button type="button" class="button button-small" id="entry-social-choose">Choose image</button><button type="button" class="button button-small button-danger" id="entry-social-remove" {{ if not .Content.SocialMediaID }}hidden{{ end }}>Remove</button></div></div></div>
+          <div class="admin-card" style="border:1px solid var(--ui-border);border-radius:var(--ui-radius-md);overflow:hidden;max-width:500px">
+            <div id="social-preview-fb-image" style="width:100%;aspect-ratio:1200/630;background:#f0f2f5;display:flex;align-items:center;justify-content:center;overflow:hidden;">{{ if .Content.SocialMediaID }}<img src="/media/{{ .Content.SocialMediaID }}/social" alt="" style="width:100%;height:100%;object-fit:cover;">{{ else }}<span style="color:#8a8d91;">No image</span>{{ end }}</div>
+            <div style="padding:10px 12px;background:#f0f2f5;"><div id="social-preview-fb-url" class="social-card__url" style="font-size:12px;color:#606770;text-transform:uppercase;"></div><div id="social-preview-fb-title" class="social-card__title" style="font-size:16px;font-weight:600;color:#1d2129;"></div><div id="social-preview-fb-desc" class="social-card__desc" style="font-size:14px;color:#606770;"></div></div>
+          </div>
+        </div>
+      </div>
     </section>
     {{ else }}
     <p class="muted">SEO not available for this content type.</p>
@@ -250,8 +278,10 @@
 
   <script>
     (function(){
-      const tabs = document.querySelectorAll('[role="tab"]');
-      const panels = document.querySelectorAll('[role="tabpanel"]');
+      const tablist = document.querySelector('[data-entry-tabs]');
+      if(!tablist) return;
+      const tabs = tablist.querySelectorAll('[data-entry-tab]');
+      const panels = document.querySelectorAll('#tab-editor, #tab-settings, #tab-seo');
       function activate(id, push){
         tabs.forEach(t=>{
           const sel = t.getAttribute('aria-controls')===id;
@@ -308,38 +338,9 @@
       [titleInput,descInput,canonicalInput].forEach(function(el){ if(el) el.addEventListener('input',function(){updateCounts(); updateSerp(); updateSocialPreview();});}); if(titleEntry) titleEntry.addEventListener('input',function(){updateSerp(); updateSocialPreview();}); if(excerptEntry) excerptEntry.addEventListener('input',function(){updateSerp(); updateSocialPreview();}); if(socialChoose){socialChoose.addEventListener('click',function(){ if(!window.openMediaPicker) return; window.openMediaPicker({onSelect:function(a){ if(socialInput) socialInput.value=a.id; updateSocialPreview();}});});} if(socialRemove){socialRemove.addEventListener('click',function(){ if(socialInput) socialInput.value=''; updateSocialPreview();});} updateCounts(); updateSerp(); updateSocialPreview();
     })();
   </script>
-</form>
-<div class="admin-section" id="share-preview-section" style="margin-top:24px; padding:16px; border:1px solid var(--ui-border);">
-  <h3>Share draft preview</h3>
-  <p class="form-help">Create a temporary public link to share this draft without login. The link shows the exact saved revision.</p>
-  {{ if .Content.EntryID }}
-  <form method="post" action="/admin/preview-links" data-on:submit__prevent="@post('/admin/preview-links', {contentType: 'form'})" style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin:12px 0;">
-    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
-    <input type="hidden" name="entry_id" value="{{ .Content.EntryID }}">
-    <label>Expires <select name="expires" class="form-control" style="width:auto;"><option value="1h">1 hour</option><option value="24h" selected>24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label>
-    <button type="submit" class="button">Create link</button>
-  </form>
-  <div id="preview-share-result"></div>
-  {{ if .Content.PreviewLinks }}
-  <h4>Active links</h4>
-  <ul style="list-style:none; padding:0; display:grid; gap:8px;">
-  {{ range .Content.PreviewLinks }}
-    <li id="preview-link-{{ .ID }}" style="display:flex; gap:8px; align-items:center; justify-content:space-between; padding:8px; border:1px solid var(--ui-border);">
-      <span style="font-size:13px;">Created {{ .CreatedAt }} · Expires {{ .ExpiresAt }}</span>
-      <form method="post" action="/admin/preview-links/{{ .ID }}/revoke" style="display:inline;">
-        <input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}">
-        <button class="button button-small button-danger" type="submit" data-on:click__prevent="@post('/admin/preview-links/{{ .ID }}/revoke', {contentType: 'form'})">Revoke</button>
-      </form>
-    </li>
-  {{ end }}
-  </ul>
-  {{ else }}
-  <p class="muted" style="font-size:13px;">No active preview links.</p>
-  {{ end }}
-  {{ else }}
-  <p class="muted">Save the entry first to create a share preview link.</p>
-  {{ end }}
-</div>
+ </form>
+<!-- Share preview data for Document → Sharing drawer (not rendered after workspace) -->
+<script id="share-preview-data" type="application/json">{"entryId":"{{ .Content.EntryID }}","csrfToken":"{{ .Content.CSRFToken }}","previewLinks":[{{ range $i, $l := .Content.PreviewLinks }}{{ if $i }},{{ end }}{"id":"{{ $l.ID }}","createdAt":"{{ $l.CreatedAt }}","expiresAt":"{{ $l.ExpiresAt }}"}{{ end }}]}</script>
 <script>
   document.querySelectorAll('[data-custom-media-picker]').forEach(function (button) {
     button.addEventListener('click', function () {

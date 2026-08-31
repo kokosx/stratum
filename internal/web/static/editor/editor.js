@@ -1,7 +1,7 @@
 // Stratum Visual Editor — unified SDT editor (modular)
 import { state, bootstrap, definitions, definitionFor, pushHistory, maybePushHistory, undo, redo, updateDirty, syncBaseline, initHistory, hydrateNode, isDirtyNow, commitMutation, setInsertionTarget, clearInsertionTarget } from "./state.js";
 import { findNode, isContainer, createNode, duplicateSubtree, assignNewIDs, clonePatternNodes, insertionPoint, insertionPointForPattern, canInsertRoots, containerAccepts, isWithin, collectNodeIds } from "./tree.js";
-import { createValidNode, canInsert, canInsertRoots as canInsertRootsM, canRemove, canMove, canDuplicate, canIndent as canIndentM, canOutdent as canOutdentM, insertionPointForBlock, resolveInsertionTarget } from "./mutations.js";
+import { createValidNode, canInsert, canInsertRoots as canInsertRootsM, canRemove, canMove, canDuplicate, canIndent as canIndentM, canOutdent as canOutdentM, insertionPointForBlock, resolveInsertionTarget, hasLegalInsertion } from "./mutations.js";
 import { renderCatalog, renderPatternCatalog, initLibraryTabs } from "./library.js";
 import { renderNavigator, updateBreadcrumbs } from "./navigator.js";
 import { renderInspector } from "./inspector.js";
@@ -47,15 +47,39 @@ window.__stratum_clearInsertionTarget = () => { clearInsertionTarget(); renderCa
 window.__stratum_canRemove = canRemove;
 window.__stratum_canDuplicate = canDuplicate;
 window.__stratum_canInsert = canInsert;
+window.__stratum_hasLegalInsertion = hasLegalInsertion;
 window.__stratum_renderCatalog = (f) => renderCatalog(f || document.getElementById("block-search")?.value||"");
 window.__stratum_onSelectionChange = (nodeId, instanceKey, externalInfo) => {
   state.selectedNodeId = nodeId;
   state.selectedInstanceKey = instanceKey || null;
+  // expand ancestors so selected is visible
+  if (nodeId) {
+    try {
+      const path = [];
+      function walk(nodes, acc) {
+        for (const n of nodes) {
+          const cur = [...acc, n];
+          if (n.id === nodeId) { path.push(...cur); return true; }
+          if (n.children && walk(n.children, cur)) return true;
+        }
+        return false;
+      }
+      walk(state.document.nodes, []);
+      path.forEach(p => { if (state.collapsed.has(p.id)) state.collapsed.delete(p.id); });
+    } catch(_) {}
+  }
+  if (state._closeMenu) state._closeMenu();
   renderNavigator();
   renderInspector(externalInfo || null);
   updateBreadcrumbs();
-  // sync legacy tree selection
   renderTree();
+  // scroll navigator to selected
+  if (nodeId) {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`) || document.querySelector(`[data-node-id="${nodeId}"]`);
+      if (el) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }, 20);
+  }
 };
 window.__stratum_renderTree = renderTree;
 
@@ -100,14 +124,14 @@ function renderTree() {
       renderCatalog("");
       const lib = document.querySelector(".block-library");
       if (lib) lib.scrollIntoView({behavior:"smooth"});
-      const tabs = document.querySelectorAll(".library-tab");
-      tabs.forEach(t=>{ if(t.dataset.tab==="blocks"){ t.click(); }});
+      const tabs = document.querySelectorAll("[data-library-tab]");
+      tabs.forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks"){ t.click(); }});
     });
     const patBtn = element("button", "button", "Browse patterns");
     patBtn.type = "button";
     patBtn.addEventListener("click", () => {
-      const tabs = document.querySelectorAll(".library-tab");
-      tabs.forEach(t=>{ if(t.dataset.tab==="patterns"){ t.click(); }});
+      const tabs = document.querySelectorAll("[data-library-tab]");
+      tabs.forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="patterns"){ t.click(); }});
     });
     actions.append(addBtn, patBtn);
     empty.append(title, desc, actions);
@@ -140,14 +164,7 @@ function insertionLabelForContainer(containerNode) {
 function renderDropZone(siblings, containerNode) {
   const zone = document.createElement("div");
   zone.className = containerNode ? "node__children" : "tree__root";
-  const canAddInside = (() => {
-    if (!containerNode) return true;
-    const def = definitionFor(containerNode);
-    if (!def) return false;
-    if (def.schema.children.mode==="none") return false;
-    if (def.schema.children.max!=null && siblings.length >= def.schema.children.max) return false;
-    return true;
-  })();
+  const canAddInside = hasLegalInsertion(containerNode, 0);
   if (siblings.length === 0) {
     const slot = document.createElement("div");
     slot.className = "drop-slot drop-slot--empty";
@@ -166,7 +183,7 @@ function renderDropZone(siblings, containerNode) {
         const lib = document.querySelector(".block-library");
         if (lib) lib.scrollIntoView({behavior:"smooth"});
         // switch to blocks tab
-        document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
       });
       inner.replaceChildren();
       inner.append(element("span","muted", containerNode ? `${definitionFor(containerNode)?.displayName || "Container"} is empty` : "No blocks"), btn);
@@ -184,60 +201,82 @@ function renderDropZone(siblings, containerNode) {
     return zone;
   }
   siblings.forEach((child, index) => {
-    const slot = document.createElement("div");
-    slot.className = "drop-slot drop-slot--insertion";
-    // Insertion button between blocks (subtle hover)
-    const btn = element("button", "insertion-btn", "+");
-    btn.type = "button";
-    btn.title = "Add block here";
-    btn.setAttribute("aria-label", "Add block here");
-    btn.style.cssText = "width:100%;height:18px;border:1px dashed transparent;background:transparent;color:#94a3b8;font-size:11px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .12s, border-color .12s";
-    btn.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      const parentId = containerNode ? containerNode.id : null;
-      setInsertionTarget({parentId, index});
-      renderCatalog("");
-      document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
-    });
-    slot.addEventListener("mouseenter", ()=> btn.style.opacity="1");
-    slot.addEventListener("mouseleave", ()=> btn.style.opacity="0");
-    slot.addEventListener("focusin", ()=> btn.style.opacity="1");
-    // highlight if this is insertion target
-    if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===index) {
-      slot.classList.add("drop-slot--active");
-      btn.style.opacity="1";
-      btn.style.borderColor="#2563eb";
-      btn.style.background="#eff6ff";
+    // Only render insertion affordance if SDT boundary is legal
+    if (hasLegalInsertion(containerNode, index)) {
+      const slot = document.createElement("div");
+      slot.className = "drop-slot drop-slot--insertion";
+      const btn = element("button", "insertion-btn", "+");
+      btn.type = "button";
+      btn.title = "Add block here";
+      btn.setAttribute("aria-label", "Add block here");
+      btn.style.cssText = "width:100%;min-height:28px;height:28px;border:1px dashed transparent;background:transparent;color:#94a3b8;font-size:11px;border-radius:6px;cursor:pointer;opacity:0;transition:opacity .12s, border-color .12s; display:flex;align-items:center;justify-content:center;";
+      btn.addEventListener("click", (e)=>{
+        e.stopPropagation();
+        const parentId = containerNode ? containerNode.id : null;
+        setInsertionTarget({parentId, index});
+        renderCatalog("");
+        document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
+      });
+      slot.addEventListener("mouseenter", ()=> btn.style.opacity="1");
+      slot.addEventListener("mouseleave", ()=> { if (!slot.classList.contains("drop-slot--active")) btn.style.opacity="0"; });
+      slot.addEventListener("focusin", ()=> btn.style.opacity="1");
+      if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===index) {
+        slot.classList.add("drop-slot--active");
+        btn.style.opacity="1";
+        btn.style.borderColor="#2563eb";
+        btn.style.background="#eff6ff";
+      }
+      slot.append(btn);
+      attachSlot(slot, containerNode, index);
+      zone.append(slot);
+    } else {
+      // Still need a drop target for DnD (validation will reject) but no visual plus
+      const slot = document.createElement("div");
+      slot.className = "drop-slot drop-slot--insertion is-disabled";
+      slot.style.minHeight = "4px";
+      slot.style.height = "4px";
+      // Attach for DnD feedback only (no button)
+      attachSlot(slot, containerNode, index);
+      // Hide when illegal to avoid christmas tree
+      slot.style.display = "none";
+      zone.append(slot);
     }
-    slot.append(btn);
-    attachSlot(slot, containerNode, index);
-    zone.append(slot);
     zone.append(renderNode(child));
   });
-  const tail = document.createElement("div");
-  tail.className = "drop-slot drop-slot--insertion";
-  const tailBtn = element("button", "insertion-btn", "+");
-  tailBtn.type = "button";
-  tailBtn.title = "Add block here";
-  tailBtn.style.cssText = "width:100%;height:18px;border:1px dashed transparent;background:transparent;color:#94a3b8;font-size:11px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .12s";
-  tailBtn.addEventListener("click", (e)=>{
-    e.stopPropagation();
-    const parentId = containerNode ? containerNode.id : null;
-    setInsertionTarget({parentId, index:siblings.length});
-    renderCatalog("");
-    document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
-  });
-  tail.addEventListener("mouseenter", ()=> tailBtn.style.opacity="1");
-  tail.addEventListener("mouseleave", ()=> tailBtn.style.opacity="0");
-  if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===siblings.length) {
-    tail.classList.add("drop-slot--active");
-    tailBtn.style.opacity="1";
-    tailBtn.style.borderColor="#2563eb";
-    tailBtn.style.background="#eff6ff";
+  // Tail boundary
+  if (hasLegalInsertion(containerNode, siblings.length)) {
+    const tail = document.createElement("div");
+    tail.className = "drop-slot drop-slot--insertion";
+    const tailBtn = element("button", "insertion-btn", "+");
+    tailBtn.type = "button";
+    tailBtn.title = "Add block here";
+    tailBtn.style.cssText = "width:100%;min-height:28px;height:28px;border:1px dashed transparent;background:transparent;color:#94a3b8;font-size:11px;border-radius:6px;cursor:pointer;opacity:0;transition:opacity .12s;display:flex;align-items:center;justify-content:center;";
+    tailBtn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const parentId = containerNode ? containerNode.id : null;
+      setInsertionTarget({parentId, index:siblings.length});
+      renderCatalog("");
+      document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
+    });
+    tail.addEventListener("mouseenter", ()=> tailBtn.style.opacity="1");
+    tail.addEventListener("mouseleave", ()=> { if (!tail.classList.contains("drop-slot--active")) tailBtn.style.opacity="0"; });
+    if (state.insertionTarget && state.insertionTarget.parentId === (containerNode?containerNode.id:null) && state.insertionTarget.index===siblings.length) {
+      tail.classList.add("drop-slot--active");
+      tailBtn.style.opacity="1";
+      tailBtn.style.borderColor="#2563eb";
+      tailBtn.style.background="#eff6ff";
+    }
+    tail.append(tailBtn);
+    attachSlot(tail, containerNode, siblings.length);
+    zone.append(tail);
+  } else {
+    const tail = document.createElement("div");
+    tail.className = "drop-slot drop-slot--insertion is-disabled";
+    tail.style.minHeight = "0";
+    tail.style.display = "none";
+    attachSlot(tail, containerNode, siblings.length);
+    zone.append(tail);
   }
-  tail.append(tailBtn);
-  attachSlot(tail, containerNode, siblings.length);
-  zone.append(tail);
   return zone;
 }
 
@@ -315,21 +354,27 @@ function renderNode(node) {
     btn.classList.add("node__collapse");
     actions.append(btn);
   }
-  // Add inside button for containers
+  // Add inside button for containers — schema-legal only
   if (container) {
-    const canInsertInside = (() => {
+    const canInsertInside = hasLegalInsertion(node, node.children.length);
+    let reason = "";
+    if (!canInsertInside) {
       const def = definitionFor(node);
-      if (!def) return false;
-      if (def.schema.children.max!=null && node.children.length >= def.schema.children.max) return false;
-      return def.schema.children.mode!=="none";
-    })();
-    const addInsideBtn = actionButton("+", canInsertInside? insertionLabelForContainer(node) : "Maximum reached", ()=>{
-      if (!canInsertInside) { showInsertionPrompt(`${definition?.displayName || node.block} has reached maximum children.`); return; }
+      if (def) {
+        const rule = def.schema.children;
+        if (rule.mode==="none") reason = `${def.displayName} does not allow child blocks.`;
+        else if (rule.max!=null && node.children.length >= rule.max) reason = `${def.displayName} allows at most ${rule.max} child blocks.`;
+        else if (rule.mode==="allowed" && rule.blocks && rule.blocks.length) reason = `${def.displayName} allows only ${rule.blocks.join(", ")}.`;
+        else reason = "Cannot add here.";
+      } else reason = "Cannot add here.";
+    }
+    const addInsideBtn = actionButton("+", canInsertInside? insertionLabelForContainer(node) : (reason || "Maximum reached"), ()=>{
+      if (!canInsertInside) { showInsertionPrompt(reason || "Cannot add here."); return; }
       setInsertionTarget({parentId: node.id, index: node.children.length});
       renderCatalog("");
-      document.querySelectorAll(".library-tab").forEach(t=>{ if(t.dataset.tab==="blocks") t.click(); });
+      document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
     });
-    if (!canInsertInside) { addInsideBtn.disabled=true; addInsideBtn.style.opacity="0.4"; addInsideBtn.title="Maximum reached"; }
+    if (!canInsertInside) { addInsideBtn.disabled=true; addInsideBtn.style.opacity="0.4"; addInsideBtn.title=reason; }
     actions.append(addInsideBtn);
   }
   // Duplicate with validation
@@ -525,8 +570,10 @@ function performDrop(drag, containerNode, index){
   clearInsertionTarget();
   state.selectedNodeId=nodeId;
   state.selectedInstanceKey=null;
-  if (canvasController) canvasController.selectNode(nodeId, null);
+  state.__pendingScrollToId = nodeId;
+  if (canvasController) canvasController.selectNode(nodeId, null, { scroll: false });
   changed();
+  if (canvasController) setTimeout(()=>canvasController.scrollToNode(nodeId, "smooth"), 60);
 }
 window.__stratum_performNavigatorDrop = (drag, targetNode, position)=>{
   if (!drag) return;
@@ -556,12 +603,17 @@ function addBlock(definition){
   const point = insertionPointForBlock(definition.block);
   if (!point) {
     showInsertionPrompt("Choose where to add this block.");
-    // Enter insertion mode without target: highlight valid drop slots
-    // For now just set root target if allowed
-    const canRoot = canInsert(null, definition.block, state.document.nodes.length);
-    if (canRoot.ok) {
-      setInsertionTarget({parentId:null, index: state.document.nodes.length});
-      renderCatalog("");
+    // Only auto-target root when document is empty — otherwise require explicit placement
+    if (state.document.nodes.length === 0) {
+      const canRoot = canInsert(null, definition.block, 0);
+      if (canRoot.ok) {
+        setInsertionTarget({parentId:null, index: 0});
+        renderCatalog("");
+      }
+    } else {
+      // Highlight valid slots via insertion affordances; user must click a drop zone / Add button
+      if (window.__stratum_renderCatalog) window.__stratum_renderCatalog("");
+      if (canvasController) canvasController.renderOverlays();
     }
     return;
   }
@@ -574,8 +626,11 @@ function addBlock(definition){
   if (!ok) { showInsertionPrompt("Could not add block."); return; }
   clearInsertionTarget();
   state.selectedNodeId=newId;
-  if (canvasController) canvasController.selectNode(newId, null);
+  state.__pendingScrollToId = newId;
+  if (canvasController) canvasController.selectNode(newId, null, { scroll: false });
   changed();
+  // ensure canvas scrolls to new node after render (before preview)
+  if (canvasController) setTimeout(()=>canvasController.scrollToNode(newId, "smooth"), 60);
 }
 function moveNode(id, offset){
   const found=findNode(id); if(!found) return;
@@ -652,7 +707,9 @@ function duplicateNode(id){
   });
   if (!ok) return;
   state.selectedNodeId=dupeId;
+  state.__pendingScrollToId = dupeId;
   changed();
+  if (canvasController) setTimeout(()=>canvasController.scrollToNode(dupeId, "smooth"), 60);
 }
 function insertPattern(patternId){
   const pattern=state.patterns.find(p=>p.id===patternId);
@@ -698,7 +755,9 @@ function insertPattern(patternId){
   if (!ok) return;
   clearInsertionTarget();
   state.selectedNodeId=firstId;
+  state.__pendingScrollToId = firstId;
   changed();
+  if (canvasController) setTimeout(()=>canvasController.scrollToNode(firstId, "smooth"), 60);
 }
 
 // Changed
@@ -823,7 +882,75 @@ window.addEventListener("beforeunload", (e)=>{
 })();
 
 const blockSearchEl=document.getElementById("block-search");
-if(blockSearchEl) blockSearchEl.addEventListener("input", (e)=>{ const v=e.target.value; renderCatalog(v); renderPatternCatalog(v); });
+if(blockSearchEl) blockSearchEl.addEventListener("input", (e)=>{
+  const v=e.target.value;
+  if (state.libraryTab === "navigator") {
+    const q = v.trim().toLowerCase();
+    const container = document.getElementById("navigator-content");
+    if (!container) return;
+    if (!q) {
+      // clear filter: restore collapsed state and re-render
+      container.querySelectorAll(".navigator-node").forEach(n=>{ n.style.display=""; n.style.outline=""; });
+      renderNavigator();
+      return;
+    }
+    // Collect matched ids via document traversal (covers collapsed nodes)
+    const matchedIds = new Set();
+    const ancestors = new Map(); // nodeId -> parentId
+    function walk(nodes, parentId) {
+      for (const n of nodes) {
+        if (parentId) ancestors.set(n.id, parentId);
+        // check summary/type
+        const def = definitionFor(n);
+        const txt = `${def ? def.displayName : n.block} ${(() => {
+          // replicate nodeSummary quickly
+          const p = n.props || {};
+          const s = n.settings || {};
+          if (n.block==="core/heading"||n.block==="core/entry-title") return p.text||"";
+          if (n.block==="core/text") return (p.text||"").slice(0,70);
+          if (n.block==="core/button") return p.label||"";
+          return "";
+        })()} ${n.block}`.toLowerCase();
+        if (txt.includes(q)) {
+          matchedIds.add(n.id);
+          // add ancestors
+          let cur = n.id;
+          while (ancestors.has(cur)) {
+            const par = ancestors.get(cur);
+            matchedIds.add(par);
+            // expand
+            if (state.collapsed.has(par)) state.collapsed.delete(par);
+            cur = par;
+          }
+        }
+        if (n.children) walk(n.children, n.id);
+      }
+    }
+    walk(state.document.nodes, null);
+    // Re-render to expand ancestors
+    renderNavigator();
+    // Highlight matches and hide non-matched
+    const allNodes = container.querySelectorAll(".navigator-node");
+    allNodes.forEach(n=>{
+      const id = n.dataset.nodeId;
+      if (matchedIds.has(id)) {
+        n.style.outline = "1px solid #93c5fd";
+        n.style.display = "";
+      } else {
+        // hide if not ancestor of match and not matched
+        n.style.display = "none";
+        n.style.outline = "";
+      }
+    });
+    // Ensure ancestors of matches are visible even if they were hidden
+    matchedIds.forEach(id=>{
+      const el = container.querySelector(`[data-node-id="${CSS.escape ? CSS.escape(id) : id}"]`);
+      if (el) el.style.display = "";
+    });
+  } else {
+    renderCatalog(v); renderPatternCatalog(v);
+  }
+});
 form.addEventListener("submit", ()=>{
   documentInput.value=JSON.stringify(state.document);
   syncBaseline();
@@ -846,14 +973,18 @@ document.addEventListener("click", (e)=>{
     if(frame) frame.style.width=w;
     if(canvasEl) {
       const wrap=document.getElementById("editor-canvas-wrap");
-      if(w==="100%"){ if(wrap) wrap.style.maxWidth="100%"; canvasEl.style.width="100%"; }
-      else { if(wrap) wrap.style.maxWidth=w; canvasEl.style.width=w; }
+      const stage=document.getElementById("editor-canvas-stage");
+      const target = stage || wrap;
+      if(w==="100%"){ if(target) target.style.maxWidth="100%"; if(stage) stage.style.maxWidth="100%"; canvasEl.style.width="100%"; }
+      else { if(target) target.style.maxWidth=w; if(stage) stage.style.maxWidth=w; canvasEl.style.width="100%"; }
       if(canvasController) setTimeout(()=>canvasController.updateOverlayPositions(), 100);
     }
   }
-  if(e.target.matches(".inspector-tab")){
-    const tab=e.target.dataset.tab;
-    document.querySelectorAll(".inspector-tab").forEach(b=>{ b.classList.remove("is-active"); b.setAttribute("aria-selected","false"); });
+  if(e.target.matches("[data-inspector-tab]") || e.target.matches(".inspector-tab")){
+    const tab=e.target.getAttribute('data-inspector-tab') || e.target.dataset.tab;
+    const container = document.querySelector('[data-inspector-tabs]');
+    const scope = container || document;
+    scope.querySelectorAll("[data-inspector-tab], .inspector-tab").forEach(b=>{ b.classList.remove("is-active"); b.setAttribute("aria-selected","false"); });
     e.target.classList.add("is-active"); e.target.setAttribute("aria-selected","true");
     const blockPanel=document.getElementById("inspector-block-panel");
     const docPanel=document.getElementById("inspector-document-panel");
@@ -868,54 +999,358 @@ function renderDocumentInspector(){
   const slot=document.getElementById("document-inspector-slot");
   if(!slot) return;
   slot.replaceChildren();
-  // Move existing Settings tab content into inspector document panel for unified view
-  // For now, show capabilities-based info
   const info=document.createElement("div");
   info.className="document-inspector";
   const res=bootstrap.resource || {};
-  const caps=bootstrap.capabilities || {};
   const h3 = document.createElement("h3");
   h3.style.margin = "0 0 8px";
-  h3.textContent = res.label || res.id || "Document";
-  const p1 = document.createElement("p");
-  p1.className = "muted";
-  p1.style.fontSize = "12px";
-  p1.textContent = `${res.type||""} ${res.kind? "· "+res.kind:""} ${res.contentTypeId? "· "+res.contentTypeId:""}`.trim();
-  const grid = document.createElement("div");
-  grid.style.display = "grid";
-  grid.style.gap = "6px";
-  grid.style.marginTop = "12px";
-  grid.style.fontSize = "12px";
-  for (const [k,v] of Object.entries(caps)) {
-    const row = document.createElement("div");
-    const strong = document.createElement("strong");
-    strong.textContent = `${k}: `;
-    row.append(strong, document.createTextNode(v?"yes":"no"));
-    grid.append(row);
+  h3.textContent = "About";
+  const typeLabel = res.contentTypeId ? res.contentTypeId.charAt(0).toUpperCase()+res.contentTypeId.slice(1) : (res.type==="entry"? "Page":"Document");
+  const statusEl = document.getElementById("editor-publish-state");
+  const statusText = statusEl ? statusEl.textContent.trim() : "";
+  const pubPath = document.getElementById("entry-slug") ? ("/"+(document.getElementById("entry-slug").value||"")) : "";
+  const meta = document.createElement("div");
+  meta.style.display = "grid";
+  meta.style.gap = "4px";
+  meta.style.fontSize = "13px";
+  meta.style.marginTop = "6px";
+  const row1 = document.createElement("div");
+  const strong = document.createElement("strong");
+  strong.style.fontWeight = "600";
+  strong.textContent = typeLabel;
+  const span = document.createElement("span");
+  span.style.color = "#64748b";
+  span.textContent = ` · ${statusText||"Draft"}`;
+  row1.append(strong, span);
+  const row2 = document.createElement("div");
+  row2.style.fontSize = "12px";
+  row2.style.color = "#64748b";
+  row2.style.wordBreak = "break-all";
+  row2.textContent = pubPath || (res.label || "");
+  meta.append(row1, row2);
+  info.append(h3, meta);
+  if (res.label) {
+    const labelRow = document.createElement("div");
+    labelRow.style.fontSize = "12px";
+    labelRow.style.marginTop = "6px";
+    labelRow.style.color = "#334155";
+    labelRow.textContent = res.label;
+    info.append(labelRow);
   }
   const p2 = document.createElement("p");
   p2.className = "muted";
   p2.style.marginTop = "12px";
   p2.style.fontSize = "11px";
-  p2.textContent = "Switch to Settings tab for full metadata (title, slug, SEO, fields, taxonomies). Visual canvas is primary; Inspector Block tab edits selected block.";
-  info.append(h3, p1, grid, p2);
+  p2.textContent = "Inspector Document shows publishing, URL and theme settings. Visual canvas is primary; Inspector Block tab edits selected block.";
+  info.append(p2);
   slot.append(info);
-  // Also try to move legacy Settings tab content if present (for entry)
+  // Also try to move legacy Settings tab content if present (for entry) — grouped per AB spec
   const settingsTab=document.getElementById("tab-settings");
   if(settingsTab){
+    // Avoid empty Classification — hide if no taxonomy panels
+    const hasTaxonomy = settingsTab.querySelectorAll('[name^="taxonomy_"]').length > 0 || settingsTab.querySelector('.taxonomy-hierarchy');
+    if(!hasTaxonomy){
+      const classSection = settingsTab.querySelector('section h3');
+      // Find Classification section and hide if empty
+      settingsTab.querySelectorAll('section').forEach(sec=>{
+        const h=sec.querySelector('h3');
+        if(h && h.textContent.trim()==='Classification'){
+          // Check if inner has panels
+          if(sec.querySelectorAll('.taxonomy-hierarchy, [name^="taxonomy_"]').length===0){
+            // If original empty state not rendered, leave hidden via slot clone logic
+          }
+        }
+      });
+    }
     const clone=settingsTab.cloneNode(true);
     clone.hidden=false;
     clone.id="doc-settings-clone";
     clone.style.display="grid";
     clone.style.gap="16px";
-    // Remove duplicate ids
+    // Remove duplicate ids and disable inputs to avoid duplicate submit
     clone.querySelectorAll("[id]").forEach(el=> el.id = el.id + "-clone");
+    clone.querySelectorAll("[name]").forEach(el=> { el.disabled = true; el.setAttribute("data-clone-disabled","1"); });
+    // Replace submit buttons with links to Settings tab
+    clone.querySelectorAll('button[type="submit"], button[data-on*="@post"]').forEach(btn=>{
+      const link = document.createElement("a");
+      link.href = "#settings";
+      link.className = btn.className || "button button-small";
+      link.textContent = btn.textContent.trim() || "Edit in Settings";
+      link.style.display = "inline-flex";
+      link.style.alignItems = "center";
+      link.addEventListener("click", (e)=>{ e.preventDefault(); document.getElementById("tab-btn-settings")?.click(); });
+      btn.replaceWith(link);
+    });
     slot.append(document.createElement("hr"));
+    const settingsHeader=document.createElement("h3");
+    settingsHeader.textContent="Publishing & Settings";
+    settingsHeader.style.margin="12px 0 0";
+    slot.append(settingsHeader);
+    const settingsHint=document.createElement("p");
+    settingsHint.className="muted";
+    settingsHint.style.fontSize="11px";
+    settingsHint.textContent="Read-only summary — use Settings tab to edit.";
+    slot.append(settingsHint);
     slot.append(clone);
+  }
+  // SEO panel — compact redesign, clone into drawer as well (deduped)
+  const seoTab=document.getElementById("tab-seo");
+  if(seoTab){
+    const seoClone=seoTab.cloneNode(true);
+    seoClone.hidden=false;
+    seoClone.id="doc-seo-clone";
+    seoClone.style.display="grid";
+    seoClone.style.gap="12px";
+    seoClone.querySelectorAll("[id]").forEach(el=> el.id = el.id + "-clone");
+    seoClone.querySelectorAll("[name]").forEach(el=> { el.disabled = true; });
+    seoClone.querySelectorAll('button[type="submit"], button[data-on*="@post"]').forEach(btn=>{
+      const link = document.createElement("a");
+      link.href = "#seo";
+      link.className = btn.className || "button button-small";
+      link.textContent = btn.textContent.trim() || "Edit in SEO";
+      link.addEventListener("click", (e)=>{ e.preventDefault(); document.getElementById("tab-btn-seo")?.click(); });
+      btn.replaceWith(link);
+    });
+    slot.append(document.createElement("hr"));
+    const seoHeader=document.createElement("h3");
+    seoHeader.textContent="SEO";
+    seoHeader.style.margin="12px 0 0";
+    slot.append(seoHeader);
+    const seoHint=document.createElement("p");
+    seoHint.className="muted";
+    seoHint.style.fontSize="11px";
+    seoHint.textContent="Read-only — edit in SEO tab.";
+    slot.append(seoHint);
+    slot.append(seoClone);
+  }
+  // Sharing — move Share draft preview into Document → Sharing (AA)
+  const shareSection=document.getElementById("share-preview-section");
+  const shareDataEl=document.getElementById("share-preview-data");
+  let shareClone=null;
+  if(shareSection){
+    shareClone=shareSection.cloneNode(true);
+    shareClone.hidden=false;
+    shareClone.id="doc-share-clone";
+    shareClone.style.display="grid";
+    shareClone.style.gap="10px";
+    shareClone.style.marginTop="12px";
+    shareClone.style.borderTop="1px solid var(--ui-border)";
+    shareClone.style.paddingTop="12px";
+    shareClone.querySelectorAll("[id]").forEach(el=> el.id = el.id + "-clone");
+    shareClone.querySelectorAll("[name]").forEach(el=> { el.disabled=true; });
+    // Replace forms inside clone with disabled representation to avoid nested form submit
+    shareClone.querySelectorAll("form").forEach(f=>{
+      f.querySelectorAll("[name]").forEach(el=> el.disabled=true);
+      f.querySelectorAll('button').forEach(btn=> btn.disabled=true);
+    });
+    const entryId = document.getElementById('entry-id')?.value || bootstrap.resource?.id || "";
+    if(!entryId){
+      const msg=document.createElement("p");
+      msg.className="muted";
+      msg.style.fontSize="12px";
+      msg.textContent="Save this draft before creating a share link.";
+      shareClone.replaceChildren(msg);
+      const h=document.createElement("h4");
+      h.textContent="Sharing";
+      shareClone.prepend(h);
+    } else {
+      const h=shareClone.querySelector('h3');
+      if(!h){
+        const nh=document.createElement("h4");
+        nh.textContent="Sharing";
+        shareClone.prepend(nh);
+      } else {
+        h.textContent="Sharing";
+      }
+      const hint=document.createElement("p");
+      hint.className="muted";
+      hint.style.fontSize="11px";
+      hint.textContent="Use Sharing section above (Settings tab) to manage links.";
+      shareClone.append(hint);
+    }
+    slot.append(document.createElement("hr"));
+    slot.append(shareClone);
+  } else if(shareDataEl){
+    try{
+      const data=JSON.parse(shareDataEl.textContent||"{}");
+      const entryId=data.entryId||document.getElementById('entry-id')?.value||bootstrap.resource?.id||"";
+      const csrf=data.csrfToken||document.querySelector('input[name="csrf_token"]')?.value||"";
+      const links=data.previewLinks||[];
+      const container=document.createElement("div");
+      container.id="doc-share-clone";
+      container.style.display="grid";
+      container.style.gap="10px";
+      container.style.marginTop="12px";
+      container.style.borderTop="1px solid var(--ui-border)";
+      container.style.paddingTop="12px";
+      const h4=document.createElement("h4");
+      h4.textContent="Sharing";
+      container.append(h4);
+      if(!entryId){
+        const p=document.createElement("p");
+        p.className="muted";
+        p.style.fontSize="12px";
+        p.textContent="Save this draft before creating a share link.";
+        container.append(p);
+      } else {
+        const p=document.createElement("p");
+        p.className="form-help";
+        p.textContent="Create a temporary public link to share this draft without login.";
+        container.append(p);
+        // Use div + button (not nested <form> inside outer editor form) — avoid invalid HTML nesting
+        const controls=document.createElement("div");
+        controls.style.display="flex";
+        controls.style.gap="8px";
+        controls.style.alignItems="flex-end";
+        controls.style.flexWrap="wrap";
+        const label=document.createElement("label");
+        label.textContent="Expires ";
+        const sel=document.createElement("select");
+        sel.className="form-control"; sel.style.width="auto";
+        sel.id="preview-link-expires-clone";
+        [["1h","1 hour"],["24h","24 hours"],["7d","7 days"],["30d","30 days"]].forEach(([v,lbl])=>{
+          const opt=document.createElement("option");
+          opt.value=v; opt.textContent=lbl; if(v==="24h") opt.selected=true;
+          sel.append(opt);
+        });
+        label.append(sel);
+        const btn=document.createElement("button");
+        btn.type="button"; btn.className="button"; btn.textContent="Create link";
+        btn.addEventListener("click", async ()=>{
+          btn.disabled=true; btn.textContent="Creating…";
+          try {
+            const params=new URLSearchParams({ csrf_token: csrf, entry_id: entryId, expires: sel.value });
+            const res=await fetch("/admin/preview-links", { method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body: params.toString() });
+            if(!res.ok) throw new Error(await res.text());
+            if(window.stratumToast) window.stratumToast("success","Preview link created");
+            // trigger datastar or reload preview links section
+            setTimeout(()=> location.reload(), 500);
+          } catch(e){
+            if(window.stratumToast) window.stratumToast("error", String(e.message||e));
+            btn.disabled=false; btn.textContent="Create link";
+          }
+        });
+        controls.append(label, btn);
+        container.append(controls);
+        if(links.length){
+          const h5=document.createElement("h4");
+          h5.textContent="Active links";
+          container.append(h5);
+          const ul=document.createElement("ul");
+          ul.style.listStyle="none";
+          ul.style.padding="0";
+          ul.style.display="grid";
+          ul.style.gap="8px";
+          links.forEach(l=>{
+            const li=document.createElement("li");
+            li.style.display="flex";
+            li.style.gap="8px";
+            li.style.alignItems="center";
+            li.style.justifyContent="space-between";
+            li.style.padding="8px";
+            li.style.border="1px solid var(--ui-border)";
+            const span=document.createElement("span");
+            span.style.fontSize="13px";
+            span.textContent=`Created ${l.createdAt} · Expires ${l.expiresAt}`;
+            const revokeBtn=document.createElement("button");
+            revokeBtn.className="button button-small button-danger";
+            revokeBtn.type="button";
+            revokeBtn.textContent="Revoke";
+            revokeBtn.addEventListener("click", async ()=>{
+              revokeBtn.disabled=true;
+              try {
+                const params=new URLSearchParams({ csrf_token: csrf });
+                const res=await fetch(`/admin/preview-links/${l.id}/revoke`, { method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body: params.toString() });
+                if(!res.ok) throw new Error(await res.text());
+                if(window.stratumToast) window.stratumToast("success","Link revoked");
+                li.remove();
+              } catch(e){
+                if(window.stratumToast) window.stratumToast("error", String(e.message||e));
+                revokeBtn.disabled=false;
+              }
+            });
+            li.append(span, revokeBtn);
+            ul.append(li);
+          });
+          container.append(ul);
+        } else {
+          const p2=document.createElement("p");
+          p2.className="muted";
+          p2.style.fontSize="13px";
+          p2.textContent="No active preview links.";
+          container.append(p2);
+        }
+      }
+      slot.append(document.createElement("hr"));
+      slot.append(container);
+    }catch(e){}
   }
 }
 
 // Init
+function setupPanelCollapsibles(){
+  const library = document.querySelector(".block-library");
+  const inspector = document.querySelector(".block-inspector");
+  const workspace = document.querySelector(".editor-workspace");
+  // restore from localStorage
+  try {
+    if (localStorage.getItem("stratum:panel-library-collapsed")==="1" && library) library.classList.add("is-collapsed");
+    if (localStorage.getItem("stratum:panel-inspector-collapsed")==="1" && inspector) inspector.classList.add("is-collapsed");
+  } catch(_) {}
+  function toggle(panel, key){
+    if (!panel) return;
+    const collapsed = panel.classList.toggle("is-collapsed");
+    try { localStorage.setItem(key, collapsed?"1":"0"); } catch(_) {}
+    // trigger overlay recalc
+    if (canvasController) setTimeout(()=>canvasController.updateOverlayPositions(), 50);
+  }
+  document.querySelectorAll('[data-collapse="library"], [data-panel-toggle="library"]').forEach(btn=>{
+    btn.addEventListener("click", ()=> toggle(library, "stratum:panel-library-collapsed"));
+  });
+  document.querySelectorAll('[data-collapse="inspector"], [data-panel-toggle="inspector"]').forEach(btn=>{
+    btn.addEventListener("click", ()=> toggle(inspector, "stratum:panel-inspector-collapsed"));
+  });
+  // drag autoscroll for canvas and navigator
+  const scroller = document.getElementById("editor-canvas-wrap");
+  const navTree = document.getElementById("navigator-tree");
+  function setupAutoScroll(el){
+    if (!el) return;
+    let raf = null;
+    let dir = 0;
+    function loop(){
+      if (dir !== 0) {
+        el.scrollBy(0, dir*8);
+        if (canvasController) canvasController.updateOverlayPositions();
+      }
+      raf = requestAnimationFrame(loop);
+    }
+    el.addEventListener("dragover", (e)=>{
+      const rect = el.getBoundingClientRect();
+      const threshold = 40;
+      const y = e.clientY;
+      if (y < rect.top + threshold) dir = -1;
+      else if (y > rect.bottom - threshold) dir = 1;
+      else dir = 0;
+      if (dir !== 0 && !raf) loop();
+      if (dir === 0 && raf) { cancelAnimationFrame(raf); raf=null; }
+    });
+    el.addEventListener("dragleave", ()=>{
+      dir = 0;
+      if (raf) { cancelAnimationFrame(raf); raf=null; }
+    });
+    el.addEventListener("drop", ()=>{
+      dir = 0;
+      if (raf) { cancelAnimationFrame(raf); raf=null; }
+    });
+    el.addEventListener("dragend", ()=>{
+      dir = 0;
+      if (raf) { cancelAnimationFrame(raf); raf=null; }
+    });
+  }
+  setupAutoScroll(scroller);
+  setupAutoScroll(navTree);
+  setupAutoScroll(document.getElementById("navigator-content"));
+}
 if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", init);
 else init();
 function init(){
@@ -925,6 +1360,7 @@ function init(){
   renderInspector();
   updateBreadcrumbs();
   initArchivePreviewContext();
+  setupPanelCollapsibles();
   documentInput.value=JSON.stringify(state.document);
   initHistory();
   schedulePreview();

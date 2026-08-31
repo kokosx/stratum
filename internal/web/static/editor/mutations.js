@@ -232,6 +232,52 @@ export function canOutdent(nodeId) {
   return canMove(nodeId, newParent, parentFound.index+1);
 }
 
+// Whether a parent boundary could accept at least one insertable block.
+// Uses real catalog probe (not just mode check) – returns false when max reached
+// or allowed list empty. Root always true (root accepts any).
+export function hasLegalInsertion(parentNode, index) {
+  if (!parentNode) return true;
+  const def = definitionFor(parentNode);
+  if (!def) return false;
+  const rule = ruleFor(def);
+  if (rule.mode === "none") return false;
+  if (rule.max != null && parentNode.children && parentNode.children.length >= rule.max) return false;
+  if (rule.mode === "any") return true;
+  if (rule.mode === "allowed") {
+    if (!Array.isArray(rule.blocks) || rule.blocks.length === 0) return false;
+    // Check if at least one allowed block is actually available in catalog and not hidden,
+    // and canInsert would succeed for that block.
+    for (const blk of rule.blocks) {
+      let defForBlk = null;
+      for (const d of definitions.values()) if (d.block === blk) { defForBlk = d; break; }
+      if (!defForBlk) {
+        for (const d of state.catalog) if (d.block === blk) { defForBlk = d; break; }
+      }
+      if (!defForBlk) continue;
+      if (defForBlk.hidden) continue;
+      const ch = canInsert(parentNode, blk, index);
+      if (ch.ok) return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+export function legalBoundariesFor(parentNode) {
+  const siblings = parentNode ? parentNode.children : state.document.nodes;
+  const len = siblings ? siblings.length : 0;
+  const out = [];
+  for (let i = 0; i <= len; i++) {
+    const legal = hasLegalInsertion(parentNode, i);
+    out.push({ parentId: parentNode ? parentNode.id : null, parentNode, index: i, legal });
+  }
+  return out;
+}
+
+export function getDefinitionForBlock(block) {
+  return definitionForBlock(block);
+}
+
 // Resolve insertionTarget object {parentId,index} to {parentNode,siblings,index}
 export function resolveInsertionTarget(target) {
   if (!target) return null;
@@ -268,8 +314,10 @@ export function insertionPointForBlock(block) {
       if (canRootSibling.ok) return { parentNode: null, siblings: state.document.nodes, index: selected.index+1 };
     }
   }
-  // Last try root append
-  const canRoot = canInsert(null, block, state.document.nodes.length);
-  if (canRoot.ok) return { parentNode: null, siblings: state.document.nodes, index: state.document.nodes.length };
+  // Last try root append only for empty document / no selection (explicit UX: not surprising teleport)
+  if (state.document.nodes.length === 0) {
+    const canRoot = canInsert(null, block, 0);
+    if (canRoot.ok) return { parentNode: null, siblings: state.document.nodes, index: 0 };
+  }
   return null;
 }

@@ -16,9 +16,9 @@
 <section class="admin-section">
   <h2>Needs attention</h2>
   <div class="card"><div class="card-body dashboard-grid">
-    {{ if .Content.OnboardingIncomplete }}<div><span class="status-indicator status-indicator--warning">● Onboarding incomplete</span> — <a href="/admin/creator">Choose a starter site</a></div>{{ end }}
-    {{ if gt .Content.NewSubmissionCount 0 }}<div><span class="status-indicator status-indicator--info">● {{ .Content.NewSubmissionCount }} new form submission{{ if ne .Content.NewSubmissionCount 1 }}s{{ end }}</span> — <a href="/admin/forms">Review submissions</a></div>{{ end }}
-    {{ if gt .Content.PendingCommentCount 0 }}<div><span class="status-indicator status-indicator--warning">● {{ .Content.PendingCommentCount }} comment{{ if ne .Content.PendingCommentCount 1 }}s{{ end }} awaiting moderation</span> — <a href="/admin/comments">Moderate</a></div>{{ end }}
+    {{ if .Content.OnboardingIncomplete }}<div><span class="status-indicator status-indicator--warning">Onboarding incomplete</span> — <a href="/admin/creator">Choose a starter site</a></div>{{ end }}
+    {{ if gt .Content.NewSubmissionCount 0 }}<div><span class="status-indicator status-indicator--info">{{ .Content.NewSubmissionCount }} new form submission{{ if ne .Content.NewSubmissionCount 1 }}s{{ end }}</span> — <a href="/admin/forms">Review submissions</a></div>{{ end }}
+    {{ if gt .Content.PendingCommentCount 0 }}<div><span class="status-indicator status-indicator--warning">{{ .Content.PendingCommentCount }} comment{{ if ne .Content.PendingCommentCount 1 }}s{{ end }} awaiting moderation</span> — <a href="/admin/comments">Moderate</a></div>{{ end }}
   </div></div>
 </section>
 {{ end }}
@@ -31,7 +31,7 @@
     <tr>
       <td class="data-table__primary">{{ .Title }}</td>
       <td class="muted">{{ .ContentTypeLabel }}</td>
-      <td><span class="status-indicator status-indicator--{{ .StatusTone }}">● {{ .Status }}</span></td>
+      <td><span class="status-indicator status-indicator--{{ .StatusTone }}">{{ .Status }}</span></td>
       <td class="muted">{{ .UpdatedAt.Format "2 Jan 2006 15:04" }}</td>
       <td><a href="{{ .EditURL }}">Edit</a></td>
     </tr>

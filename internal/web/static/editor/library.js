@@ -197,52 +197,44 @@ export function renderPatternCatalog(filter = "") {
 }
 
 export function initLibraryTabs() {
-  const tabs = document.querySelectorAll(".library-tab");
+  const container = document.querySelector('[data-library-tabs]');
+  const tabs = container ? container.querySelectorAll('[data-library-tab]') : document.querySelectorAll(".library-tab");
   const blockCat = document.getElementById("block-catalog");
   const patternCat = document.getElementById("pattern-catalog");
   const navTree = document.getElementById("navigator-tree");
   const searchEl = document.getElementById("block-search");
   if (!tabs.length || !blockCat || !patternCat) return;
+  function activate(wanted){
+    tabs.forEach((t) => {
+      t.classList.remove("is-active");
+      t.setAttribute("aria-selected", "false");
+    });
+    const active = container ? container.querySelector(`[data-library-tab="${wanted}"]`) : document.querySelector(`[data-library-tab="${wanted}"]`) || document.querySelector(`[data-tab="${wanted}"]`);
+    if(active){ active.classList.add("is-active"); active.setAttribute("aria-selected","true"); }
+    state.libraryTab = wanted;
+    if (wanted === "patterns") {
+      blockCat.hidden = true;
+      patternCat.hidden = false;
+      if (navTree) navTree.hidden = true;
+      if (searchEl) searchEl.placeholder = "Search patterns";
+    } else if (wanted === "navigator") {
+      blockCat.hidden = true;
+      patternCat.hidden = true;
+      if (navTree) navTree.hidden = false;
+      if (searchEl) searchEl.placeholder = "Search navigator";
+      if (window.__stratum_renderNavigator) window.__stratum_renderNavigator();
+    } else {
+      blockCat.hidden = false;
+      patternCat.hidden = true;
+      if (navTree) navTree.hidden = true;
+      if (searchEl) searchEl.placeholder = "Search blocks";
+    }
+  }
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
-      tabs.forEach((t) => {
-        t.classList.remove("is-active");
-        t.setAttribute("aria-selected", "false");
-      });
-      tab.classList.add("is-active");
-      tab.setAttribute("aria-selected", "true");
-      const wanted = tab.dataset.tab;
-      state.libraryTab = wanted;
-      if (wanted === "patterns") {
-        blockCat.hidden = true;
-        patternCat.hidden = false;
-        if (navTree) navTree.hidden = true;
-        if (searchEl) searchEl.placeholder = "Search patterns";
-      } else if (wanted === "navigator") {
-        blockCat.hidden = true;
-        patternCat.hidden = true;
-        if (navTree) navTree.hidden = false;
-        if (searchEl) searchEl.placeholder = "Search navigator";
-        if (window.__stratum_renderNavigator) window.__stratum_renderNavigator();
-      } else {
-        blockCat.hidden = false;
-        patternCat.hidden = true;
-        if (navTree) navTree.hidden = true;
-        if (searchEl) searchEl.placeholder = "Search blocks";
-      }
+      const wanted = tab.getAttribute('data-library-tab') || tab.dataset.tab;
+      activate(wanted);
     });
   });
-  if (state.libraryTab === "patterns") {
-    blockCat.hidden = true;
-    patternCat.hidden = false;
-    if (navTree) navTree.hidden = true;
-  } else if (state.libraryTab === "navigator") {
-    blockCat.hidden = true;
-    patternCat.hidden = true;
-    if (navTree) navTree.hidden = false;
-  } else {
-    blockCat.hidden = false;
-    patternCat.hidden = true;
-    if (navTree) navTree.hidden = true;
-  }
+  activate(state.libraryTab || "blocks");
 }

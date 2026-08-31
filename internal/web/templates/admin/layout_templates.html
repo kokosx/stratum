@@ -13,7 +13,7 @@
       <td><a href="/admin/appearance/templates/{{ .ID }}/edit">{{ .Name }}</a></td>
       <td>{{ if eq .Kind "archive" }}Archive{{ else }}Single{{ end }}</td>
       <td>{{ .ContentTypeName }}</td>
-      <td><span class="status-indicator status-indicator--{{ statusTone .Status }}">● {{ .Status }}</span></td>
+      <td><span class="status-indicator status-indicator--{{ statusTone .Status }}">{{ .Status }}</span></td>
       <td>{{ if .IsDefault }}<span class="status-badge status-badge--default">Default</span>{{ else if .IsDefaultArchive }}<span class="status-badge status-badge--default">Default</span>{{ else }}<span class="muted">—</span>{{ end }}</td>
       <td>
         <a class="button" href="/admin/appearance/templates/{{ .ID }}/edit">Edit</a>

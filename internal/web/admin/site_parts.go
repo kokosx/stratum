@@ -247,7 +247,7 @@ func (h *Handler) renderSitePartEditor(w http.ResponseWriter, r *http.Request, p
 		DeleteAction:   "/admin/appearance/site-parts/" + part.ID + "/delete",
 		RevisionsURL:   "/admin/appearance/site-parts/" + part.ID + "/revisions",
 	}
-	if err := h.sitePartEditorTemplate.ExecuteTemplate(w, "layout.html", LayoutData{Title: "Edit Site Part - " + part.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
+	if err := h.sitePartEditorTemplate.ExecuteTemplate(w, "editor_layout.html", LayoutData{Title: "Edit Site Part - " + part.Name, ActiveMenu: ResolveNav(r.URL.Path).ActiveSection, ActiveSection: ResolveNav(r.URL.Path).ActiveSection, ActiveItem: ResolveNav(r.URL.Path).ActiveItem, Nav: h.navForUser(r), CSRFToken: token, Content: data}); err != nil {
 		log.Printf("render site part editor: %v", err)
 	}
 }

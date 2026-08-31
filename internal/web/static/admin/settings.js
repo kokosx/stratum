@@ -1,8 +1,7 @@
 // Settings control panel behaviour:
 //  - dirty tracking enables the Save changes button and flips the plain status text
-//  - section navigation scrolls and highlights without a page reload (legacy stacked layout)
-//  - saving and toggles are handled by Datastar (see the form/toggle attributes);
-//    the server patches #settings-content in place, so no full reload occurs.
+//  - saving and toggles are handled by Datastar (server patches #settings-content);
+//    no stacked-layout IntersectionObserver needed — sections are separate routes.
 (function () {
   function initForm(form) {
     if (!form || form.dataset.dirtyInit === "1") return;
@@ -156,36 +155,4 @@
     document.querySelector("form[id^='settings-form-']");
   if (initialForm) initForm(initialForm);
   document.querySelectorAll("form[id^='settings-form-']").forEach(initForm);
-
-  const navLinks = Array.from(document.querySelectorAll(".settings-nav__link"));
-  const hasDataSection = navLinks.some((l) => l.dataset.section);
-  if (!hasDataSection) return;
-
-  navLinks.forEach((link) => {
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      const section = document.getElementById("section-" + link.dataset.section);
-      if (section) section.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  });
-
-  const sections = navLinks
-    .map((link) => document.getElementById("section-" + link.dataset.section))
-    .filter(Boolean);
-
-  if ("IntersectionObserver" in window && sections.length) {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-          const id = entry.target.id.replace("section-", "");
-          navLinks.forEach((link) => {
-            link.classList.toggle("is-active", link.dataset.section === id);
-          });
-        });
-      },
-      { rootMargin: "-20% 0px -70% 0px" }
-    );
-    sections.forEach((section) => observer.observe(section));
-  }
 })();

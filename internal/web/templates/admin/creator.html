@@ -12,7 +12,7 @@
   </div>
 </section>
 {{ else }}
-<div class="creator-studio" data-creator-studio>
+<div class="creator-studio" data-creator-studio data-initial-step="{{ .Content.InitialStep }}" data-has-validation-err="{{ if .Content.HasValidationErr }}1{{ else }}0{{ end }}" data-has-server-site-url="{{ if .Content.SiteURL }}1{{ else }}0{{ end }}">
   <header class="creator-studio__header">
     <p class="creator-eyebrow">Create your site</p>
     <h1>Guided setup — preview on the right</h1>
@@ -29,11 +29,12 @@
     <button type="button" data-mobile-tab="controls" class="is-active">Controls</button>
     <button type="button" data-mobile-tab="preview">Preview</button>
   </div>
-  {{ if .Content.Error }}<div class="notice notice-danger" role="alert">{{ .Content.Error }}</div>{{ end }}
+  {{ if .Content.Error }}<div class="notice notice-danger" role="alert" id="creator-global-error">{{ .Content.Error }}</div>{{ end }}
   <div class="creator-studio__body">
     <section class="creator-studio__controls">
       <form method="post" action="/admin/creator" id="creator-form" novalidate>
         <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <input type="hidden" name="wizard_step" id="wizard-step-input" value="{{ .Content.InitialStep }}">
         <!-- Step 1 Site type -->
         <fieldset class="creator-step is-active-step" data-step="1" aria-labelledby="step1-title">
           <legend id="step1-title">1 — Site type</legend>
@@ -163,9 +164,12 @@
               <label class="form-label">Language<select class="form-control" name="language">{{ range .Content.LanguageOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Language }}selected{{ end }}>{{ .Label }} ({{ .Value }})</option>{{ end }}</select></label>
               <label class="form-label">Timezone<select class="form-control" name="timezone">{{ range .Content.TimezoneOptions }}<option value="{{ .Value }}" {{ if eq .Value $.Content.Timezone }}selected{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
               <label class="form-label">Site represents<select class="form-control" name="site_represents"><option value="organization" {{ if eq .Content.SiteRepresents "organization" }}selected{{ end }}>Organization</option><option value="person" {{ if eq .Content.SiteRepresents "person" }}selected{{ end }}>Person</option></select></label>
-              <label class="form-label">Site URL <small>optional</small><input class="form-control" type="url" name="site_url" value="{{ .Content.SiteURL }}" placeholder="https://example.com"></label>
+              <label class="form-label" for="creator-site-url">Site URL <small>optional</small><input class="form-control {{ if index .Content.FieldErrors "site_url" }}is-invalid{{ end }}" type="url" name="site_url" id="creator-site-url" value="{{ .Content.SiteURL }}" placeholder="https://example.com" aria-describedby="site-url-error site-url-help" data-has-site-url="{{ if .Content.SiteURL }}1{{ else }}0{{ end }}"></label>
+              {{ if index .Content.FieldErrors "site_url" }}<p class="form-error" role="alert" id="site-url-error">{{ index .Content.FieldErrors "site_url" }}</p>{{ else }}<p class="form-error" role="alert" id="site-url-error" hidden></p>{{ end }}
+              <p class="form-help" id="site-url-help">The public canonical base URL. Used for sitemap and theme.</p>
+              <p class="form-help" id="site-url-suggest" hidden>Detected site address: <span id="site-url-suggest-val"></span> <button type="button" class="button button-small button-ghost" id="site-url-use-suggest">Use this address</button></p>
             </div>
-              <label class="creator-checkbox"><input type="checkbox" name="discourage_search_engines" value="on" {{ if not .Content.IndexingEnabled }}checked{{ end }}> Discourage search engines until site is ready</label>
+              <label class="admin-choice-row" for="creator-discourage"><input class="admin-choice-row__control" id="creator-discourage" type="checkbox" name="discourage_search_engines" value="on" {{ if not .Content.IndexingEnabled }}checked{{ end }}><span class="admin-choice-row__content"><span class="admin-choice-row__title">Discourage search engines</span><span class="admin-choice-row__description">Ask crawlers not to index yet.</span></span></label>
           </div>
         </fieldset>
         <nav class="creator-nav">

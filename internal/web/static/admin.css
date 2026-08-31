@@ -247,7 +247,7 @@ h1 { margin: 0 0 24px; font-size: 28px; font-weight: 600; }
 .check-row { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 .check-row input { margin: 0; }
 .robots-preview { margin: 0; padding: 12px; background: #1d2327; color: #f0f0f1; border-radius: 3px; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; max-height: 260px; overflow: auto; }
-.settings-savebar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 14px 0; background: linear-gradient(to top, #f0f0f1 70%, rgba(240,240,241,0)); }
+.settings-savebar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; background: var(--ui-surface); border-top: 1px solid var(--ui-border); }
 @media (max-width: 720px) { .settings-nav { overflow-x: auto; flex-wrap: nowrap; } }
 
 /* Media Library */
@@ -739,7 +739,7 @@ textarea.form-control, .form-field textarea { height: auto; min-height: 88px; pa
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); }
 
 /* Cards / Panels — no shadow, border + spacing for grouping */
-.card { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); overflow: hidden; }
+.card, .admin-card { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); overflow: hidden; }
 .card-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--ui-border); background: var(--ui-surface); }
 .card-body { padding: 16px; }
 .card-footer { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--ui-border); background: var(--ui-surface-subtle); }
@@ -761,7 +761,8 @@ textarea.form-control, .form-field textarea { height: auto; min-height: 88px; pa
 .data-table__primary a:hover { text-decoration: underline; color: var(--ui-primary-hover); }
 .data-table__meta { color: var(--ui-text-muted); font-size: 12.5px; }
 /* Legacy pill badges — keep only for rare badge use cases; normal lifecycle uses status-indicator below */
-.status-badge { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; border: 1px solid transparent; }
+.status-badge { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; border: 1px solid transparent; }
+.status-badge::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: currentColor; flex: none; }
 .status-badge--published { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
 .status-badge--draft { background: #f8fafc; color: #475569; border-color: var(--ui-border); }
 .status-badge--pending { background: #fffbeb; color: #92400e; border-color: #fde68a; }
@@ -787,7 +788,7 @@ textarea.form-control, .form-field textarea { height: auto; min-height: 88px; pa
 .sidebar { border-right: 1px solid #0f172a; }
 
 /* Settings shell width */
-.settings-shell { max-width: 1040px; }
+.settings-shell { max-width: 900px; }
 .settings-content .panel, .settings-content .settings-section { width: 100%; }
 .settings-section { background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); padding: 20px; }
 .settings-section .form-control, .settings-section select.form-control, .settings-section textarea.form-control, .settings-section input.form-control { max-width: 640px; }
@@ -1005,6 +1006,21 @@ textarea.form-control, .form-field textarea { height: auto; min-height: 88px; pa
 .dashboard-shortcuts { display:grid; gap:8px; max-width:520px; }
 .dashboard-shortcuts__row { display:flex; justify-content:space-between; gap:12px; }
 .dashboard-grid { display:grid; gap:10px; }
+
+/* Admin choice row primitive — reusable for Creator checkbox and Settings toggles */
+.admin-choice-row{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md);background:var(--ui-surface);cursor:pointer;min-height:44px;transition:border-color 140ms,background 140ms}
+.admin-choice-row:hover{border-color:var(--ui-border-strong);background:var(--ui-surface-subtle)}
+.admin-choice-row:has(.admin-choice-row__control:checked){border-color:var(--ui-primary);background:var(--ui-primary-subtle)}
+.admin-choice-row__control{width:18px;height:18px;margin:2px 0 0;flex:0 0 18px;accent-color:var(--ui-primary)}
+.admin-choice-row__content{display:grid;gap:2px;min-width:0}
+.admin-choice-row__title{font-weight:600;font-size:13.5px;color:var(--ui-text)}
+.admin-choice-row__description{font-size:12.5px;color:var(--ui-text-muted);line-height:1.4}
+.admin-choice-row:focus-within{outline:2px solid var(--ui-focus);outline-offset:2px}
+
+/* File picker primitive */
+.file-picker{transition:border-color 140ms,background 140ms}
+.file-picker:hover{border-color:var(--ui-primary)!important}
+.file-picker.is-drag{border-color:var(--ui-primary)!important;background:var(--ui-primary-subtle)!important}
 
 /* Generic status indicator is already defined */
 
