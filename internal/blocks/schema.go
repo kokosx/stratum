@@ -244,8 +244,16 @@ func (s *Schema) validateContract() error {
 			if field.Control != "text" && field.Control != "textarea" && field.Control != "richtext" {
 				return fmt.Errorf("editor.fields.%s: inline requires control text, textarea or richtext", path)
 			}
-			if field.InlineMode != "" && field.InlineMode != "plain" {
+			if field.InlineMode != "" && field.InlineMode != "plain" && field.InlineMode != "rich" {
 				return fmt.Errorf("editor.fields.%s: unsupported inlineMode %q", path, field.InlineMode)
+			}
+			if field.InlineMode == "rich" {
+				if field.Control != "richtext" {
+					return fmt.Errorf("editor.fields.%s: inlineMode rich requires control richtext", path)
+				}
+				if value.Type != "object" || value.Properties == nil {
+					return fmt.Errorf("editor.fields.%s: inlineMode rich requires richtext object", path)
+				}
 			}
 			if value.Type != "string" && !(value.Type == "object" && value.Properties != nil) {
 				return fmt.Errorf("editor.fields.%s: inline requires string or richtext object", path)

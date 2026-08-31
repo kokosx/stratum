@@ -569,19 +569,40 @@ export function plainTextFromRichText(value) {
   return value.content.map((r) => (typeof r.text === "string" ? r.text : "")).join("");
 }
 
+export function isRichTextValid(value) {
+  if (!value || typeof value !== "object") return false;
+  if (value.version !== 1 || !Array.isArray(value.content)) return false;
+  for (const run of value.content) {
+    if (!run || typeof run.text !== "string") return false;
+    if (run.marks != null) {
+      if (!Array.isArray(run.marks)) return false;
+      for (const m of run.marks) {
+        if (!m || typeof m.type !== "string") return false;
+        if (!["bold","italic","strike","code","link"].includes(m.type)) return false;
+        if (m.type === "link") {
+          if (typeof m.href !== "string" || m.href.trim() === "") return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 export function isFieldPlainSafe(node, path) {
   const def = definitionForBlock(node.block, node.version);
   const field = def?.schema?.editor?.fields?.[path];
   if (!field || !field.inline) return false;
   const raw = getFieldValue(node, path);
   if (field.control === "richtext") {
-    // Richtext inline plain: allow empty or plain runs only
+    if (field.inlineMode === "rich") {
+      if (raw == null) return true;
+      return isRichTextValid(raw);
+    }
+    // plain mode: only plain runs
     if (raw == null) return true;
-    // If value is missing but has default, treat as plain
     return isPlainRichTextValue(raw);
   }
   if (field.control === "text" || field.control === "textarea") {
-    // Plain string inline
     if (raw == null) return true;
     return typeof raw === "string";
   }

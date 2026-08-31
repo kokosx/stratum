@@ -282,8 +282,18 @@ function validateAgainstSchema(value, schema, path) {
 }
 
 function isRichTextSchema(schema) {
-  // Heuristic: object with version/content properties and required version
   return schema && schema.type === "object" && schema.properties && "version" in schema.properties && "content" in schema.properties;
+}
+function isSafeHref(href) {
+  if (!href || typeof href !== "string") return false;
+  const t = href.trim();
+  if (t === "") return false;
+  if (t.startsWith("#") || t.startsWith("/")) return !t.startsWith("//");
+  try {
+    const u = new URL(t, "http://example.com");
+    const scheme = u.protocol.replace(":", "").toLowerCase();
+    return ["http", "https", "mailto", "tel"].includes(scheme);
+  } catch (_) { return false; }
 }
 
 export function updateNodeField({ nodeId, path, value, renderHint }) {
@@ -319,15 +329,76 @@ export function updateNodeField({ nodeId, path, value, renderHint }) {
   const control = fieldMeta?.control;
   const isRichText = control === "richtext" || isRichTextSchema(schema);
   if (isRichText) {
-    if (typeof value !== "string") return { ok: false, reason: "Expected text." };
-    let plain = String(value);
-    plain = plain.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, " ");
-    if (plain.trim() === "") plain = "";
-    if (plain.length > 10000) plain = plain.slice(0, 10000);
-    if (plain === "") {
-      coerced = { version: 1, content: [] };
+    if (typeof value === "string") {
+      let plain = String(value);
+      plain = plain.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, " ");
+      if (plain.trim() === "") plain = "";
+      if (plain.length > 10000) plain = plain.slice(0, 10000);
+      if (plain === "") {
+        coerced = { version: 1, content: [] };
+      } else {
+        coerced = { version: 1, content: [{ text: plain }] };
+      }
+    } else if (value && typeof value === "object" && value.version === 1 && Array.isArray(value.content)) {
+      // RichText object (M5B) — normalize and validate
+      if (value.version !== 1) return { ok: false, reason: "Invalid rich text version" };
+      let content = [];
+      for (const run of value.content) {
+        if (!run || typeof run.text !== "string") continue;
+        if (run.text.length === 0) continue;
+        let marks = run.marks;
+        if (marks && Array.isArray(marks)) {
+          const uniq = new Map();
+          for (const m of marks) {
+            if (!m || typeof m.type !== "string") continue;
+            if (!["bold","italic","strike","code","link"].includes(m.type)) continue;
+            if (m.type === "link") {
+              if (!m.href || typeof m.href !== "string" || !isSafeHref(m.href)) continue;
+              const key = m.type + "\x00" + m.href;
+              uniq.set(key, { type: m.type, href: m.href });
+            } else {
+              const key = m.type;
+              uniq.set(key, { type: m.type });
+            }
+          }
+          const arr = Array.from(uniq.values());
+          arr.sort((a, b) => a.type === b.type ? (a.href || "").localeCompare(b.href || "") : a.type.localeCompare(b.type));
+          marks = arr.length ? arr : undefined;
+        } else {
+          marks = undefined;
+        }
+        if (content.length > 0) {
+          const last = content[content.length - 1];
+          const lastMarks = last.marks ? JSON.stringify(last.marks) : "[]";
+          const curMarks = marks ? JSON.stringify(marks) : "[]";
+          if (lastMarks === curMarks) {
+            last.text += run.text;
+            continue;
+          }
+        }
+        const newRun = { text: run.text };
+        if (marks) newRun.marks = marks;
+        content.push(newRun);
+      }
+      if (content.length > 200) content = content.slice(0, 200);
+      let totalChars = 0;
+      for (const r of content) totalChars += r.text.length;
+      if (totalChars > 10000) {
+        let truncated = [];
+        let acc = 0;
+        for (const r of content) {
+          if (acc + r.text.length <= 10000) { truncated.push(r); acc += r.text.length; }
+          else {
+            const remaining = 10000 - acc;
+            if (remaining > 0) truncated.push({ ...r, text: r.text.slice(0, remaining) });
+            break;
+          }
+        }
+        content = truncated;
+      }
+      coerced = { version: 1, content };
     } else {
-      coerced = { version: 1, content: [{ text: plain }] };
+      return { ok: false, reason: "Expected text." };
     }
     const err = validateAgainstSchema(coerced, schema, path);
     if (err) return { ok: false, reason: err };
