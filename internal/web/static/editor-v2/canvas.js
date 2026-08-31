@@ -130,17 +130,72 @@ function buildNodeIdToBlock() {
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
-  // Try to find block name via nodeId map
   const map = buildNodeIdToBlock();
   const block = map.get(instance.nodeId);
-  if (block) return displayNameForBlock(block);
-  // External fallback: use owner label if external
-  if (instance.ownerType) {
-    if (instance.ownerLabel) return `${instance.ownerLabel} · Site Part`;
-    if (instance.ownerId) return `${instance.ownerId} · Site Part`;
-    return "Site Part";
+  const isExternal = !instance.editable;
+  // Try registry displayName
+  let display = "";
+  if (block) {
+    display = displayNameForBlock(block);
+  } else {
+    // No block mapping — could be external/template node not in Page SDT
+    // Do NOT show nodeId technical ID
+    if (isExternal) {
+      // For external, try to infer from owner: if site-part, use owner friendly if available and not technical
+      if (instance.ownerType === "site-part" && instance.ownerLabel && !isTechnicalId(instance.ownerLabel)) {
+        display = instance.ownerLabel;
+      } else {
+        // Unknown external → generic
+        return "Template element";
+      }
+    } else {
+      return "Block";
+    }
   }
-  return displayNameForBlock(block || instance.nodeId || "Block");
+
+  // For external/read-only, append context
+  if (isExternal) {
+    if (instance.ownerType === "site-part") {
+      // Prefer friendly site part name if available and not technical
+      if (instance.ownerLabel && !isTechnicalId(instance.ownerLabel)) {
+        // e.g., "Main Header" → show as is, no duplication
+        // But if display is same as owner, don't duplicate
+        if (display.toLowerCase() === instance.ownerLabel.toLowerCase()) return display;
+        return `${display} · Site Part`;
+      }
+      return `${display} · Site Part`;
+    }
+    // Template external (layout template, etc)
+    // Spec examples: "Entry Title · Template"
+    return `${display} · Template`;
+  }
+  return display;
+}
+
+function isTechnicalId(s) {
+  if (!s || typeof s !== "string") return true;
+  const t = s.trim();
+  if (t.length < 3) return true;
+  // Heuristic: UUID, blk_..., random base64-like without spaces
+  if (/^[a-z0-9_-]{8,}$/i.test(t) && !t.includes(" ") && !t.includes("/")) {
+    // If it looks like ID and not human words (no space, short)
+    // But "Main Header" has space, so not technical
+    // "AaGwQYWccYC7wM3" matches this → technical
+    // Also check if it contains only alnum and is long
+    if (t.length >= 8 && /^[A-Za-z0-9_-]+$/.test(t) && !/[aeiou]/i.test(t.slice(0,4))) {
+      // Very rough: but treat as technical if no displayName-like
+    }
+    // Simpler: if string has no space and length>6 and not in known display names, treat as technical
+    // For now, if it has no space and is not humanized block, assume technical
+    if (!t.includes(" ") && t.length > 6) {
+      // Check if it's known block displayName? Those are short words with spaces maybe
+      // For safety, treat UUID-like as technical
+      if (/^(blk_|entry|site|page)_/i.test(t) || /^[A-Fa-f0-9-]{10,}$/.test(t) || /^[A-Za-z0-9]{10,}$/.test(t)) return true;
+    }
+  }
+  // If string looks like UUID
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t)) return true;
+  return false;
 }
 
 export class CanvasController {
@@ -316,7 +371,7 @@ export class CanvasController {
       return;
     }
     // Check viewport visibility — if rect is outside, still show but it will be clipped
-    const isExternal = !hit.editable && !!hit.ownerType;
+    const isExternal = !hit.editable;
     this.overlay.setHover(rect, isExternal);
   }
 
@@ -356,15 +411,8 @@ export class CanvasController {
       }
       if (isSameResourceFragment(href)) {
         e.preventDefault();
-        // allow selection first, then scroll
         const hit = this.hitForTarget(target);
-        if (hit) {
-          this.selectInstance(hit);
-        } else {
-          // check anchor itself mapping? already
-        }
-        // Don't stopPropagation before selection? we already prevented default, now scroll
-        handleSamePageAnchor(this.doc, href);
+        if (hit) this.selectInstance(hit);
         try { e.stopPropagation(); } catch (_) {}
         return;
       }
@@ -477,6 +525,8 @@ export class CanvasController {
 
   syncGeometry() {
     if (!this.overlay || !this.doc) return;
+    // Update scope boundary (primary editable region)
+    this.updateScope();
     // Hover
     if (this.hoverInst) {
       const inst = this.index.get(this.hoverInst.instanceKey) || this.hoverInst;
@@ -488,18 +538,19 @@ export class CanvasController {
         if (this.selected && this.selected.instanceKey === inst.instanceKey) {
           this.overlay.clearHover();
         } else {
-          const isExternal = !inst.editable && !!inst.ownerType;
+          const isExternal = !inst.editable;
           this.overlay.setHover(rect, isExternal);
         }
       }
+    } else {
+      // Clear hover if no hoverInst
+      if (this.overlay) this.overlay.clearHover();
     }
     // Selection
     if (this.selected) {
       // Ensure still in index (after reload, instanceKey may be stale if node removed)
       let inst = this.index.get(this.selected.instanceKey);
       if (!inst) {
-        // Try to find by nodeId representative? But spec says selection should remain, but geometry may be missing.
-        // If not found, clear visual but keep state (maybe node deleted)
         this.overlay.clearSelection();
         return;
       }
@@ -509,23 +560,47 @@ export class CanvasController {
         return;
       }
       const label = labelForInstance(inst);
-      const isExternal = !inst.editable && !!inst.ownerType;
-      let externalLabel = null;
-      if (isExternal) {
-        const ownerLabel = inst.ownerLabel || inst.ownerId || inst.ownerType;
-        // Prefer "Main Header · Site Part" style
-        if (ownerLabel) {
-          // Try to make friendly: capitalize? Use label as is
-          externalLabel = `${ownerLabel} · Site Part`;
-          if (ownerLabel.toLowerCase().includes("site part")) externalLabel = ownerLabel;
-        } else {
-          externalLabel = "Site Part";
-        }
-      }
-      this.overlay.setSelected(rect, label, { external: isExternal, externalLabel });
+      const isExternal = !inst.editable;
+      this.overlay.setSelected(rect, label, { external: isExternal });
     } else {
       this.overlay.clearSelection();
     }
+  }
+
+  updateScope() {
+    if (!this.overlay || !this.doc) return;
+    // Compute union of all primary editable instances
+    const primaryInstances = [];
+    for (const inst of this.index.values()) {
+      if (inst.editable) primaryInstances.push(inst);
+    }
+    if (primaryInstances.length === 0) {
+      this.overlay.clearScope();
+      return;
+    }
+    const rects = [];
+    for (const inst of primaryInstances) {
+      const r = this.visualRect(inst);
+      if (r && r.width > 0 && r.height > 0) rects.push(r);
+    }
+    if (rects.length === 0) {
+      this.overlay.clearScope();
+      return;
+    }
+    // Union all rects
+    let union = rects[0];
+    for (let i=1;i<rects.length;i++) {
+      const r = rects[i];
+      const left = Math.min(union.left, r.left);
+      const top = Math.min(union.top, r.top);
+      const right = Math.max(union.left + union.width, r.left + r.width);
+      const bottom = Math.max(union.top + union.height, r.top + r.height);
+      union = { left, top, width: right-left, height: bottom-top, right, bottom };
+    }
+    // If union is huge and includes gaps (e.g., header/footer gaps) the box may be misleading,
+    // but for typical Page with header/footer external, union will be middle contiguous region.
+    // Add small padding for visibility? Keep tight.
+    this.overlay.setScope(union);
   }
 
   onKey(e) {

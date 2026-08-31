@@ -120,7 +120,22 @@ export const state = {
 
 // Helpers for displayName lookup (block id -> displayName)
 // Uses bootstrap catalog + definitions if present, falls back to minimal map.
+// NEVER returns technical IDs — always friendly.
 const displayNameCache = new Map();
+
+function humanizeBlockName(block) {
+  if (!block || typeof block !== "string") return "";
+  let name = block.includes("/") ? block.split("/").pop() : block;
+  // handle kebab/sneak
+  name = name.replace(/[_-]+/g, " ");
+  // insert space before capitals for camelCase (rare)
+  name = name.replace(/([a-z])([A-Z])/g, "$1 $2");
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
 
 function buildDisplayNameMap() {
   if (displayNameCache.size) return displayNameCache;
@@ -132,11 +147,13 @@ function buildDisplayNameMap() {
     if (!item || !item.block) continue;
     // keep latest by block name (if multiple versions, larger version wins)
     const existing = displayNameCache.get(item.block);
+    const disp = item.displayName && String(item.displayName).trim() ? String(item.displayName).trim() : "";
+    const friendly = disp || humanizeBlockName(item.block);
     if (!existing || (item.version && existing.version < item.version)) {
-      displayNameCache.set(item.block, { displayName: item.displayName || item.block, version: item.version });
+      displayNameCache.set(item.block, { displayName: friendly, version: item.version });
     }
   }
-  // Minimal fallback for known core blocks if no catalog provided
+  // Semantic fallback for known core blocks if no catalog provided or missing displayName
   const fallback = {
     "core/section": "Section",
     "core/stack": "Stack",
@@ -150,7 +167,16 @@ function buildDisplayNameMap() {
     "core/navigation": "Navigation",
     "core/site-part": "Site Part",
     "core/entry-field": "Entry Field",
+    "core/entry-title": "Entry Title",
+    "core/entry-excerpt": "Entry Excerpt",
+    "core/entry-content": "Entry Content",
     "core/entry-media": "Entry Media",
+    "core/featured-image": "Featured Image",
+    "core/content-slot": "Page Content",
+    "core/archive-title": "Archive Title",
+    "core/archive-description": "Archive Description",
+    "core/site-name": "Site Name",
+    "core/site-logo": "Site Logo",
     "core/form": "Form",
     "core/card": "Card",
   };
@@ -161,12 +187,22 @@ function buildDisplayNameMap() {
 }
 
 export function displayNameForBlock(blockName) {
+  if (!blockName || typeof blockName !== "string") return "Block";
+  // Never treat technical IDs (blk_*, uuid, AaGwQ...) as block names — they lack "/"
+  if (!blockName.includes("/")) {
+    // Might be a technical nodeId passed by mistake — never show it
+    return "Block";
+  }
   const map = buildDisplayNameMap();
   const entry = map.get(blockName);
   if (entry && entry.displayName) return entry.displayName;
-  // fallback: strip namespace
-  if (typeof blockName === "string" && blockName.includes("/")) return blockName.split("/").pop();
-  return blockName || "Block";
+  // humanized fallback
+  const hum = humanizeBlockName(blockName);
+  return hum || "Block";
+}
+
+export function friendlyLabelForUnknown() {
+  return "Template element";
 }
 
 export function clearSelection() {
