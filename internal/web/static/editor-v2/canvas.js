@@ -156,13 +156,6 @@ function labelForInstance(instance) {
   // For external/read-only, append context
   if (isExternal) {
     if (instance.ownerType === "site-part") {
-      // Prefer friendly site part name if available and not technical
-      if (instance.ownerLabel && !isTechnicalId(instance.ownerLabel)) {
-        // e.g., "Main Header" → show as is, no duplication
-        // But if display is same as owner, don't duplicate
-        if (display.toLowerCase() === instance.ownerLabel.toLowerCase()) return display;
-        return `${display} · Site Part`;
-      }
       return `${display} · Site Part`;
     }
     // Template external (layout template, etc)
@@ -176,22 +169,10 @@ function isTechnicalId(s) {
   if (!s || typeof s !== "string") return true;
   const t = s.trim();
   if (t.length < 3) return true;
-  // Heuristic: UUID, blk_..., random base64-like without spaces
-  if (/^[a-z0-9_-]{8,}$/i.test(t) && !t.includes(" ") && !t.includes("/")) {
-    // If it looks like ID and not human words (no space, short)
-    // But "Main Header" has space, so not technical
-    // "AaGwQYWccYC7wM3" matches this → technical
-    // Also check if it contains only alnum and is long
-    if (t.length >= 8 && /^[A-Za-z0-9_-]+$/.test(t) && !/[aeiou]/i.test(t.slice(0,4))) {
-      // Very rough: but treat as technical if no displayName-like
-    }
-    // Simpler: if string has no space and length>6 and not in known display names, treat as technical
-    // For now, if it has no space and is not humanized block, assume technical
-    if (!t.includes(" ") && t.length > 6) {
-      // Check if it's known block displayName? Those are short words with spaces maybe
-      // For safety, treat UUID-like as technical
-      if (/^(blk_|entry|site|page)_/i.test(t) || /^[A-Fa-f0-9-]{10,}$/.test(t) || /^[A-Za-z0-9]{10,}$/.test(t)) return true;
-    }
+  // Explicit: blk_*, UUID, or long alnum without spaces = technical
+  if (/^(blk_|entry|site|page)_/i.test(t)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t)) return true;
+  if (/^[A-Za-z0-9]{10,}$/.test(t) && !t.includes(" ") && !t.includes("/")) return true;
   }
   // If string looks like UUID
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t)) return true;
