@@ -115,65 +115,88 @@ export function isActiveFieldElement(target) {
 }
 
 // Helpers for rich toolbar
-function getActiveMarks() {
+function getActiveMarks(offsets) {
   if (!active || !active.fieldEl || active.mode !== "rich") return [];
-  const offsets = selectionToOffsets(active.fieldEl);
-  if (!offsets || offsets.start === offsets.end) return [];
+  const o = offsets || active.richSelection || selectionToOffsets(active.fieldEl);
+  if (!o || o.start === o.end) return [];
   const rich = domToRichText(active.fieldEl);
   let pos = 0;
   const selectedRuns = [];
   for (const run of rich.content) {
     const runEnd = pos + run.text.length;
-    if (runEnd <= offsets.start || pos >= offsets.end) { pos = runEnd; continue; }
+    if (runEnd <= o.start || pos >= o.end) { pos = runEnd; continue; }
     selectedRuns.push(run);
     pos = runEnd;
   }
   if (selectedRuns.length === 0) return [];
-  // Intersection of marks: marks that appear in every selected run
   let common = selectedRuns[0].marks ? [...selectedRuns[0].marks] : [];
   for (let i = 1; i < selectedRuns.length; i++) {
     const cur = selectedRuns[i].marks || [];
     common = common.filter(cm => cur.some(m => m.type === cm.type && (cm.type !== "link" || m.href === cm.href) && (cm.href || "") === (m.href || "")));
   }
-  // For link, need to check uniform href
   return common.map(m => m.type);
 }
 
 function updateToolbar() {
   if (!active || active.mode !== "rich" || !active.canvas) return;
+  if (RichToolbar.isToolbarInteraction()) return;
   const fieldEl = active.fieldEl;
   const offsets = selectionToOffsets(fieldEl);
   if (!offsets || offsets.start === offsets.end) {
-    RichToolbar.hideToolbar();
+    if (!RichToolbar.isToolbarInteraction()) {
+      RichToolbar.hideToolbar();
+      active.richSelection = null;
+    }
     return;
   }
-  // Check selection inside field
   const sel = fieldEl.ownerDocument.getSelection();
-  if (!sel || sel.rangeCount === 0) { RichToolbar.hideToolbar(); return; }
+  if (!sel || sel.rangeCount === 0) {
+    if (!RichToolbar.isToolbarInteraction()) { RichToolbar.hideToolbar(); active.richSelection = null; }
+    return;
+  }
   const range = sel.getRangeAt(0);
   if (!fieldEl.contains(range.commonAncestorContainer) && range.commonAncestorContainer !== fieldEl) {
-    RichToolbar.hideToolbar(); return;
+    if (!RichToolbar.isToolbarInteraction()) { RichToolbar.hideToolbar(); active.richSelection = null; }
+    return;
   }
+  // Save stable offsets
+  active.richSelection = { start: offsets.start, end: offsets.end };
   let rect = null;
   try { rect = range.getBoundingClientRect(); } catch (_) {}
   if (!rect || (rect.width === 0 && rect.height === 0)) {
     try { rect = fieldEl.getBoundingClientRect(); } catch (_) {}
   }
-  const marks = getActiveMarks();
-  RichToolbar.showToolbar(active.canvas, fieldEl, rect, marks);
+  const marks = getActiveMarks(offsets);
+  RichToolbar.showToolbar(active.canvas, fieldEl, rect, marks, offsets);
 }
 
 function applyRichMark(markType, href) {
   if (!active || active.mode !== "rich") return false;
   const fieldEl = active.fieldEl;
-  const offsets = selectionToOffsets(fieldEl);
+  const offsets = active.richSelection || selectionToOffsets(fieldEl);
   if (!offsets || offsets.start === offsets.end) return false;
+  // Validate offsets still within text length
+  const len = fieldEl.textContent ? fieldEl.textContent.length : 0;
+  const start = Math.max(0, Math.min(offsets.start, len));
+  const end = Math.max(0, Math.min(offsets.end, len));
+  if (start === end) return false;
   const current = domToRichText(fieldEl);
-  const updated = toggleMarkInRichText(current, offsets.start, offsets.end, markType, href);
+  const updated = toggleMarkInRichText(current, start, end, markType, href);
   renderRichTextToDOM(fieldEl, updated);
-  restoreSelectionFromOffsets(fieldEl, offsets.start, offsets.end);
+  restoreSelectionFromOffsets(fieldEl, start, end);
+  // Keep saved selection
+  active.richSelection = { start, end };
   try { active.canvas.requestSync(); } catch (_) {}
-  updateToolbar();
+  // Keep toolbar visible with updated active states
+  try {
+    let rect = null;
+    try {
+      const sel = fieldEl.ownerDocument.getSelection();
+      if (sel && sel.rangeCount > 0) rect = sel.getRangeAt(0).getBoundingClientRect();
+    } catch (_) {}
+    const marks = getActiveMarks({ start, end });
+    RichToolbar.showToolbar(active.canvas, fieldEl, rect, marks, { start, end });
+  } catch (_) {}
   return true;
 }
 
@@ -566,8 +589,8 @@ function attachPlainHandlers(fieldEl, canvas) {
   };
   const onBlur = () => {
     setTimeout(() => {
+      if (RichToolbar.isPopoverVisible() || RichToolbar.isToolbarInteraction()) return;
       if (active && active.fieldEl === fieldEl) {
-        if (RichToolbar.isPopoverVisible()) return;
         commitActiveEdit();
       }
     }, 0);
@@ -808,7 +831,7 @@ function attachRichHandlers(fieldEl, canvas) {
   };
   const onBlur = () => {
     setTimeout(() => {
-      if (RichToolbar.isPopoverVisible()) return;
+      if (RichToolbar.isPopoverVisible() || RichToolbar.isToolbarInteraction()) return;
       if (active && active.fieldEl === fieldEl) commitActiveEdit();
     }, 0);
   };
@@ -816,6 +839,7 @@ function attachRichHandlers(fieldEl, canvas) {
   const onMouseDown = (e) => { e.stopPropagation(); };
   const onSelectionChange = () => {
     if (!active || active.fieldEl !== fieldEl) return;
+    if (RichToolbar.isToolbarInteraction()) return;
     // Update toolbar visibility
     try {
       const offsets = selectionToOffsets(fieldEl);
@@ -873,62 +897,60 @@ function attachRichHandlers(fieldEl, canvas) {
   handlers.onSelectionChange = onSelectionChange;
   handlers.onScroll = onScroll;
   handlers.fieldEl = fieldEl;
-  // Setup toolbar callbacks
-  RichToolbar.setToolbarCallbacks(
-    (mark, href) => {
-      if (mark === "link") {
-        // trigger link popover
-        const offsets = selectionToOffsets(fieldEl);
-        if (!offsets || offsets.start===offsets.end) return;
-        const cur = domToRichText(fieldEl);
-        let hrefVal = "";
-        let pos=0, uniformHref=null, uniform=true;
-        for (const run of cur.content) {
-          const runEnd=pos+run.text.length;
-          if (runEnd<=offsets.start || pos>=offsets.end) {pos=runEnd; continue;}
-          const link = run.marks && run.marks.find(m=>m.type==="link");
-          const curHref = link ? link.href : null;
-          if (uniformHref===null) uniformHref=curHref;
-          else if (uniformHref!==curHref) uniform=false;
-          pos=runEnd;
-        }
-        if (uniform && uniformHref) hrefVal=uniformHref;
-        RichToolbar.showPopover(canvas, fieldEl, hrefVal, offsets,
-          (m, v) => {
-            const curOffsets = RichToolbar.getSavedOffsets() || offsets;
-            restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-            const cur2 = domToRichText(fieldEl);
-            const updated = toggleMarkInRichText(cur2, curOffsets.start, curOffsets.end, "link", v);
-            renderRichTextToDOM(fieldEl, updated);
-            restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-            try { canvas.requestSync(); } catch (_) {}
-          },
-          () => {
-            const curOffsets = RichToolbar.getSavedOffsets() || offsets;
-            restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-            const cur2 = domToRichText(fieldEl);
-            const updated = toggleMarkInRichText(cur2, curOffsets.start, curOffsets.end, "link", null);
-            renderRichTextToDOM(fieldEl, updated);
-            restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-            try { canvas.requestSync(); } catch (_) {}
-          },
-          () => {
-            try { const curOffsets = RichToolbar.getSavedOffsets() || offsets; if(curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end); } catch (_) {}
-          }
-        );
-      } else {
-        const offsets = selectionToOffsets(fieldEl);
-        if (!offsets || offsets.start===offsets.end) return;
-        const cur = domToRichText(fieldEl);
-        const updated = toggleMarkInRichText(cur, offsets.start, offsets.end, mark);
-        renderRichTextToDOM(fieldEl, updated);
-        restoreSelectionFromOffsets(fieldEl, offsets.start, offsets.end);
-        try { canvas.requestSync(); } catch (_) {}
-      }
+  // Setup toolbar callbacks (explicit object, no globals)
+  RichToolbar.setToolbarCallbacks({
+    toggleMark: (mark) => {
+      const offsets = active.richSelection || selectionToOffsets(fieldEl);
+      if (!offsets || offsets.start === offsets.end) return;
+      const start = Math.max(0, Math.min(offsets.start, fieldEl.textContent.length));
+      const end = Math.max(0, Math.min(offsets.end, fieldEl.textContent.length));
+      const cur = domToRichText(fieldEl);
+      const updated = toggleMarkInRichText(cur, start, end, mark);
+      renderRichTextToDOM(fieldEl, updated);
+      restoreSelectionFromOffsets(fieldEl, start, end);
+      active.richSelection = { start, end };
+      try { canvas.requestSync(); } catch (_) {}
+      // Keep toolbar visible
+      try {
+        const sel = fieldEl.ownerDocument.getSelection();
+        let rect = null;
+        if (sel && sel.rangeCount > 0) rect = sel.getRangeAt(0).getBoundingClientRect();
+        const marks = getActiveMarks({ start, end });
+        RichToolbar.showToolbar(canvas, fieldEl, rect, marks, { start, end });
+      } catch (_) {}
     },
-    null,
-    null
-  );
+    openLink: () => triggerLink(),
+    applyLink: (href) => {
+      const offsets = active.richSelection || selectionToOffsets(fieldEl);
+      if (!offsets) return;
+      const start = Math.max(0, Math.min(offsets.start, fieldEl.textContent.length));
+      const end = Math.max(0, Math.min(offsets.end, fieldEl.textContent.length));
+      const cur = domToRichText(fieldEl);
+      const updated = toggleMarkInRichText(cur, start, end, "link", href);
+      renderRichTextToDOM(fieldEl, updated);
+      restoreSelectionFromOffsets(fieldEl, start, end);
+      active.richSelection = { start, end };
+      try { canvas.requestSync(); } catch (_) {}
+    },
+    removeLink: () => {
+      const offsets = active.richSelection || selectionToOffsets(fieldEl);
+      if (!offsets) return;
+      const start = Math.max(0, Math.min(offsets.start, fieldEl.textContent.length));
+      const end = Math.max(0, Math.min(offsets.end, fieldEl.textContent.length));
+      const cur = domToRichText(fieldEl);
+      const updated = toggleMarkInRichText(cur, start, end, "link", null);
+      renderRichTextToDOM(fieldEl, updated);
+      restoreSelectionFromOffsets(fieldEl, start, end);
+      active.richSelection = { start, end };
+      try { canvas.requestSync(); } catch (_) {}
+    },
+    closeLink: () => {
+      try {
+        const curOffsets = active.richSelection;
+        if (curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
+      } catch (_) {}
+    }
+
   if (active) active.handlers = handlers;
 }
 
