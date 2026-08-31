@@ -67,6 +67,7 @@ export class CanvasController {
     this._onAux = this.onAuxClick.bind(this);
     this._onSubmitBlock = this.onSubmitBlock.bind(this);
     this._boundWinEvents = false;
+    this.onEscape = null;
   }
 
   onSubmitBlock(e) {
@@ -115,15 +116,16 @@ export class CanvasController {
       try { doc.addEventListener("scroll", this._onScroll, { passive: true }); } catch (_) {}
     }
 
-    // Parent key handler for Escape (also bind inside iframe above)
-    try { document.addEventListener("keydown", this._onKey); } catch (_) {}
-
     // Initial sync
     this.syncGeometry();
     // Restore selection if state already has one (e.g., after viewport switch without reload)
-    if (state.selection && this.index.has(state.selection.instanceKey)) {
-      this.selected = state.selection;
-      this.syncGeometry();
+    if (state.selection) {
+      if (state.selection.instanceKey && this.index.has(state.selection.instanceKey)) {
+        this.selected = state.selection;
+        this.syncGeometry();
+      } else if (!state.selection.logical) {
+        state.selection = null;
+      }
     }
   }
 
@@ -144,7 +146,6 @@ export class CanvasController {
         this.win.removeEventListener("resize", this._onResize);
       }
     } catch (_) {}
-    try { document.removeEventListener("keydown", this._onKey); } catch (_) {}
     if (this.overlay) {
       try { this.overlay.destroy(); } catch (_) {}
     }
@@ -155,8 +156,9 @@ export class CanvasController {
     this.elementToNode = new WeakMap();
     this.nodeToKeys = new Map();
     this.hoverInst = null;
-    // keep this.selected? we keep state.selection, but clear local reference
-    // Do not clear state.selection on destroy — it persists across reloads if same node still exists
+    this.selected = null;
+    // Do not clear state.selection here — attach restores it when the same
+    // rendered occurrence still exists in the reloaded preview.
     this._rafPending = false;
     this._boundWinEvents = false;
   }
@@ -284,6 +286,52 @@ export class CanvasController {
     this.syncGeometry();
   }
 
+  selectNode(node) {
+    if (!node || !node.id) return;
+    const keys = (this.nodeToKeys.get(node.id) || []).filter((key) => {
+      const instance = this.index.get(key);
+      return instance && instance.editable;
+    });
+
+    if (this.selected && this.selected.nodeId === node.id && this.index.has(this.selected.instanceKey)) {
+      this.selectInstance(this.index.get(this.selected.instanceKey));
+      return;
+    }
+    if (keys.length === 1) {
+      this.selectInstance(this.index.get(keys[0]));
+      return;
+    }
+    if (keys.length > 1) {
+      const visible = keys.filter((key) => {
+        const rect = this.visualRect(this.index.get(key));
+        if (!rect || !this.doc?.documentElement) return false;
+        const width = this.doc.documentElement.clientWidth || 0;
+        const height = this.doc.documentElement.clientHeight || 0;
+        return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width;
+      });
+      if (visible.length === 1) {
+        this.selectInstance(this.index.get(visible[0]));
+        return;
+      }
+    }
+
+    // A document node can render as several Collection occurrences. Keep one
+    // shared logical selection without drawing a misleading occurrence outline.
+    this.selected = null;
+    state.selection = {
+      nodeId: node.id,
+      instanceKey: null,
+      editable: true,
+      ownerType: "entry",
+      ownerId: state.entryId,
+      ownerLabel: state.title,
+      block: node.block || "",
+      version: node.version || 0,
+      logical: true,
+    };
+    if (this.overlay) this.overlay.clearSelection();
+  }
+
   clearSelection() {
     this.selected = null;
     state.selection = null;
@@ -394,8 +442,9 @@ export class CanvasController {
   onKey(e) {
     if (!e) return;
     if (e.key === "Escape") {
+      if (typeof this.onEscape === "function" && this.onEscape(e)) return;
       // If selection exists, clear it. Do not prevent overflow menu's own Escape if no selection
-      if (this.selected) {
+      if (state.selection) {
         e.preventDefault();
         // Don't stopPropagation? Let overflow menu also handle? But spec: if overflow is open, its Escape still works.
         // We clear selection and let event пузырь continue for overflow.

@@ -27,6 +27,18 @@
       </div>
     </div>
     <div class="editor-v2-topbar__right">
+      <button class="editor-v2-action-btn" type="button" id="editor-v2-blocks-btn" aria-label="Blocks" aria-expanded="false" aria-controls="editor-v2-panel-left" data-testid="editor-v2-blocks">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Blocks</span>
+      </button>
+      <button class="editor-v2-action-btn" type="button" id="editor-v2-layers-btn" aria-label="Layers" aria-expanded="false" aria-controls="editor-v2-panel-left" data-testid="editor-v2-layers">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m12 3-9 5 9 5 9-5-9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></svg>
+        <span>Layers</span>
+      </button>
+      <button class="editor-v2-action-btn" type="button" id="editor-v2-document-btn" aria-label="Document" aria-expanded="false" aria-controls="editor-v2-panel-right" data-testid="editor-v2-document">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v5h5M9 12h6M9 16h6"/></svg>
+        <span>Document</span>
+      </button>
       {{ if .Content.PublicURL }}<a class="editor-v2-icon-btn" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener" title="View live page" aria-label="View live page" data-testid="editor-v2-view-live">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M14 3h7v7"/><path d="M10 14L21 3"/><path d="M21 14v7H3V3h7"/></svg>
       </a>{{ end }}
@@ -46,6 +58,8 @@
       <div id="editor-v2-loading" class="editor-v2-loading">Loading preview…</div>
       <div id="editor-v2-error" class="editor-v2-error" hidden></div>
     </div>
+    <div id="editor-v2-panel-left" class="editor-v2-panel-slot editor-v2-panel-slot--left" aria-live="polite" hidden></div>
+    <div id="editor-v2-panel-right" class="editor-v2-panel-slot editor-v2-panel-slot--right" aria-live="polite" hidden></div>
   </div>
   <!-- hidden metadata for preview.js fallback -->
   <input type="hidden" id="editor-v2-title" value="{{ .Content.Title }}">

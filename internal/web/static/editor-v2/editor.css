@@ -1,3 +1,13 @@
+html {
+  --editor-z-canvas: 0;
+  --editor-z-loading: 5;
+  --editor-z-panel: 10;
+  --editor-z-panel-front: 11;
+  --editor-z-topbar: 20;
+  --editor-z-menu: 30;
+  --editor-z-toast: 40;
+}
+
 html,
 body.editor-v2-layout {
   margin: 0;
@@ -24,6 +34,7 @@ body.editor-v2-layout {
   border-bottom: 1px solid var(--ui-border, #e2e8f0);
   background: var(--ui-surface, #fff);
   position: relative;
+  z-index: var(--editor-z-topbar);
 }
 
 .editor-v2-topbar__left {
@@ -71,6 +82,39 @@ body.editor-v2-layout {
   align-items: center;
   gap: 8px;
   justify-self: end;
+}
+
+.editor-v2-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  font: 600 12px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.editor-v2-action-btn:hover {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.editor-v2-action-btn.is-active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.editor-v2-action-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 
 /* Icon button - square 32px for View live, Back, Overflow */
@@ -181,7 +225,7 @@ body.editor-v2-layout {
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   padding: 4px;
-  z-index: 20;
+  z-index: var(--editor-z-menu);
 }
 
 .editor-v2-overflow-menu[hidden] {
@@ -217,6 +261,7 @@ body.editor-v2-layout {
   display: flex;
   justify-content: center;
   align-items: flex-start;
+  position: relative;
 }
 
 .editor-v2-stage {
@@ -229,6 +274,7 @@ body.editor-v2-layout {
   flex: 0 0 auto;
   min-height: 0;
   height: 100%;
+  z-index: var(--editor-z-canvas);
 }
 
 .editor-v2-canvas {
@@ -258,7 +304,7 @@ body.editor-v2-layout {
   font-size: 12px;
   color: #475569;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  z-index: 5;
+  z-index: var(--editor-z-loading);
 }
 
 .editor-v2-error {
@@ -275,4 +321,429 @@ body.editor-v2-layout {
 
 .editor-v2-topbar .button {
   white-space: nowrap;
+}
+
+/* Floating workspace panels. Slots are overlay layers and never participate in
+   workspace flex sizing, so opening a panel cannot move or resize the canvas. */
+.editor-v2-panel-slot {
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  z-index: var(--editor-z-panel);
+  display: flex;
+  align-items: flex-start;
+  width: min(340px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.editor-v2-panel-slot[hidden] {
+  display: none;
+}
+
+.editor-v2-panel-slot--left {
+  left: 16px;
+}
+
+.editor-v2-panel-slot--right {
+  right: 16px;
+  width: min(370px, calc(100% - 32px));
+  justify-content: flex-end;
+}
+
+.editor-v2-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid #dbe3ec;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.05);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 130ms ease, transform 130ms ease;
+  pointer-events: auto;
+}
+
+.editor-v2-panel.is-open {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.editor-v2-panel__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 6px 7px 6px 13px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.editor-v2-panel__title {
+  margin: 0;
+  color: #0f172a;
+  font: 600 14px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.editor-v2-panel__title:focus {
+  outline: none;
+}
+
+.editor-v2-panel__title:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+}
+
+.editor-v2-panel__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.editor-v2-panel__close:hover {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.editor-v2-panel__close:focus-visible,
+.editor-v2-panel__search:focus-visible,
+.editor-v2-block-item:focus-visible,
+.editor-v2-navigator__toggle:focus-visible,
+.editor-v2-navigator__select:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+.editor-v2-panel__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  overscroll-behavior: contain;
+}
+
+.editor-v2-panel__search {
+  box-sizing: border-box;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #0f172a;
+  font: 400 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.editor-v2-panel__search::placeholder {
+  color: #94a3b8;
+}
+
+.editor-v2-panel__empty,
+.editor-v2-panel__description {
+  margin: 12px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.editor-v2-block-category {
+  margin-top: 16px;
+}
+
+.editor-v2-block-category__title,
+.editor-v2-panel__section-title {
+  margin: 0 0 7px;
+  color: #64748b;
+  font: 700 11px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.editor-v2-panel__section-title:not(:first-child) {
+  margin-top: 20px;
+}
+
+.editor-v2-block-category__list {
+  display: grid;
+  gap: 4px;
+}
+
+.editor-v2-block-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 46px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #1e293b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.editor-v2-block-item:hover {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.editor-v2-block-item.is-selected {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.editor-v2-block-item__icon {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #475569;
+}
+
+.editor-v2-block-item__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.editor-v2-block-item__name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.editor-v2-block-item__description {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-v2-navigator__scope {
+  padding: 0 4px 9px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.editor-v2-navigator__tree {
+  display: grid;
+  gap: 1px;
+}
+
+.editor-v2-navigator__row {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding-left: calc(var(--navigator-depth, 0) * 16px);
+  border-radius: 6px;
+}
+
+.editor-v2-navigator__item.is-active > .editor-v2-navigator__row {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.editor-v2-navigator__toggle,
+.editor-v2-navigator__toggle-spacer {
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+}
+
+.editor-v2-navigator__toggle {
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.editor-v2-navigator__toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.editor-v2-navigator__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px 0 2px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: 500 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.editor-v2-navigator__toggle:hover,
+.editor-v2-navigator__select:hover {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.editor-v2-navigator__note {
+  margin: 14px 4px 2px;
+  padding-top: 12px;
+  border-top: 1px solid #eef2f7;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.editor-v2-summary {
+  display: grid;
+  margin: 0;
+}
+
+.editor-v2-summary__row {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.7fr) minmax(0, 1.3fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.editor-v2-summary__label,
+.editor-v2-summary__value {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.editor-v2-summary__label {
+  color: #64748b;
+}
+
+.editor-v2-summary__value {
+  overflow-wrap: anywhere;
+  color: #1e293b;
+  font-weight: 500;
+}
+
+.editor-v2-readonly-badge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.editor-v2-schema-summary {
+  margin-top: 18px;
+  padding: 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.editor-v2-schema-summary__title {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.editor-v2-schema-summary .editor-v2-panel__description {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.editor-v2-schema-summary__counts {
+  display: flex;
+  gap: 12px;
+  margin-top: 9px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+@media (max-width: 1100px) {
+  .editor-v2-action-btn {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+  }
+
+  .editor-v2-action-btn > span {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .editor-v2-topbar {
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .editor-v2-topbar__right {
+    gap: 4px;
+  }
+
+  .editor-v2-viewport-label,
+  .editor-v2-topbar__subtitle {
+    display: none;
+  }
+
+  .editor-v2-viewport-btn {
+    min-width: 34px;
+    padding-inline: 7px;
+  }
+
+  .editor-v2-panel-slot,
+  .editor-v2-panel-slot--right {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  .editor-v2-panel-slot.is-front {
+    z-index: var(--editor-z-panel-front);
+  }
+
+  .editor-v2-panel-slot.is-covered {
+    display: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .editor-v2-topbar__identity {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-v2-panel {
+    transition: none;
+  }
 }

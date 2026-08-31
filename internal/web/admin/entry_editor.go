@@ -510,7 +510,7 @@ func (h *Handler) renderEntryFormV2(w http.ResponseWriter, r *http.Request, data
 		return
 	}
 	migratedDoc := migrateDocumentForEditor(doc)
-	resource := EditorResource{Type: "entry", ID: data.EntryID, Kind: data.ContentTypeID, Label: data.Title, ContentTypeID: data.ContentTypeID}
+	resource := EditorResource{Type: "entry", ID: data.EntryID, Kind: data.ContentTypeID, Label: data.Title, ContentTypeID: data.ContentTypeID, Location: data.PublicURL}
 	actions := EditorActions{PreviewURL: "/admin/editor/preview", SaveURL: data.Action, PublishURL: data.PublishAction, BackURL: data.BackURL, PublicPreviewURL: data.PublicURL}
 	bs, berr := buildEditorBootstrap(r.Context(), h, resource, migratedDoc, "entry", "/admin/editor/preview", actions)
 	if berr != nil {
@@ -521,19 +521,37 @@ func (h *Handler) renderEntryFormV2(w http.ResponseWriter, r *http.Request, data
 	// Use typed embedding to avoid fragile map[string]any round-trip.
 	type v2Bootstrap struct {
 		editorBootstrap
-		Title     string `json:"title"`
-		Slug      string `json:"slug"`
-		Excerpt   string `json:"excerpt"`
-		EntryID   string `json:"entryId"`
-		CSRFToken string `json:"csrfToken"`
+		Title        string `json:"title"`
+		Slug         string `json:"slug"`
+		Excerpt      string `json:"excerpt"`
+		EntryID      string `json:"entryId"`
+		Status       string `json:"status"`
+		TemplateName string `json:"templateName,omitempty"`
+		CSRFToken    string `json:"csrfToken"`
+	}
+	templateName := h.editorTemplateName(r.Context(), data)
+	if data.LayoutTemplateID != "" {
+		for _, option := range data.LayoutTemplates {
+			if option.ID == data.LayoutTemplateID {
+				templateName = option.Name
+				break
+			}
+		}
+		if templateName == "" {
+			if selected, err := h.queries.GetLayoutTemplate(r.Context(), data.LayoutTemplateID); err == nil {
+				templateName = selected.Name
+			}
+		}
 	}
 	enriched := v2Bootstrap{
 		editorBootstrap: bs,
-		Title:          data.Title,
-		Slug:           data.Slug,
-		Excerpt:        data.Excerpt,
-		EntryID:        data.EntryID,
-		CSRFToken:      token,
+		Title:           data.Title,
+		Slug:            data.Slug,
+		Excerpt:         data.Excerpt,
+		EntryID:         data.EntryID,
+		Status:          data.Status,
+		TemplateName:    templateName,
+		CSRFToken:       token,
 	}
 	bootstrap, err := json.Marshal(enriched)
 	if err != nil {
@@ -555,6 +573,24 @@ func (h *Handler) renderEntryFormV2(w http.ResponseWriter, r *http.Request, data
 	if err := h.editorV2Template.ExecuteTemplate(w, "editor_v2_layout.html", LayoutData{Title: data.Heading, CSRFToken: token, Content: v2}); err != nil {
 		log.Printf("render entry form v2: %v", err)
 	}
+}
+
+func (h *Handler) editorTemplateName(ctx context.Context, data entryFormData) string {
+	if data.DefaultTemplateName != "" {
+		return data.DefaultTemplateName
+	}
+	if data.LayoutTemplateID != "" || data.ContentTypeID == "" {
+		return ""
+	}
+	contentType, err := h.queries.GetContentType(ctx, data.ContentTypeID)
+	if err != nil || !contentType.DefaultLayoutTemplateID.Valid || contentType.DefaultLayoutTemplateID.String == "" {
+		return ""
+	}
+	tmpl, err := h.queries.GetLayoutTemplate(ctx, contentType.DefaultLayoutTemplateID.String)
+	if err != nil {
+		return ""
+	}
+	return tmpl.Name
 }
 
 func (h *Handler) hierarchyParentOptions(ctx context.Context, contentTypeID, entryID, selectedParentID string) ([]hierarchyParentOption, string) {

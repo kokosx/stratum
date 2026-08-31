@@ -53,6 +53,18 @@ function derivePublicInfo() {
 
 const derived = derivePublicInfo();
 
+function authoritativeResourceURL() {
+  const candidates = [
+    bootstrap.resource?.location,
+    bootstrap.actions?.publicPreviewUrl,
+    bootstrap.actions?.publicPreviewURL,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return "";
+}
+
 // selection is pure runtime, does not mutate SDT here
 // { nodeId, instanceKey, editable, ownerType, ownerId, ownerLabel } or null
 function createSelectionState() {
@@ -60,6 +72,28 @@ function createSelectionState() {
 }
 
 const sel = createSelectionState();
+const selectionListeners = new Set();
+
+export const panelState = {
+  left: null,
+  right: null,
+  recent: [],
+};
+
+const panelListeners = new Set();
+
+function notifySelection(next, previous) {
+  for (const listener of selectionListeners) {
+    try { listener(next, previous); } catch (_) {}
+  }
+}
+
+function notifyPanels() {
+  const snapshot = { left: panelState.left, right: panelState.right, recent: [...panelState.recent] };
+  for (const listener of panelListeners) {
+    try { listener(snapshot); } catch (_) {}
+  }
+}
 
 export const state = {
   // generic resource descriptor, M1 focuses on entry/page but keeps shape generic
@@ -76,15 +110,22 @@ export const state = {
   excerpt: bootstrap.excerpt || "",
   contentTypeId: bootstrap.contentTypeId || bootstrap.resource?.contentTypeId || "",
   entryId: bootstrap.entryId || bootstrap.resource?.id || "",
+  status: bootstrap.status || "",
+  templateName: bootstrap.templateName || "",
   csrfToken: bootstrap.csrfToken || "",
   // public URL for View Live / bootstrap
   publicUrl: derived.publicUrl,
+  // Server-authoritative URL for document metadata. Unlike publicUrl this does
+  // not synthesize a route for drafts that are not publicly available.
+  resourceUrl: authoritativeResourceURL(),
   // M2 selection
   get selection() {
     return sel.current;
   },
   set selection(v) {
+    const previous = sel.current;
     sel.current = v;
+    notifySelection(v, previous);
   },
   get hoveredKey() {
     return sel.hoveredKey;
@@ -93,6 +134,54 @@ export const state = {
     sel.hoveredKey = v;
   },
 };
+
+export function subscribeSelection(listener) {
+  if (typeof listener !== "function") return () => {};
+  selectionListeners.add(listener);
+  return () => selectionListeners.delete(listener);
+}
+
+export function subscribePanels(listener) {
+  if (typeof listener !== "function") return () => {};
+  panelListeners.add(listener);
+  return () => panelListeners.delete(listener);
+}
+
+export function setPanel(slot, panel) {
+  const allowed = slot === "left"
+    ? new Set([null, "blocks", "navigator"])
+    : slot === "right"
+      ? new Set([null, "inspector", "document"])
+      : null;
+  if (!allowed || !allowed.has(panel)) return false;
+  if (panelState[slot] === panel) return false;
+  panelState[slot] = panel;
+  panelState.recent = panelState.recent.filter((item) => item !== slot);
+  if (panel) panelState.recent.push(slot);
+  notifyPanels();
+  return true;
+}
+
+export function togglePanel(slot, panel) {
+  return setPanel(slot, panelState[slot] === panel ? null : panel);
+}
+
+export function activatePanel(slot, panel) {
+  if (panelState[slot] !== panel) return setPanel(slot, panel);
+  if (mostRecentPanelSlot() === slot) return false;
+  panelState.recent = panelState.recent.filter((item) => item !== slot);
+  panelState.recent.push(slot);
+  notifyPanels();
+  return true;
+}
+
+export function mostRecentPanelSlot() {
+  for (let i = panelState.recent.length - 1; i >= 0; i--) {
+    const slot = panelState.recent[i];
+    if (panelState[slot]) return slot;
+  }
+  return null;
+}
 
 // Helpers for displayName lookup (block id -> displayName)
 // Uses bootstrap catalog + definitions if present, falls back to minimal map.
@@ -177,13 +266,43 @@ export function displayNameForBlock(blockName) {
   return hum || "Block";
 }
 
+export function blockCatalog() {
+  return Array.isArray(bootstrap.catalog) ? bootstrap.catalog : [];
+}
+
+export function definitionForBlock(block, version) {
+  const candidates = [];
+  if (Array.isArray(bootstrap.definitions)) candidates.push(...bootstrap.definitions);
+  if (Array.isArray(bootstrap.catalog)) candidates.push(...bootstrap.catalog);
+  let latest = null;
+  for (const item of candidates) {
+    if (!item || item.block !== block) continue;
+    if (version && Number(item.version) === Number(version)) return item;
+    if (!latest || Number(item.version || 0) > Number(latest.version || 0)) latest = item;
+  }
+  return latest;
+}
+
+export function findDocumentNode(nodeId) {
+  if (!nodeId) return null;
+  const walk = (nodes) => {
+    for (const node of nodes || []) {
+      if (node && node.id === nodeId) return node;
+      const found = walk(node && node.children);
+      if (found) return found;
+    }
+    return null;
+  };
+  return walk(state.document && state.document.nodes);
+}
+
 export function friendlyLabelForUnknown() {
   return "Template element";
 }
 
 export function clearSelection() {
-  sel.current = null;
+  state.selection = null;
 }
 export function setSelection(selObj) {
-  sel.current = selObj;
+  state.selection = selObj;
 }

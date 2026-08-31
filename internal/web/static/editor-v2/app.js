@@ -2,6 +2,7 @@
 import { state, bootstrap } from "./state.js";
 import { fetchPreview } from "./preview.js";
 import { CanvasController } from "./canvas.js";
+import { PanelController } from "./panels.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available
@@ -21,6 +22,9 @@ class EditorApp {
     this.overflowBtn = root.querySelector("#editor-v2-overflow-btn");
     this.overflowMenu = root.querySelector("#editor-v2-overflow-menu");
     this.canvas = null;
+    this.panels = null;
+    this.closeOverflowMenu = null;
+    this._onEscape = (event) => this.panels?.handleEscape(event);
   }
 
   mount() {
@@ -31,6 +35,19 @@ class EditorApp {
     if (this.iframe) {
       this.canvas = new CanvasController(this.iframe, this.stage);
     }
+    this.panels = new PanelController({
+      root: this.root,
+      workspace: this.workspace,
+      canvas: this.canvas,
+      closeMenu: () => {
+        if (!this.overflowMenu || this.overflowMenu.hidden) return false;
+        this.closeOverflowMenu?.(true);
+        return true;
+      },
+    });
+    this.panels.mount();
+    if (this.canvas) this.canvas.onEscape = this._onEscape;
+    document.addEventListener("keydown", this._onEscape);
     this.loadPreview();
   }
 
@@ -47,10 +64,12 @@ class EditorApp {
     if (!this.overflowBtn || !this.overflowMenu) return;
     const btn = this.overflowBtn;
     const menu = this.overflowMenu;
-    const close = () => {
+    const close = (focus = false) => {
       menu.hidden = true;
       btn.setAttribute("aria-expanded", "false");
+      if (focus) btn.focus();
     };
+    this.closeOverflowMenu = close;
     const open = () => {
       menu.hidden = false;
       btn.setAttribute("aria-expanded", "true");
@@ -68,12 +87,6 @@ class EditorApp {
       if (menu.hidden) return;
       if (btn.contains(e.target) || menu.contains(e.target)) return;
       close();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !menu.hidden) {
-        close();
-        btn.focus();
-      }
     });
   }
 
