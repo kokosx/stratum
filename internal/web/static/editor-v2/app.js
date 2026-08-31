@@ -1,5 +1,4 @@
 // app.js — V2 shell / viewport / preview lifecycle (interaction lives in canvas.js)
-// Note: anchor inert handling (target _blank via trim().toLowerCase(), scrollIntoView, scrollingElement, getElementById, getElementsByName, decodeURIComponent, bare relatives like about#t) now lives in canvas.js
 import { state, bootstrap } from "./state.js";
 import { fetchPreview } from "./preview.js";
 import { CanvasController } from "./canvas.js";
@@ -9,145 +8,6 @@ const VIEWPORTS = {
   tablet: 768,
   mobile: 390,
 };
-
-function normalizePath(p) {
-  if (!p || p === "") return "/";
-  let s = String(p).trim();
-  if (!s.startsWith("/")) s = "/" + s;
-  s = s.replace(/\/+$/, "");
-  if (s === "") s = "/";
-  return s;
-}
-
-function getCurrentResourceInfo() {
-  const origin = state.publicOrigin || window.location.origin;
-  const pathname = normalizePath(state.publicPath || "/");
-  const search = state.publicSearch || "";
-  return { origin, pathname, search };
-}
-
-function isSameResourceFragment(rawHref) {
-  if (!rawHref) return false;
-  const trimmed = String(rawHref).trim();
-  if (trimmed === "") return false;
-  // Block non-http schemes immediately — never a same-page anchor (mailto, tel, javascript, data, blob, etc.)
-  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^https?:/i.test(trimmed)) return false;
-  // Only allow hash-only, absolute-path, or http(s) URLs with hash; bare relatives like "about#t" are treated as cross-page navigation and blocked
-  if (!trimmed.startsWith("#") && !trimmed.startsWith("/") && !/^https?:\/\//i.test(trimmed)) return false;
-  // href="#" always same-page scroll to top
-  if (trimmed === "#") return true;
-  // hash-only like #pricing — same page regardless of query (inherits current query)
-  if (trimmed.startsWith("#")) {
-    // Must have non-whitespace fragment; "#   " should not be considered valid anchor
-    const frag = trimmed.slice(1);
-    return frag.trim().length > 0;
-  }
-  // Must contain hash to be considered anchor; without hash it's navigation -> block
-  const hashIndex = trimmed.indexOf("#");
-  if (hashIndex === -1) return false;
-  // If hash is empty like "/about#" — treat as same-page if path matches but scroll top? Spec says href="#" scrolls top, but "/about#" not defined. Handle as "#" equivalent if path matches.
-  // For other cases with hash, compare origin+path+search
-  try {
-    const current = getCurrentResourceInfo();
-    // Resolve href against current origin+pathname as base
-    // For relative hrefs like "/about#team" or "https://example.test/about#team"
-    // Use current origin as base; new URL will handle absolute and relative correctly
-    const baseForResolve = current.origin + current.pathname + current.search;
-    const url = new URL(trimmed, baseForResolve);
-    // Origin must exactly match (absolute public URL with different origin -> block)
-    if (url.origin !== current.origin) return false;
-    const linkPathname = normalizePath(url.pathname);
-    const linkSearch = url.search || "";
-    if (linkPathname !== current.pathname) return false;
-    if (linkSearch !== current.search) return false;
-    // Must have hash (including "#")
-    return url.hash.length > 0;
-  } catch (_) {
-    return false;
-  }
-}
-
-function findAnchorTarget(doc, hash) {
-  if (!doc || !hash) return null;
-  let fragment = hash.startsWith("#") ? hash.slice(1) : hash;
-  // hash might contain encoded chars, handle decode
-  try {
-    fragment = decodeURIComponent(fragment);
-  } catch (_) {
-    // keep raw if decode fails
-  }
-  fragment = fragment.trim();
-  if (!fragment) return null;
-  // Prefer getElementById, avoid unescaped CSS selector injection
-  let el = null;
-  try {
-    el = doc.getElementById(fragment);
-  } catch (_) {
-    el = null;
-  }
-  if (el) return el;
-  // Fallback legacy name attribute
-  try {
-    const byName = doc.getElementsByName(fragment);
-    if (byName && byName.length) return byName[0];
-  } catch (_) {}
-  return null;
-}
-
-function handleSamePageAnchor(doc, rawHref) {
-  if (!doc) return;
-  const trimmed = String(rawHref).trim();
-  if (trimmed === "#") {
-    const scroller = doc.scrollingElement || doc.documentElement || doc.body;
-    if (scroller && typeof scroller.scrollTo === "function") {
-      try {
-        scroller.scrollTo({ top: 0, behavior: "smooth" });
-      } catch (_) {
-        scroller.scrollTop = 0;
-        if (doc.body) doc.body.scrollTop = 0;
-      }
-    } else {
-      if (doc.documentElement) doc.documentElement.scrollTop = 0;
-      if (doc.body) doc.body.scrollTop = 0;
-    }
-    // Also update location hash without navigation? Not needed; iframe srcdoc has no real URL.
-    return;
-  }
-  // For hash-only or same-resource absolute URL with hash
-  try {
-    const current = getCurrentResourceInfo();
-    const baseForResolve = current.origin + current.pathname + current.search;
-    const url = new URL(trimmed, baseForResolve);
-    const hash = url.hash || (trimmed.startsWith("#") ? trimmed : "");
-    if (!hash || hash === "#") {
-      const scroller = doc.scrollingElement || doc.documentElement || doc.body;
-      if (scroller && scroller.scrollTo) {
-        scroller.scrollTo({ top: 0, behavior: "smooth" });
-      }
-      return;
-    }
-    const target = findAnchorTarget(doc, hash);
-    if (target && typeof target.scrollIntoView === "function") {
-      try {
-        target.scrollIntoView({ behavior: "smooth", block: "start" });
-      } catch (_) {
-        target.scrollIntoView();
-      }
-    }
-  } catch (_) {
-    // Fallback: try direct hash string
-    if (trimmed.startsWith("#")) {
-      const target = findAnchorTarget(doc, trimmed);
-      if (target && target.scrollIntoView) {
-        try {
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
-        } catch (_) {
-          target.scrollIntoView();
-        }
-      }
-    }
-  }
-}
 
 class EditorApp {
   constructor({ root }) {
@@ -358,10 +218,10 @@ if (root) {
     return false;
   })();
   if (shouldDebug) {
-    window.__STRATUM_V2_DEBUG = { app, state, bootstrap, isSameResourceFragment, handleSamePageAnchor, findAnchorTarget, normalizePath, getCurrentResourceInfo };
+    window.__STRATUM_V2_DEBUG = { app, state, bootstrap };
   }
   app.mount();
 }
 
 // Export for tests / modules (no window global needed)
-export { EditorApp, isSameResourceFragment, handleSamePageAnchor, findAnchorTarget, normalizePath, getCurrentResourceInfo, VIEWPORTS };
+export { EditorApp, VIEWPORTS };

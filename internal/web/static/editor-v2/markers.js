@@ -1,6 +1,7 @@
 // markers.js — parser + index for renderer instrumentation
-// Renderer format (Go): <!-- stratum-node-start:nodeID:instanceKey:editable[:ownerType:ownerId[:ownerLabel]] -->
-// nodeID and instanceKey are url.PathEscape'd; instanceKey contains "/" and ":" so it is split via editable token.
+// Renderer format (Go): <!-- stratum-node-start:nodeID:instanceKey:editable:block:version[:ownerType:ownerId[:ownerLabel]] -->
+// nodeID, instanceKey and block are url.PathEscape'd; instanceKey contains "/" and ":" so it is split via editable token.
+// block is always present (e.g. core%2Fbutton), version is integer. Old markers without block are still tolerated.
 
 function decodeSafe(s) {
   try {
@@ -11,7 +12,7 @@ function decodeSafe(s) {
 }
 
 // Parse a single start comment data string (already trimmed, without surrounding "<!--" "-->")
-// data is like "stratum-node-start:sec1:root%2Fnode%3Asec1:true" or with owners
+// data is like "stratum-node-start:sec1:root%2Fnode%3Asec1:true:core%2Fsection:2" or with owners
 export function parseStartComment(data) {
   if (!data || typeof data !== "string") return null;
   const prefix = "stratum-node-start:";
@@ -38,22 +39,36 @@ export function parseStartComment(data) {
   let instanceKey = keyParts.join(":");
   instanceKey = decodeSafe(instanceKey);
   const editable = parts[editableIdx] === "true";
+  let block = "";
+  let version = 0;
   let ownerType = "";
   let ownerId = "";
   let ownerLabel = "";
   const remaining = parts.length - editableIdx - 1;
+  // Detect new format with block:version after editable (block must match blockNamePattern)
+  const blockPattern = /^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*$/;
   if (remaining >= 2) {
-    ownerType = decodeSafe(parts[editableIdx + 1]);
-    ownerId = decodeSafe(parts[editableIdx + 2]);
+    const candBlock = decodeSafe(parts[editableIdx + 1]);
+    const candVersionStr = parts[editableIdx + 2];
+    const isBlock = blockPattern.test(candBlock) && /^[1-9][0-9]*$/.test(candVersionStr);
+    if (isBlock) {
+      block = candBlock;
+      version = parseInt(candVersionStr, 10) || 0;
+      if (remaining >= 4) {
+        ownerType = decodeSafe(parts[editableIdx + 3]);
+        ownerId = decodeSafe(parts[editableIdx + 4]);
+      }
+      if (remaining >= 5) {
+        ownerLabel = decodeSafe(parts[editableIdx + 5]);
+      }
+    } else {
+      // Legacy: no block/version, remaining are owner fields
+      ownerType = decodeSafe(parts[editableIdx + 1]);
+      if (remaining >= 2) ownerId = decodeSafe(parts[editableIdx + 2]);
+      if (remaining >= 3) ownerLabel = decodeSafe(parts[editableIdx + 3]);
+    }
   }
-  if (remaining >= 3) {
-    ownerLabel = decodeSafe(parts[editableIdx + 3]);
-  }
-  if (remaining >= 4) {
-    // if label itself contained ":", it would have been split; re-join remaining after 3?
-    // But per Go, label is single escaped token, so 4 parts max is enough.
-  }
-  return { nodeId, instanceKey, editable, ownerType, ownerId, ownerLabel };
+  return { nodeId, instanceKey, editable, block, version, ownerType, ownerId, ownerLabel };
 }
 
 export function parseEndComment(data) {
@@ -71,7 +86,7 @@ export function parseEndComment(data) {
 
 // Build index from iframe document.
 // Returns { index: Map<instanceKey, RenderedNodeInstance>, elementToNode: WeakMap<Element, RenderedNodeInstance> }
-// RenderedNodeInstance = { nodeId, instanceKey, editable, ownerType, ownerId, ownerLabel, blockName?, rootElements: Element[] }
+// RenderedNodeInstance = { nodeId, instanceKey, block, version, editable, ownerType, ownerId, ownerLabel, rootElements: Element[], visualElement: Element|null }
 export function buildMarkerIndex(doc) {
   const index = new Map();
   const elementToNode = new WeakMap();
@@ -106,6 +121,8 @@ export function buildMarkerIndex(doc) {
           nodeId: parsed.nodeId,
           instanceKey: parsed.instanceKey,
           editable: parsed.editable,
+          block: parsed.block || "",
+          version: parsed.version || 0,
           ownerType: parsed.ownerType,
           ownerId: parsed.ownerId,
           ownerLabel: parsed.ownerLabel,
@@ -134,6 +151,8 @@ export function buildMarkerIndex(doc) {
           nodeId: startInfo.nodeId,
           instanceKey: startInfo.instanceKey,
           editable: startInfo.editable,
+          block: startInfo.block || "",
+          version: startInfo.version || 0,
           ownerType: startInfo.ownerType,
           ownerId: startInfo.ownerId,
           ownerLabel: startInfo.ownerLabel,
@@ -151,10 +170,6 @@ export function buildMarkerIndex(doc) {
       // Skip overlay host itself if present (we inject later, but during rebuild it may exist)
       if (node.tagName && node.tagName.toLowerCase() === "stratum-editor-overlay-root") continue;
       const deepest = stack[stack.length - 1];
-      // Detect editor visual root (e.g. button's inner <a>). First occurrence wins.
-      if (!deepest.visualElement && node.hasAttribute && node.hasAttribute("data-stratum-editor-visual-root")) {
-        deepest.visualElement = node;
-      }
       // Map element to deepest node
       elementToNode.set(node, deepest);
       // Determine rootElements: if parent not mapped to same instance, it's root
@@ -179,6 +194,8 @@ export function buildMarkerIndex(doc) {
         nodeId: leftover.nodeId,
         instanceKey: leftover.instanceKey,
         editable: leftover.editable,
+        block: leftover.block || "",
+        version: leftover.version || 0,
         ownerType: leftover.ownerType,
         ownerId: leftover.ownerId,
         ownerLabel: leftover.ownerLabel,
@@ -192,6 +209,61 @@ export function buildMarkerIndex(doc) {
   }
 
   return { index, elementToNode, nodeToKeys, instances: Array.from(index.values()) };
+}
+
+// Find visual element inside same instance. Selector is block-defined visualRoot.
+// Must not escape into nested child instance: candidate's deepest owner must be same instanceKey.
+export function findVisualElementForInstance(instance, selector, elementToNode) {
+  if (!instance || !selector || typeof selector !== "string") return null;
+  const sel = selector.trim();
+  if (sel === "") return null;
+  if (!instance.rootElements || instance.rootElements.length === 0) return null;
+  for (const root of instance.rootElements) {
+    if (!root) continue;
+    try {
+      if (root.matches && typeof root.matches === "function" && root.matches(sel)) {
+        const owner = elementToNode ? elementToNode.get(root) : null;
+        if (!owner || owner.instanceKey === instance.instanceKey) return root;
+      }
+    } catch (_) {
+      return null; // invalid selector -> fallback
+    }
+    try {
+      const el = root.querySelector(sel);
+      if (el) {
+        const owner = elementToNode ? elementToNode.get(el) : null;
+        if (!owner || owner.instanceKey === instance.instanceKey) return el;
+        // If first match belongs to nested instance, try next distinct match via querySelectorAll fallback
+        const list = root.querySelectorAll(sel);
+        for (const cand of list) {
+          const o = elementToNode ? elementToNode.get(cand) : null;
+          if (!o || o.instanceKey === instance.instanceKey) return cand;
+        }
+      }
+    } catch (_) {
+      return null; // SyntaxError -> invalid selector, fallback
+    }
+  }
+  return null;
+}
+
+// Resolve visualRoot for all instances using a lookup function.
+// getVisualRoot(block, version) => selector string | "".
+// Lazily cached per instance; call once after buildMarkerIndex. Invalid/non-matching falls back to natural bounds.
+export function resolveVisualElements(index, elementToNode, getVisualRoot) {
+  if (!index || typeof getVisualRoot !== "function") return;
+  for (const inst of index.values()) {
+    if (inst.visualElement) continue; // already resolved
+    let selector = "";
+    try {
+      selector = getVisualRoot(inst.block, inst.version) || "";
+    } catch (_) {
+      selector = "";
+    }
+    if (!selector) continue;
+    const el = findVisualElementForInstance(inst, selector, elementToNode);
+    if (el) inst.visualElement = el;
+  }
 }
 
 // Visual bounds helpers

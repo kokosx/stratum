@@ -207,14 +207,16 @@ func (e *EditorCanvas) CloneWithOwner(ownerType, ownerID string) *EditorCanvas {
 }
 
 func editorStartComment(nodeID, instanceKey string, editable bool, ownerType, ownerID string) string {
-	return editorStartCommentWithLabel(nodeID, instanceKey, editable, ownerType, ownerID, "")
+	return editorStartCommentWithLabel(nodeID, instanceKey, editable, "", 0, ownerType, ownerID, "")
 }
 
-func editorStartCommentWithLabel(nodeID, instanceKey string, editable bool, ownerType, ownerID, ownerLabel string) string {
-	// Format: <!-- stratum-node-start:nodeID:instanceKey:editable[:ownerType:ownerId[:ownerLabel]] -->
+func editorStartCommentWithLabel(nodeID, instanceKey string, editable bool, block string, version int, ownerType, ownerID, ownerLabel string) string {
+	// Format: <!-- stratum-node-start:nodeID:instanceKey:editable:block:version[:ownerType:ownerId[:ownerLabel]] -->
+	// block and version are always present (generic metadata for canvas). block is PathEscaped so "/" does not break split.
 	safeID := url.PathEscape(sanitizeMarkerToken(nodeID))
-	safeKey := url.PathEscape(instanceKey)
-	s := "<!-- stratum-node-start:" + safeID + ":" + safeKey + ":" + fmt.Sprintf("%t", editable)
+	safeKey := url.PathEscape(sanitizeMarkerToken(instanceKey))
+	safeBlock := url.PathEscape(sanitizeMarkerToken(block))
+	s := "<!-- stratum-node-start:" + safeID + ":" + safeKey + ":" + fmt.Sprintf("%t", editable) + ":" + safeBlock + ":" + fmt.Sprintf("%d", version)
 	if ownerType != "" {
 		s += ":" + url.PathEscape(sanitizeMarkerToken(ownerType)) + ":" + url.PathEscape(sanitizeMarkerToken(ownerID))
 		if ownerLabel != "" {
@@ -226,7 +228,7 @@ func editorStartCommentWithLabel(nodeID, instanceKey string, editable bool, owne
 }
 
 func editorEndComment(nodeID, instanceKey string) string {
-	return "<!-- stratum-node-end:" + url.PathEscape(sanitizeMarkerToken(nodeID)) + ":" + url.PathEscape(instanceKey) + " -->"
+	return "<!-- stratum-node-end:" + url.PathEscape(sanitizeMarkerToken(nodeID)) + ":" + url.PathEscape(sanitizeMarkerToken(instanceKey)) + " -->"
 }
 
 func sanitizeMarkerToken(s string) string {
@@ -915,7 +917,7 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 			return "", err
 		}
 		if editorEnabled {
-			start := editorStartCommentWithLabel(node.ID, instanceKey, editable, ownerType, ownerID, ownerLabel)
+			start := editorStartCommentWithLabel(node.ID, instanceKey, editable, node.Block, node.Version, ownerType, ownerID, ownerLabel)
 			end := editorEndComment(node.ID, instanceKey)
 			return template.HTML(start + string(html) + end), nil
 		}
@@ -957,22 +959,8 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
 	htmlStr := out.String()
-	// Editor visual root: for blocks where the natural root is a technical wrapper
-	// (e.g. button's stratum-btn-wrap, image's figure), mark the actual widget
-	// element so the canvas can use its bounds for selection. Canvas remains
-	// generic — it just looks for data-stratum-editor-visual-root. Public output
-	// has no marker.
 	if editorEnabled {
-		if node.Block == "core/button" {
-			// Inner <a>/<span> with stratum-button is the visual widget.
-			htmlStr = strings.Replace(htmlStr, `class="stratum-button`, `data-stratum-editor-visual-root class="stratum-button`, 1)
-		} else if node.Block == "core/image" {
-			// Inner <img> is the visual; figure wrapper is structural.
-			htmlStr = strings.Replace(htmlStr, `<img`, `<img data-stratum-editor-visual-root`, 1)
-		}
-	}
-	if editorEnabled {
-		start := editorStartCommentWithLabel(node.ID, instanceKey, editable, ownerType, ownerID, ownerLabel)
+		start := editorStartCommentWithLabel(node.ID, instanceKey, editable, node.Block, node.Version, ownerType, ownerID, ownerLabel)
 		end := editorEndComment(node.ID, instanceKey)
 		return template.HTML(start + htmlStr + end), nil
 	}

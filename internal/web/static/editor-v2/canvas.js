@@ -1,151 +1,25 @@
 // canvas.js — iframe interaction lifecycle for V2
-import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
+import { buildMarkerIndex, visualRectForInstance, resolveVisualElements } from "./markers.js";
 import { Overlay } from "./overlay.js";
-import { state, displayNameForBlock } from "./state.js";
-
-function normalizePath(p) {
-  if (!p || p === "") return "/";
-  let s = String(p).trim();
-  if (!s.startsWith("/")) s = "/" + s;
-  s = s.replace(/\/+$/, "");
-  if (s === "") s = "/";
-  return s;
-}
-
-function getCurrentResourceInfo() {
-  const origin = state.publicOrigin || window.location.origin;
-  const pathname = normalizePath(state.publicPath || "/");
-  const search = state.publicSearch || "";
-  return { origin, pathname, search };
-}
-
-function isSameResourceFragment(rawHref) {
-  if (!rawHref) return false;
-  const trimmed = String(rawHref).trim();
-  if (trimmed === "") return false;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^https?:/i.test(trimmed)) return false;
-  if (!trimmed.startsWith("#") && !trimmed.startsWith("/") && !/^https?:\/\//i.test(trimmed)) return false;
-  if (trimmed === "#") return true;
-  if (trimmed.startsWith("#")) {
-    const frag = trimmed.slice(1);
-    return frag.trim().length > 0;
-  }
-  const hashIndex = trimmed.indexOf("#");
-  if (hashIndex === -1) return false;
-  try {
-    const current = getCurrentResourceInfo();
-    const baseForResolve = current.origin + current.pathname + current.search;
-    const url = new URL(trimmed, baseForResolve);
-    if (url.origin !== current.origin) return false;
-    const linkPathname = normalizePath(url.pathname);
-    const linkSearch = url.search || "";
-    if (linkPathname !== current.pathname) return false;
-    if (linkSearch !== current.search) return false;
-    return url.hash.length > 0;
-  } catch (_) {
-    return false;
-  }
-}
-
-function findAnchorTarget(doc, hash) {
-  if (!doc || !hash) return null;
-  let fragment = hash.startsWith("#") ? hash.slice(1) : hash;
-  try {
-    fragment = decodeURIComponent(fragment);
-  } catch (_) {}
-  fragment = fragment.trim();
-  if (!fragment) return null;
-  let el = null;
-  try { el = doc.getElementById(fragment); } catch (_) { el = null; }
-  if (el) return el;
-  try {
-    const byName = doc.getElementsByName(fragment);
-    if (byName && byName.length) return byName[0];
-  } catch (_) {}
-  return null;
-}
-
-function handleSamePageAnchor(doc, rawHref) {
-  if (!doc) return;
-  const trimmed = String(rawHref).trim();
-  if (trimmed === "#") {
-    const scroller = doc.scrollingElement || doc.documentElement || doc.body;
-    if (scroller && typeof scroller.scrollTo === "function") {
-      try { scroller.scrollTo({ top: 0, behavior: "smooth" }); } catch (_) {
-        scroller.scrollTop = 0;
-        if (doc.body) doc.body.scrollTop = 0;
-      }
-    } else {
-      if (doc.documentElement) doc.documentElement.scrollTop = 0;
-      if (doc.body) doc.body.scrollTop = 0;
-    }
-    return;
-  }
-  try {
-    const current = getCurrentResourceInfo();
-    const baseForResolve = current.origin + current.pathname + current.search;
-    const url = new URL(trimmed, baseForResolve);
-    const hash = url.hash || (trimmed.startsWith("#") ? trimmed : "");
-    if (!hash || hash === "#") {
-      const scroller = doc.scrollingElement || doc.documentElement || doc.body;
-      if (scroller && scroller.scrollTo) scroller.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-    const target = findAnchorTarget(doc, hash);
-    if (target && typeof target.scrollIntoView === "function") {
-      try { target.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) { target.scrollIntoView(); }
-    }
-  } catch (_) {
-    if (trimmed.startsWith("#")) {
-      const target = findAnchorTarget(doc, trimmed);
-      if (target && target.scrollIntoView) {
-        try { target.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) { target.scrollIntoView(); }
-      }
-    }
-  }
-}
-
-// Helper to get blockName for displayName — we need to map nodeId -> block.
-// Bootstrap definitions + catalog give us block names, but we need nodeId mapping.
-// We can extract from state.document SDT? For Collection repeated nodes, nodeId still maps to same block.
-// So build map nodeId -> block once.
-let nodeIdToBlockCache = null;
-let nodeIdToBlockCacheDoc = null;
-function buildNodeIdToBlock() {
-  const curDoc = state.document;
-  if (nodeIdToBlockCache && nodeIdToBlockCacheDoc === curDoc) return nodeIdToBlockCache;
-  const map = new Map();
-  function walk(nodes) {
-    if (!Array.isArray(nodes)) return;
-    for (const n of nodes) {
-      if (n && n.id && n.block) map.set(n.id, n.block);
-      if (n && n.children) walk(n.children);
-    }
-  }
-  if (curDoc && Array.isArray(curDoc.nodes)) walk(curDoc.nodes);
-  nodeIdToBlockCache = map;
-  nodeIdToBlockCacheDoc = curDoc;
-  return map;
-}
+import { state, displayNameForBlock, getVisualRootForBlock } from "./state.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
-  const map = buildNodeIdToBlock();
-  const block = map.get(instance.nodeId);
+  const block = instance.block || "";
   const isExternal = !instance.editable;
-  // Try registry displayName
   let display = "";
-  if (block) {
+  if (block && block.includes("/")) {
     display = displayNameForBlock(block);
-  } else {
-    // No block mapping — could be external/template node not in Page SDT
-    // Do NOT show nodeId technical ID
+  }
+  if (!display || display === "Block") {
+    // No block mapping — could be external/template node with unknown definition
     if (isExternal) {
-      // For external, try to infer from owner: if site-part, use owner friendly if available and not technical
       if (instance.ownerType === "site-part" && instance.ownerLabel && !isTechnicalId(instance.ownerLabel)) {
         display = instance.ownerLabel;
+      } else if (block && block.includes("/")) {
+        // block present but no displayName — humanized fallback already handled; use it
+        // display already set via displayNameForBlock humanization
       } else {
-        // Unknown external → generic
         return "Template element";
       }
     } else {
@@ -153,13 +27,10 @@ function labelForInstance(instance) {
     }
   }
 
-  // For external/read-only, append context
   if (isExternal) {
     if (instance.ownerType === "site-part") {
       return `${display} · Site Part`;
     }
-    // Template external (layout template, etc)
-    // Spec examples: "Entry Title · Template"
     return `${display} · Template`;
   }
   return display;
@@ -219,6 +90,9 @@ export class CanvasController {
     this.index = built.index;
     this.elementToNode = built.elementToNode;
     this.nodeToKeys = built.nodeToKeys;
+    try {
+      resolveVisualElements(this.index, this.elementToNode, getVisualRootForBlock);
+    } catch (_) {}
 
     // Create overlay
     this.overlay = new Overlay(doc);
@@ -296,6 +170,9 @@ export class CanvasController {
     this.index = built.index;
     this.elementToNode = built.elementToNode;
     this.nodeToKeys = built.nodeToKeys;
+    try {
+      resolveVisualElements(this.index, this.elementToNode, getVisualRootForBlock);
+    } catch (_) {}
     this.syncGeometry();
   }
 
@@ -354,91 +231,29 @@ export class CanvasController {
 
   onClick(e) {
     if (!this.doc || !this.overlay) return;
-    // Handle submit separately: block but also select
     if (e.type === "submit") {
       try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-      // Try to find form's block
       const formEl = e.target;
       const hit = formEl ? this.hitForTarget(formEl) : null;
-      if (hit) {
-        this.selectInstance(hit);
-      }
+      if (hit) this.selectInstance(hit);
       return;
     }
 
     const target = e.target;
-    // Auxclick already handled? but click path handles anchors
-
-    // Check anchor first for navigation logic
-    let anchor = null;
-    try { anchor = target.closest ? target.closest("a[href]") : null; } catch (_) { anchor = null; }
-    if (anchor) {
-      const href = anchor.getAttribute("href") || "";
-      const tgt = (anchor.getAttribute("target") || "").trim().toLowerCase();
-      if (tgt === "_blank") {
-        e.preventDefault();
-        // no stopPropagation before selection — let selection happen
-        const hit = this.hitForTarget(target);
-        if (hit) this.selectInstance(hit);
-        else {
-          // Even if no hit, block navigation
-          try { e.stopPropagation(); } catch (_) {}
-        }
-        return;
-      }
-      if (isSameResourceFragment(href)) {
-        e.preventDefault();
-        const hit = this.hitForTarget(target);
-        if (hit) this.selectInstance(hit);
-        try { e.stopPropagation(); } catch (_) {}
-        return;
-      }
-      // Cross-page: block navigation, but still allow selection
-      e.preventDefault();
-      const hit = this.hitForTarget(target);
-      if (hit) {
-        this.selectInstance(hit);
-      }
-      try { e.stopPropagation(); } catch (_) {}
-      return;
-    }
-
-    // Check interactive elements (button, input submit, form)
-    let interactive = null;
-    try { interactive = target.closest ? target.closest("button, input[type='submit'], input[type='button'], [role='link'], [role='button'], form") : null; } catch (_) {}
-    if (interactive) {
-      const tag = interactive.tagName;
-      const role = interactive.getAttribute ? interactive.getAttribute("role") : "";
-      if (tag === "BUTTON" || tag === "INPUT" || role === "button" || role === "link") {
-        e.preventDefault();
-        const hit = this.hitForTarget(target);
-        if (hit) this.selectInstance(hit);
-        try { e.stopPropagation(); } catch (_) {}
-        return;
-      }
-      if (tag === "FORM") {
-        e.preventDefault();
-        const hit = this.hitForTarget(target);
-        if (hit) this.selectInstance(hit);
-        try { e.stopPropagation(); } catch (_) {}
-        return;
-      }
-    }
-
-    // Normal block click
     const hit = this.hitForTarget(target);
+    // In edit mode every interactive click is inert and selects its block.
+    // No distinction between same-page anchor, cross-page, _blank, button, form.
+    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
     if (hit) {
-      e.preventDefault();
-      try { e.stopPropagation(); } catch (_) {}
       this.selectInstance(hit);
       return;
     }
-
-    // Click in empty area (mapped? hit null) → clear selection
-    // But if clicked element is mapped to Section (Section padding), hit would be Section, we already handled.
-    // Only clear if truly no mapped node
-    e.preventDefault();
-    try { e.stopPropagation(); } catch (_) {}
+    // No mapped block: if click was on anchor/button/form without mapping, keep blocking navigation but don't select.
+    // If truly empty area, clear selection.
+    try {
+      const anchor = target.closest ? target.closest("a[href], button, input[type='submit'], input[type='button'], [role='link'], [role='button'], form") : null;
+      if (anchor) return;
+    } catch (_) {}
     this.clearSelection();
   }
 
@@ -461,6 +276,8 @@ export class CanvasController {
       ownerType: instance.ownerType,
       ownerId: instance.ownerId,
       ownerLabel: instance.ownerLabel,
+      block: instance.block || "",
+      version: instance.version || 0,
     };
     this.selected = sel;
     state.selection = sel;

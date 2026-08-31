@@ -53,6 +53,7 @@ type EditorSchema struct {
 	LCPCandidate     bool                   `json:"lcpCandidate,omitempty"`
 	RequiresFeatured bool                   `json:"requiresFeatured,omitempty"`
 	StarterChildren  []StarterChild         `json:"starterChildren,omitempty"`
+	VisualRoot       string                 `json:"visualRoot,omitempty"`
 }
 
 type StarterChild struct {
@@ -216,6 +217,17 @@ func (s *Schema) validateContract() error {
 		}
 		if sc.Version <= 0 {
 			return fmt.Errorf("editor.starterChildren[%d]: version must be >0", i)
+		}
+	}
+	if s.Editor.VisualRoot != "" {
+		if len(s.Editor.VisualRoot) > 500 {
+			return fmt.Errorf("editor.visualRoot: too long (max 500)")
+		}
+		if strings.TrimSpace(s.Editor.VisualRoot) == "" {
+			return fmt.Errorf("editor.visualRoot: must not be whitespace")
+		}
+		if strings.Contains(s.Editor.VisualRoot, "<") {
+			return fmt.Errorf("editor.visualRoot: must not contain '<'")
 		}
 	}
 	for path, field := range s.Editor.Fields {

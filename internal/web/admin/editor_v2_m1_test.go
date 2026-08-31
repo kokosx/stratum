@@ -152,8 +152,8 @@ func TestV2AnchorStaticGuards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	// Fetch app.js and state.js
-	for _, path := range []string{"/admin/static/editor-v2/app.js", "/admin/static/editor-v2/state.js"} {
+	// Fetch app.js, canvas.js and state.js - after M2.5 cleanup anchor helpers are dead and removed
+	for _, path := range []string{"/admin/static/editor-v2/app.js", "/admin/static/editor-v2/canvas.js", "/admin/static/editor-v2/state.js"} {
 		req := httptest.NewRequest("GET", path, nil)
 		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
 		req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: "test-token"})
@@ -164,58 +164,76 @@ func TestV2AnchorStaticGuards(t *testing.T) {
 		}
 		body := rec.Body.String()
 		if path == "/admin/static/editor-v2/app.js" {
-			// Must contain anchor helpers
-			for _, want := range []string{
+			// After M2.5: anchor navigation helpers are dead — app.js must NOT contain them
+			for _, unwanted := range []string{
 				"isSameResourceFragment",
 				"handleSamePageAnchor",
 				"findAnchorTarget",
 				"getCurrentResourceInfo",
-				"normalizePath",
-				`target.*_blank`, // check target handling exists
 			} {
-				if !strings.Contains(body, want) && want != `target.*_blank` {
-					t.Fatalf("app.js missing %q", want)
+				if strings.Contains(body, unwanted) {
+					t.Fatalf("app.js should not contain dead %q after M2.5 cleanup", unwanted)
 				}
 			}
-			if !strings.Contains(body, `trim().toLowerCase()`) || !strings.Contains(body, `_blank`) {
-				t.Fatalf("app.js should handle target _blank with trim+lower")
-			}
-			if !strings.Contains(body, `scrollIntoView`) {
-				t.Fatalf("app.js should use scrollIntoView for anchors")
-			}
-			if !strings.Contains(body, `scrollingElement`) {
-				t.Fatalf("app.js should handle href=\"#\" scrollTo top")
-			}
-			if !strings.Contains(body, `getElementById`) {
-				t.Fatalf("app.js should use getElementById for target")
-			}
-			if !strings.Contains(body, `getElementsByName`) {
-				t.Fatalf("app.js should fallback to name")
-			}
-			if !strings.Contains(body, `decodeURIComponent`) {
-				t.Fatalf("app.js should decode fragment")
-			}
-			// Ensure non-http scheme block
-			if !strings.Contains(body, `^[a-z][a-z0-9+.-]*:`) {
-				t.Fatalf("app.js should block non-http schemes like mailto/tel")
-			}
-			// Ensure bare relatives blocked
-			if !strings.Contains(body, `about#t`) || !strings.Contains(body, `bare relatives`) {
-				t.Fatalf("app.js should document bare relatives blocked")
+			// Should not contain scrollIntoView anchor navigation
+			if strings.Contains(body, `scrollIntoView`) {
+				t.Fatalf("app.js should not contain scrollIntoView after inert edit mode")
 			}
 			// Ensure no emoji icons
 			if strings.Contains(body, "🖥") || strings.Contains(body, "📱") {
 				t.Fatalf("app.js should not use emoji")
 			}
-		} else {
-			// state.js must expose publicUrl etc.
-			for _, want := range []string{"publicUrl", "publicPath", "publicSearch", "publicOrigin"} {
-				if !strings.Contains(body, want) {
-					t.Fatalf("state.js missing %q", want)
+			// Must still contain VIEWPORTS
+			if !strings.Contains(body, "VIEWPORTS") {
+				t.Fatalf("app.js should contain VIEWPORTS")
+			}
+		} else if path == "/admin/static/editor-v2/canvas.js" {
+			// canvas.js must NOT contain dead anchor helpers, must contain simplified inert handling
+			for _, unwanted := range []string{
+				"isSameResourceFragment",
+				"handleSamePageAnchor",
+				"findAnchorTarget",
+			} {
+				if strings.Contains(body, unwanted) {
+					t.Fatalf("canvas.js should not contain dead %q", unwanted)
 				}
+			}
+			if strings.Contains(body, `scrollIntoView`) {
+				t.Fatalf("canvas.js should not contain scrollIntoView after M2.5")
+			}
+			if strings.Contains(body, "getElementById") && strings.Contains(body, "findAnchorTarget") {
+				t.Fatalf("canvas.js should not contain anchor target lookup")
+			}
+			// Must contain generic inert handling and visualRoot lookup
+			if !strings.Contains(body, "preventDefault") || !strings.Contains(body, "selectInstance") {
+				t.Fatalf("canvas.js should contain inert preventDefault+selectInstance")
+			}
+			if !strings.Contains(body, "getVisualRootForBlock") || !strings.Contains(body, "resolveVisualElements") {
+				t.Fatalf("canvas.js should contain generic visualRoot lookup")
+			}
+			if strings.Contains(body, "nodeIdToBlockCache") {
+				t.Fatalf("canvas.js should not contain nodeIdToBlockCache after marker carries block")
+			}
+			if strings.Contains(body, "data-stratum-editor-visual-root") {
+				t.Fatalf("canvas.js should not contain data-stratum-editor-visual-root attribute")
+			}
+		} else {
+			// state.js must expose publicUrl but NOT dead publicPath/Search/Origin (M2.5 cleanup §24)
+			if !strings.Contains(body, "publicUrl") {
+				t.Fatalf("state.js missing publicUrl")
+			}
+			if strings.Contains(body, "publicPath") || strings.Contains(body, "publicSearch") || strings.Contains(body, "publicOrigin") {
+				t.Fatalf("state.js should not contain dead publicPath/publicSearch/publicOrigin after M2.5")
 			}
 			if !strings.Contains(body, "publicPreviewUrl") {
 				t.Fatalf("state.js should derive from actions.publicPreviewUrl")
+			}
+			// Must expose visualRoot helper and displayNameForBlock
+			if !strings.Contains(body, "getVisualRootForBlock") {
+				t.Fatalf("state.js should expose getVisualRootForBlock")
+			}
+			if !strings.Contains(body, "displayNameForBlock") {
+				t.Fatalf("state.js should contain displayNameForBlock")
 			}
 		}
 	}
