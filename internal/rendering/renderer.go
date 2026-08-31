@@ -216,9 +216,9 @@ func editorStartCommentWithLabel(nodeID, instanceKey string, editable bool, owne
 	safeKey := url.PathEscape(instanceKey)
 	s := "<!-- stratum-node-start:" + safeID + ":" + safeKey + ":" + fmt.Sprintf("%t", editable)
 	if ownerType != "" {
-		s += ":" + url.PathEscape(ownerType) + ":" + url.PathEscape(ownerID)
+		s += ":" + url.PathEscape(sanitizeMarkerToken(ownerType)) + ":" + url.PathEscape(sanitizeMarkerToken(ownerID))
 		if ownerLabel != "" {
-			s += ":" + url.PathEscape(ownerLabel)
+			s += ":" + url.PathEscape(sanitizeMarkerToken(ownerLabel))
 		}
 	}
 	s += " -->"

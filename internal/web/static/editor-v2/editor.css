@@ -222,6 +222,8 @@ body.editor-v2-layout {
 .editor-v2-stage {
   position: relative;
   width: 100%;
+  /* Single source of truth for viewport width is JS VIEWPORTS (768/390) setting inline max-width.
+     CSS only defines base layout; iframe is always 100% of stage. */
   max-width: 100%;
   margin: 0 auto;
   flex: 0 0 auto;
@@ -240,29 +242,9 @@ body.editor-v2-layout {
   border-radius: 2px;
 }
 
-.editor-v2-canvas-wrap--tablet .editor-v2-stage {
-  max-width: 768px;
-}
+/* Legacy viewport max-widths removed — VIEWPORTS in app.js (tablet: 768, mobile: 390) is single source.
+   Keeping one reference for backward test compatibility is not needed; tests check JS VIEWPORTS. */
 
-.editor-v2-canvas-wrap--mobile .editor-v2-stage {
-  max-width: 390px;
-}
-
-.editor-v2-stage--tablet {
-  max-width: 768px;
-}
-
-.editor-v2-stage--mobile {
-  max-width: 390px;
-}
-
-.editor-v2-workspace--tablet .editor-v2-stage {
-  max-width: 768px;
-}
-
-.editor-v2-workspace--mobile .editor-v2-stage {
-  max-width: 390px;
-}
 
 .editor-v2-loading {
   position: absolute;

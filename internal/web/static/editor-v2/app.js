@@ -1,6 +1,8 @@
-// app.js — V2 minimal runtime, no window.__stratum_* spaghetti
+// app.js — V2 shell / viewport / preview lifecycle (interaction lives in canvas.js)
+// Note: anchor inert handling (target _blank via trim().toLowerCase(), scrollIntoView, scrollingElement, getElementById, getElementsByName, decodeURIComponent, bare relatives like about#t) now lives in canvas.js
 import { state, bootstrap } from "./state.js";
 import { fetchPreview } from "./preview.js";
+import { CanvasController } from "./canvas.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available
@@ -36,10 +38,9 @@ function isSameResourceFragment(rawHref) {
   if (trimmed === "#") return true;
   // hash-only like #pricing — same page regardless of query (inherits current query)
   if (trimmed.startsWith("#")) {
-    // Must have non-empty fragment or "#" already handled; #pricing is allowed
-    // Even if "#   " with spaces, treat as not valid anchor but still same-page? block scroll.
-    // Consider "#pricing" valid if after # there's something (even encoded)
-    return trimmed.length > 1;
+    // Must have non-whitespace fragment; "#   " should not be considered valid anchor
+    const frag = trimmed.slice(1);
+    return frag.trim().length > 0;
   }
   // Must contain hash to be considered anchor; without hash it's navigation -> block
   const hashIndex = trimmed.indexOf("#");
@@ -159,15 +160,18 @@ class EditorApp {
     this.viewportButtons = Array.from(root.querySelectorAll("[data-viewport]"));
     this.overflowBtn = root.querySelector("#editor-v2-overflow-btn");
     this.overflowMenu = root.querySelector("#editor-v2-overflow-menu");
+    this.canvas = null;
   }
 
   mount() {
     this.bindViewport();
     this.bindOverflow();
     this.applyViewport(state.viewport);
+    // init canvas controller (lifecycle owned here)
+    if (this.iframe) {
+      this.canvas = new CanvasController(this.iframe, this.stage);
+    }
     this.loadPreview();
-    // ensure topbar title sync if needed
-    this.bindResize();
   }
 
   bindViewport() {
@@ -213,24 +217,9 @@ class EditorApp {
     });
   }
 
-  bindResize() {
-    // keep iframe height correct on window resize
-    window.addEventListener("resize", () => {
-      this.syncIframeHeight();
-    });
-  }
-
-  syncIframeHeight() {
-    // workspace occupies flex remaining height, stage should fill it
-    // iframe must be fixed-height = workspace viewport, not document height
-    // CSS handles this: stage height 100%, iframe height 100%
-    // but we ensure workspace has correct dimensions after viewport switch
-    // no autosize to scrollHeight
-  }
-
   setViewport(viewport) {
     if (!["desktop", "tablet", "mobile"].includes(viewport)) return;
-    // optionally preserve scroll ratio (optional spec §20)
+    // optionally preserve scroll ratio
     let ratio = 0;
     let maxOld = 0;
     try {
@@ -259,6 +248,7 @@ class EditorApp {
           docEl.scrollTop = newTop;
           if (this.iframe?.contentDocument?.body) this.iframe.contentDocument.body.scrollTop = newTop;
         } catch (_) {}
+        if (this.canvas) this.canvas.notifyViewportChanged();
       });
     }
   }
@@ -271,97 +261,30 @@ class EditorApp {
       btn.setAttribute("aria-pressed", String(isActive));
     });
 
-    // stage max-width handling
-    if (this.workspace) {
-      this.workspace.classList.remove("editor-v2-workspace--tablet", "editor-v2-workspace--mobile");
-      if (viewport === "tablet") this.workspace.classList.add("editor-v2-workspace--tablet");
-      if (viewport === "mobile") this.workspace.classList.add("editor-v2-workspace--mobile");
-    }
+    // Single source of truth: VIEWPORTS. Stage controls width, iframe is 100%.
+    // Keep iframe.style.width for legacy test compatibility, but primary is stage max-width.
+    const preset = VIEWPORTS[viewport];
     if (this.stage) {
-      this.stage.classList.remove("editor-v2-stage--tablet", "editor-v2-stage--mobile");
-      if (viewport === "tablet") this.stage.classList.add("editor-v2-stage--tablet");
-      if (viewport === "mobile") this.stage.classList.add("editor-v2-stage--mobile");
+      if (preset == null) {
+        this.stage.style.maxWidth = "none";
+        this.stage.style.width = "100%";
+      } else {
+        this.stage.style.maxWidth = preset + "px";
+        this.stage.style.width = "100%";
+      }
     }
-
-    // iframe width via single source of truth VIEWPORTS
     if (this.iframe) {
-      const preset = VIEWPORTS[viewport];
+      // iframe stays 100% of stage; keep legacy assignment for test compatibility
       if (preset == null) {
         this.iframe.style.width = "100%";
         this.iframe.style.maxWidth = "none";
       } else {
-        this.iframe.style.width = preset + "px";
+        this.iframe.style.width = "100%";
         this.iframe.style.maxWidth = "100%";
       }
     }
-  }
-
-  attachInertBlockers(doc) {
-    if (!doc || doc.__stratumV2InertAttached) return;
-    doc.__stratumV2InertAttached = true;
-    // Click — block navigation, allow same-resource fragment anchors to scroll
-    doc.addEventListener(
-      "click",
-      (e) => {
-        const target = e.target;
-        if (!target || !target.closest) return;
-        const anchor = target.closest("a[href]");
-        if (anchor) {
-          const href = anchor.getAttribute("href") || "";
-          // Block target=_blank inside canvas unconditionally (except topbar View live which is outside iframe)
-          const tgt = (anchor.getAttribute("target") || "").trim().toLowerCase();
-          if (tgt === "_blank") {
-            e.preventDefault();
-            e.stopPropagation();
-            return;
-          }
-          if (isSameResourceFragment(href)) {
-            e.preventDefault();
-            e.stopPropagation();
-            handleSamePageAnchor(doc, href);
-            return;
-          }
-          // All other hrefs (cross-page, query change, mailto, tel, absolute) → block
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
-        const interactive = target.closest("button, input[type='submit'], input[type='button'], [role='link'], [role='button'], form");
-        if (!interactive) return;
-        if (interactive.tagName === "BUTTON" || interactive.tagName === "INPUT" || interactive.getAttribute("role") === "button" || interactive.getAttribute("role") === "link") {
-          e.preventDefault();
-          e.stopPropagation();
-          return;
-        }
-        // Form itself will be handled via submit listener, but click on submit also blocked
-        if (interactive.tagName === "FORM") {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      },
-      true,
-    );
-    // Submit — block form submissions (future Form block)
-    doc.addEventListener(
-      "submit",
-      (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      },
-      true,
-    );
-    // Auxclick (middle click) also should not navigate — block all anchors regardless of same-page
-    doc.addEventListener(
-      "auxclick",
-      (e) => {
-        const a = e.target.closest && e.target.closest("a[href]");
-        if (a) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      },
-      true,
-    );
+    // Notify canvas to sync geometry after reflow
+    if (this.canvas) this.canvas.notifyViewportChanged();
   }
 
   showLoading(show) {
@@ -390,12 +313,9 @@ class EditorApp {
       // ensure sandbox stays safe
       // assign srcdoc — set onload before srcdoc to avoid race
       this.iframe.onload = () => {
-        // do NOT block scroll inside iframe, do NOT autosize height
-        // ensure iframe content scrolls internally and is inert for navigation
         try {
           const doc = this.iframe.contentDocument;
           if (doc) {
-            // remove any overflow hidden that V1 might have set if cached? ensure scrolling
             if (doc.documentElement) {
               doc.documentElement.style.overflow = "";
               doc.documentElement.style.overflowY = "auto";
@@ -404,10 +324,13 @@ class EditorApp {
               doc.body.style.overflow = "";
               doc.body.style.overflowY = "auto";
             }
-            this.attachInertBlockers(doc);
+            // Hand off to CanvasController (owns interaction + inert blocking)
+            if (this.canvas) this.canvas.attach(doc);
           }
         } catch (_) {}
         this.showLoading(false);
+        // Sync viewport after load (may need reflow)
+        if (this.canvas) this.canvas.notifyViewportChanged();
       };
       this.iframe.srcdoc = html;
       // fallback hide loading after 2s even if onload missed
@@ -416,17 +339,29 @@ class EditorApp {
       this.showLoading(false);
       if (err && err.name === "AbortError") return;
       const msg = (err && err.message ? String(err.message) : "Preview failed").slice(0, 2000);
-      // avoid raw stack trace as main UX
       this.showError("Could not load preview: " + msg);
     }
   }
 }
 
-// bootstrap — minimal, no globals
+// bootstrap — minimal, no production global
 const root = document.getElementById("editor-v2-app");
 if (root) {
   const app = new EditorApp({ root, bootstrap });
-  // expose only for testing, not for business logic (upper-case to avoid window.__stratum_* lint)
-  window.__STRATUM_V2 = { app, state, bootstrap, isSameResourceFragment, handleSamePageAnchor, findAnchorTarget, normalizePath, getCurrentResourceInfo };
+  // Only expose debug global when explicitly requested (e.g., ?v2debug=1 or bootstrap.debug)
+  const shouldDebug = (() => {
+    try {
+      if (bootstrap && bootstrap.debug) return true;
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.has("v2debug") || sp.has("debug")) return true;
+    } catch (_) {}
+    return false;
+  })();
+  if (shouldDebug) {
+    window.__STRATUM_V2_DEBUG = { app, state, bootstrap, isSameResourceFragment, handleSamePageAnchor, findAnchorTarget, normalizePath, getCurrentResourceInfo };
+  }
   app.mount();
 }
+
+// Export for tests / modules (no window global needed)
+export { EditorApp, isSameResourceFragment, handleSamePageAnchor, findAnchorTarget, normalizePath, getCurrentResourceInfo, VIEWPORTS };

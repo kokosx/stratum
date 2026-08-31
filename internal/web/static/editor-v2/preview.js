@@ -49,9 +49,8 @@ export async function fetchPreview(signal) {
   const combinedSignal = signal || pendingController.signal;
 
   const url = new URL(state.previewUrl, window.location.origin);
-  // do NOT request editor_canvas markers in M1 — keep preview clean
-  // (server will still accept editor_canvas=0 without markers)
-  url.searchParams.set("editor_canvas", "0");
+  // M2: request editor instrumentation markers (existing backend mode)
+  url.searchParams.set("editor_canvas", "1");
 
   const response = await fetch(url.toString(), {
     method: "POST",
@@ -59,6 +58,7 @@ export async function fetchPreview(signal) {
       "Content-Type": "application/x-www-form-urlencoded",
       "X-CSRF-Token": csrf,
       "X-Requested-With": "StratumEditor",
+      "X-Stratum-Editor-Canvas": "1",
     },
     body: params,
     signal: combinedSignal,

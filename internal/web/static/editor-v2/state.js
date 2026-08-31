@@ -74,6 +74,14 @@ function derivePublicInfo() {
 
 const derived = derivePublicInfo();
 
+// selection is pure runtime, does not mutate SDT here
+// { nodeId, instanceKey, editable, ownerType, ownerId, ownerLabel } or null
+function createSelectionState() {
+  return { current: null, hoveredKey: null };
+}
+
+const sel = createSelectionState();
+
 export const state = {
   // generic resource descriptor, M1 focuses on entry/page but keeps shape generic
   resource: bootstrap.resource || {},
@@ -95,4 +103,75 @@ export const state = {
   publicPath: derived.publicPath,
   publicSearch: derived.publicSearch,
   publicOrigin: derived.publicOrigin,
+  // M2 selection
+  get selection() {
+    return sel.current;
+  },
+  set selection(v) {
+    sel.current = v;
+  },
+  get hoveredKey() {
+    return sel.hoveredKey;
+  },
+  set hoveredKey(v) {
+    sel.hoveredKey = v;
+  },
 };
+
+// Helpers for displayName lookup (block id -> displayName)
+// Uses bootstrap catalog + definitions if present, falls back to minimal map.
+const displayNameCache = new Map();
+
+function buildDisplayNameMap() {
+  if (displayNameCache.size) return displayNameCache;
+  const candidates = [];
+  if (Array.isArray(bootstrap.catalog)) candidates.push(...bootstrap.catalog);
+  if (Array.isArray(bootstrap.definitions)) candidates.push(...bootstrap.definitions);
+  // catalog entries are {block, version, displayName}
+  for (const item of candidates) {
+    if (!item || !item.block) continue;
+    // keep latest by block name (if multiple versions, larger version wins)
+    const existing = displayNameCache.get(item.block);
+    if (!existing || (item.version && existing.version < item.version)) {
+      displayNameCache.set(item.block, { displayName: item.displayName || item.block, version: item.version });
+    }
+  }
+  // Minimal fallback for known core blocks if no catalog provided
+  const fallback = {
+    "core/section": "Section",
+    "core/stack": "Stack",
+    "core/grid": "Grid",
+    "core/heading": "Heading",
+    "core/text": "Text",
+    "core/button": "Button",
+    "core/image": "Image",
+    "core/collection": "Collection",
+    "core/accordion": "Accordion",
+    "core/navigation": "Navigation",
+    "core/site-part": "Site Part",
+    "core/entry-field": "Entry Field",
+    "core/entry-media": "Entry Media",
+    "core/form": "Form",
+    "core/card": "Card",
+  };
+  for (const [k, v] of Object.entries(fallback)) {
+    if (!displayNameCache.has(k)) displayNameCache.set(k, { displayName: v, version: 0 });
+  }
+  return displayNameCache;
+}
+
+export function displayNameForBlock(blockName) {
+  const map = buildDisplayNameMap();
+  const entry = map.get(blockName);
+  if (entry && entry.displayName) return entry.displayName;
+  // fallback: strip namespace
+  if (typeof blockName === "string" && blockName.includes("/")) return blockName.split("/").pop();
+  return blockName || "Block";
+}
+
+export function clearSelection() {
+  sel.current = null;
+}
+export function setSelection(selObj) {
+  sel.current = selObj;
+}
