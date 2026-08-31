@@ -53,7 +53,7 @@ function attachHandlers(fieldEl, canvas) {
   const handlers = {};
 
   const onCompositionStart = () => { composing = true; };
-  const onCompositionEnd = () => { composing = false; };
+  const onCompositionEnd = () => { composing = false; try { canvas.requestSync(); } catch (_) {} };
 
   const onKeyDown = (e) => {
     if (composing || e.isComposing) return;
@@ -92,19 +92,20 @@ function attachHandlers(fieldEl, canvas) {
       const sel = fieldEl.ownerDocument.getSelection ? fieldEl.ownerDocument.getSelection() : window.getSelection();
       if (!sel || sel.rangeCount === 0) {
         fieldEl.textContent += text;
-        return;
+      } else {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const textNode = fieldEl.ownerDocument.createTextNode(text);
+        range.insertNode(textNode);
+        range.setStartAfter(textNode);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
       }
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      const textNode = fieldEl.ownerDocument.createTextNode(text);
-      range.insertNode(textNode);
-      range.setStartAfter(textNode);
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
     } catch (_) {
-      fieldEl.textContent += text;
+      try { fieldEl.textContent += text; } catch (_) {}
     }
+    try { canvas.requestSync(); } catch (_) {}
   };
 
   const onDrop = (e) => {
@@ -122,6 +123,7 @@ function attachHandlers(fieldEl, canvas) {
   };
 
   const onInput = () => {
+    let didNormalize = false;
     if (fieldEl.querySelector && fieldEl.querySelector("*")) {
       const plain = fieldEl.textContent || "";
       const sel = fieldEl.ownerDocument.getSelection ? fieldEl.ownerDocument.getSelection() : null;
@@ -137,6 +139,7 @@ function attachHandlers(fieldEl, canvas) {
         }
       } catch (_) {}
       fieldEl.textContent = plain;
+      didNormalize = true;
       try {
         const sel2 = fieldEl.ownerDocument.getSelection();
         if (sel2) {
@@ -160,6 +163,7 @@ function attachHandlers(fieldEl, canvas) {
         }
       } catch (_) {}
     }
+    try { canvas.requestSync(); } catch (_) {}
   };
 
   const onBlur = () => {
