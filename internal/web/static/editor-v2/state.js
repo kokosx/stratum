@@ -95,6 +95,15 @@ function notifyPanels() {
   }
 }
 
+const documentListeners = new Set();
+let persistedDocumentJSON = "";
+try { persistedDocumentJSON = JSON.stringify(bootstrap.document || { version: 1, nodes: [] }); } catch (_) { persistedDocumentJSON = ""; }
+function notifyDocument(next) {
+  for (const listener of documentListeners) {
+    try { listener(next); } catch (_) {}
+  }
+}
+
 export const state = {
   // generic resource descriptor, M1 focuses on entry/page but keeps shape generic
   resource: bootstrap.resource || {},
@@ -118,6 +127,7 @@ export const state = {
   // Server-authoritative URL for document metadata. Unlike publicUrl this does
   // not synthesize a route for drafts that are not publicly available.
   resourceUrl: authoritativeResourceURL(),
+  dirty: false,
   // M2 selection
   get selection() {
     return sel.current;
@@ -145,6 +155,36 @@ export function subscribePanels(listener) {
   if (typeof listener !== "function") return () => {};
   panelListeners.add(listener);
   return () => panelListeners.delete(listener);
+}
+
+export function subscribeDocument(listener) {
+  if (typeof listener !== "function") return () => {};
+  documentListeners.add(listener);
+  return () => documentListeners.delete(listener);
+}
+
+export function setDocument(nextDocument) {
+  if (!nextDocument || typeof nextDocument !== "object") return;
+  // immutable enough: clone to avoid external mutation aliasing
+  let cloned;
+  try {
+    cloned = typeof structuredClone === "function" ? structuredClone(nextDocument) : JSON.parse(JSON.stringify(nextDocument));
+  } catch (_) {
+    cloned = JSON.parse(JSON.stringify(nextDocument));
+  }
+  cloned.nodes ||= [];
+  state.document = cloned;
+  // internal dirty flag — prepares future Save/Undo, no elaborate history yet (§79)
+  try {
+    const now = JSON.stringify(state.document);
+    state.dirty = now !== persistedDocumentJSON;
+  } catch (_) { state.dirty = true; }
+  notifyDocument(state.document);
+}
+
+export function syncDirtyBaseline() {
+  try { persistedDocumentJSON = JSON.stringify(state.document); } catch (_) {}
+  state.dirty = false;
 }
 
 export function setPanel(slot, panel) {
@@ -294,6 +334,27 @@ export function findDocumentNode(nodeId) {
     return null;
   };
   return walk(state.document && state.document.nodes);
+}
+
+export function findDocumentParent(nodeId) {
+  if (!nodeId) return null;
+  const walk = (nodes, parent) => {
+    for (let i = 0; i < (nodes || []).length; i++) {
+      const node = nodes[i];
+      if (node && node.id === nodeId) return { parent, index: i, siblings: nodes, node };
+      const nested = walk(node && node.children, node);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return walk(state.document && state.document.nodes, null);
+}
+
+export function isContainerNode(node) {
+  if (!node) return false;
+  const def = definitionForBlock(node.block, node.version);
+  if (!def || !def.schema || !def.schema.children) return false;
+  return def.schema.children.mode !== "none";
 }
 
 function isTechnicalValue(value) {

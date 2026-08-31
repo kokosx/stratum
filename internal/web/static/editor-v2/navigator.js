@@ -1,4 +1,4 @@
-import { displayNameForBlock, nodeSummaryFor, state, subscribeSelection } from "./state.js";
+import { displayNameForBlock, nodeSummaryFor, state, subscribeDocument, subscribeSelection } from "./state.js";
 
 function createElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -14,6 +14,10 @@ export class NavigatorView {
     this.expanded = new Set();
     this.initialized = false;
     this.unsubscribe = subscribeSelection(() => this.selectionChanged());
+    this.unsubscribeDoc = subscribeDocument(() => {
+      // Immediate update even before preview (§47)
+      this.render();
+    });
   }
 
   mount(root, canvas) {

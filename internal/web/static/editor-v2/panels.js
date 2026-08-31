@@ -2,14 +2,18 @@ import {
   activatePanel,
   blockCatalog,
   displayNameForBlock,
+  findDocumentNode,
   mostRecentPanelSlot,
   panelState,
   setPanel,
   state,
+  subscribeDocument,
   subscribePanels,
   subscribeSelection,
   togglePanel,
 } from "./state.js";
+import { clearInsertionTarget, getInsertionTarget, legalBlocksFor, resolveGlobalInsertion, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
+import { insertBlock } from "./commands.js";
 import { NavigatorView } from "./navigator.js";
 import { inspectorTitle, renderDocumentBody, renderInspectorBody } from "./inspector.js";
 
@@ -77,6 +81,8 @@ export class PanelController {
     this.focusNext = { left: false, right: false };
     this.unsubscribePanels = null;
     this.unsubscribeSelection = null;
+    this.unsubscribeDocument = null;
+    this.unsubscribeInsertion = null;
     this.onResize = () => this.updateStacking();
   }
 
@@ -86,7 +92,24 @@ export class PanelController {
     this.bindButton("document", "right", "document");
     this.unsubscribePanels = subscribePanels(() => this.render());
     this.unsubscribeSelection = subscribeSelection((next, previous) => this.selectionChanged(next, previous));
+    this.unsubscribeDocument = subscribeDocument(() => {
+      // Blocks may need re-render if filtering depends on doc max children
+      if (panelState.left === "blocks") this.renderSlot("left", true);
+    });
+    this.unsubscribeInsertion = subscribeInsertionTarget(() => {
+      if (panelState.left === "blocks") this.renderSlot("left", true);
+    });
     window.addEventListener("resize", this.onResize);
+    // open Blocks from Quick Inserter's Browse all blocks (keeps exact target)
+    window.addEventListener("stratum:open-blocks", () => {
+      // panel will be target-aware via getInsertionTarget
+      if (panelState.left !== "blocks") {
+        this.focusNext.left = true;
+        activatePanel("left", "blocks");
+      } else {
+        this.renderSlot("left", true);
+      }
+    });
     this.render();
   }
 
@@ -96,16 +119,24 @@ export class PanelController {
     button.addEventListener("click", () => {
       this.lastFocusedButton[slot] = button;
       this.focusNext[slot] = panelState[slot] !== panel;
+      // Switching Blocks → Layers clears insertionTarget (§37)
+      const prevLeft = panelState.left;
       const covered = window.matchMedia("(max-width: 760px)").matches
         && panelState[slot] === panel
         && Boolean(panelState.left && panelState.right)
         && mostRecentPanelSlot() !== slot;
+      if (prevLeft === "blocks" && panel === "navigator" && slot === "left") {
+        clearInsertionTarget();
+      }
+      const wasBlocksOpen = prevLeft === "blocks" && slot === "left" && panel === "blocks";
       if (covered) {
         this.focusNext[slot] = true;
         activatePanel(slot, panel);
+        if (wasBlocksOpen) clearInsertionTarget();
         return;
       }
       togglePanel(slot, panel);
+      if (wasBlocksOpen) clearInsertionTarget();
     });
   }
 
@@ -224,7 +255,15 @@ export class PanelController {
       : panel === "navigator" ? this.buttons.navigator
         : panel === "document" ? this.buttons.document
           : null;
+    // clearing insertionTarget when Blocks closes after explicit contextual insertion (§37)
+    // Keep target while Blocks is open; clear on close or when switching left slot
+    const wasBlocks = panel === "blocks" && slot === "left";
     setPanel(slot, null);
+    if (wasBlocks) clearInsertionTarget();
+    // Switching Blocks → Layers clears insertionTarget
+    if (slot === "left" && panel === "navigator") {
+      // already handled via setPanel observer, but ensure
+    }
     if (restoreFocus && panel === "inspector") this.restoreInspectorFocus();
     else if (restoreFocus && button && typeof button.focus === "function") button.focus();
   }
@@ -252,6 +291,14 @@ export class PanelController {
 
   handleEscape(event) {
     if (!event || event.key !== "Escape") return false;
+    // quick inserter has priority (§49) — canvas handles it via its own onKey, but also close if panels focused
+    try {
+      if (this.canvas && this.canvas.quickInserter && this.canvas.quickInserter.isOpen()) {
+        event.preventDefault();
+        this.canvas.closeQuickInserter();
+        return true;
+      }
+    } catch (_) {}
     if (typeof this.closeMenu === "function" && this.closeMenu()) {
       event.preventDefault();
       return true;
@@ -271,6 +318,44 @@ export class PanelController {
   }
 
   renderBlocks(body) {
+    // Target-aware header (§35)
+    const target = getInsertionTarget();
+    if (target) {
+      const header = createElement("div", "editor-v2-insertion-context");
+      header.style.cssText = "background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px";
+      const left = createElement("div");
+      let label = "Add block";
+      let subLabel = "";
+      if (target.parentId == null) {
+        subLabel = "Between blocks";
+        // try to distinguish root vs inside? Use generic
+        const nodes = state.document.nodes || [];
+        if (target.index === 0 && nodes.length === 0) subLabel = "Page content";
+        else if (target.index === 0) subLabel = "Before first block";
+        else if (target.index === nodes.length) subLabel = "After last block";
+      } else {
+        const parentNode = findDocumentNode(target.parentId);
+        const display = parentNode ? displayNameForBlock(parentNode.block) : "Container";
+        label = `Add block`;
+        subLabel = `Inside ${display}`;
+      }
+      const title = createElement("strong", "", label);
+      title.style.fontSize = "12px";
+      title.style.color = "#1e40af";
+      left.append(title);
+      const sub = createElement("small", "", subLabel);
+      sub.style.display = "block";
+      sub.style.color = "#64748b";
+      sub.style.fontSize = "11px";
+      left.append(sub);
+      const cancel = createElement("button", "editor-v2-panel__close");
+      cancel.type = "button";
+      cancel.textContent = "Cancel";
+      cancel.style.cssText = "padding:4px 8px;font-size:11px;border:1px solid #bfdbfe;background:white;border-radius:6px;cursor:pointer;color:#1e40af;";
+      cancel.addEventListener("click", () => { clearInsertionTarget(); });
+      header.append(left, cancel);
+      body.append(header);
+    }
     const search = createElement("input", "editor-v2-panel__search");
     search.type = "search";
     search.placeholder = "Search blocks…";
@@ -283,14 +368,38 @@ export class PanelController {
     };
     search.addEventListener("input", update);
     body.append(search, results);
+    // global fallback hint element for conservative insertion (§38)
+    const hintEl = createElement("div", "editor-v2-panel__hint");
+    hintEl.style.cssText = "display:none;margin-top:8px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;border-radius:6px;font-size:12px;";
+    hintEl.textContent = "Choose where to add this block.";
+    body.append(results, hintEl);
     this.renderCatalog(results);
+    // expose hint for renderCatalog to toggle
+    this._blocksHintEl = hintEl;
   }
 
   renderCatalog(root) {
     root.replaceChildren();
     const query = this.blocksQuery.trim().toLocaleLowerCase();
+    const target = getInsertionTarget();
+    let targetParentNode = null;
+    let targetIndex = 0;
+    if (target) {
+      targetParentNode = target.parentId == null ? null : findDocumentNode(target.parentId);
+      targetIndex = target.index;
+    }
+    // When targeted, only show legal blocks (§36)
+    let candidateItems = blockCatalog();
+    if (target) {
+      candidateItems = legalBlocksFor(targetParentNode, targetIndex);
+      if (!candidateItems.length) {
+        root.append(createElement("p", "editor-v2-panel__empty", targetParentNode ? `No blocks allowed in ${displayNameForBlock(targetParentNode.block)}.` : "No blocks available."));
+        if (this._blocksHintEl) this._blocksHintEl.style.display = "none";
+        return;
+      }
+    }
     const groups = new Map();
-    for (const item of blockCatalog()) {
+    for (const item of candidateItems) {
       if (!item || !item.block) continue;
       const displayName = item.displayName || displayNameForBlock(item.block);
       const haystack = `${displayName} ${item.block} ${item.description || ""}`.toLocaleLowerCase();
@@ -301,8 +410,10 @@ export class PanelController {
     }
     if (groups.size === 0) {
       root.append(createElement("p", "editor-v2-panel__empty", "No blocks found"));
+      if (this._blocksHintEl) this._blocksHintEl.style.display = "none";
       return;
     }
+    if (this._blocksHintEl) this._blocksHintEl.style.display = "none";
 
     const categories = [...groups.keys()].sort((a, b) => {
       const ai = CATEGORY_ORDER.indexOf(a);
@@ -324,8 +435,38 @@ export class PanelController {
         copy.append(createElement("span", "editor-v2-block-item__name", item.displayName));
         if (item.description) copy.append(createElement("span", "editor-v2-block-item__description", item.description));
         row.append(copy);
-        row.addEventListener("click", () => {
-          this.selectedCatalogItem = this.selectedCatalogItem === key ? "" : key;
+        // insertion on click (§39, no draggable yet §40)
+        row.addEventListener("click", (e) => {
+          e.preventDefault(); e.stopPropagation();
+          let res;
+          if (target) {
+            res = insertBlock({ definition: item, parentId: target.parentId, index: target.index });
+          } else {
+            const fallback = resolveGlobalInsertion(item);
+            if (fallback) {
+              res = insertBlock({ definition: item, parentId: fallback.parentId, index: fallback.index });
+            } else {
+              // conservative: no surprising teleport (§38,70)
+              if (this._blocksHintEl) this._blocksHintEl.style.display = "block";
+              return;
+            }
+          }
+          if (!res || !res.ok) {
+            const reason = res?.reason || "Could not insert block.";
+            try {
+              if (window.stratumToast) window.stratumToast("error", reason);
+              else if (this._blocksHintEl) { this._blocksHintEl.textContent = reason; this._blocksHintEl.style.display = "block"; setTimeout(() => { const el=this._blocksHintEl; if(el) el.style.display = "none"; }, 3000); }
+            } catch (_) {}
+            return;
+          }
+          if (this._blocksHintEl) this._blocksHintEl.style.display = "none";
+          this.selectedCatalogItem = key;
+          try { state.__pendingSelectionId = res.node.id; state.__pendingSelectionBlock = res.node.block; } catch (_) {}
+          // Advance target index for sequential inserts (§34 keeps exact target but we bump for next)
+          if (target) {
+            try { setInsertionTarget({ parentId: target.parentId, index: target.index + 1 }); } catch (_) {}
+          }
+          // Re-render catalog to reflect new max/legal
           this.renderCatalog(root);
         });
         list.append(row);
