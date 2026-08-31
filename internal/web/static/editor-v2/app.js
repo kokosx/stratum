@@ -28,7 +28,10 @@ class EditorApp {
     this._previewTimer = null;
     this._pendingSelectionId = null;
     this._onEscape = (event) => this.panels?.handleEscape(event);
-    this._onDocumentChange = () => this.schedulePreview();
+    this._onDocumentChange = (doc, meta) => {
+      if (meta && meta.renderHint === "defer") return;
+      this.schedulePreview();
+    };
   }
 
   mount() {
@@ -58,9 +61,6 @@ class EditorApp {
   }
 
   schedulePreview() {
-    // discrete insertion, small debounce 80ms (§43) or immediate; abort stale via fetchPreview
-    // Commit active inline edit before scheduling preview (blur may have already committed, but ensure)
-    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
     if (this._previewTimer) clearTimeout(this._previewTimer);
     this._previewTimer = setTimeout(() => {
       this._previewTimer = null;
@@ -74,8 +74,6 @@ class EditorApp {
 
   async refreshPreview() {
     if (!this.iframe) return;
-    // Commit active edit before fetching preview (spec §52/53/54)
-    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
     const pendingId = this._pendingSelectionId;
     this._pendingSelectionId = null;
     // preserve scroll near edited location (§45)

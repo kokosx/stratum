@@ -29,7 +29,7 @@ try {
 const stateMod = await import("./state.js");
 const commandsMod = await import("./commands.js");
 const { state, isPlainRichTextValue, plainTextFromRichText, inlineFieldsForNode, primaryInlineFieldForNode, isInlineEditableNode } = stateMod;
-const { updateNodeField, createNode } = commandsMod;
+const { updateNodeField, createNode, insertBlock } = commandsMod;
 
 function resetDoc(nodes = []) {
   state.document = { version: 1, nodes: JSON.parse(JSON.stringify(nodes)) };
@@ -151,5 +151,52 @@ describe("inline helpers", () => {
     const bDef = catalog.find(c=>c.block==="core/button");
     const node = createNode(bDef);
     assert.equal(isInlineEditableNode(node), true);
+  });
+});
+describe("document change metadata", () => {
+  it("inline update can emit deferred render hint", () => {
+    const hDef = catalog.find(c=>c.block==="core/heading");
+    const node = createNode(hDef); node.id="h1"; node.props.text={version:1,content:[{text:"Old"}]}; resetDoc([node]);
+    let receivedHint = null;
+    let receivedDoc = null;
+    const unsub = stateMod.subscribeDocument((doc, meta) => { receivedDoc = doc; receivedHint = meta?.renderHint; });
+    const res = updateNodeField({nodeId:"h1", path:"props.text", value:"New", renderHint:"defer"});
+    assert.equal(res.ok, true);
+    assert.equal(receivedHint, "defer");
+    assert.ok(receivedDoc);
+    assert.equal(receivedDoc.nodes[0].props.text.content[0].text, "New");
+    unsub();
+  });
+  it("insertion still requests normal render", () => {
+    const hDef = catalog.find(c=>c.block==="core/heading");
+    resetDoc([]);
+    let hint = null;
+    const unsub = stateMod.subscribeDocument((doc, meta) => { hint = meta?.renderHint; });
+    const res = insertBlock({definition: hDef, parentId: null, index:0});
+    assert.equal(res.ok, true);
+    assert.equal(hint, "refresh");
+    unsub();
+  });
+  it("document subscribers still receive inline update", () => {
+    const hDef = catalog.find(c=>c.block==="core/heading");
+    const node = createNode(hDef); node.id="h1"; node.props.text={version:1,content:[{text:"A"}]}; resetDoc([node]);
+    let notified = false;
+    let hint = null;
+    const unsub = stateMod.subscribeDocument((doc, meta) => { notified = true; hint = meta?.renderHint; });
+    const res = updateNodeField({nodeId:"h1", path:"props.text", value:"B", renderHint:"defer"});
+    assert.equal(notified, true);
+    assert.equal(hint, "defer");
+    unsub();
+  });
+  it("unchanged commit causes no refresh", () => {
+    const bDef = catalog.find(c=>c.block==="core/button");
+    const node = createNode(bDef); node.id="b1"; node.props.label="Same"; resetDoc([node]);
+    let notified = false;
+    const unsub = stateMod.subscribeDocument(() => { notified = true; });
+    const res = updateNodeField({nodeId:"b1", path:"props.label", value:"Same"});
+    assert.equal(res.ok, true);
+    assert.equal(res.unchanged, true);
+    assert.equal(notified, false);
+    unsub();
   });
 });

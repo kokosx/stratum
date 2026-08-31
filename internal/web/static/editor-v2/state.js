@@ -98,9 +98,9 @@ function notifyPanels() {
 const documentListeners = new Set();
 let persistedDocumentJSON = "";
 try { persistedDocumentJSON = JSON.stringify(bootstrap.document || { version: 1, nodes: [] }); } catch (_) { persistedDocumentJSON = ""; }
-function notifyDocument(next) {
+function notifyDocument(next, meta) {
   for (const listener of documentListeners) {
-    try { listener(next); } catch (_) {}
+    try { listener(next, meta); } catch (_) {}
   }
 }
 
@@ -198,7 +198,7 @@ export function isEditing() {
   return !!state.editing;
 }
 
-export function setDocument(nextDocument) {
+export function setDocument(nextDocument, options = {}) {
   if (!nextDocument || typeof nextDocument !== "object") return;
   // immutable enough: clone to avoid external mutation aliasing
   let cloned;
@@ -214,7 +214,8 @@ export function setDocument(nextDocument) {
     const now = JSON.stringify(state.document);
     state.dirty = now !== persistedDocumentJSON;
   } catch (_) { state.dirty = true; }
-  notifyDocument(state.document);
+  const hint = options && options.renderHint ? options.renderHint : "refresh";
+  notifyDocument(state.document, { renderHint: hint });
 }
 
 export function syncDirtyBaseline() {

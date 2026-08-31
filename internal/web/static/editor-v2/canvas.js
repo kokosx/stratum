@@ -1241,8 +1241,7 @@ export class CanvasController {
       style.setAttribute("data-stratum-inline", "true");
       style.textContent = `
 [data-stratum-editor-field]{ position:relative; min-width: 1ch; min-height: 1em; outline: none; }
-[data-stratum-editor-field][data-stratum-editing="true"]{ outline: 1px solid #2563eb; outline-offset: 2px; border-radius: 2px; background: rgba(37,99,235,0.06); }
-[data-stratum-editor-field][data-stratum-editing="true"]:focus{ outline: 2px solid #2563eb; }
+[data-stratum-editor-field][data-stratum-editing="true"]{ outline: none !important; box-shadow: none !important; caret-color: #2563eb; }
 [data-stratum-editor-field]:empty::before{ content: attr(data-placeholder); color: #94a3b8; font-style: italic; pointer-events: none; opacity: 0.9; }
 [data-stratum-editor-field][data-stratum-editing="true"]:empty::before{ opacity: 0.6; }
 `;

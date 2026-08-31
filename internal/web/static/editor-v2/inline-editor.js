@@ -270,7 +270,7 @@ export function commitActiveEdit() {
     cleanupEditingState();
     return true;
   }
-  const result = updateNodeField({ nodeId, path, value: plain });
+  const result = updateNodeField({ nodeId, path, value: plain, renderHint: "defer" });
   if (!result || !result.ok) {
     // On failure, keep editing? For now, cancel and show?
     cleanupEditingState();

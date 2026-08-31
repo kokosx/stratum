@@ -286,7 +286,7 @@ function isRichTextSchema(schema) {
   return schema && schema.type === "object" && schema.properties && "version" in schema.properties && "content" in schema.properties;
 }
 
-export function updateNodeField({ nodeId, path, value }) {
+export function updateNodeField({ nodeId, path, value, renderHint }) {
   if (!nodeId || typeof nodeId !== "string") return { ok: false, reason: "Unknown block." };
   if (!path || typeof path !== "string") return { ok: false, reason: "Unknown field." };
   const parts = path.split(".");
@@ -379,7 +379,8 @@ export function updateNodeField({ nodeId, path, value }) {
   cloneNode.block = node.block;
   cloneNode.version = node.version;
 
-  setDocument(next);
+  const hint = renderHint === "defer" ? "defer" : "refresh";
+  setDocument(next, { renderHint: hint });
   const updated = findDocumentNode(nodeId);
   return { ok: true, node: updated, previousValue, value: toSet };
 }
