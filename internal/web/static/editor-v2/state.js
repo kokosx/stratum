@@ -104,6 +104,14 @@ function notifyDocument(next) {
   }
 }
 
+const editingStore = { current: null };
+const editingListeners = new Set();
+function notifyEditing(next, previous) {
+  for (const listener of editingListeners) {
+    try { listener(next, previous); } catch (_) {}
+  }
+}
+
 export const state = {
   // generic resource descriptor, M1 focuses on entry/page but keeps shape generic
   resource: bootstrap.resource || {},
@@ -143,6 +151,14 @@ export const state = {
   set hoveredKey(v) {
     sel.hoveredKey = v;
   },
+  get editing() {
+    return editingStore.current;
+  },
+  set editing(v) {
+    const previous = editingStore.current;
+    editingStore.current = v;
+    notifyEditing(v, previous);
+  },
 };
 
 export function subscribeSelection(listener) {
@@ -161,6 +177,25 @@ export function subscribeDocument(listener) {
   if (typeof listener !== "function") return () => {};
   documentListeners.add(listener);
   return () => documentListeners.delete(listener);
+}
+
+export function subscribeEditing(listener) {
+  if (typeof listener !== "function") return () => {};
+  editingListeners.add(listener);
+  return () => editingListeners.delete(listener);
+}
+
+export function setEditing(next) {
+  state.editing = next;
+}
+export function clearEditing() {
+  state.editing = null;
+}
+export function getEditing() {
+  return state.editing;
+}
+export function isEditing() {
+  return !!state.editing;
 }
 
 export function setDocument(nextDocument) {
@@ -374,13 +409,19 @@ function extractPlainText(value) {
 }
 
 function getFieldValue(node, path) {
-  const dot = path.indexOf(".");
-  if (dot === -1) return undefined;
-  const scope = path.slice(0, dot);
-  const key = path.slice(dot + 1);
-  if (scope === "props") return node.props ? node.props[key] : undefined;
-  if (scope === "settings") return node.settings ? node.settings[key] : undefined;
-  return undefined;
+  if (!path || typeof path !== "string") return undefined;
+  const parts = path.split(".");
+  if (parts.length < 2) return undefined;
+  const scope = parts[0];
+  let obj = null;
+  if (scope === "props") obj = node.props;
+  else if (scope === "settings") obj = node.settings;
+  else return undefined;
+  for (let i = 1; i < parts.length; i++) {
+    if (obj == null || typeof obj !== "object") return undefined;
+    obj = obj[parts[i]];
+  }
+  return obj;
 }
 
 function humanizeSegment(segment) {
@@ -506,4 +547,81 @@ export function clearSelection() {
 }
 export function setSelection(selObj) {
   state.selection = selObj;
+}
+
+// === Inline editing helpers (M5A) ===
+
+export function isPlainRichTextValue(value) {
+  if (!value || typeof value !== "object") return false;
+  if (value.version !== 1 || !Array.isArray(value.content)) return false;
+  if (value.content.length === 0) return true;
+  // Plain means every run is plain text without marks (no bold/italic/link etc.)
+  for (const run of value.content) {
+    if (!run || typeof run.text !== "string") return false;
+    if (run.marks && run.marks.length > 0) return false;
+  }
+  return true;
+}
+
+export function plainTextFromRichText(value) {
+  if (!value || typeof value !== "object" || !Array.isArray(value.content)) return "";
+  return value.content.map((r) => (typeof r.text === "string" ? r.text : "")).join("");
+}
+
+export function isFieldPlainSafe(node, path) {
+  const def = definitionForBlock(node.block, node.version);
+  const field = def?.schema?.editor?.fields?.[path];
+  if (!field || !field.inline) return false;
+  const raw = getFieldValue(node, path);
+  if (field.control === "richtext") {
+    // Richtext inline plain: allow empty or plain runs only
+    if (raw == null) return true;
+    // If value is missing but has default, treat as plain
+    return isPlainRichTextValue(raw);
+  }
+  if (field.control === "text" || field.control === "textarea") {
+    // Plain string inline
+    if (raw == null) return true;
+    return typeof raw === "string";
+  }
+  return false;
+}
+
+export function inlineFieldsForNode(node) {
+  if (!node) return [];
+  const def = definitionForBlock(node.block, node.version);
+  if (!def || !def.schema || !def.schema.editor || !def.schema.editor.fields) return [];
+  const result = [];
+  for (const [path, field] of Object.entries(def.schema.editor.fields)) {
+    if (!field.inline) continue;
+    if (!isFieldPlainSafe(node, path)) continue;
+    result.push(path);
+  }
+  return result;
+}
+
+export function primaryInlineFieldForNode(node) {
+  const fields = inlineFieldsForNode(node);
+  if (fields.length !== 1) return null;
+  return fields[0];
+}
+
+export function isInlineEditableNode(node) {
+  return inlineFieldsForNode(node).length > 0;
+}
+
+export function placeholderForInlineField(block, path) {
+  try {
+    const def = definitionForBlock(block);
+    const field = def?.schema?.editor?.fields?.[path];
+    if (field && typeof field.placeholder === "string" && field.placeholder.trim() !== "") {
+      return field.placeholder;
+    }
+  } catch (_) {}
+  return "";
+}
+
+export function isInlineEditableField(node, path) {
+  const fields = inlineFieldsForNode(node);
+  return fields.includes(path);
 }

@@ -65,6 +65,9 @@ type EditorField struct {
 	Control       string `json:"control,omitempty"`
 	Group         string `json:"group,omitempty"`
 	OptionsSource string `json:"optionsSource,omitempty"`
+	Inline        bool   `json:"inline,omitempty"`
+	InlineMode    string `json:"inlineMode,omitempty"`
+	Placeholder   string `json:"placeholder,omitempty"`
 }
 
 var supportedOptionsSources = map[string]bool{"content-types": true, "entry-fields": true, "taxonomies": true, "taxonomy-terms": true, "site-parts": true, "forms": true}
@@ -233,6 +236,20 @@ func (s *Schema) validateContract() error {
 				return fmt.Errorf("editor.fields.%s: field does not exist", path)
 			}
 			value = next
+		}
+		if field.Inline {
+			if parts[0] != "props" {
+				return fmt.Errorf("editor.fields.%s: inline is only allowed for props.", path)
+			}
+			if field.Control != "text" && field.Control != "textarea" && field.Control != "richtext" {
+				return fmt.Errorf("editor.fields.%s: inline requires control text, textarea or richtext", path)
+			}
+			if field.InlineMode != "" && field.InlineMode != "plain" {
+				return fmt.Errorf("editor.fields.%s: unsupported inlineMode %q", path, field.InlineMode)
+			}
+			if value.Type != "string" && !(value.Type == "object" && value.Properties != nil) {
+				return fmt.Errorf("editor.fields.%s: inline requires string or richtext object", path)
+			}
 		}
 		if field.Control != "" && !supportedControls[field.Control] {
 			return fmt.Errorf("editor.fields.%s: unsupported control %q", path, field.Control)

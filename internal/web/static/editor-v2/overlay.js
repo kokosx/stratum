@@ -118,6 +118,13 @@ const OVERLAY_CSS = `
   background: #d97706;
 }
 .overlay-handle--external .overlay-handle__plus { border-left-color: rgba(255,255,255,.3); }
+.overlay-outline--editing {
+  border-color: #1d4ed8 !important;
+  border-style: solid !important;
+}
+.overlay-handle--editing {
+  background: #1e3a8a;
+}
 .overlay-insertion-line {
   position: fixed;
   pointer-events: none;
@@ -411,8 +418,14 @@ export class Overlay {
     if (this.selectedEl) this.selectedEl.style.display = "none";
     if (this.handleEl) this.handleEl.style.display = "none";
     // Also clear external style
-    if (this.selectedEl) this.selectedEl.classList.remove("overlay-outline--external");
-    if (this.handleEl) this.handleEl.classList.remove("overlay-handle--external");
+    if (this.selectedEl) {
+      this.selectedEl.classList.remove("overlay-outline--external");
+      this.selectedEl.classList.remove("overlay-outline--editing");
+    }
+    if (this.handleEl) {
+      this.handleEl.classList.remove("overlay-handle--external");
+      this.handleEl.classList.remove("overlay-handle--editing");
+    }
   }
 
   clearInsertion() {
@@ -653,6 +666,7 @@ export class Overlay {
       return;
     }
     const isExternal = !!(opts && opts.external);
+    const isEditing = !!(opts && opts.editing);
     const externalLabel = opts && opts.externalLabel;
 
     // Selected outline
@@ -667,6 +681,8 @@ export class Overlay {
     } else {
       sel.classList.remove("overlay-outline--external");
     }
+    if (isEditing) sel.classList.add("overlay-outline--editing");
+    else sel.classList.remove("overlay-outline--editing");
 
     // Handle — coherent [ Section | + ] (plus is visually part of handle)
     const handle = this.handleEl;
@@ -682,6 +698,8 @@ export class Overlay {
     } else {
       handle.classList.remove("overlay-handle--external");
     }
+    if (isEditing) handle.classList.add("overlay-handle--editing");
+    else handle.classList.remove("overlay-handle--editing");
     // Build handle content: label + optional plus inside handle (Add inside)
     handle.replaceChildren();
     const labelSpan = this.doc.createElement("span");

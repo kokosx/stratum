@@ -2,8 +2,9 @@
 import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
-import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument } from "./state.js";
+import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument, primaryInlineFieldForNode } from "./state.js";
 import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
+import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveFieldElement, getActiveFieldElement } from "./inline-editor.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -136,6 +137,7 @@ export class CanvasController {
     this._onResize = this.onResize.bind(this);
     this._onKey = this.onKey.bind(this);
     this._onAux = this.onAuxClick.bind(this);
+    this._onDblClick = this.onDblClick.bind(this);
     this._onSubmitBlock = this.onSubmitBlock.bind(this);
     this._boundWinEvents = false;
     this.onEscape = null;
@@ -196,9 +198,12 @@ export class CanvasController {
       doc.addEventListener("pointermove", this._onMove, true);
       doc.addEventListener("mousemove", this._onMove, true);
       doc.addEventListener("click", this._onClick, true);
+      doc.addEventListener("dblclick", this._onDblClick, true);
       doc.addEventListener("auxclick", this._onAux, true);
       doc.addEventListener("submit", this._onSubmitBlock, true);
       doc.addEventListener("keydown", this._onKey, true);
+      // Inject editor placeholder CSS for inline fields
+      try { this.injectInlineCSS(doc); } catch (_) {}
     } catch (_) {}
 
     if (this.win) {
@@ -225,11 +230,14 @@ export class CanvasController {
   }
 
   destroy() {
+    // Commit active edit before tearing down (avoid stale contenteditable)
+    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
     try {
       if (this.doc) {
         this.doc.removeEventListener("pointermove", this._onMove, true);
         this.doc.removeEventListener("mousemove", this._onMove, true);
         this.doc.removeEventListener("click", this._onClick, true);
+        this.doc.removeEventListener("dblclick", this._onDblClick, true);
         this.doc.removeEventListener("auxclick", this._onAux, true);
         this.doc.removeEventListener("submit", this._onSubmitBlock, true);
         this.doc.removeEventListener("keydown", this._onKey, true);
@@ -305,6 +313,11 @@ export class CanvasController {
 
   onMove(e) {
     if (!this.doc || !this.overlay) return;
+    if (isInlineEditing()) {
+      if (this.hoverInst) { this.hoverInst = null; state.hoveredKey = null; try { this.overlay.clearHover(); } catch (_) {} }
+      if (this.insertionHint) { this.insertionHint = null; try { this.overlay.clearInsertion(); } catch (_) {} }
+      return;
+    }
     if (this.isEditorUIEvent(e)) return;
     // Throttle insertion hint derivation via rAF, but hover is immediate
     const hit = this.hitForTarget(e.target);
@@ -355,6 +368,10 @@ export class CanvasController {
 
   updateInsertionHint(e, hit) {
     if (!this.doc || !this.overlay) return;
+    if (isInlineEditing()) {
+      if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); }
+      return;
+    }
     if (this.quickInserter && this.quickInserter.isOpen()) {
       // keep hint but not derive new one while inserter open
       return;
@@ -603,6 +620,15 @@ export class CanvasController {
 
   onClick(e) {
     if (!this.doc || !this.overlay) return;
+    // Inline editing: clicks inside active field must reach contenteditable normally
+    if (isInlineEditing()) {
+      const activeEl = getActiveFieldElement();
+      if (activeEl && (e.target === activeEl || (activeEl.contains && activeEl.contains(e.target)))) {
+        return;
+      }
+      // Click outside active field: commit first, then proceed to select new block
+      commitActiveEdit();
+    }
     if (this.isEditorUIEvent(e)) return;
     if (e.type === "submit") {
       try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
@@ -918,12 +944,20 @@ export class CanvasController {
 
   syncGeometry() {
     if (!this.overlay || !this.doc) return;
+    // During inline editing, suppress hover/insertion affordances (§29)
+    if (isInlineEditing()) {
+      try { this.overlay.clearHover(); } catch (_) {}
+      try { this.overlay.clearInsertion(); } catch (_) {}
+      try { this.overlay.clearBlocksTarget(); } catch (_) {}
+    }
     // Persistent Blocks target indicator (§22) — show before hover/selection so it stays visible while panel open
-    this.updateBlocksTarget();
+    if (!isInlineEditing()) this.updateBlocksTarget();
     // Update scope boundary (primary editable region)
     this.updateScope();
-    // Hover
-    if (this.hoverInst) {
+    // Hover (suppressed while editing)
+    if (isInlineEditing()) {
+      if (this.overlay) this.overlay.clearHover();
+    } else if (this.hoverInst) {
       const inst = this.index.get(this.hoverInst.instanceKey) || this.hoverInst;
       const rect = this.visualRect(inst);
       if (!rect) {
@@ -954,12 +988,16 @@ export class CanvasController {
         this.overlay.clearSelection();
         return;
       }
-      const label = labelForInstance(inst);
+      let label = labelForInstance(inst);
       const isExternal = !inst.editable;
+      const editing = isInlineEditing() && state.editing && state.editing.nodeId === this.selected.nodeId;
+      if (editing) {
+        label = label + " · Editing";
+      }
       // Decide if selected container can Add inside (§27) — small plus on handle
-      let handleOpts = { external: isExternal };
+      let handleOpts = { external: isExternal, editing: !!editing };
       try {
-        if (isExternal === false) {
+        if (!editing && isExternal === false) {
           const node = findDocumentNode(this.selected.nodeId);
           if (node && isContainerNode(node) && (node.children || []).length >= 0) {
             // hasLegalInsertion for append inside
@@ -984,10 +1022,10 @@ export class CanvasController {
     } else {
       this.overlay.clearSelection();
     }
-    // Empty states (overlay/editor instrumentation, never SDT) (§24-25)
-    this.updateEmptyStates();
-    // Re-establish insertion line after geometry sync if we still have a hint (recompute rect)
-    if (this.insertionHint && !(this.quickInserter && this.quickInserter.isOpen())) {
+    // Empty states (overlay/editor instrumentation, never SDT) (§24-25) — suppressed while editing
+    if (!isInlineEditing()) this.updateEmptyStates(); else this.overlay.clearEmptyStates();
+    // Re-establish insertion line after geometry sync if we still have a hint (recompute rect) — suppressed while editing
+    if (!isInlineEditing() && this.insertionHint && !(this.quickInserter && this.quickInserter.isOpen())) {
       const hint = this.insertionHint;
       const parentNode = hint.parentId == null ? null : findDocumentNode(hint.parentId);
       if (!hasLegalInsertion(parentNode, hint.index)) {
@@ -1196,8 +1234,57 @@ export class CanvasController {
     this.overlay.setScope(union);
   }
 
+  injectInlineCSS(doc) {
+    if (!doc || doc.__stratumInlineCSSInjected) return;
+    try {
+      const style = doc.createElement("style");
+      style.setAttribute("data-stratum-inline", "true");
+      style.textContent = `
+[data-stratum-editor-field]{ position:relative; min-width: 1ch; min-height: 1em; outline: none; }
+[data-stratum-editor-field][data-stratum-editing="true"]{ outline: 1px solid #2563eb; outline-offset: 2px; border-radius: 2px; background: rgba(37,99,235,0.06); }
+[data-stratum-editor-field][data-stratum-editing="true"]:focus{ outline: 2px solid #2563eb; }
+[data-stratum-editor-field]:empty::before{ content: attr(data-placeholder); color: #94a3b8; font-style: italic; pointer-events: none; opacity: 0.9; }
+[data-stratum-editor-field][data-stratum-editing="true"]:empty::before{ opacity: 0.6; }
+`;
+      (doc.head || doc.documentElement).appendChild(style);
+      doc.__stratumInlineCSSInjected = true;
+    } catch (_) {}
+  }
+
+  onDblClick(e) {
+    if (!this.doc || !this.overlay) return;
+    if (this.isEditorUIEvent(e)) return;
+    // If active editing, ignore dblclick (already editing)
+    if (isInlineEditing()) return;
+    const hit = this.hitForTarget(e.target);
+    if (!hit || !hit.editable) return;
+    const node = findDocumentNode(hit.nodeId);
+    if (!node) return;
+    // External/read-only never
+    if (!hit.editable) return;
+    // Try to start inline edit
+    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+    const started = startInlineEdit(hit.nodeId, hit.instanceKey, this);
+    if (started) {
+      this.selectInstance(hit);
+      this.requestSync();
+    }
+  }
+
   onKey(e) {
     if (!e) return;
+    // Inline editing gets first Escape priority
+    if (isInlineEditing()) {
+      if (e.key === "Escape") {
+        e.preventDefault(); e.stopPropagation();
+        e.stopImmediatePropagation && e.stopImmediatePropagation();
+        cancelActiveEdit();
+        return;
+      }
+      // While editing, Enter is handled inside fieldEl's keydown (commit), not here
+      // Tab also handled inside
+      return;
+    }
     if (e.key === "Escape") {
       // priority: quick inserter open → close it (§49)
       if (this.quickInserter && this.quickInserter.isOpen()) {
@@ -1209,10 +1296,32 @@ export class CanvasController {
       // If selection exists, clear it. Do not prevent overflow menu's own Escape if no selection
       if (state.selection) {
         e.preventDefault();
-        // Don't stopPropagation? Let overflow menu also handle? But spec: if overflow is open, its Escape still works.
-        // We clear selection and let event пузырь continue for overflow.
         this.clearSelection();
         return;
+      }
+    }
+    if (e.key === "Enter" && !e.isComposing) {
+      // Optional keyboard Enter to edit when selected block has exactly one plain inline field
+      if (isInlineEditing()) return;
+      if (this.quickInserter && this.quickInserter.isOpen()) return;
+      const sel = state.selection;
+      if (!sel || !sel.editable || sel.logical) return;
+      if (this.selected && this.selected.instanceKey && this.index.has(this.selected.instanceKey)) {
+        const node = findDocumentNode(sel.nodeId);
+        if (!node) return;
+        const primary = primaryInlineFieldForNode(node);
+        if (!primary) return;
+        // Must have single editable instance to avoid ambiguity
+        const keys = (this.nodeToKeys.get(sel.nodeId) || []).filter(k => {
+          const inst = this.index.get(k);
+          return inst && inst.editable;
+        });
+        if (keys.length !== 1) return;
+        // Respect composition
+        if (e.isComposing) return;
+        e.preventDefault(); e.stopPropagation();
+        const instKey = keys[0];
+        startInlineEdit(sel.nodeId, instKey, this, primary);
       }
     }
   }

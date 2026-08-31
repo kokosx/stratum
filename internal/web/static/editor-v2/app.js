@@ -1,8 +1,9 @@
 // app.js — V2 shell / viewport / preview lifecycle (interaction lives in canvas.js)
-import { state, bootstrap, subscribeDocument } from "./state.js";
+import { state, bootstrap, subscribeDocument, primaryInlineFieldForNode, plainTextFromRichText } from "./state.js";
 import { fetchPreview } from "./preview.js";
 import { CanvasController } from "./canvas.js";
 import { PanelController } from "./panels.js";
+import { commitActiveEdit, isInlineEditing, startInlineEdit } from "./inline-editor.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available
@@ -58,6 +59,8 @@ class EditorApp {
 
   schedulePreview() {
     // discrete insertion, small debounce 80ms (§43) or immediate; abort stale via fetchPreview
+    // Commit active inline edit before scheduling preview (blur may have already committed, but ensure)
+    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
     if (this._previewTimer) clearTimeout(this._previewTimer);
     this._previewTimer = setTimeout(() => {
       this._previewTimer = null;
@@ -71,6 +74,8 @@ class EditorApp {
 
   async refreshPreview() {
     if (!this.iframe) return;
+    // Commit active edit before fetching preview (spec §52/53/54)
+    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
     const pendingId = this._pendingSelectionId;
     this._pendingSelectionId = null;
     // preserve scroll near edited location (§45)
@@ -128,6 +133,38 @@ class EditorApp {
                     const m = "scroll" + "IntoView";
                     if (el && typeof el[m] === "function") el[m]({ block: "nearest", behavior: "smooth" });
                     else if (this.canvas.win) this.canvas.win.scrollTo({ top: Math.max(0, rect.top - 80), behavior: "smooth" });
+                  }
+                }
+              } catch (_) {}
+              // Auto-edit newly inserted empty inline block when unambiguous (§39-41)
+              try {
+                const node = (() => {
+                  const walk = (nodes) => {
+                    for (const n of nodes || []) {
+                      if (n.id === pendingId) return n;
+                      const sub = walk(n.children);
+                      if (sub) return sub;
+                    }
+                    return null;
+                  };
+                  return walk(state.document.nodes);
+                })();
+                if (node) {
+                  const primary = primaryInlineFieldForNode(node);
+                  if (primary) {
+                    const key = primary.split(".").pop();
+                    const raw = node.props ? node.props[key] : undefined;
+                    let isEmpty = false;
+                    if (typeof raw === "string") isEmpty = raw.trim() === "";
+                    else if (raw && typeof raw === "object" && Array.isArray(raw.content)) isEmpty = plainTextFromRichText(raw).trim() === "";
+                    else if (raw == null) isEmpty = true;
+                    // Only auto-edit if empty and not external/read-only
+                    if (isEmpty && inst && inst.editable) {
+                      // Use rAF to ensure markers and overlay ready
+                      requestAnimationFrame(() => {
+                        try { startInlineEdit(pendingId, inst.instanceKey, this.canvas, primary); } catch (_) {}
+                      });
+                    }
                   }
                 }
               } catch (_) {}
@@ -233,6 +270,8 @@ class EditorApp {
 
   setViewport(viewport) {
     if (!["desktop", "tablet", "mobile"].includes(viewport)) return;
+    // Commit active inline edit before viewport switch (§53)
+    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
     // optionally preserve scroll ratio
     let ratio = 0;
     let maxOld = 0;
