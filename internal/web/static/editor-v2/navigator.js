@@ -1,4 +1,4 @@
-import { displayNameForBlock, state, subscribeSelection } from "./state.js";
+import { displayNameForBlock, nodeSummaryFor, state, subscribeSelection } from "./state.js";
 
 function createElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -58,14 +58,17 @@ export class NavigatorView {
   renderNode(node, depth) {
     const item = createElement("div", "editor-v2-navigator__item");
     item.dataset.nodeId = node.id;
-
     const children = node.children || [];
-    const expanded = children.length > 0 && this.expanded.has(node.id);
+    const isContainer = children.length > 0;
+    if (isContainer) item.classList.add("is-container");
+    if (depth === 0) item.classList.add("is-root");
+
+    const expanded = isContainer && this.expanded.has(node.id);
 
     const row = createElement("div", "editor-v2-navigator__row");
     row.style.setProperty("--navigator-depth", String(depth));
 
-    if (children.length > 0) {
+    if (isContainer) {
       const toggle = createElement("button", "editor-v2-navigator__toggle");
       toggle.type = "button";
       toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${displayNameForBlock(node.block)}`);
@@ -81,16 +84,25 @@ export class NavigatorView {
       row.append(createElement("span", "editor-v2-navigator__toggle-spacer"));
     }
 
-    const select = createElement("button", "editor-v2-navigator__select", displayNameForBlock(node.block));
+    const select = createElement("button", "editor-v2-navigator__select");
     select.type = "button";
     select.dataset.nodeId = node.id;
+    const name = createElement("span", "editor-v2-navigator__name", displayNameForBlock(node.block));
+    select.append(name);
+    const rawSummary = nodeSummaryFor(node);
+    if (rawSummary) {
+      const truncated = rawSummary.length > 36 ? rawSummary.slice(0, 33) + "\u2026" : rawSummary;
+      const summaryEl = createElement("span", "editor-v2-navigator__summary", truncated);
+      summaryEl.title = rawSummary;
+      select.append(summaryEl);
+    }
     select.addEventListener("click", () => {
       if (this.canvas && typeof this.canvas.selectNode === "function") this.canvas.selectNode(node);
     });
     row.append(select);
     item.append(row);
 
-    if (children.length > 0 && expanded) {
+    if (isContainer && expanded) {
       const group = createElement("div", "editor-v2-navigator__group");
       for (const child of children) group.append(this.renderNode(child, depth + 1));
       item.append(group);

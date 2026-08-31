@@ -296,6 +296,146 @@ export function findDocumentNode(nodeId) {
   return walk(state.document && state.document.nodes);
 }
 
+function isTechnicalValue(value) {
+  if (!value || typeof value !== "string") return false;
+  const text = value.trim();
+  return /^(blk|entry|site|page)[-_]/i.test(text)
+    || /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(text)
+    || (/^[A-Za-z0-9_-]{16,}$/.test(text) && /[0-9_-]/.test(text));
+}
+
+function extractPlainText(value) {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && value.version === 1 && Array.isArray(value.content)) {
+    return value.content.map((run) => typeof run?.text === "string" ? run.text : "").join("").trim();
+  }
+  return "";
+}
+
+function getFieldValue(node, path) {
+  const dot = path.indexOf(".");
+  if (dot === -1) return undefined;
+  const scope = path.slice(0, dot);
+  const key = path.slice(dot + 1);
+  if (scope === "props") return node.props ? node.props[key] : undefined;
+  if (scope === "settings") return node.settings ? node.settings[key] : undefined;
+  return undefined;
+}
+
+function humanizeSegment(segment) {
+  let name = segment.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim();
+  if (!name) return "Value";
+  if (name.toLowerCase() === "url") return "Link";
+  return name.split(/\s+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+
+export function friendlyLabelForPath(path, definition) {
+  const field = definition?.schema?.editor?.fields?.[path];
+  if (field?.label) {
+    if (path === "props.text" && field.control === "richtext" && field.label === "Text") return "Content";
+    if (path === "props.url" && field.label === "URL") return "Link";
+    return field.label;
+  }
+  const last = path.split(".").pop() || "";
+  if (last.toLowerCase() === "url") return "Link";
+  return humanizeSegment(last);
+}
+
+function isTechnicalField(path, raw) {
+  const last = path.split(".").pop() || "";
+  if (/Id$/i.test(last)) return true;
+  if (typeof raw === "string" && isTechnicalValue(raw)) return true;
+  return false;
+}
+
+function formatInspectorValue(raw, path) {
+  if (raw == null) return "";
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    if (!t) return "";
+    return t.length > 140 ? t.slice(0, 137) + "\u2026" : t;
+  }
+  if (typeof raw === "number") {
+    if (path.endsWith("level")) return `H${raw}`;
+    return String(raw);
+  }
+  if (typeof raw === "boolean") {
+    return raw ? "Yes" : "";
+  }
+  if (raw && typeof raw === "object" && raw.version === 1 && Array.isArray(raw.content)) {
+    const txt = raw.content.map((run) => typeof run?.text === "string" ? run.text : "").join("").trim();
+    if (!txt) return "";
+    return txt.length > 140 ? txt.slice(0, 137) + "\u2026" : txt;
+  }
+  if (Array.isArray(raw)) {
+    const joined = raw.filter((v) => typeof v === "string" && v.trim()).join(", ").trim();
+    if (!joined) return "";
+    return joined.length > 140 ? joined.slice(0, 137) + "\u2026" : joined;
+  }
+  return "";
+}
+
+export function nodeSummaryFor(node) {
+  if (!node) return "";
+  const def = definitionForBlock(node.block, node.version);
+  const fields = def?.schema?.editor?.summaryFields || def?.SummaryFields || [];
+  for (const path of fields) {
+    const raw = getFieldValue(node, path);
+    const txt = extractPlainText(raw);
+    if (txt) return txt.slice(0, 70);
+    if (typeof raw === "number" && String(raw).trim()) return String(raw).slice(0, 70);
+  }
+  const fieldOrder = Object.keys(def?.schema?.editor?.fields || {});
+  for (const path of fieldOrder) {
+    if (!path.startsWith("props.")) continue;
+    const last = path.split(".").pop() || "";
+    if (/Id$/i.test(last)) continue;
+    const raw = getFieldValue(node, path);
+    const txt = extractPlainText(raw);
+    if (txt) return txt.slice(0, 70);
+    if (typeof raw === "number" && String(raw).trim()) return String(raw).slice(0, 70);
+  }
+  const props = node.props || {};
+  for (const [k, v] of Object.entries(props)) {
+    if (/Id$/i.test(k)) continue;
+    const txt = extractPlainText(v);
+    if (txt) return txt.slice(0, 70);
+    if (typeof v === "string" && v.trim()) return v.trim().slice(0, 70);
+  }
+  return "";
+}
+
+export function inspectorFactsFor(node) {
+  if (!node) return [];
+  const def = definitionForBlock(node.block, node.version);
+  if (!def) return [];
+  const facts = [];
+  const seen = new Set();
+  const summaryFields = def.schema?.editor?.summaryFields || def.SummaryFields || [];
+  for (const path of summaryFields) {
+    const raw = getFieldValue(node, path);
+    const formatted = formatInspectorValue(raw, path);
+    if (!formatted) continue;
+    if (isTechnicalField(path, raw)) continue;
+    const label = friendlyLabelForPath(path, def);
+    facts.push([label, formatted]);
+    seen.add(path);
+  }
+  const fieldPaths = Object.keys(def.schema?.editor?.fields || {});
+  const propsPaths = fieldPaths.filter((p) => p.startsWith("props."));
+  for (const path of propsPaths) {
+    if (seen.has(path)) continue;
+    const raw = getFieldValue(node, path);
+    const formatted = formatInspectorValue(raw, path);
+    if (!formatted) continue;
+    if (isTechnicalField(path, raw)) continue;
+    if (facts.length >= 4) break;
+    const label = friendlyLabelForPath(path, def);
+    facts.push([label, formatted]);
+  }
+  return facts;
+}
+
 export function friendlyLabelForUnknown() {
   return "Template element";
 }

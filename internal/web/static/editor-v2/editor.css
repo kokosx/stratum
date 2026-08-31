@@ -346,7 +346,7 @@ body.editor-v2-layout {
 
 .editor-v2-panel-slot--right {
   right: 16px;
-  width: min(370px, calc(100% - 32px));
+  width: min(360px, calc(100% - 32px));
   justify-content: flex-end;
 }
 
@@ -540,16 +540,16 @@ body.editor-v2-layout {
 
 .editor-v2-navigator__scope {
   padding: 0 4px 9px;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .editor-v2-navigator__tree {
   display: grid;
-  gap: 1px;
+  gap: 2px;
 }
 
 .editor-v2-navigator__row {
@@ -590,6 +590,9 @@ body.editor-v2-layout {
 
 .editor-v2-navigator__select {
   flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   height: 30px;
   padding: 0 8px 0 2px;
@@ -600,9 +603,38 @@ body.editor-v2-layout {
   color: inherit;
   font: 500 13px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   text-align: left;
-  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.editor-v2-navigator__name {
+  flex: 0 0 auto;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-v2-navigator__item.is-container > .editor-v2-navigator__row .editor-v2-navigator__name {
+  font-weight: 700;
+}
+
+.editor-v2-navigator__summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-v2-navigator__item.is-root {
+  margin-bottom: 6px;
+}
+
+.editor-v2-navigator__item.is-root:last-child {
+  margin-bottom: 0;
 }
 
 .editor-v2-navigator__toggle:hover,
