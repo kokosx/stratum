@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	AddAgentGrant(ctx context.Context, arg AddAgentGrantParams) error
 	CancelActivePublicationJobsForEntry(ctx context.Context, arg CancelActivePublicationJobsForEntryParams) error
 	ClearContentTypeDefaultArchiveTemplate(ctx context.Context, arg ClearContentTypeDefaultArchiveTemplateParams) error
 	ClearContentTypeDefaultLayoutTemplate(ctx context.Context, arg ClearContentTypeDefaultLayoutTemplateParams) error
@@ -19,8 +20,10 @@ type Querier interface {
 	ClearSitePartPublishedRevision(ctx context.Context, arg ClearSitePartPublishedRevisionParams) error
 	CompleteImportRun(ctx context.Context, arg CompleteImportRunParams) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
+	CountActiveAgents(ctx context.Context) (int64, error)
 	CountAllComments(ctx context.Context) (int64, error)
 	CountApprovedCommentsByEntry(ctx context.Context, entryID string) (int64, error)
+	CountAuditEvents(ctx context.Context) (int64, error)
 	CountCommentsByStatus(ctx context.Context) ([]CountCommentsByStatusRow, error)
 	CountCommentsFiltered(ctx context.Context, arg CountCommentsFilteredParams) (int64, error)
 	CountEntries(ctx context.Context) (int64, error)
@@ -34,6 +37,9 @@ type Querier interface {
 	CountPublishedEntriesByContentType(ctx context.Context, contentTypeID string) (int64, error)
 	CountPublishedEntriesByTerm(ctx context.Context, termID string) (int64, error)
 	CountTermsByTaxonomy(ctx context.Context, taxonomyID string) (int64, error)
+	CreateAgent(ctx context.Context, arg CreateAgentParams) error
+	CreateAgentToken(ctx context.Context, arg CreateAgentTokenParams) error
+	CreateAuditEvent(ctx context.Context, arg CreateAuditEventParams) error
 	CreateBlockDefinition(ctx context.Context, arg CreateBlockDefinitionParams) error
 	CreateComment(ctx context.Context, arg CreateCommentParams) error
 	CreateContentType(ctx context.Context, arg CreateContentTypeParams) error
@@ -58,6 +64,9 @@ type Querier interface {
 	CreateTaxonomy(ctx context.Context, arg CreateTaxonomyParams) error
 	CreateTerm(ctx context.Context, arg CreateTermParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
+	DeleteAgent(ctx context.Context, id string) error
+	DeleteAgentGrants(ctx context.Context, agentID string) error
+	DeleteAgentTokensByAgent(ctx context.Context, agentID string) error
 	DeleteComment(ctx context.Context, id string) error
 	DeleteContentType(ctx context.Context, id string) error
 	DeleteEntry(ctx context.Context, id string) error
@@ -79,7 +88,10 @@ type Querier interface {
 	DeleteTermsForRevision(ctx context.Context, revisionID string) error
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
 	GetActivePublicationJobByEntry(ctx context.Context, entryID string) (PublicationJob, error)
+	GetAgent(ctx context.Context, id string) (Agent, error)
+	GetAgentToken(ctx context.Context, id string) (AgentToken, error)
 	GetArchiveRouteByContentType(ctx context.Context, contentTypeID sql.NullString) (Route, error)
+	GetAuditEvent(ctx context.Context, id string) (AuditEvent, error)
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
 	GetComment(ctx context.Context, id string) (Comment, error)
 	GetCommentByImportID(ctx context.Context, arg GetCommentByImportIDParams) (Comment, error)
@@ -136,9 +148,15 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id string) (GetUserByIDRow, error)
 	HasAdmin(ctx context.Context) (bool, error)
 	ListActiveForms(ctx context.Context) ([]Form, error)
+	ListAgentGrants(ctx context.Context, agentID string) ([]AgentGrant, error)
+	ListAgentTokens(ctx context.Context, agentID string) ([]AgentToken, error)
+	ListAgents(ctx context.Context) ([]Agent, error)
 	ListAllFormSubmissions(ctx context.Context, formID string) ([]FormSubmission, error)
 	ListApprovedCommentsByEntry(ctx context.Context, arg ListApprovedCommentsByEntryParams) ([]Comment, error)
 	ListArchiveRoutes(ctx context.Context) ([]Route, error)
+	ListAuditEventsByActor(ctx context.Context, arg ListAuditEventsByActorParams) ([]AuditEvent, error)
+	ListAuditEventsByResource(ctx context.Context, arg ListAuditEventsByResourceParams) ([]AuditEvent, error)
+	ListAuditEventsForRevision(ctx context.Context, revisionID sql.NullString) ([]AuditEvent, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
 	ListChildTerms(ctx context.Context, parentID sql.NullString) ([]Term, error)
 	ListCommentsByEntry(ctx context.Context, entryID string) ([]Comment, error)
@@ -203,8 +221,12 @@ type Querier interface {
 	ListTermsByTaxonomyWithCounts(ctx context.Context, taxonomyID string) ([]ListTermsByTaxonomyWithCountsRow, error)
 	ListTermsForRevision(ctx context.Context, revisionID string) ([]Term, error)
 	ListUsers(ctx context.Context) ([]ListUsersRow, error)
+	LookupAgentByTokenHash(ctx context.Context, tokenHash string) (LookupAgentByTokenHashRow, error)
 	MoveEntryToTrash(ctx context.Context, arg MoveEntryToTrashParams) error
+	RecentAuditEvents(ctx context.Context, arg RecentAuditEventsParams) ([]AuditEvent, error)
+	RemoveAgentGrant(ctx context.Context, arg RemoveAgentGrantParams) error
 	RestoreEntryFromTrash(ctx context.Context, arg RestoreEntryFromTrashParams) error
+	RevokeAgentToken(ctx context.Context, arg RevokeAgentTokenParams) error
 	SearchTermsByTaxonomy(ctx context.Context, arg SearchTermsByTaxonomyParams) ([]Term, error)
 	SeedArchiveRoute(ctx context.Context, arg SeedArchiveRouteParams) error
 	SeedEntry(ctx context.Context, arg SeedEntryParams) error
@@ -230,6 +252,9 @@ type Querier interface {
 	SetSitePartLocation(ctx context.Context, arg SetSitePartLocationParams) error
 	SetSitePartPublishedRevision(ctx context.Context, arg SetSitePartPublishedRevisionParams) error
 	SetTermsForRevision(ctx context.Context, arg SetTermsForRevisionParams) error
+	UpdateAgent(ctx context.Context, arg UpdateAgentParams) error
+	UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) error
+	UpdateAgentTokenLastUsed(ctx context.Context, arg UpdateAgentTokenLastUsedParams) error
 	UpdateCommentParent(ctx context.Context, arg UpdateCommentParentParams) error
 	UpdateCommentStatus(ctx context.Context, arg UpdateCommentStatusParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error

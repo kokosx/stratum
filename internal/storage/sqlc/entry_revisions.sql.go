@@ -14,11 +14,11 @@ const createEntryRevision = `-- name: CreateEntryRevision :exec
 INSERT INTO entry_revisions (
     id, entry_id, revision_number, slug, title, excerpt, document_json,
     seo_title, seo_description, canonical_url, featured_media_id, social_media_id,
-    seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, fields_json, created_by, created_at,
+    seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, fields_json, created_by, created_by_kind, created_at,
     visibility, password_hash, sticky, review_state, comments_enabled
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?19, ''), '{}'), ?20, ?21,
-    COALESCE(NULLIF(?22, ''), 'public'), ?23, ?24, COALESCE(NULLIF(?25, ''), 'draft'), ?26)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?19, ''), '{}'), ?20, COALESCE(NULLIF(?21, ''), 'user'), ?22,
+    COALESCE(NULLIF(?23, ''), 'public'), ?24, ?25, COALESCE(NULLIF(?26, ''), 'draft'), ?27)
 `
 
 type CreateEntryRevisionParams struct {
@@ -42,6 +42,7 @@ type CreateEntryRevisionParams struct {
 	MenuOrder        int64          `json:"menu_order"`
 	FieldsJson       interface{}    `json:"fields_json"`
 	CreatedBy        sql.NullString `json:"created_by"`
+	CreatedByKind    interface{}    `json:"created_by_kind"`
 	CreatedAt        int64          `json:"created_at"`
 	Visibility       interface{}    `json:"visibility"`
 	PasswordHash     sql.NullString `json:"password_hash"`
@@ -72,6 +73,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 		arg.MenuOrder,
 		arg.FieldsJson,
 		arg.CreatedBy,
+		arg.CreatedByKind,
 		arg.CreatedAt,
 		arg.Visibility,
 		arg.PasswordHash,
@@ -83,7 +85,7 @@ func (q *Queries) CreateEntryRevision(ctx context.Context, arg CreateEntryRevisi
 }
 
 const getEntryRevision = `-- name: GetEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug, fields_json, visibility, password_hash, sticky, review_state, comments_enabled
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug, fields_json, visibility, password_hash, sticky, review_state, comments_enabled, created_by_kind
 FROM entry_revisions
 WHERE id = ?
 LIMIT 1
@@ -119,12 +121,13 @@ func (q *Queries) GetEntryRevision(ctx context.Context, id string) (EntryRevisio
 		&i.Sticky,
 		&i.ReviewState,
 		&i.CommentsEnabled,
+		&i.CreatedByKind,
 	)
 	return i, err
 }
 
 const getLatestEntryRevision = `-- name: GetLatestEntryRevision :one
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug, fields_json, visibility, password_hash, sticky, review_state, comments_enabled
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug, fields_json, visibility, password_hash, sticky, review_state, comments_enabled, created_by_kind
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -161,12 +164,13 @@ func (q *Queries) GetLatestEntryRevision(ctx context.Context, entryID string) (E
 		&i.Sticky,
 		&i.ReviewState,
 		&i.CommentsEnabled,
+		&i.CreatedByKind,
 	)
 	return i, err
 }
 
 const listEntryRevisions = `-- name: ListEntryRevisions :many
-SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug, fields_json, visibility, password_hash, sticky, review_state, comments_enabled
+SELECT id, entry_id, revision_number, title, excerpt, document_json, seo_title, seo_description, created_by, created_at, canonical_url, featured_media_id, social_media_id, seo_robots_index, seo_robots_follow, schema_mode, layout_template_id, parent_entry_id, menu_order, slug, fields_json, visibility, password_hash, sticky, review_state, comments_enabled, created_by_kind
 FROM entry_revisions
 WHERE entry_id = ?
 ORDER BY revision_number DESC
@@ -208,6 +212,7 @@ func (q *Queries) ListEntryRevisions(ctx context.Context, entryID string) ([]Ent
 			&i.Sticky,
 			&i.ReviewState,
 			&i.CommentsEnabled,
+			&i.CreatedByKind,
 		); err != nil {
 			return nil, err
 		}

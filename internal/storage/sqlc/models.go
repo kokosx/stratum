@@ -8,6 +8,47 @@ import (
 	"database/sql"
 )
 
+type Agent struct {
+	ID              string         `json:"id"`
+	Name            string         `json:"name"`
+	Status          string         `json:"status"`
+	DefaultAuthorID sql.NullString `json:"default_author_id"`
+	CreatedByUserID sql.NullString `json:"created_by_user_id"`
+	CreatedAt       int64          `json:"created_at"`
+	UpdatedAt       int64          `json:"updated_at"`
+}
+
+type AgentGrant struct {
+	AgentID    string `json:"agent_id"`
+	Permission string `json:"permission"`
+	Scope      string `json:"scope"`
+}
+
+type AgentToken struct {
+	ID          string        `json:"id"`
+	AgentID     string        `json:"agent_id"`
+	TokenHash   string        `json:"token_hash"`
+	TokenPrefix string        `json:"token_prefix"`
+	Label       string        `json:"label"`
+	CreatedAt   int64         `json:"created_at"`
+	ExpiresAt   sql.NullInt64 `json:"expires_at"`
+	LastUsedAt  sql.NullInt64 `json:"last_used_at"`
+	RevokedAt   sql.NullInt64 `json:"revoked_at"`
+}
+
+type AuditEvent struct {
+	ID           string         `json:"id"`
+	ActorKind    string         `json:"actor_kind"`
+	ActorID      sql.NullString `json:"actor_id"`
+	Transport    string         `json:"transport"`
+	Action       string         `json:"action"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   sql.NullString `json:"resource_id"`
+	RevisionID   sql.NullString `json:"revision_id"`
+	MetadataJson string         `json:"metadata_json"`
+	CreatedAt    int64          `json:"created_at"`
+}
+
 type BlockDefinition struct {
 	ID           string         `json:"id"`
 	Namespace    string         `json:"namespace"`
@@ -54,6 +95,20 @@ type ContentType struct {
 	DefaultArchiveTemplateID sql.NullString `json:"default_archive_template_id"`
 }
 
+type CustomCodeSnippet struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Scope     string         `json:"scope"`
+	ScopeID   sql.NullString `json:"scope_id"`
+	Kind      string         `json:"kind"`
+	Placement string         `json:"placement"`
+	Code      string         `json:"code"`
+	Enabled   int64          `json:"enabled"`
+	SortOrder int64          `json:"sort_order"`
+	CreatedAt int64          `json:"created_at"`
+	UpdatedAt int64          `json:"updated_at"`
+}
+
 type Entry struct {
 	ID                  string         `json:"id"`
 	ContentTypeID       string         `json:"content_type_id"`
@@ -97,6 +152,7 @@ type EntryRevision struct {
 	Sticky           int64          `json:"sticky"`
 	ReviewState      string         `json:"review_state"`
 	CommentsEnabled  int64          `json:"comments_enabled"`
+	CreatedByKind    string         `json:"created_by_kind"`
 }
 
 type EntryRevisionTerm struct {
@@ -220,6 +276,17 @@ type NotFoundPath struct {
 	HitCount    int64  `json:"hit_count"`
 	FirstSeenAt int64  `json:"first_seen_at"`
 	LastSeenAt  int64  `json:"last_seen_at"`
+}
+
+type PreviewLink struct {
+	ID         string         `json:"id"`
+	TokenHash  string         `json:"token_hash"`
+	EntryID    string         `json:"entry_id"`
+	RevisionID string         `json:"revision_id"`
+	CreatedBy  sql.NullString `json:"created_by"`
+	ExpiresAt  int64          `json:"expires_at"`
+	RevokedAt  sql.NullInt64  `json:"revoked_at"`
+	CreatedAt  int64          `json:"created_at"`
 }
 
 type PublicationJob struct {
