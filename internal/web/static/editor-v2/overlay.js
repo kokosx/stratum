@@ -67,7 +67,7 @@ const OVERLAY_CSS = `
 .overlay-scope-label--end {
   background: #f1f5f9;
   color: #475569;
-  font-size: 10px;
+  font-size: 11px;
   border-color: #cbd5e1;
 }
 .overlay-handle {

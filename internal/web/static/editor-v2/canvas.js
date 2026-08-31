@@ -169,13 +169,9 @@ function isTechnicalId(s) {
   if (!s || typeof s !== "string") return true;
   const t = s.trim();
   if (t.length < 3) return true;
-  // Explicit: blk_*, UUID, or long alnum without spaces = technical
-  if (/^(blk_|entry|site|page)_/i.test(t)) return true;
+  if (/^(blk|entry|site|page)[-_]/i.test(t)) return true;
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t)) return true;
-  if (/^[A-Za-z0-9]{10,}$/.test(t) && !t.includes(" ") && !t.includes("/")) return true;
-  }
-  // If string looks like UUID
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(t)) return true;
+  if (/^[A-Za-z0-9_-]{10,}$/.test(t) && !t.includes(" ") && !t.includes("/")) return true;
   return false;
 }
 
