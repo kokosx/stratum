@@ -1,0 +1,42 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Agent Ready: {{ .Content.AgentName }}</h1><p>Your Stratum Agent is ready. Copy one thing, paste it, done.</p></div></header>
+
+<div class="admin-section admin-form-card">
+  <div style="background:#fef3c7; border:1px solid #f59e0b; padding:1rem; border-radius:6px; margin-bottom:1rem;">
+    <strong>Copy this token now.</strong> It will not be shown again. <br>
+    <code style="word-break:break-all; font-size:1.1em;">{{ .Content.RawToken }}</code>
+  </div>
+
+  <h2>Connect your AI assistant</h2>
+  <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+    <button class="button" onclick="document.getElementById('client-cursor').style.display='block'">Cursor</button>
+    <button class="button" onclick="document.getElementById('client-claude').style.display='block'">Claude</button>
+    <button class="button" onclick="document.getElementById('client-generic').style.display='block'">Generic MCP</button>
+  </div>
+
+  <h3>Connection details</h3>
+  <p><strong>Endpoint:</strong> <code>{{ .Content.Endpoint }}</code></p>
+  <p><strong>Token:</strong> <code>{{ .Content.RawToken }}</code></p>
+
+  <div class="admin-page-actions">
+    <button class="button button-primary" onclick="navigator.clipboard.writeText(document.getElementById('mcp-config').textContent); window.stratumToast && window.stratumToast('Copied MCP config','success')">Copy MCP config</button>
+    <button class="button" onclick="navigator.clipboard.writeText(document.getElementById('setup-prompt').textContent); window.stratumToast && window.stratumToast('Copied setup prompt','success')">Copy setup prompt</button>
+  </div>
+
+  <h4>MCP config (ready to copy)</h4>
+  <pre id="mcp-config" style="background:#f3f4f6; padding:1rem; overflow:auto;">{{ .Content.MCPConfig }}</pre>
+
+  <h4>Setup prompt (for coding agents that edit their own config)</h4>
+  <div style="background:#fef9c3; border:1px solid #eab308; padding:0.5rem; margin-bottom:0.5rem; font-size:0.9em;">This prompt contains your Agent token. Only paste it into an AI application you trust.</div>
+  <pre id="setup-prompt" style="background:#f3f4f6; padding:1rem; white-space:pre-wrap;">{{ .Content.SetupPrompt }}</pre>
+
+  <details style="margin-top:1rem;"><summary>Advanced / Manual setup</summary>
+    <p>Endpoint: <code>{{ .Content.Endpoint }}</code></p>
+    <p>Header: <code>Authorization: Bearer &lt;token&gt;</code></p>
+    <p>Transport: Streamable HTTP (POST {{ .Content.Endpoint }})</p>
+  </details>
+
+  <p style="margin-top:1rem;"><strong>Try asking your AI:</strong> “Connect to Stratum and tell me the site name.”</p>
+  <p><a class="button" href="/admin/settings/agents/{{ .Content.AgentID }}">Done → Agent detail</a> <a class="button" href="/admin/settings/agents">Back to Agents</a></p>
+</div>
+{{ end }}

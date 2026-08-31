@@ -218,7 +218,7 @@
               <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px 10px;border:1px solid var(--ui-border);border-radius:var(--ui-radius-md);background:var(--ui-surface)">
                 <div style="display:grid;gap:2px;min-width:0">
                   <span style="font-weight:600;font-size:13px">Revision {{ .Number }} {{ if .Published }}<span class="status-indicator status-indicator--success">Published</span>{{ else }}<span class="status-indicator status-indicator--muted">Draft</span>{{ end }}</span>
-                  <span class="muted" style="font-size:12px">{{ .CreatedAtFormatted }}</span>
+                  <span class="muted" style="font-size:12px">{{ .CreatedAtFormatted }} · {{ .CreatedByLabel }}</span>
                 </div>
                 <div class="admin-page-actions"><a class="button button-small" href="{{ $.Content.Action }}/revisions/{{ .ID }}/preview" target="_blank" rel="noopener">Preview</a>{{ if not .Published }}<button class="button button-small" type="submit" formaction="{{ $.Content.Action }}/revisions/{{ .ID }}/restore">Restore</button>{{ end }}</div>
               </div>

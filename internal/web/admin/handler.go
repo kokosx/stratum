@@ -14,6 +14,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kokosx/stratum/internal/agents"
+	"github.com/kokosx/stratum/internal/audit"
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/blocks"
@@ -21,6 +23,7 @@ import (
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/creator"
 	"github.com/kokosx/stratum/internal/customcode"
+	"github.com/kokosx/stratum/internal/entryops"
 	"github.com/kokosx/stratum/internal/forms"
 	wordpress "github.com/kokosx/stratum/internal/importer/wordpress"
 	"github.com/kokosx/stratum/internal/layouts"
@@ -78,6 +81,10 @@ type Handler struct {
 	toolsImportCompleteTemplate  *template.Template
 	toolsBackupsTemplate         *template.Template
 	customCodeTemplate           *template.Template
+	agentsTemplate               *template.Template
+	agentFormTemplate            *template.Template
+	agentDetailTemplate          *template.Template
+	agentOnboardingTemplate      *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -94,7 +101,14 @@ type Handler struct {
 	creator                      *creator.Service
 	customCode                   *customcode.Service
 	importManager                *wordpress.WordPressImportManager
+	audit                        *audit.Service
+	agents                       *agents.Service
+	entryOps                     *entryops.Service
 }
+
+func (h *Handler) Agents() *agents.Service   { return h.agents }
+func (h *Handler) EntryOps() *entryops.Service { return h.entryOps }
+func (h *Handler) Audit() *audit.Service     { return h.audit }
 
 type LayoutData struct {
 	Title         string
@@ -355,6 +369,22 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	agentsTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "agents", "agents.html")
+	if err != nil {
+		return nil, err
+	}
+	agentFormTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "agent_form", "agents_form.html")
+	if err != nil {
+		return nil, err
+	}
+	agentDetailTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "agent_detail", "agents_detail.html")
+	if err != nil {
+		return nil, err
+	}
+	agentOnboardingTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "agent_onboarding", "agents_onboarding.html")
+	if err != nil {
+		return nil, err
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
@@ -371,6 +401,11 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	}
 	importerForManager := wordpress.New(database, queries, blockRegistry, mediaService, dataDir)
 	importManager := wordpress.NewManager(dataDir, importerForManager, runtime)
+	auditService := audit.New(database, queries)
+	agentsService := agents.New(database, queries)
+	entryOpsService := entryops.New(database, queries, blockRegistry, publisher, auditService, runtime)
+	entryOpsService.SetMedia(mediaService)
+	entryOpsService.SetSearchRefresh(searchService.RefreshEntry)
 	return &Handler{
 		database:                     database,
 		queries:                      queries,
@@ -414,6 +449,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		toolsImportCompleteTemplate:  toolsImportCompleteTemplate,
 		toolsBackupsTemplate:         toolsBackupsTemplate,
 		customCodeTemplate:           customCodeTemplate,
+		agentsTemplate:               agentsTemplate,
+		agentFormTemplate:            agentFormTemplate,
+		agentDetailTemplate:          agentDetailTemplate,
+		agentOnboardingTemplate:      agentOnboardingTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,
@@ -428,6 +467,9 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		creator:                      creator.NewService(database, queries, blockRegistry, mediaService, themeRuntime, runtime, searchService),
 		customCode:                   customcode.New(database, runtime.Pages),
 		importManager:                importManager,
+		audit:                        auditService,
+		agents:                       agentsService,
+		entryOps:                     entryOpsService,
 	}, nil
 }
 
@@ -595,6 +637,14 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/settings/custom-code/{id}", h.requireAuth(h.updateCustomCodeSnippet))
 	mux.HandleFunc("POST /admin/settings/custom-code/{id}/delete", h.requireAuth(h.deleteCustomCodeSnippet))
 	mux.HandleFunc("POST /admin/settings/custom-code/{id}/toggle", h.requireAuth(h.toggleCustomCodeSnippet))
+	mux.HandleFunc("GET /admin/settings/agents", h.requireAdmin(h.listAgents))
+	mux.HandleFunc("GET /admin/settings/agents/new", h.requireAdmin(h.newAgentForm))
+	mux.HandleFunc("POST /admin/settings/agents", h.requireAdmin(h.createAgent))
+	mux.HandleFunc("GET /admin/settings/agents/{id}", h.requireAdmin(h.viewAgent))
+	mux.HandleFunc("POST /admin/settings/agents/{id}", h.requireAdmin(h.updateAgent))
+	mux.HandleFunc("POST /admin/settings/agents/{id}/tokens", h.requireAdmin(h.createAgentToken))
+	mux.HandleFunc("POST /admin/settings/agents/{id}/tokens/{tokenID}/revoke", h.requireAdmin(h.revokeAgentToken))
+	mux.HandleFunc("POST /admin/settings/agents/{id}/toggle", h.requireAdmin(h.toggleAgentStatus))
 	mux.HandleFunc("GET /admin/appearance/templates/{id}/custom-code", h.requireAuth(h.templateCustomCode))
 	mux.HandleFunc("POST /admin/appearance/templates/{id}/custom-code", h.requireAuth(h.createCustomCodeSnippet))
 	mux.HandleFunc("GET /admin/media", h.requireAuth(h.mediaLibrary))

@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/kokosx/stratum/internal/auth"
+	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/content"
 	"github.com/kokosx/stratum/internal/document"
+	"github.com/kokosx/stratum/internal/entryops"
 	"github.com/kokosx/stratum/internal/layouts"
 	"github.com/kokosx/stratum/internal/media"
 	"github.com/kokosx/stratum/internal/preview"
@@ -158,6 +160,9 @@ type revisionHistoryItem struct {
 	CreatedAt          int64
 	CreatedAtFormatted string
 	Published          bool
+	CreatedBy          string
+	CreatedByKind      string
+	CreatedByLabel     string
 }
 
 type hierarchyParentOption struct {
@@ -532,7 +537,13 @@ func (h *Handler) loadLayoutTemplateOptions(ctx context.Context, contentTypeID s
 // writeEntry persists a new revision for an Entry and optionally publishes it.
 // It is shared by Pages and Posts; contentType selects the entry kind and
 // publish controls whether the public document is updated.
+// When entryOps is configured, it delegates to the shared application service
+// (single validated path for Admin and MCP). Otherwise it falls back to the
+// legacy inline implementation for test harnesses that construct minimal handlers.
 func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID string, input entryInput, create, publish bool) error {
+	if h.entryOps != nil {
+		return h.writeEntryViaOps(ctx, contentType, authorID, entryID, input, create, publish)
+	}
 	if h.database == nil {
 		return errors.New("admin database is not configured")
 	}
@@ -877,6 +888,136 @@ func (h *Handler) writeEntry(ctx context.Context, contentType, authorID, entryID
 	return nil
 }
 
+func (h *Handler) actorFromUserID(ctx context.Context, userID string) authz.Actor {
+	// Load user to resolve role for authorization
+	if userID == "" {
+		return authz.Actor{ID: userID, Kind: authz.ActorUser, Role: string(authz.RoleAdmin)}
+	}
+	if h.queries != nil {
+		if u, err := h.queries.GetUserByID(ctx, userID); err == nil {
+			return authz.Actor{ID: u.ID, Kind: authz.ActorUser, Role: u.Role, DisplayName: u.Email}
+		}
+	}
+	// Fallback for test harnesses that call writeEntry with dummy "author" id without creating a user
+	if userID == "author" || userID == "editor" {
+		return authz.Actor{ID: userID, Kind: authz.ActorSystem, DisplayName: userID}
+	}
+	return authz.Actor{ID: userID, Kind: authz.ActorUser, Role: string(authz.RoleAdmin)}
+}
+
+func (h *Handler) patchFromInput(input entryInput) entryops.EntryPatch {
+	patch := entryops.EntryPatch{}
+	t := strings.TrimSpace(input.title)
+	patch.Title = &t
+	s := strings.TrimSpace(input.slug)
+	if s == "" {
+		s = slugify(t)
+	}
+	// Always send slug for create; for update patch semantics we still send it
+	patch.Slug = &s
+	e := input.excerpt
+	patch.Excerpt = &e
+	st := input.seoTitle
+	patch.SEOTitle = &st
+	sd := input.seoDescription
+	patch.SEODescription = &sd
+	cu := input.canonicalURL
+	patch.CanonicalURL = &cu
+	fm := input.featuredMediaID
+	patch.FeaturedMediaID = &fm
+	sm := input.socialMediaID
+	patch.SocialMediaID = &sm
+	if input.robotsIndex != nil {
+		b := *input.robotsIndex
+		patch.RobotsIndex = &b
+	}
+	if input.robotsFollow != nil {
+		b := *input.robotsFollow
+		patch.RobotsFollow = &b
+	}
+	sc := input.schemaMode
+	patch.SchemaMode = &sc
+	if input.documentJSON != "" {
+		if doc, err := document.Decode([]byte(input.documentJSON)); err == nil {
+			patch.Document = doc
+			patch.DocumentSet = true
+		}
+	}
+	patch.Fields = input.fields
+	patch.FieldsSet = true
+	if input.layoutTemplateID != "" {
+		lt := input.layoutTemplateID
+		patch.LayoutTemplateID = &lt
+	} else {
+		empty := ""
+		patch.LayoutTemplateID = &empty
+	}
+	patch.LayoutSet = true
+	pr := input.parentEntryID
+	patch.ParentEntryID = &pr
+	patch.ParentSet = true
+	mo := input.menuOrder
+	patch.MenuOrder = &mo
+	vis := input.visibility
+	if vis == "" {
+		vis = "public"
+	}
+	patch.Visibility = &vis
+	if strings.TrimSpace(input.password) != "" {
+		pw := input.password
+		patch.Password = &pw
+		patch.PasswordSet = true
+	}
+	sticky := input.sticky
+	patch.Sticky = &sticky
+	ce := input.commentsEnabled
+	patch.CommentsEnabled = &ce
+	rs := input.reviewState
+	if rs == "" {
+		rs = "draft"
+	}
+	patch.ReviewState = &rs
+	patch.TaxonomyValues = input.taxonomyValues
+	patch.TaxonomySet = true
+	return patch
+}
+
+func (h *Handler) writeEntryViaOps(ctx context.Context, contentType, authorID, entryID string, input entryInput, create, publish bool) error {
+	actor := h.actorFromUserID(ctx, authorID)
+	patch := h.patchFromInput(input)
+	if create {
+		_, revID, _, err := h.entryOps.CreateDraft(ctx, actor, contentType, entryID, patch)
+		if err != nil {
+			return err
+		}
+		if publish {
+			if _, err := h.entryOps.Publish(ctx, actor, entryID, revID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// Update path: need expected revision
+	latest, err := h.queries.GetLatestEntryRevision(ctx, entryID)
+	if err != nil {
+		return err
+	}
+	_, _, _, err = h.entryOps.UpdateDraft(ctx, actor, entryID, latest.ID, patch)
+	if err != nil {
+		return err
+	}
+	if publish {
+		newLatest, err := h.queries.GetLatestEntryRevision(ctx, entryID)
+		if err != nil {
+			return err
+		}
+		if _, err := h.entryOps.Publish(ctx, actor, entryID, newLatest.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func revisionMatchesInput(ctx context.Context, q *db.Queries, revision db.EntryRevision, input entryInput, documentJSON, fieldsJSON string, excerpt, seoTitle, seoDescription, canonicalURL, featuredMediaID, socialMediaID sql.NullString, robotsIndex, robotsFollow sql.NullInt64, schemaMode string, layoutTemplateID sql.NullString, termIDs []string, visibility string, passwordHash sql.NullString, sticky int64, reviewState string, commentsEnabled int64) (bool, error) {
 	if revision.Slug != input.slug || revision.Title != input.title || revision.DocumentJson != documentJSON || revision.FieldsJson != fieldsJSON || revision.Excerpt != excerpt || revision.SeoTitle != seoTitle || revision.SeoDescription != seoDescription || revision.CanonicalUrl != canonicalURL || revision.FeaturedMediaID != featuredMediaID || revision.SocialMediaID != socialMediaID || revision.SeoRobotsIndex != robotsIndex || revision.SeoRobotsFollow != robotsFollow || revision.SchemaMode != schemaMode || revision.LayoutTemplateID != layoutTemplateID || revision.ParentEntryID != nullableString(input.parentEntryID) || revision.MenuOrder != input.menuOrder || revision.Visibility != visibility || revision.ReviewState != reviewState || revision.Sticky != sticky || revision.CommentsEnabled != commentsEnabled {
 		return false, nil
@@ -1014,7 +1155,33 @@ func (h *Handler) revisionHistory(ctx context.Context, entry db.Entry) []revisio
 	items := make([]revisionHistoryItem, 0, len(revisions))
 	for _, revision := range revisions {
 		formatted := time.Unix(revision.CreatedAt, 0).In(loc).Format("02 Jan 2006, 15:04")
-		items = append(items, revisionHistoryItem{ID: revision.ID, Number: revision.RevisionNumber, Title: revision.Title, Slug: revision.Slug, CreatedAt: revision.CreatedAt, CreatedAtFormatted: formatted, Published: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String == revision.ID})
+		kind := revision.CreatedByKind
+		if kind == "" {
+			kind = "user"
+		}
+		by := revision.CreatedBy.String
+		label := by
+		if kind == "agent" {
+			if agent, err := h.queries.GetAgent(ctx, by); err == nil {
+				label = agent.Name + " · via MCP"
+			} else {
+				label = by + " · via MCP"
+			}
+		} else if kind == "system" {
+			label = "System"
+		} else if by != "" {
+			if u, err := h.queries.GetUserByID(ctx, by); err == nil {
+				label = u.Email
+			}
+		} else {
+			label = "Unknown"
+		}
+		items = append(items, revisionHistoryItem{
+			ID: revision.ID, Number: revision.RevisionNumber, Title: revision.Title, Slug: revision.Slug,
+			CreatedAt: revision.CreatedAt, CreatedAtFormatted: formatted,
+			Published: entry.PublishedRevisionID.Valid && entry.PublishedRevisionID.String == revision.ID,
+			CreatedBy: by, CreatedByKind: kind, CreatedByLabel: label,
+		})
 	}
 	return items
 }

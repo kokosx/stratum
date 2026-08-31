@@ -1,0 +1,58 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>{{ .Content.Agent.Name }}</h1><p>Agent details and credentials.</p></div><a class="button" href="/admin/settings/agents">Back to Agents</a></header>
+
+<section class="admin-section admin-form-card">
+  <h2>Update Agent</h2>
+  <form method="post" action="/admin/settings/agents/{{ .Content.Agent.ID }}" class="field-grid">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <div class="form-group"><label class="form-label" for="agent-name">Name</label><input class="form-control" type="text" id="agent-name" name="name" value="{{ .Content.Agent.Name }}" required></div>
+    <div class="form-group"><label class="form-label" for="agent-author">Default author</label>
+      <select class="form-control" id="agent-author" name="default_author_id">
+        <option value="">— None —</option>
+        {{ range .Content.Users }}<option value="{{ .ID }}" {{ if eq $.Content.Agent.DefaultAuthorID.String .ID }}selected{{ end }}>{{ .Email }}</option>{{ end }}
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label" for="agent-status">Status</label>
+      <select class="form-control" id="agent-status" name="status"><option value="active" {{ if eq .Content.Agent.Status "active" }}selected{{ end }}>Active</option><option value="disabled" {{ if eq .Content.Agent.Status "disabled" }}selected{{ end }}>Disabled</option></select>
+    </div>
+    <div class="admin-page-actions"><button class="button button-primary" type="submit">Save</button></div>
+  </form>
+</section>
+
+<section class="admin-section">
+  <h2>Tokens</h2>
+  {{ if .Content.Tokens }}
+  <table class="data-table">
+    <thead><tr><th>Prefix</th><th>Label</th><th>Created</th><th>Last used</th><th>Actions</th></tr></thead>
+    <tbody>
+    {{ range .Content.Tokens }}
+      <tr><td><code>{{ .TokenPrefix }}</code></td><td>{{ .Label }}</td><td>{{ .CreatedAt }}</td><td>{{ if .LastUsedAt.Valid }}{{ .LastUsedAt.Int64 }}{{ else }}—{{ end }}</td>
+        <td>
+          {{ if not .RevokedAt.Valid }}<form method="post" action="/admin/settings/agents/{{ $.Content.Agent.ID }}/tokens/{{ .ID }}/revoke"><input type="hidden" name="csrf_token" value="{{ $.Content.CSRFToken }}"><button class="button button-small" type="submit">Revoke</button></form>{{ else }}Revoked{{ end }}
+        </td>
+      </tr>
+    {{ end }}
+    </tbody>
+  </table>
+  {{ else }}<p class="muted">No tokens.</p>{{ end }}
+  <form method="post" action="/admin/settings/agents/{{ .Content.Agent.ID }}/tokens" class="field-grid" style="margin-top:1rem;">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <div class="form-group"><label class="form-label" for="token-label">New token label</label><input class="form-control" type="text" id="token-label" name="label" placeholder="Claude laptop"></div>
+    <div class="admin-page-actions"><button class="button" type="submit">Create token</button></div>
+  </form>
+</section>
+
+<section class="admin-section">
+  <h2>Permissions</h2>
+  <form method="post" action="/admin/settings/agents/{{ .Content.Agent.ID }}" class="field-grid">
+    <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+    <input type="hidden" name="name" value="{{ .Content.Agent.Name }}">
+    <input type="hidden" name="default_author_id" value="{{ .Content.Agent.DefaultAuthorID.String }}">
+    <input type="hidden" name="status" value="{{ .Content.Agent.Status }}">
+    <h3>Content permissions (checked = granted)</h3>
+    <p class="muted">Use * for all, or content_type:&lt;id&gt; per type. Current grants:</p>
+    <ul>{{ range $k, $v := .Content.Grants }}{{ range $scope, $ok := $v }}<li>{{ $k }} : {{ $scope }}</li>{{ end }}{{ else }}<li>No grants</li>{{ end }}</ul>
+    <p class="muted">To update, use the form on the New Agent page or edit via the grant checkboxes (not yet editable inline — recreate agent).</p>
+  </form>
+</section>
+{{ end }}

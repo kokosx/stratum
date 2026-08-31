@@ -1,0 +1,62 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>{{ if .Content.IsNew }}New Agent{{ else }}Edit Agent{{ end }}</h1><p>Choose a name, default author and permissions.</p></div><a class="button" href="/admin/settings/agents">Back to Agents</a></header>
+
+<form method="post" action="{{ if .Content.IsNew }}/admin/settings/agents{{ else }}/admin/settings/agents/{{ .Content.Agent.ID }}{{ end }}" class="field-grid">
+  <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
+  <div class="form-group"><label class="form-label" for="agent-name">Name</label><input class="form-control" type="text" id="agent-name" name="name" value="{{ if .Content.Agent }}{{ .Content.Agent.Name }}{{ end }}" required placeholder="Claude SEO"><p class="form-help">Human-readable name shown in revision history.</p></div>
+  <div class="form-group"><label class="form-label" for="agent-author">Default author</label>
+    <select class="form-control" id="agent-author" name="default_author_id">
+      <option value="">— No default author —</option>
+      {{ range .Content.Users }}<option value="{{ .ID }}" {{ if eq $.Content.Agent.DefaultAuthorID.String .ID }}selected{{ end }}>{{ .Email }}</option>{{ end }}
+    </select>
+    <p class="form-help">Used as the public editorial author when this agent creates content.</p>
+  </div>
+
+  <h3>Content permissions</h3>
+  <p class="muted">Grant read/create/edit/publish/trash per content type. Agents never gain users, Custom Code or delete.</p>
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Permission</th>
+        {{ range .Content.ContentTypes }}<th>{{ .PluralName }} ({{ .ID }})</th>{{ end }}
+        <th>All (*)</th>
+      </tr></thead>
+      <tbody>
+        <tr><td>Read</td>
+          {{ range $ct := .Content.ContentTypes }}<td><label><input type="checkbox" name="grant_entries.read__{{ $ct.ID }}" value="on"> Read</label></td>{{ end }}
+          <td><label><input type="checkbox" name="grant_entries.read" value="*"> All</label></td>
+        </tr>
+        <tr><td>Create</td>
+          {{ range $ct := .Content.ContentTypes }}<td><label><input type="checkbox" name="grant_entries.create__{{ $ct.ID }}" value="on"> Create</label></td>{{ end }}
+          <td><label><input type="checkbox" name="grant_entries.create" value="*"> All</label></td>
+        </tr>
+        <tr><td>Edit</td>
+          {{ range $ct := .Content.ContentTypes }}<td><label><input type="checkbox" name="grant_entries.edit__{{ $ct.ID }}" value="on"> Edit</label></td>{{ end }}
+          <td><label><input type="checkbox" name="grant_entries.edit" value="*"> All</label></td>
+        </tr>
+        <tr><td>Publish</td>
+          {{ range $ct := .Content.ContentTypes }}<td><label><input type="checkbox" name="grant_entries.publish__{{ $ct.ID }}" value="on"> Publish</label></td>{{ end }}
+          <td><label><input type="checkbox" name="grant_entries.publish" value="*"> All</label></td>
+        </tr>
+        <tr><td>Trash</td>
+          {{ range $ct := .Content.ContentTypes }}<td><label><input type="checkbox" name="grant_entries.trash__{{ $ct.ID }}" value="on"> Trash</label></td>{{ end }}
+          <td><label><input type="checkbox" name="grant_entries.trash" value="*"> All</label></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Other permissions</h3>
+  <div class="field-grid">
+    <label><input type="checkbox" name="grant_media.read" value="on"> media.read</label>
+    <label><input type="checkbox" name="grant_media.upload" value="on"> media.upload</label>
+    <label><input type="checkbox" name="grant_media.edit" value="on"> media.edit</label>
+    <label><input type="checkbox" name="grant_taxonomies.read" value="on"> taxonomies.read</label>
+    <label><input type="checkbox" name="grant_taxonomies.assign" value="on"> taxonomies.assign</label>
+    <label><input type="checkbox" name="grant_content_types.read" value="on" checked> content_types.read</label>
+    <label><input type="checkbox" name="grant_blocks.read" value="on" checked> blocks.read</label>
+    <label><input type="checkbox" name="grant_site.read" value="on" checked> site.read</label>
+  </div>
+
+  <div class="admin-page-actions"><button class="button button-primary" type="submit">{{ if .Content.IsNew }}Create Agent &amp; Get Token{{ else }}Save Agent{{ end }}</button></div>
+</form>
+{{ end }}

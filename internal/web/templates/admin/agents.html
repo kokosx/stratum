@@ -1,0 +1,23 @@
+{{ define "content" }}
+<header class="admin-page-header"><div><h1>Agents</h1><p>Service identities for AI assistants and automations.</p></div><div><a class="button button-primary" href="/admin/settings/agents/new">New Agent</a></div></header>
+
+{{ if .Content.Agents }}
+<div class="data-table-wrap">
+  <table class="data-table">
+    <thead><tr><th>Name</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+    <tbody>
+    {{ range .Content.Agents }}
+      <tr>
+        <td class="data-table__primary">{{ .Name }}</td>
+        <td>{{ .Status }}</td>
+        <td class="muted">{{ .CreatedAt }}</td>
+        <td><a class="button button-small" href="/admin/settings/agents/{{ .ID }}">Open</a></td>
+      </tr>
+    {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ else }}
+<p class="muted">No agents yet. Create your first agent to connect an AI assistant.</p>
+{{ end }}
+{{ end }}
