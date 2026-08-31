@@ -204,12 +204,12 @@ func TestV2AnchorStaticGuards(t *testing.T) {
 			if strings.Contains(body, "getElementById") && strings.Contains(body, "findAnchorTarget") {
 				t.Fatalf("canvas.js should not contain anchor target lookup")
 			}
-			// Must contain generic inert handling and visualRoot lookup
+			// Must contain generic inert handling (no visualRoot abstraction)
 			if !strings.Contains(body, "preventDefault") || !strings.Contains(body, "selectInstance") {
 				t.Fatalf("canvas.js should contain inert preventDefault+selectInstance")
 			}
-			if !strings.Contains(body, "getVisualRootForBlock") || !strings.Contains(body, "resolveVisualElements") {
-				t.Fatalf("canvas.js should contain generic visualRoot lookup")
+			if strings.Contains(body, "getVisualRootForBlock") || strings.Contains(body, "resolveVisualElements") || strings.Contains(body, "visualRoot") || strings.Contains(body, "visualElement") {
+				t.Fatalf("canvas.js should not contain visualRoot abstraction after corrective")
 			}
 			if strings.Contains(body, "nodeIdToBlockCache") {
 				t.Fatalf("canvas.js should not contain nodeIdToBlockCache after marker carries block")
@@ -218,7 +218,7 @@ func TestV2AnchorStaticGuards(t *testing.T) {
 				t.Fatalf("canvas.js should not contain data-stratum-editor-visual-root attribute")
 			}
 		} else {
-			// state.js must expose publicUrl but NOT dead publicPath/Search/Origin (M2.5 cleanup §24)
+			// state.js must expose publicUrl but NOT dead publicPath/Search/Origin
 			if !strings.Contains(body, "publicUrl") {
 				t.Fatalf("state.js missing publicUrl")
 			}
@@ -228,9 +228,8 @@ func TestV2AnchorStaticGuards(t *testing.T) {
 			if !strings.Contains(body, "publicPreviewUrl") {
 				t.Fatalf("state.js should derive from actions.publicPreviewUrl")
 			}
-			// Must expose visualRoot helper and displayNameForBlock
-			if !strings.Contains(body, "getVisualRootForBlock") {
-				t.Fatalf("state.js should expose getVisualRootForBlock")
+			if strings.Contains(body, "visualRoot") || strings.Contains(body, "getVisualRootForBlock") {
+				t.Fatalf("state.js should not contain visualRoot after corrective")
 			}
 			if !strings.Contains(body, "displayNameForBlock") {
 				t.Fatalf("state.js should contain displayNameForBlock")

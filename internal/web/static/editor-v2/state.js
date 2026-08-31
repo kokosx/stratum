@@ -181,36 +181,6 @@ export function friendlyLabelForUnknown() {
   return "Template element";
 }
 
-const visualRootLookup = new Map();
-
-function buildVisualRootMap() {
-  if (visualRootLookup.size) return visualRootLookup;
-  const candidates = [];
-  if (Array.isArray(bootstrap.catalog)) candidates.push(...bootstrap.catalog);
-  if (Array.isArray(bootstrap.definitions)) candidates.push(...bootstrap.definitions);
-  for (const item of candidates) {
-    if (!item || !item.block) continue;
-    const key = `${item.block}@${item.version}`;
-    const vr = item.schema?.editor?.visualRoot;
-    if (vr && typeof vr === "string" && vr.trim() !== "") {
-      visualRootLookup.set(key, vr.trim());
-    } else if (!visualRootLookup.has(key)) {
-      // explicitly store empty to avoid re-search
-      visualRootLookup.set(key, "");
-    }
-  }
-  return visualRootLookup;
-}
-
-export function getVisualRootForBlock(block, version) {
-  if (!block || typeof block !== "string") return "";
-  const v = version != null ? String(version) : "";
-  const key = v ? `${block}@${v}` : block;
-  const map = buildVisualRootMap();
-  if (map.has(key)) return map.get(key) || "";
-  return "";
-}
-
 export function clearSelection() {
   sel.current = null;
 }

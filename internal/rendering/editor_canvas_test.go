@@ -221,7 +221,9 @@ func TestMarkerCarriesBlockAndVersion(t *testing.T) {
 	}
 }
 
-func TestCustomBlockVisualRootIsMetadataDriven(t *testing.T) {
+func TestCustomBlockNaturalBlockBox(t *testing.T) {
+	// Regression: natural SDT block box is the rendered block root (wrapper), not inner element.
+	// After removing visualRoot, Button/Image/custom blocks must use their full block markup.
 	renderer, _ := NewRenderer([]Definition{
 		{Namespace: "custom", Name: "demo-widget", Version: 1, RendererType: "template", Template: `<div class="technical-wrapper"><span class="actual-widget">Demo</span></div>`},
 		{Namespace: "core", Name: "section", Version: 1, RendererType: "template", Template: `<section>{{.Children}}</section>`},
@@ -236,23 +238,41 @@ func TestCustomBlockVisualRootIsMetadataDriven(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	s := string(html)
-	// Marker must carry custom block identity without generic renderer branching
 	if !strings.Contains(s, "custom%2Fdemo-widget:1") {
 		t.Fatalf("custom block marker should contain block/version, got %s", s)
 	}
-	// Generic renderer must not inject visual-root attribute for custom block
 	if strings.Contains(s, "data-stratum-editor-visual-root") {
-		t.Fatalf("custom block should not have hardcoded visual root injection, got %s", s)
+		t.Fatalf("generic renderer must not inject visualRoot, got %s", s)
 	}
-	// Ensure technical wrapper and actual widget are present but untouched
 	if !strings.Contains(s, `class="technical-wrapper"`) || !strings.Contains(s, `class="actual-widget"`) {
 		t.Fatalf("custom block markup should be untouched: %s", s)
 	}
-	// Ensure renderer output for custom block is generic: no block-name branch strings remain
-	// (we already checked no visual-root attr; additionally ensure public clean)
 	rcPublic := RenderContext{Mode: ModePublic}
 	htmlPub, _ := renderer.RenderDocumentContext(doc, rcPublic)
 	if strings.Contains(string(htmlPub), "stratum-node") {
 		t.Fatalf("public render should not contain markers")
+	}
+}
+
+func TestNaturalBlockBoundsNotVisualRoot(t *testing.T) {
+	// Button's wrapper is the correct block box (alignment/width/spacing live there).
+	// Hover and selection must share identical geometry (union of block roots), not tight inner <a>.
+	renderer, _ := NewRenderer([]Definition{
+		{Namespace: "core", Name: "button", Version: 1, RendererType: "template", Template: `<div class="stratum-btn-wrap stratum-align-left"><a class="stratum-button">Click</a></div>`},
+	}, nil)
+	doc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "b1", Block: "core/button", Version: 1, Props: json.RawMessage(`{"label":"Click","url":"/"}`), Settings: json.RawMessage(`{}`)}}}
+	ids := map[string]struct{}{"b1": {}}
+	rc := RenderContext{Mode: ModePreview, IsPreview: true, Editor: &EditorCanvas{Enabled: true, EditableNodeIDs: ids, InstanceScope: "root"}}
+	html, _ := renderer.RenderDocumentContext(doc, rc)
+	s := string(html)
+	if !strings.Contains(s, "core%2Fbutton:1") {
+		t.Fatalf("marker should carry block/version")
+	}
+	// Ensure wrapper markup is present and not mutated
+	if !strings.Contains(s, `stratum-btn-wrap`) || !strings.Contains(s, `stratum-button`) {
+		t.Fatalf("button markup missing: %s", s)
+	}
+	if strings.Contains(s, "data-stratum-editor-visual-root") {
+		t.Fatalf("must not inject visualRoot")
 	}
 }

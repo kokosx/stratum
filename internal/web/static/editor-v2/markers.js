@@ -86,7 +86,7 @@ export function parseEndComment(data) {
 
 // Build index from iframe document.
 // Returns { index: Map<instanceKey, RenderedNodeInstance>, elementToNode: WeakMap<Element, RenderedNodeInstance> }
-// RenderedNodeInstance = { nodeId, instanceKey, block, version, editable, ownerType, ownerId, ownerLabel, rootElements: Element[], visualElement: Element|null }
+// RenderedNodeInstance = { nodeId, instanceKey, block, version, editable, ownerType, ownerId, ownerLabel, rootElements: Element[] }
 export function buildMarkerIndex(doc) {
   const index = new Map();
   const elementToNode = new WeakMap();
@@ -129,7 +129,6 @@ export function buildMarkerIndex(doc) {
           startComment: node,
           depth: stack.length,
           rootElements: [],
-          visualElement: null,
         };
         stack.push(info);
         // Keep reference for later end
@@ -157,7 +156,6 @@ export function buildMarkerIndex(doc) {
           ownerId: startInfo.ownerId,
           ownerLabel: startInfo.ownerLabel,
           rootElements: startInfo.rootElements.slice(),
-          visualElement: startInfo.visualElement || null,
         };
         index.set(startInfo.instanceKey, instance);
         if (!nodeToKeys.has(startInfo.nodeId)) nodeToKeys.set(startInfo.nodeId, []);
@@ -200,7 +198,6 @@ export function buildMarkerIndex(doc) {
         ownerId: leftover.ownerId,
         ownerLabel: leftover.ownerLabel,
         rootElements: leftover.rootElements.slice(),
-        visualElement: leftover.visualElement || null,
       };
       index.set(leftover.instanceKey, instance);
       if (!nodeToKeys.has(leftover.nodeId)) nodeToKeys.set(leftover.nodeId, []);
@@ -209,61 +206,6 @@ export function buildMarkerIndex(doc) {
   }
 
   return { index, elementToNode, nodeToKeys, instances: Array.from(index.values()) };
-}
-
-// Find visual element inside same instance. Selector is block-defined visualRoot.
-// Must not escape into nested child instance: candidate's deepest owner must be same instanceKey.
-export function findVisualElementForInstance(instance, selector, elementToNode) {
-  if (!instance || !selector || typeof selector !== "string") return null;
-  const sel = selector.trim();
-  if (sel === "") return null;
-  if (!instance.rootElements || instance.rootElements.length === 0) return null;
-  for (const root of instance.rootElements) {
-    if (!root) continue;
-    try {
-      if (root.matches && typeof root.matches === "function" && root.matches(sel)) {
-        const owner = elementToNode ? elementToNode.get(root) : null;
-        if (!owner || owner.instanceKey === instance.instanceKey) return root;
-      }
-    } catch (_) {
-      return null; // invalid selector -> fallback
-    }
-    try {
-      const el = root.querySelector(sel);
-      if (el) {
-        const owner = elementToNode ? elementToNode.get(el) : null;
-        if (!owner || owner.instanceKey === instance.instanceKey) return el;
-        // If first match belongs to nested instance, try next distinct match via querySelectorAll fallback
-        const list = root.querySelectorAll(sel);
-        for (const cand of list) {
-          const o = elementToNode ? elementToNode.get(cand) : null;
-          if (!o || o.instanceKey === instance.instanceKey) return cand;
-        }
-      }
-    } catch (_) {
-      return null; // SyntaxError -> invalid selector, fallback
-    }
-  }
-  return null;
-}
-
-// Resolve visualRoot for all instances using a lookup function.
-// getVisualRoot(block, version) => selector string | "".
-// Lazily cached per instance; call once after buildMarkerIndex. Invalid/non-matching falls back to natural bounds.
-export function resolveVisualElements(index, elementToNode, getVisualRoot) {
-  if (!index || typeof getVisualRoot !== "function") return;
-  for (const inst of index.values()) {
-    if (inst.visualElement) continue; // already resolved
-    let selector = "";
-    try {
-      selector = getVisualRoot(inst.block, inst.version) || "";
-    } catch (_) {
-      selector = "";
-    }
-    if (!selector) continue;
-    const el = findVisualElementForInstance(inst, selector, elementToNode);
-    if (el) inst.visualElement = el;
-  }
 }
 
 // Visual bounds helpers
@@ -294,15 +236,6 @@ export function unionRects(rects) {
 
 export function visualRectForInstance(instance, doc) {
   if (!instance) return null;
-  // Prefer editor visual root if present — actual widget bounds, not technical wrapper.
-  if (instance.visualElement && typeof instance.visualElement.getBoundingClientRect === "function") {
-    if (!doc || doc.contains(instance.visualElement)) {
-      try {
-        const r = instance.visualElement.getBoundingClientRect();
-        if (r && (r.width > 0 || r.height > 0)) return r;
-      } catch (_) {}
-    }
-  }
   if (!instance.rootElements || instance.rootElements.length === 0) {
     // No rendered output — M2: do not show synthetic placeholder
     return null;

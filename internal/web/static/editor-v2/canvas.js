@@ -1,7 +1,7 @@
 // canvas.js — iframe interaction lifecycle for V2
-import { buildMarkerIndex, visualRectForInstance, resolveVisualElements } from "./markers.js";
+import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
-import { state, displayNameForBlock, getVisualRootForBlock } from "./state.js";
+import { state, displayNameForBlock } from "./state.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -90,9 +90,6 @@ export class CanvasController {
     this.index = built.index;
     this.elementToNode = built.elementToNode;
     this.nodeToKeys = built.nodeToKeys;
-    try {
-      resolveVisualElements(this.index, this.elementToNode, getVisualRootForBlock);
-    } catch (_) {}
 
     // Create overlay
     this.overlay = new Overlay(doc);
@@ -170,9 +167,6 @@ export class CanvasController {
     this.index = built.index;
     this.elementToNode = built.elementToNode;
     this.nodeToKeys = built.nodeToKeys;
-    try {
-      resolveVisualElements(this.index, this.elementToNode, getVisualRootForBlock);
-    } catch (_) {}
     this.syncGeometry();
   }
 
