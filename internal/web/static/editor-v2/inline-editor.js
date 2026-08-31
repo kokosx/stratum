@@ -950,6 +950,7 @@ function attachRichHandlers(fieldEl, canvas) {
         if (curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
       } catch (_) {}
     }
+  });
 
   if (active) active.handlers = handlers;
 }
