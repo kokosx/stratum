@@ -1,0 +1,49 @@
+{{ define "content" }}
+<div id="editor-v2-app" class="editor-v2-app">
+  <header class="editor-v2-topbar">
+    <div class="editor-v2-topbar__left">
+      <a class="button button-small" href="{{ .Content.BackURL }}" aria-label="Back" title="Back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </a>
+      <div style="display:grid;gap:2px;min-width:0">
+        <div class="editor-v2-topbar__title" title="{{ .Content.Title }}">{{ if .Content.Resource.Label }}{{ .Content.Resource.Label }}{{ else if .Content.Title }}{{ .Content.Title }}{{ else }}Untitled{{ end }}</div>
+        <div class="editor-v2-topbar__subtitle">{{ if .Content.Resource.ContentTypeID }}{{ .Content.Resource.ContentTypeID }}{{ else }}{{ .Content.ContentTypeID }}{{ end }}{{ if .Content.Resource.ID }} · {{ .Content.Resource.ID }}{{ end }}</div>
+      </div>
+    </div>
+    <div class="editor-v2-topbar__right">
+      <div class="editor-v2-viewport-group" role="group" aria-label="Viewport">
+        <button class="editor-v2-viewport-btn is-active" type="button" data-viewport="desktop" title="Desktop" aria-label="Desktop" aria-pressed="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          <span style="margin-left:6px">Desktop</span>
+        </button>
+        <button class="editor-v2-viewport-btn" type="button" data-viewport="tablet" title="Tablet" aria-label="Tablet" aria-pressed="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M12 17h.01"/></svg>
+          <span style="margin-left:6px">Tablet</span>
+        </button>
+        <button class="editor-v2-viewport-btn" type="button" data-viewport="mobile" title="Mobile" aria-label="Mobile" aria-pressed="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M12 18h.01"/></svg>
+          <span style="margin-left:6px">Mobile</span>
+        </button>
+      </div>
+      {{ if .Content.PublicURL }}<a class="button button-small" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener" title="View live page">View live</a>{{ end }}
+      <a class="button button-small" href="{{ .Content.BackURL }}" title="Back to list">Back</a>
+      {{ if .Content.PublicURL }}<a class="button button-small" href="{{ .Content.Action }}" title="Open V1 editor">Open V1</a>{{ end }}
+    </div>
+  </header>
+  <div id="editor-v2-workspace" class="editor-v2-workspace">
+    <div id="editor-v2-stage" class="editor-v2-stage">
+      <iframe id="editor-v2-canvas" class="editor-v2-canvas" sandbox="allow-same-origin" title="Visual canvas"></iframe>
+      <div id="editor-v2-loading" class="editor-v2-loading">Loading preview…</div>
+      <div id="editor-v2-error" class="editor-v2-error" hidden></div>
+    </div>
+  </div>
+  <!-- hidden metadata for preview.js fallback -->
+  <input type="hidden" id="editor-v2-title" value="{{ .Content.Title }}">
+  <input type="hidden" id="editor-v2-slug" value="{{ .Content.Slug }}">
+  <input type="hidden" id="editor-v2-excerpt" value="{{ .Content.Excerpt }}">
+  <input type="hidden" id="editor-v2-content-type" value="{{ .Content.ContentTypeID }}">
+  <input type="hidden" id="editor-v2-entry-id" value="{{ .Content.EntryID }}">
+</div>
+<script id="editor-v2-bootstrap" type="application/json">{{ .Content.EditorJSON }}</script>
+<script type="module" src="/admin/static/editor-v2/app.js"></script>
+{{ end }}

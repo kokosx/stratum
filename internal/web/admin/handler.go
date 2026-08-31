@@ -44,6 +44,7 @@ type Handler struct {
 	dashboardTemplate            *template.Template
 	entriesTemplate              *template.Template
 	entryTemplate                *template.Template
+	editorV2Template             *template.Template
 	setupTemplate                *template.Template
 	loginTemplate                *template.Template
 	menusTemplate                *template.Template
@@ -208,6 +209,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		return nil, err
 	}
 	entryTemplate, err := template.New("entry_form").Funcs(adminFuncs).ParseFS(templateFS, "layout.html", "editor_layout.html", "editor.html", "entry_form.html")
+	if err != nil {
+		return nil, err
+	}
+	editorV2Template, err := template.New("editor_v2").Funcs(adminFuncs).ParseFS(templateFS, "editor_v2_layout.html", "editor_v2.html")
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +385,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		dashboardTemplate:            dashboardTemplate,
 		entriesTemplate:              entriesTemplate,
 		entryTemplate:                entryTemplate,
+		editorV2Template:             editorV2Template,
 		setupTemplate:                setupTemplate,
 		loginTemplate:                loginTemplate,
 		menusTemplate:                menusTemplate,

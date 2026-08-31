@@ -157,7 +157,7 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		}
 		scheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
 	}
-	h.renderEntryForm(w, r, entryFormData{
+	data := entryFormData{
 		Heading:               "Edit page",
 		Action:                "/admin/pages/" + entry.ID,
 		PublishAction:         "/admin/pages/" + entry.ID + "/publish",
@@ -202,7 +202,12 @@ func (h *Handler) editPage(w http.ResponseWriter, r *http.Request) {
 		ReviewState:           revision.ReviewState,
 		CommentsEnabled:       revision.CommentsEnabled != 0,
 		SupportsComments:      content.DefinitionFor(pageContentType).Capabilities.SupportsComments,
-	}, "pages")
+	}
+	if r.URL.Query().Get("editor") == "v2" {
+		h.renderEntryFormV2(w, r, data)
+		return
+	}
+	h.renderEntryForm(w, r, data, "pages")
 }
 
 // entryEditorStatus derives the displayed status label and public URL for an

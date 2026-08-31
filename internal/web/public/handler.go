@@ -1916,8 +1916,9 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 	}
 	// If preview specifies a layout template, compose before prepare so LCP/collections see final tree.
 	// Composition is validated inside the layout service boundary.
+	// Also resolves default layout when LayoutTemplateID is empty (fallback to contentType default), matching public rendering.
 	effectiveDoc := input.Document
-	if input.LayoutTemplateID != "" {
+	{
 		ct := input.ContentTypeID
 		if ct == "" {
 			if input.EntryID != "" {
@@ -1927,16 +1928,20 @@ func (h *Handler) RenderEditableDocument(ctx context.Context, input RenderInput)
 			}
 		}
 		if ct != "" {
+			ltID := sql.NullString{}
+			if input.LayoutTemplateID != "" {
+				ltID = sql.NullString{String: input.LayoutTemplateID, Valid: true}
+			}
 			var composed *document.Document
 			var cerr error
 			if h.layoutsService != nil {
-				composed, _, cerr = h.layoutsService.ResolveEffectiveDocument(ctx, input.Document, ct, sql.NullString{String: input.LayoutTemplateID, Valid: true})
+				composed, _, cerr = h.layoutsService.ResolveEffectiveDocument(ctx, input.Document, ct, ltID)
 			} else {
-				composed, cerr = layouts.ResolveEffectiveDocument(ctx, h.queries, input.Document, ct, sql.NullString{String: input.LayoutTemplateID, Valid: true})
+				composed, cerr = layouts.ResolveEffectiveDocument(ctx, h.queries, input.Document, ct, ltID)
 			}
-			if cerr == nil {
+			if cerr == nil && composed != nil {
 				effectiveDoc = composed
-			} else {
+			} else if cerr != nil {
 				return nil, cerr
 			}
 		}

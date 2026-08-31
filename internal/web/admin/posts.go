@@ -100,7 +100,7 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		}
 		scheduledAt = time.Unix(job.ScheduledAt, 0).In(loc).Format("2006-01-02T15:04")
 	}
-	h.renderEntryForm(w, r, entryFormData{
+	data := entryFormData{
 		Heading:          "Edit post",
 		Action:           "/admin/posts/" + entry.ID,
 		PublishAction:    "/admin/posts/" + entry.ID + "/publish",
@@ -140,7 +140,12 @@ func (h *Handler) editPost(w http.ResponseWriter, r *http.Request) {
 		ReviewState:      revision.ReviewState,
 		CommentsEnabled:  revision.CommentsEnabled != 0,
 		SupportsComments: content.DefinitionFor(postContentType).Capabilities.SupportsComments,
-	}, "posts")
+	}
+	if r.URL.Query().Get("editor") == "v2" {
+		h.renderEntryFormV2(w, r, data)
+		return
+	}
+	h.renderEntryForm(w, r, data, "posts")
 }
 
 func (h *Handler) savePost(w http.ResponseWriter, r *http.Request) {

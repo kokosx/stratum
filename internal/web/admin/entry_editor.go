@@ -474,6 +474,88 @@ func (h *Handler) renderEntryForm(w http.ResponseWriter, r *http.Request, data e
 	}
 }
 
+type editorV2Data struct {
+	Title         string
+	Slug          string
+	Excerpt       string
+	ContentTypeID string
+	EntryID       string
+	Action        string
+	BackURL       string
+	PublicURL     string
+	Resource      EditorResource
+	EditorJSON    template.JS
+}
+
+// renderEntryFormV2 renders the minimal V2 fullscreen shell.
+// It reuses the existing backend (buildEditorBootstrap, SDT, renderer) and only switches the template.
+func (h *Handler) renderEntryFormV2(w http.ResponseWriter, r *http.Request, data entryFormData) {
+	token, err := h.csrfToken(w, r)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	if h.blocks == nil {
+		http.Error(w, "Block registry is not configured", http.StatusInternalServerError)
+		return
+	}
+	if data.DocumentJSON == "" {
+		data.DocumentJSON = `{"version":1,"nodes":[]}`
+	}
+	doc, err := document.Decode([]byte(data.DocumentJSON))
+	if err != nil {
+		log.Printf("prepare editor document v2: %v", err)
+		http.Error(w, "Invalid stored document", http.StatusInternalServerError)
+		return
+	}
+	migratedDoc := migrateDocumentForEditor(doc)
+	resource := EditorResource{Type: "entry", ID: data.EntryID, Kind: data.ContentTypeID, Label: data.Title, ContentTypeID: data.ContentTypeID}
+	actions := EditorActions{PreviewURL: "/admin/editor/preview", SaveURL: data.Action, PublishURL: data.PublishAction, BackURL: data.BackURL, PublicPreviewURL: data.PublicURL}
+	bs, berr := buildEditorBootstrap(r.Context(), h, resource, migratedDoc, "entry", "/admin/editor/preview", actions)
+	if berr != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	// Enrich bootstrap with metadata expected by V2 frontend without creating a new domain model.
+	// Use typed embedding to avoid fragile map[string]any round-trip.
+	type v2Bootstrap struct {
+		editorBootstrap
+		Title     string `json:"title"`
+		Slug      string `json:"slug"`
+		Excerpt   string `json:"excerpt"`
+		EntryID   string `json:"entryId"`
+		CSRFToken string `json:"csrfToken"`
+	}
+	enriched := v2Bootstrap{
+		editorBootstrap: bs,
+		Title:          data.Title,
+		Slug:           data.Slug,
+		Excerpt:        data.Excerpt,
+		EntryID:        data.EntryID,
+		CSRFToken:      token,
+	}
+	bootstrap, err := json.Marshal(enriched)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	v2 := editorV2Data{
+		Title:         data.Title,
+		Slug:          data.Slug,
+		Excerpt:       data.Excerpt,
+		ContentTypeID: data.ContentTypeID,
+		EntryID:       data.EntryID,
+		Action:        data.Action,
+		BackURL:       data.BackURL,
+		PublicURL:     data.PublicURL,
+		Resource:      resource,
+		EditorJSON:    template.JS(bootstrap),
+	}
+	if err := h.editorV2Template.ExecuteTemplate(w, "editor_v2_layout.html", LayoutData{Title: data.Heading, CSRFToken: token, Content: v2}); err != nil {
+		log.Printf("render entry form v2: %v", err)
+	}
+}
+
 func (h *Handler) hierarchyParentOptions(ctx context.Context, contentTypeID, entryID, selectedParentID string) ([]hierarchyParentOption, string) {
 	rows, err := h.queries.ListLatestHierarchyForContentType(ctx, contentTypeID)
 	if err != nil {
