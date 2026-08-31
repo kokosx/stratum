@@ -39,26 +39,36 @@ const OVERLAY_CSS = `
   position: fixed;
   pointer-events: none;
   box-sizing: border-box;
-  border: 1px dashed #cbd5e1;
-  border-radius: 6px;
+  height: 0;
+  border: 0;
+  border-top: 1px dashed #cbd5e1;
   background: transparent;
+}
+.overlay-scope--bottom {
+  border-top: 1px dashed #cbd5e1;
 }
 .overlay-scope-label {
   position: fixed;
   pointer-events: none;
-  height: 20px;
-  line-height: 20px;
+  height: 18px;
+  line-height: 18px;
   padding: 0 6px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   background: #f8fafc;
   color: #64748b;
   border: 1px solid #cbd5e1;
   border-radius: 4px;
   white-space: nowrap;
+}
+.overlay-scope-label--end {
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  border-color: #cbd5e1;
 }
 .overlay-handle {
   position: fixed;
@@ -89,11 +99,13 @@ export class Overlay {
     this.doc = doc;
     this.host = null;
     this.shadow = null;
+    this.scopeTopEl = null;
+    this.scopeTopLabelEl = null;
+    this.scopeBottomEl = null;
+    this.scopeBottomLabelEl = null;
     this.hoverEl = null;
     this.selectedEl = null;
     this.handleEl = null;
-    this.scopeEl = null;
-    this.scopeLabelEl = null;
     this._beforeHeight = 0;
   }
 
@@ -138,7 +150,34 @@ export class Overlay {
     style.textContent = OVERLAY_CSS;
     shadow.appendChild(style);
 
-    // Create outlines
+    // Create scope boundaries first (behind selection/hover)
+    this.scopeTopEl = this.doc.createElement("div");
+    this.scopeTopEl.className = "overlay-scope";
+    this.scopeTopEl.setAttribute("data-role", "scope-top");
+    this.scopeTopEl.style.display = "none";
+    shadow.appendChild(this.scopeTopEl);
+
+    this.scopeTopLabelEl = this.doc.createElement("div");
+    this.scopeTopLabelEl.className = "overlay-scope-label";
+    this.scopeTopLabelEl.setAttribute("data-role", "scope-top-label");
+    this.scopeTopLabelEl.textContent = "Page content";
+    this.scopeTopLabelEl.style.display = "none";
+    shadow.appendChild(this.scopeTopLabelEl);
+
+    this.scopeBottomEl = this.doc.createElement("div");
+    this.scopeBottomEl.className = "overlay-scope overlay-scope--bottom";
+    this.scopeBottomEl.setAttribute("data-role", "scope-bottom");
+    this.scopeBottomEl.style.display = "none";
+    shadow.appendChild(this.scopeBottomEl);
+
+    this.scopeBottomLabelEl = this.doc.createElement("div");
+    this.scopeBottomLabelEl.className = "overlay-scope-label overlay-scope-label--end";
+    this.scopeBottomLabelEl.setAttribute("data-role", "scope-bottom-label");
+    this.scopeBottomLabelEl.textContent = "End of Page content";
+    this.scopeBottomLabelEl.style.display = "none";
+    shadow.appendChild(this.scopeBottomLabelEl);
+
+    // Create outlines (on top of scope)
     this.hoverEl = this.doc.createElement("div");
     this.hoverEl.className = "overlay-outline overlay-outline--hover";
     this.hoverEl.setAttribute("data-role", "hover");
@@ -156,19 +195,6 @@ export class Overlay {
     this.handleEl.setAttribute("data-role", "handle");
     this.handleEl.style.display = "none";
     shadow.appendChild(this.handleEl);
-
-    this.scopeEl = this.doc.createElement("div");
-    this.scopeEl.className = "overlay-scope";
-    this.scopeEl.setAttribute("data-role", "scope");
-    this.scopeEl.style.display = "none";
-    shadow.appendChild(this.scopeEl);
-
-    this.scopeLabelEl = this.doc.createElement("div");
-    this.scopeLabelEl.className = "overlay-scope-label";
-    this.scopeLabelEl.setAttribute("data-role", "scope-label");
-    this.scopeLabelEl.textContent = "Page content";
-    this.scopeLabelEl.style.display = "none";
-    shadow.appendChild(this.scopeLabelEl);
 
     // Verify host didn't change scrollHeight
     try {
@@ -193,8 +219,10 @@ export class Overlay {
     this.hoverEl = null;
     this.selectedEl = null;
     this.handleEl = null;
-    this.scopeEl = null;
-    this.scopeLabelEl = null;
+    this.scopeTopEl = null;
+    this.scopeTopLabelEl = null;
+    this.scopeBottomEl = null;
+    this.scopeBottomLabelEl = null;
     this.doc = null;
   }
 
@@ -211,36 +239,77 @@ export class Overlay {
   }
 
   clearScope() {
-    if (this.scopeEl) this.scopeEl.style.display = "none";
-    if (this.scopeLabelEl) this.scopeLabelEl.style.display = "none";
+    if (this.scopeTopEl) this.scopeTopEl.style.display = "none";
+    if (this.scopeTopLabelEl) this.scopeTopLabelEl.style.display = "none";
+    if (this.scopeBottomEl) this.scopeBottomEl.style.display = "none";
+    if (this.scopeBottomLabelEl) this.scopeBottomLabelEl.style.display = "none";
   }
 
   setScope(rect) {
-    if (!this.scopeEl || !this.scopeLabelEl || !rect) {
+    if (!this.scopeTopEl || !this.scopeTopLabelEl || !this.scopeBottomEl || !this.scopeBottomLabelEl || !rect) {
       this.clearScope();
       return;
     }
-    // Show subtle scope boundary. If rect is very large (covers most of page), still show but low contrast.
-    this.scopeEl.style.display = "block";
-    this.scopeEl.style.left = Math.round(rect.left) + "px";
-    this.scopeEl.style.top = Math.round(rect.top) + "px";
-    this.scopeEl.style.width = Math.round(rect.width) + "px";
-    this.scopeEl.style.height = Math.round(rect.height) + "px";
-    this.scopeLabelEl.style.display = "block";
-    // Label at top-left of scope, slightly above
-    let labelLeft = Math.round(rect.left);
-    let labelTop = Math.round(rect.top - 20);
-    if (labelTop < 2) labelTop = Math.round(rect.top + 2);
-    this.scopeLabelEl.style.left = labelLeft + "px";
-    this.scopeLabelEl.style.top = labelTop + "px";
-    // Clamp horizontal
+    const left = Math.round(rect.left);
+    const width = Math.round(rect.width);
+    const top = Math.round(rect.top);
+    const bottom = Math.round(rect.top + rect.height);
+
+    // Top boundary
+    this.scopeTopEl.style.display = "block";
+    this.scopeTopEl.style.left = left + "px";
+    this.scopeTopEl.style.top = top + "px";
+    this.scopeTopEl.style.width = width + "px";
+
+    this.scopeTopLabelEl.style.display = "block";
+    this.scopeTopLabelEl.textContent = "Page content";
+    let labelLeft = left + 6;
+    let labelTop = top - 18;
+    if (labelTop < 4) labelTop = top + 4;
+    this.scopeTopLabelEl.style.left = labelLeft + "px";
+    this.scopeTopLabelEl.style.top = labelTop + "px";
+
+    // Bottom boundary — explicit end
+    this.scopeBottomEl.style.display = "block";
+    this.scopeBottomEl.style.left = left + "px";
+    this.scopeBottomEl.style.top = bottom + "px";
+    this.scopeBottomEl.style.width = width + "px";
+
+    this.scopeBottomLabelEl.style.display = "block";
+    // Try to center label on bottom line, but keep within viewport
+    this.scopeBottomLabelEl.textContent = "End of Page content";
+    // Temporarily place to measure
+    this.scopeBottomLabelEl.style.left = left + "px";
+    this.scopeBottomLabelEl.style.top = (bottom + 6) + "px";
     try {
       const vw = this.doc.documentElement.clientWidth || (this.doc.defaultView && this.doc.defaultView.innerWidth) || 1024;
-      const lr = this.scopeLabelEl.getBoundingClientRect();
-      if (lr.width && labelLeft + lr.width > vw - 4) {
-        labelLeft = Math.max(4, vw - lr.width - 4);
-        this.scopeLabelEl.style.left = labelLeft + "px";
+      const inset = 6;
+      // Clamp top label
+      const tlr = this.scopeTopLabelEl.getBoundingClientRect();
+      if (tlr.width && labelLeft + tlr.width > vw - inset) {
+        labelLeft = Math.max(inset, vw - tlr.width - inset);
+        this.scopeTopLabelEl.style.left = labelLeft + "px";
       }
+      // Bottom label: try centered, else left
+      const blr = this.scopeBottomLabelEl.getBoundingClientRect();
+      if (blr.width) {
+        let bLeft = Math.round(left + (width - blr.width) / 2);
+        // If centered would be clipped or too narrow, use left
+        if (bLeft < inset) bLeft = left + 6;
+        if (bLeft + blr.width > vw - inset) bLeft = Math.max(inset, vw - blr.width - inset);
+        // If scope is very wide, centered is fine; if narrow, left is fine
+        // Prefer centered when width > 200
+        if (width > 240) {
+          this.scopeBottomLabelEl.style.left = bLeft + "px";
+        } else {
+          // narrow scope, keep label near left
+          let bLeft2 = left + 6;
+          if (bLeft2 + blr.width > vw - inset) bLeft2 = Math.max(inset, vw - blr.width - inset);
+          this.scopeBottomLabelEl.style.left = bLeft2 + "px";
+        }
+      }
+      // If bottom label would overlap selected handle (when last section selected), hide scope bottom behind selection visually
+      // Since scope is behind selection in DOM order, selection will paint on top — no extra logic needed
     } catch (_) {}
   }
 
