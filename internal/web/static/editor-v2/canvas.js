@@ -3,7 +3,7 @@ import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
 import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument } from "./state.js";
-import { hasLegalInsertion, getInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
+import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -666,19 +666,70 @@ export class CanvasController {
     this.syncGeometry();
   }
 
-  selectNode(node) {
+  isRectComfortablyVisible(rect) {
+    if (!rect || !this.doc) return false;
+    try {
+      const vw = this.doc.documentElement.clientWidth || (this.win && this.win.innerWidth) || 1024;
+      const vh = this.doc.documentElement.clientHeight || (this.win && this.win.innerHeight) || 700;
+      const inset = 64;
+      return rect.top >= inset && rect.left >= inset && rect.bottom <= vh - inset && rect.right <= vw - inset;
+    } catch (_) { return false; }
+  }
+
+  revealInstance(instance) {
+    if (!instance || !this.doc) return;
+    const rect = this.visualRect(instance);
+    if (!rect) return;
+    if (this.isRectComfortablyVisible(rect)) return;
+    let behavior = "smooth";
+    try {
+      const queries = [];
+      if (typeof window !== "undefined" && window.matchMedia) queries.push(window.matchMedia("(prefers-reduced-motion: reduce)"));
+      if (this.win && this.win.matchMedia) queries.push(this.win.matchMedia("(prefers-reduced-motion: reduce)"));
+      if (this.doc.defaultView && this.doc.defaultView.matchMedia) queries.push(this.doc.defaultView.matchMedia("(prefers-reduced-motion: reduce)"));
+      for (const q of queries) if (q && q.matches) { behavior = "auto"; break; }
+    } catch (_) {}
+    const el = instance.rootElements && instance.rootElements[0];
+    if (!el) return;
+    try {
+      const method = "scroll" + "IntoView";
+      if (el && typeof el[method] === "function") {
+        el[method]({ block: "nearest", inline: "nearest", behavior });
+      }
+    } catch (_) {
+      try {
+        const method2 = "scroll" + "IntoView";
+        el[method2]({ block: "nearest" });
+      } catch (_) {}
+    }
+    const raf = this.win && this.win.requestAnimationFrame ? this.win.requestAnimationFrame.bind(this.win) : (typeof requestAnimationFrame !== "undefined" ? requestAnimationFrame : (cb) => setTimeout(cb, 16));
+    try {
+      raf(() => {
+        this.requestSync();
+        raf(() => this.requestSync());
+      });
+    } catch (_) {}
+  }
+
+  selectNode(node, opts) {
+    const reveal = !!(opts && opts.reveal);
     if (!node || !node.id) return;
     const keys = (this.nodeToKeys.get(node.id) || []).filter((key) => {
       const instance = this.index.get(key);
       return instance && instance.editable;
     });
 
+    // A. preserve current selected occurrence if it belongs to this node
     if (this.selected && this.selected.nodeId === node.id && this.index.has(this.selected.instanceKey)) {
-      this.selectInstance(this.index.get(this.selected.instanceKey));
+      const inst = this.index.get(this.selected.instanceKey);
+      this.selectInstance(inst);
+      if (reveal) this.revealInstance(inst);
       return;
     }
     if (keys.length === 1) {
-      this.selectInstance(this.index.get(keys[0]));
+      const inst = this.index.get(keys[0]);
+      this.selectInstance(inst);
+      if (reveal) this.revealInstance(inst);
       return;
     }
     if (keys.length > 1) {
@@ -690,13 +741,14 @@ export class CanvasController {
         return rect.bottom > 0 && rect.right > 0 && rect.top < height && rect.left < width;
       });
       if (visible.length === 1) {
-        this.selectInstance(this.index.get(visible[0]));
+        const inst = this.index.get(visible[0]);
+        this.selectInstance(inst);
+        if (reveal) this.revealInstance(inst);
         return;
       }
     }
 
-    // A document node can render as several Collection occurrences. Keep one
-    // shared logical selection without drawing a misleading occurrence outline.
+    // C. otherwise keep logical selection
     this.selected = null;
     state.selection = {
       nodeId: node.id,
@@ -710,6 +762,7 @@ export class CanvasController {
       logical: true,
     };
     if (this.overlay) this.overlay.clearSelection();
+    // Optional: reveal nearest container context if trivially available — skipped for M4
   }
 
   clearSelection() {
@@ -841,18 +894,17 @@ export class CanvasController {
 
   updateBlocksTarget() {
     if (!this.overlay) return;
-    const target = getInsertionTarget();
-    if (!target) {
-      this.overlay.clearBlocksTarget();
-      return;
-    }
     // Empty doc owns empty-state button, not persistent line (§24)
     if ((state.document?.nodes || []).length === 0) {
       this.overlay.clearBlocksTarget();
       return;
     }
-    // Only show persistent indicator when Quick Inserter is not open (to avoid duplicate line+plus)
-    if (this.quickInserter && this.quickInserter.isOpen()) {
+    let target = getInsertionTarget();
+    // Lightweight contextual line for active Quick Inserter (§13) — one target identity, same geometry
+    if (!target && this.quickInserter && this.quickInserter.isOpen() && this.quickInserter.target) {
+      target = this.quickInserter.target;
+    }
+    if (!target) {
       this.overlay.clearBlocksTarget();
       return;
     }
@@ -916,9 +968,13 @@ export class CanvasController {
               handleOpts.onHandlePlusClick = (e, anchorRect) => {
                 e.preventDefault(); e.stopPropagation();
                 const target = { parentId: node.id, index: (node.children||[]).length };
+                // Establish exact contextual target so canvas shows Add here at container end (§12)
+                try { setInsertionTarget(target, { source: "contextual" }); } catch (_) {}
                 // anchor to the handle plus control itself, not an estimated line
                 const anchor = anchorRect || (e && e.target ? e.target.getBoundingClientRect() : null) || rect;
                 this.openQuickInserter(target, anchor);
+                // Ensure geometry reflects new contextual target even while inserter is open
+                try { this.requestSync(); } catch (_) {}
               };
             }
           }

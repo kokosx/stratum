@@ -695,7 +695,7 @@ export class Overlay {
       plusInside.type = "button";
       plusInside.className = "overlay-handle__plus";
       plusInside.setAttribute("data-stratum-editor-ui", "true");
-      const plusLabel = `Add inside ${text}`;
+      const plusLabel = `Add block at end of ${text}`;
       plusInside.setAttribute("aria-label", plusLabel);
       plusInside.setAttribute("title", plusLabel);
       plusInside.textContent = "+";

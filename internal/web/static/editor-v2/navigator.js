@@ -101,7 +101,7 @@ export class NavigatorView {
       select.append(summaryEl);
     }
     select.addEventListener("click", () => {
-      if (this.canvas && typeof this.canvas.selectNode === "function") this.canvas.selectNode(node);
+      if (this.canvas && typeof this.canvas.selectNode === "function") this.canvas.selectNode(node, { reveal: true });
     });
     row.append(select);
     item.append(row);
