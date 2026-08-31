@@ -18,6 +18,7 @@ import (
 	"github.com/kokosx/stratum/internal/blocks"
 	"github.com/kokosx/stratum/internal/datalock"
 	wordpress "github.com/kokosx/stratum/internal/importer/wordpress"
+	"github.com/kokosx/stratum/internal/mcpserver"
 	"github.com/kokosx/stratum/internal/publishing"
 	"github.com/kokosx/stratum/internal/runtimehub"
 	"github.com/kokosx/stratum/internal/search"
@@ -307,6 +308,10 @@ func serve(application *app.App, serveCfg ServeConfig) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// MCP endpoint (Stratum system namespace, single binary)
+	mcpSrv := mcpserver.New(application.Database.DB, application.Queries, adminHandler.Agents(), adminHandler.EntryOps(), application.Blocks)
+	mux.Handle("/stratum/mcp", mcpSrv.Handler())
+	mux.Handle("/stratum/mcp/", mcpSrv.Handler())
 	mux.Handle("/admin", adminHandler.Routes())
 	mux.Handle("/admin/", adminHandler.Routes())
 	mux.Handle("/", publicHandler)
