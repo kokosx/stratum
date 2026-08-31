@@ -112,6 +112,7 @@ export function buildMarkerIndex(doc) {
           startComment: node,
           depth: stack.length,
           rootElements: [],
+          visualElement: null,
         };
         stack.push(info);
         // Keep reference for later end
@@ -137,6 +138,7 @@ export function buildMarkerIndex(doc) {
           ownerId: startInfo.ownerId,
           ownerLabel: startInfo.ownerLabel,
           rootElements: startInfo.rootElements.slice(),
+          visualElement: startInfo.visualElement || null,
         };
         index.set(startInfo.instanceKey, instance);
         if (!nodeToKeys.has(startInfo.nodeId)) nodeToKeys.set(startInfo.nodeId, []);
@@ -149,6 +151,10 @@ export function buildMarkerIndex(doc) {
       // Skip overlay host itself if present (we inject later, but during rebuild it may exist)
       if (node.tagName && node.tagName.toLowerCase() === "stratum-editor-overlay-root") continue;
       const deepest = stack[stack.length - 1];
+      // Detect editor visual root (e.g. button's inner <a>). First occurrence wins.
+      if (!deepest.visualElement && node.hasAttribute && node.hasAttribute("data-stratum-editor-visual-root")) {
+        deepest.visualElement = node;
+      }
       // Map element to deepest node
       elementToNode.set(node, deepest);
       // Determine rootElements: if parent not mapped to same instance, it's root
@@ -177,6 +183,7 @@ export function buildMarkerIndex(doc) {
         ownerId: leftover.ownerId,
         ownerLabel: leftover.ownerLabel,
         rootElements: leftover.rootElements.slice(),
+        visualElement: leftover.visualElement || null,
       };
       index.set(leftover.instanceKey, instance);
       if (!nodeToKeys.has(leftover.nodeId)) nodeToKeys.set(leftover.nodeId, []);
@@ -214,10 +221,18 @@ export function unionRects(rects) {
 }
 
 export function visualRectForInstance(instance, doc) {
-  if (!instance || !instance.rootElements || instance.rootElements.length === 0) {
+  if (!instance) return null;
+  // Prefer editor visual root if present — actual widget bounds, not technical wrapper.
+  if (instance.visualElement && typeof instance.visualElement.getBoundingClientRect === "function") {
+    if (!doc || doc.contains(instance.visualElement)) {
+      try {
+        const r = instance.visualElement.getBoundingClientRect();
+        if (r && (r.width > 0 || r.height > 0)) return r;
+      } catch (_) {}
+    }
+  }
+  if (!instance.rootElements || instance.rootElements.length === 0) {
     // No rendered output — M2: do not show synthetic placeholder
-    // Try Range fallback only if we could have text-only? But without rootElements we can't locate.
-    // Return null to indicate no visual.
     return null;
   }
   // Filter out elements not in DOM or display:none
@@ -232,7 +247,6 @@ export function visualRectForInstance(instance, doc) {
         rects.push(r);
       } else if (r) {
         // Still consider zero-height but maybe hidden — ignore
-        // For empty but rendered, width may be 0; we ignore to avoid stray rect at 0,0
       }
     } catch (_) {}
   }

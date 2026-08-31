@@ -956,12 +956,27 @@ func (r *Renderer) renderPreparedNode(ctx context.Context, node PreparedNode, rc
 	if err := tmpl.Execute(&out, blockData{ID: node.ID, Props: node.Props, Settings: node.Settings, Children: template.HTML(children.String()), Context: rc, Priority: priority}); err != nil {
 		return "", fmt.Errorf("render block %s@%d: %w", node.Block, node.Version, err)
 	}
+	htmlStr := out.String()
+	// Editor visual root: for blocks where the natural root is a technical wrapper
+	// (e.g. button's stratum-btn-wrap, image's figure), mark the actual widget
+	// element so the canvas can use its bounds for selection. Canvas remains
+	// generic — it just looks for data-stratum-editor-visual-root. Public output
+	// has no marker.
+	if editorEnabled {
+		if node.Block == "core/button" {
+			// Inner <a>/<span> with stratum-button is the visual widget.
+			htmlStr = strings.Replace(htmlStr, `class="stratum-button`, `data-stratum-editor-visual-root class="stratum-button`, 1)
+		} else if node.Block == "core/image" {
+			// Inner <img> is the visual; figure wrapper is structural.
+			htmlStr = strings.Replace(htmlStr, `<img`, `<img data-stratum-editor-visual-root`, 1)
+		}
+	}
 	if editorEnabled {
 		start := editorStartCommentWithLabel(node.ID, instanceKey, editable, ownerType, ownerID, ownerLabel)
 		end := editorEndComment(node.ID, instanceKey)
-		return template.HTML(start + out.String() + end), nil
+		return template.HTML(start + htmlStr + end), nil
 	}
-	return template.HTML(out.String()), nil
+	return template.HTML(htmlStr), nil
 }
 
 func (r *Renderer) renderPreparedNodes(ctx context.Context, nodes []PreparedNode, rc RenderContext) (template.HTML, error) {

@@ -158,3 +158,43 @@ func TestNormalPreviewHasNoMarkers(t *testing.T) {
 		t.Fatalf("normal preview should not have markers")
 	}
 }
+
+func TestPublicRenderHasNoVisualRoot(t *testing.T) {
+	renderer, _ := NewRenderer([]Definition{
+		{Namespace: "core", Name: "button", Version: 1, RendererType: "template", Template: `<div class="stratum-btn-wrap"><a class="stratum-button">{{.Props.label}}</a></div>`},
+	}, nil)
+	doc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "b1", Block: "core/button", Version: 1, Props: json.RawMessage(`{"label":"Click"}`), Settings: json.RawMessage(`{}`)}}}
+	rc := RenderContext{Mode: ModePublic}
+	html, err := renderer.RenderDocumentContext(doc, rc)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(html)
+	if strings.Contains(s, "data-stratum-editor-visual-root") {
+		t.Fatalf("public render should not contain visual root: %s", s)
+	}
+}
+
+func TestEditorCanvasButtonHasVisualRoot(t *testing.T) {
+	renderer, _ := NewRenderer([]Definition{
+		{Namespace: "core", Name: "button", Version: 1, RendererType: "template", Template: `<div class="stratum-btn-wrap"><a class="stratum-button">{{.Props.label}}</a></div>`},
+	}, nil)
+	doc := &document.Document{Version: 1, Nodes: []document.Node{{ID: "b1", Block: "core/button", Version: 1, Props: json.RawMessage(`{"label":"Click"}`), Settings: json.RawMessage(`{}`)}}}
+	ids := map[string]struct{}{"b1": {}}
+	rc := RenderContext{Mode: ModePreview, IsPreview: true, Editor: &EditorCanvas{Enabled: true, EditableNodeIDs: ids, InstanceScope: "root"}}
+	html, err := renderer.RenderDocumentContext(doc, rc)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	s := string(html)
+	if !strings.Contains(s, "data-stratum-editor-visual-root") {
+		t.Fatalf("editor canvas button should contain visual root: %s", s)
+	}
+	if strings.Count(s, "data-stratum-editor-visual-root") != 1 {
+		t.Fatalf("expected exactly one visual root for button, got %d: %s", strings.Count(s, "data-stratum-editor-visual-root"), s)
+	}
+	// Ensure marker still present
+	if !strings.Contains(s, "stratum-node-start:b1:") {
+		t.Fatalf("should still have node marker: %s", s)
+	}
+}
