@@ -1,7 +1,7 @@
 // insertion.js — insertion target resolution + schema legality (generic, no block hardcode)
 import { state, blockCatalog, definitionForBlock, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode } from "./state.js";
 
-let target = null; // {parentId: string|null, index:number, contextInstanceKey?: string}
+let target = null; // {parentId: string|null, index:number, source:"selection"|"contextual", contextInstanceKey?: string}
 const targetListeners = new Set();
 
 function notifyTarget(next) {
@@ -14,9 +14,17 @@ export function getInsertionTarget() {
   return target ? { ...target } : null;
 }
 
-export function setInsertionTarget(next) {
+export function getInsertionSource() {
+  return target ? target.source : null;
+}
+
+export function setInsertionTarget(next, opts) {
   if (!next || typeof next !== "object") return;
-  const normalized = { parentId: next.parentId ?? null, index: Number(next.index) || 0 };
+  let source = null;
+  if (opts && (opts.source === "contextual" || opts.source === "selection")) source = opts.source;
+  else if (next.source === "contextual" || next.source === "selection") source = next.source;
+  else source = "selection";
+  const normalized = { parentId: next.parentId ?? null, index: Number(next.index) || 0, source };
   if (next.contextInstanceKey) normalized.contextInstanceKey = String(next.contextInstanceKey);
   // validate parent existence; dangling parent treated as invalid, not root teleport
   if (normalized.parentId != null && !findDocumentNode(normalized.parentId)) {

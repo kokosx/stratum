@@ -152,7 +152,7 @@ const OVERLAY_CSS = `
   background: #2563eb;
   border-radius: 1px;
   z-index: 2147483645;
-  opacity: .9;
+  opacity: .95;
 }
 .overlay-blocks-target-plus {
   position: fixed;
@@ -169,6 +169,23 @@ const OVERLAY_CSS = `
   border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(37,99,235,.3);
   z-index: 2147483645;
+}
+.overlay-blocks-target-chip {
+  position: fixed;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 8px;
+  font: 600 11px/1 system-ui, sans-serif;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 999px;
+  border: 1px solid #fff;
+  box-shadow: 0 1px 6px rgba(37,99,235,.3);
+  z-index: 2147483645;
+  white-space: nowrap;
 }
 .overlay-empty {
   position: fixed;
@@ -201,24 +218,6 @@ const OVERLAY_CSS = `
   box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 .overlay-empty__button:hover { border-color:#94a3b8; background:#fff; }
-.overlay-handle-plus {
-  position: fixed;
-  pointer-events: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  background: #fff;
-  color: #2563eb;
-  border: 1px solid #bfdbfe;
-  font: 700 12px/1 system-ui, sans-serif;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0,0,0,.08);
-  margin-left: 6px;
-}
-.overlay-handle-plus:hover { background:#eff6ff; border-color:#93c5fd; }
 .quick-inserter { pointer-events:auto; }
 `;
 
@@ -234,11 +233,11 @@ export class Overlay {
     this.hoverEl = null;
     this.selectedEl = null;
     this.handleEl = null;
-    this.handlePlusEl = null;
     this.insertionLineEl = null;
     this.insertionPlusEl = null;
     this.blocksTargetLineEl = null;
     this.blocksTargetPlusEl = null;
+    this.blocksTargetChipEl = null;
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map(); // nodeId -> element
     this._beforeHeight = 0;
@@ -341,23 +340,14 @@ export class Overlay {
     this.insertionPlusEl = this.doc.createElement("button");
     this.insertionPlusEl.className = "overlay-insertion-plus";
     this.insertionPlusEl.setAttribute("data-role", "insertion-plus");
+    this.insertionPlusEl.setAttribute("data-stratum-editor-ui", "true");
     this.insertionPlusEl.setAttribute("type", "button");
     this.insertionPlusEl.setAttribute("aria-label", "Add block");
     this.insertionPlusEl.textContent = "+";
     this.insertionPlusEl.style.display = "none";
     shadow.appendChild(this.insertionPlusEl);
 
-    // handle + for selected container (now integrated in handle, keep legacy element hidden for compat)
-    this.handlePlusEl = this.doc.createElement("button");
-    this.handlePlusEl.className = "overlay-handle-plus";
-    this.handlePlusEl.setAttribute("data-role", "handle-plus");
-    this.handlePlusEl.setAttribute("type", "button");
-    this.handlePlusEl.setAttribute("aria-label", "Add block inside");
-    this.handlePlusEl.textContent = "+";
-    this.handlePlusEl.style.display = "none";
-    shadow.appendChild(this.handlePlusEl);
-
-    // Persistent Blocks target indicator (§22)
+    // Persistent Blocks target indicator (§22) — line + Add here chip
     this.blocksTargetLineEl = this.doc.createElement("div");
     this.blocksTargetLineEl.className = "overlay-blocks-target-line";
     this.blocksTargetLineEl.setAttribute("data-role", "blocks-target-line");
@@ -369,6 +359,12 @@ export class Overlay {
     this.blocksTargetPlusEl.textContent = "+";
     this.blocksTargetPlusEl.style.display = "none";
     shadow.appendChild(this.blocksTargetPlusEl);
+    this.blocksTargetChipEl = this.doc.createElement("div");
+    this.blocksTargetChipEl.className = "overlay-blocks-target-chip";
+    this.blocksTargetChipEl.setAttribute("data-role", "blocks-target-chip");
+    this.blocksTargetChipEl.textContent = "Add here";
+    this.blocksTargetChipEl.style.display = "none";
+    shadow.appendChild(this.blocksTargetChipEl);
 
     // Verify host didn't change scrollHeight
     try {
@@ -393,11 +389,11 @@ export class Overlay {
     this.hoverEl = null;
     this.selectedEl = null;
     this.handleEl = null;
-    this.handlePlusEl = null;
     this.insertionLineEl = null;
     this.insertionPlusEl = null;
     this.blocksTargetLineEl = null;
     this.blocksTargetPlusEl = null;
+    this.blocksTargetChipEl = null;
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map();
     this.scopeTopEl = null;
@@ -414,7 +410,6 @@ export class Overlay {
   clearSelection() {
     if (this.selectedEl) this.selectedEl.style.display = "none";
     if (this.handleEl) this.handleEl.style.display = "none";
-    if (this.handlePlusEl) this.handlePlusEl.style.display = "none";
     // Also clear external style
     if (this.selectedEl) this.selectedEl.classList.remove("overlay-outline--external");
     if (this.handleEl) this.handleEl.classList.remove("overlay-handle--external");
@@ -427,6 +422,7 @@ export class Overlay {
   clearBlocksTarget() {
     if (this.blocksTargetLineEl) this.blocksTargetLineEl.style.display = "none";
     if (this.blocksTargetPlusEl) this.blocksTargetPlusEl.style.display = "none";
+    if (this.blocksTargetChipEl) this.blocksTargetChipEl.style.display = "none";
   }
   setBlocksTarget(rect) {
     if (!this.blocksTargetLineEl || !this.blocksTargetPlusEl || !rect) {
@@ -435,15 +431,21 @@ export class Overlay {
     }
     const line = this.blocksTargetLineEl;
     const plus = this.blocksTargetPlusEl;
+    const chip = this.blocksTargetChipEl;
     line.style.display = "block";
     line.style.left = Math.round(rect.left) + "px";
     line.style.top = Math.round(rect.top) + "px";
     line.style.width = Math.round(rect.width) + "px";
-    plus.style.display = "inline-flex";
-    const left = Math.round(rect.left + rect.width / 2 - 9);
-    const top = Math.round(rect.top - 9);
-    plus.style.left = left + "px";
-    plus.style.top = top + "px";
+    // Hide legacy plus when chip is present — Blocks target is chip-only per §23
+    if (plus) plus.style.display = "none";
+    if (chip) {
+      chip.style.display = "inline-flex";
+      chip.textContent = "Add here";
+      // Center via transform to avoid forced layout measurement on every scroll
+      chip.style.left = Math.round(rect.left + rect.width / 2) + "px";
+      chip.style.top = Math.round(rect.top - 13) + "px";
+      chip.style.transform = "translateX(-50%)";
+    }
   }
 
   clearEmptyStates() {
@@ -596,6 +598,7 @@ export class Overlay {
     const btn = this.doc.createElement("button");
     btn.type = "button";
     btn.className = "overlay-empty__button";
+    btn.setAttribute("data-stratum-editor-ui", "true");
     btn.textContent = label || "+ Add block";
     btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof onClick === "function") onClick(e, btn.getBoundingClientRect()); });
     btn.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -634,6 +637,7 @@ export class Overlay {
     const btn = this.doc.createElement("button");
     btn.type = "button";
     btn.className = "overlay-empty__button";
+    btn.setAttribute("data-stratum-editor-ui", "true");
     btn.textContent = label || "+ Add block";
     btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof onClick === "function") onClick(e, btn.getBoundingClientRect()); });
     btn.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -690,6 +694,7 @@ export class Overlay {
       plusInside = this.doc.createElement("button");
       plusInside.type = "button";
       plusInside.className = "overlay-handle__plus";
+      plusInside.setAttribute("data-stratum-editor-ui", "true");
       const plusLabel = `Add inside ${text}`;
       plusInside.setAttribute("aria-label", plusLabel);
       plusInside.setAttribute("title", plusLabel);
@@ -699,6 +704,8 @@ export class Overlay {
       plusInside.addEventListener("mousedown", (e) => e.stopPropagation());
       handle.appendChild(plusInside);
     }
+    // Mark handle as editor UI container for composedPath checks
+    try { handle.setAttribute("data-stratum-editor-ui", "true"); } catch (_) {}
     handle.style.display = "inline-flex";
 
     // Position handle so its bottom edge touches top edge of rect
@@ -725,11 +732,6 @@ export class Overlay {
     } catch (_) {
       handle.style.left = handleLeft + "px";
       handle.style.top = handleTop + "px";
-    }
-    // Hide legacy detached handlePlusEl (now integrated)
-    if (this.handlePlusEl) {
-      this.handlePlusEl.style.display = "none";
-      this.handlePlusEl.onclick = null;
     }
   }
 

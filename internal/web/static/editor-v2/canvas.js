@@ -48,6 +48,75 @@ function isTechnicalId(s) {
   return false;
 }
 
+export function isEditorUIEvent(event) {
+  if (!event) return false;
+  try {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const n of path) {
+      if (!n) continue;
+      if (typeof n.getAttribute === "function" && n.getAttribute("data-stratum-editor-ui") === "true") return true;
+      if (n.matches && typeof n.matches === "function") {
+        try { if (n.matches('[data-stratum-editor-ui="true"]')) return true; } catch (_) {}
+      }
+      if (n.closest && typeof n.closest === "function") {
+        try { if (n.closest('[data-stratum-editor-ui="true"]')) return true; } catch (_) {}
+      }
+    }
+    const t = event.target;
+    if (t && t.closest && typeof t.closest === "function") {
+      try { if (t.closest('[data-stratum-editor-ui="true"]')) return true; } catch (_) {}
+    }
+  } catch (_) {}
+  return false;
+}
+
+function isScopedEditorUIEvent(event, shadow) {
+  if (!event || !shadow) return isEditorUIEvent(event);
+  try {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const n of path) {
+      if (!n) continue;
+      let candidate = null;
+      if (typeof n.getAttribute === "function" && n.getAttribute("data-stratum-editor-ui") === "true") candidate = n;
+      else if (n.matches && typeof n.matches === "function") {
+        try { if (n.matches('[data-stratum-editor-ui="true"]')) candidate = n; } catch (_) {}
+      }
+      if (candidate) {
+        try {
+          if (candidate.getRootNode && candidate.getRootNode() === shadow) return true;
+          if (shadow.contains && shadow.contains(candidate)) return true;
+          // If shadow check not available, fall back to generic
+          if (!candidate.getRootNode && !shadow.contains) return true;
+        } catch (_) { return true; }
+      }
+      if (n.closest && typeof n.closest === "function") {
+        let closest = null;
+        try { closest = n.closest('[data-stratum-editor-ui="true"]'); } catch (_) {}
+        if (closest) {
+          try {
+            if (closest.getRootNode && closest.getRootNode() === shadow) return true;
+            if (shadow.contains && shadow.contains(closest)) return true;
+            if (!closest.getRootNode && !shadow.contains) return true;
+          } catch (_) { return true; }
+        }
+      }
+    }
+    const t = event.target;
+    if (t && t.closest && typeof t.closest === "function") {
+      let closest = null;
+      try { closest = t.closest('[data-stratum-editor-ui="true"]'); } catch (_) {}
+      if (closest) {
+        try {
+          if (closest.getRootNode && closest.getRootNode() === shadow) return true;
+          if (shadow.contains && shadow.contains(closest)) return true;
+          if (!closest.getRootNode && !shadow.contains) return true;
+        } catch (_) { return true; }
+      }
+    }
+  } catch (_) {}
+  return false;
+}
+
 export class CanvasController {
   constructor(iframe, stage) {
     this.iframe = iframe;
@@ -194,6 +263,11 @@ export class CanvasController {
     this._boundWinEvents = false;
   }
 
+  isEditorUIEvent(event) {
+    if (!this.overlay || !this.overlay.shadow) return isEditorUIEvent(event);
+    return isScopedEditorUIEvent(event, this.overlay.shadow);
+  }
+
   rebuildIndex() {
     if (!this.doc) return;
     const built = buildMarkerIndex(this.doc);
@@ -218,8 +292,10 @@ export class CanvasController {
   // SDT parent lookup for editable node id (null for root)
   findSDTParent(nodeId) {
     const info = findDocumentParent(nodeId);
-    if (!info) return { parentId: null, index: 0, parentNode: null };
-    return { parentId: info.parent ? info.parent.id : null, parentNode: info.parent || null, index: info.index, siblings: info.siblings, node: info.node };
+    if (!info) return { parentId: null, index: 0, parentNode: null, parent: null };
+    const parentId = info.parent ? info.parent.id : null;
+    const parentNode = info.parent || null;
+    return { parentId, parentNode, parent: parentNode, index: info.index, siblings: info.siblings, node: info.node };
   }
 
   visualRect(instance) {
@@ -229,13 +305,7 @@ export class CanvasController {
 
   onMove(e) {
     if (!this.doc || !this.overlay) return;
-    // Quick inserter controls are pointer-events:auto inside shadow, but move inside shadow should not trigger page hover
-    try {
-      const path = e.composedPath ? e.composedPath() : [];
-      for (const n of path) {
-        if (n && n.getAttribute && (n.getAttribute("data-role") === "quick-inserter" || n.getAttribute("data-role") === "insertion-plus" || n.classList?.contains("quick-inserter"))) return;
-      }
-    } catch (_) {}
+    if (this.isEditorUIEvent(e)) return;
     // Throttle insertion hint derivation via rAF, but hover is immediate
     const hit = this.hitForTarget(e.target);
     // Always update hover outline (M2 behavior)
@@ -357,12 +427,73 @@ export class CanvasController {
     });
   }
 
+  // Helpers for gap probing (§10) — bounded offsets, no global scan
+  hitFromPoint(x, y) {
+    if (!this.doc || typeof this.doc.elementsFromPoint !== "function") return null;
+    try {
+      const els = this.doc.elementsFromPoint(x, y);
+      for (const el of els) {
+        if (!el) continue;
+        // Skip overlay host if ever hit (pointer-events:none generally excludes it)
+        if (el.tagName && el.tagName.toLowerCase() === "stratum-editor-overlay-root") continue;
+        const hit = this.hitForTarget(el);
+        if (hit) return hit;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  probeGapTarget(clientX, clientY) {
+    if (!this.doc || clientX == null || clientY == null) return null;
+    const offsets = [4, 8, 16, 24, 36];
+    let above = null, below = null;
+    let aboveInfo = null, belowInfo = null;
+    for (const off of offsets) {
+      if (!above) {
+        const h = this.hitFromPoint(clientX, clientY - off);
+        if (h && h.editable && h.nodeId && findDocumentNode(h.nodeId)) {
+          const info = this.findSDTParent(h.nodeId);
+          if (info && info.node) { above = h; aboveInfo = info; }
+        }
+      }
+      if (!below) {
+        const h = this.hitFromPoint(clientX, clientY + off);
+        if (h && h.editable && h.nodeId && findDocumentNode(h.nodeId)) {
+          const info = this.findSDTParent(h.nodeId);
+          if (info && info.node) { below = h; belowInfo = info; }
+        }
+      }
+      if (above && below) break;
+    }
+    if (above && below) {
+      const parentIdAbove = aboveInfo.parent ? aboveInfo.parent.id : null;
+      const parentIdBelow = belowInfo.parent ? belowInfo.parent.id : null;
+      if (parentIdAbove === parentIdBelow && belowInfo.index === aboveInfo.index + 1) {
+        const parentNode = belowInfo.parent || null;
+        if (!hasLegalInsertion(parentNode, belowInfo.index)) return null;
+        const rectAbove = this.visualRect(above);
+        const rectBelow = this.visualRect(below);
+        let rect = null;
+        if (rectAbove && rectBelow) {
+          const left = Math.min(rectAbove.left, rectBelow.left);
+          const right = Math.max(rectAbove.left + rectAbove.width, rectBelow.left + rectBelow.width);
+          rect = { left, top: rectBelow.top, width: right - left, height: 2 };
+        } else if (rectBelow) rect = { left: rectBelow.left, top: rectBelow.top, width: rectBelow.width, height: 2 };
+        else if (rectAbove) rect = { left: rectAbove.left, top: rectAbove.top + rectAbove.height, width: rectAbove.width, height: 2 };
+        if (rect) return { parentId: parentIdBelow, index: belowInfo.index, rect, contextInstanceKey: below.instanceKey || above.instanceKey };
+      }
+    }
+    return null;
+  }
+
   deriveInsertionCandidates(hit, e) {
     if (!hit) {
-      // Empty document root case handled via empty-state, not hint line
-      // But if document has nodes but pointer over whitespace outside any hit yet inside scope, show root boundaries?
-      // For now, if no hit, check if pointer is inside editable scope and document has nodes
-      // Show before first or after last only if near edges
+      // Local gap probing first (§10) — whitespace between adjacent siblings
+      if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
+        const probed = this.probeGapTarget(e.clientX, e.clientY);
+        if (probed) return [probed];
+      }
+      // Fallback: empty root / scope edges only
       const scopeRect = this.editableScopeRect();
       if (!scopeRect || !e) return null;
       const y = e.clientY;
@@ -472,19 +603,7 @@ export class CanvasController {
 
   onClick(e) {
     if (!this.doc || !this.overlay) return;
-    // If click is on overlay editor controls (plus/quick inserter/empty), don't select page
-    try {
-      const t = e.target;
-      if (t && t.closest) {
-        const ctrl = t.closest('[data-role="insertion-plus"], [data-role="quick-inserter"], [data-role="handle-plus"], [data-role="empty-root"], [data-role="empty-container"], .quick-inserter, .overlay-insertion-plus, .overlay-handle-plus, .overlay-empty');
-        if (ctrl) return;
-      }
-      // shadow path check
-      const path = e.composedPath ? e.composedPath() : [];
-      for (const n of path) {
-        if (n && n.getAttribute && (n.getAttribute("data-role") === "quick-inserter" || n.getAttribute("data-role") === "insertion-plus" || n.getAttribute("data-role") === "handle-plus" || n.classList?.contains("quick-inserter"))) return;
-      }
-    } catch (_) {}
+    if (this.isEditorUIEvent(e)) return;
     if (e.type === "submit") {
       try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
       const formEl = e.target;

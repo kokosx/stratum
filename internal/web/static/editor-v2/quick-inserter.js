@@ -49,6 +49,7 @@ export class QuickInserter {
     const wrap = doc.createElement("div");
     wrap.className = "quick-inserter";
     wrap.setAttribute("data-role", "quick-inserter");
+    wrap.setAttribute("data-stratum-editor-ui", "true");
     wrap.style.cssText = [
       "position:fixed",
       "pointer-events:auto",
@@ -140,13 +141,11 @@ export class QuickInserter {
       const t = { ...this.target };
       this.close();
       // keep exact target and open left Blocks panel target-aware (§34)
-      setInsertionTarget(t);
+      setInsertionTarget(t, { source: "contextual" });
       // trigger panels open - single mechanism, panels subscribes to this event
+      // TODO: inject openBlocks(target) callback instead of global event (§42)
       try { window.dispatchEvent(new CustomEvent("stratum:open-blocks", { detail: t })); } catch (_) {}
-      // ensure insertion target retained after panel open
-      setTimeout(() => setInsertionTarget(t), 0);
     });
-    browseBtn.addEventListener("click", (e) => e.stopPropagation());
     footer.appendChild(browseBtn);
 
     wrap.addEventListener("click", (e) => e.stopPropagation());

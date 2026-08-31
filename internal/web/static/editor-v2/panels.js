@@ -12,7 +12,7 @@ import {
   subscribeSelection,
   togglePanel,
 } from "./state.js";
-import { clearInsertionTarget, describeBlocksTarget, getInsertionTarget, legalBlocksFor, resolveGlobalInsertion, setInsertionTarget, subscribeInsertionTarget, targetForBlocksFromSelection } from "./insertion.js";
+import { clearInsertionTarget, describeBlocksTarget, getInsertionSource, getInsertionTarget, legalBlocksFor, resolveGlobalInsertion, setInsertionTarget, subscribeInsertionTarget, targetForBlocksFromSelection } from "./insertion.js";
 import { insertBlock } from "./commands.js";
 import { NavigatorView } from "./navigator.js";
 import { inspectorTitle, renderDocumentBody, renderInspectorBody } from "./inspector.js";
@@ -91,7 +91,19 @@ export class PanelController {
     this.bindButton("navigator", "left", "navigator");
     this.bindButton("document", "right", "document");
     this.unsubscribePanels = subscribePanels(() => this.render());
-    this.unsubscribeSelection = subscribeSelection((next, previous) => this.selectionChanged(next, previous));
+    this.unsubscribeSelection = subscribeSelection((next, previous) => {
+      this.selectionChanged(next, previous);
+      // If Blocks is open with selection-derived target, recompute immediately (§18)
+      if (panelState.left === "blocks" && getInsertionSource() === "selection") {
+        const derived = targetForBlocksFromSelection();
+        const cur = getInsertionTarget();
+        if (!derived) { if (cur) clearInsertionTarget(); }
+        else if (!cur || cur.parentId !== derived.parentId || cur.index !== derived.index) {
+          setInsertionTarget(derived, { source: "selection" });
+        }
+        // render will be triggered via insertion subscription
+      }
+    });
     this.unsubscribeDocument = subscribeDocument(() => {
       // Blocks may need re-render if filtering depends on doc max children
       if (panelState.left === "blocks") this.renderSlot("left", true);
@@ -100,9 +112,12 @@ export class PanelController {
       if (panelState.left === "blocks") this.renderSlot("left", true);
     });
     window.addEventListener("resize", this.onResize);
-    // open Blocks from Quick Inserter's Browse all blocks (keeps exact target)
-    window.addEventListener("stratum:open-blocks", () => {
+    // open Blocks from Quick Inserter's Browse all blocks (keeps exact contextual target §19)
+    window.addEventListener("stratum:open-blocks", (e) => {
       // panel will be target-aware via getInsertionTarget
+      if (e && e.detail && typeof e.detail === "object") {
+        try { setInsertionTarget(e.detail, { source: "contextual" }); } catch (_) {}
+      }
       if (panelState.left !== "blocks") {
         this.focusNext.left = true;
         activatePanel("left", "blocks");
@@ -129,6 +144,13 @@ export class PanelController {
         clearInsertionTarget();
       }
       const wasBlocksOpen = prevLeft === "blocks" && slot === "left" && panel === "blocks";
+      const openingBlocks = slot === "left" && panel === "blocks" && panelState.left !== "blocks";
+      if (openingBlocks) {
+        // Topbar Blocks must derive fresh selection-derived target, never reuse stale contextual (§21)
+        clearInsertionTarget();
+        const derived = targetForBlocksFromSelection();
+        if (derived) setInsertionTarget(derived, { source: "selection" });
+      }
       if (covered) {
         this.focusNext[slot] = true;
         activatePanel(slot, panel);
@@ -151,6 +173,9 @@ export class PanelController {
         const shouldRestore = this.rightSlot?.contains(document.activeElement);
         setPanel("right", null);
         if (shouldRestore) this.restoreInspectorFocus();
+      }
+      if (panelState.left === "blocks" && getInsertionSource() === "selection") {
+        clearInsertionTarget();
       }
       return;
     }
@@ -318,12 +343,12 @@ export class PanelController {
   }
 
   renderBlocks(body) {
-    // Ensure explicit target when Blocks opened with selection (§19-20)
+    // Ensure explicit target when Blocks opened with selection (§17,19)
     let target = getInsertionTarget();
     if (!target && panelState.left === "blocks") {
       const derived = targetForBlocksFromSelection();
       if (derived) {
-        setInsertionTarget(derived);
+        setInsertionTarget(derived, { source: "selection" });
         target = getInsertionTarget();
       }
     }
