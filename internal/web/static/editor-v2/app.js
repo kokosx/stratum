@@ -2,6 +2,12 @@
 import { state, bootstrap } from "./state.js";
 import { fetchPreview } from "./preview.js";
 
+const VIEWPORTS = {
+  desktop: null, // 100% available
+  tablet: 768,
+  mobile: 390,
+};
+
 class EditorApp {
   constructor({ root }) {
     this.root = root;
@@ -100,19 +106,70 @@ class EditorApp {
       if (viewport === "mobile") this.stage.classList.add("editor-v2-stage--mobile");
     }
 
-    // iframe width: Desktop = 100%, Tablet ~768, Mobile ~390
+    // iframe width via single source of truth VIEWPORTS
     if (this.iframe) {
-      if (viewport === "desktop") {
+      const preset = VIEWPORTS[viewport];
+      if (preset == null) {
         this.iframe.style.width = "100%";
         this.iframe.style.maxWidth = "none";
-      } else if (viewport === "tablet") {
-        this.iframe.style.width = "768px";
-        this.iframe.style.maxWidth = "100%";
-      } else if (viewport === "mobile") {
-        this.iframe.style.width = "390px";
+      } else {
+        this.iframe.style.width = preset + "px";
         this.iframe.style.maxWidth = "100%";
       }
     }
+  }
+
+  attachInertBlockers(doc) {
+    if (!doc || doc.__stratumV2InertAttached) return;
+    doc.__stratumV2InertAttached = true;
+    // Click — block any navigation/action inside canvas, keep scroll alive
+    doc.addEventListener(
+      "click",
+      (e) => {
+        const target = e.target;
+        if (!target || !target.closest) return;
+        const interactive = target.closest("a[href], button, input[type='submit'], input[type='button'], [role='link'], [role='button'], form");
+        if (!interactive) return;
+        // For anchors, any href (including hash, mailto, tel, target blank) should be inert
+        if (interactive.tagName === "A" && interactive.getAttribute("href")) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (interactive.tagName === "BUTTON" || interactive.tagName === "INPUT" || interactive.getAttribute("role") === "button" || interactive.getAttribute("role") === "link") {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        // Form itself will be handled via submit listener, but click on submit also blocked
+        if (interactive.tagName === "FORM") {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      true,
+    );
+    // Submit — block form submissions (future Form block)
+    doc.addEventListener(
+      "submit",
+      (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true,
+    );
+    // Auxclick (middle click) also should not navigate
+    doc.addEventListener(
+      "auxclick",
+      (e) => {
+        const a = e.target.closest && e.target.closest("a[href]");
+        if (a) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      true,
+    );
   }
 
   showLoading(show) {
@@ -139,10 +196,10 @@ class EditorApp {
       this.showLoading(false);
       this.showError("");
       // ensure sandbox stays safe
-      // assign srcdoc
+      // assign srcdoc — set onload before srcdoc to avoid race
       this.iframe.onload = () => {
         // do NOT block scroll inside iframe, do NOT autosize height
-        // ensure iframe content scrolls internally
+        // ensure iframe content scrolls internally and is inert for navigation
         try {
           const doc = this.iframe.contentDocument;
           if (doc) {
@@ -155,6 +212,7 @@ class EditorApp {
               doc.body.style.overflow = "";
               doc.body.style.overflowY = "auto";
             }
+            this.attachInertBlockers(doc);
           }
         } catch (_) {}
         this.showLoading(false);

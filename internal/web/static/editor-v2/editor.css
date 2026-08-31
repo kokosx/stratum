@@ -19,7 +19,7 @@ body.editor-v2-layout {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 56px;
+  min-height: 52px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--ui-border, #e2e8f0);
   background: var(--ui-surface, #fff);
@@ -30,7 +30,7 @@ body.editor-v2-layout {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 0;
 }
 
 .editor-v2-topbar__title {
@@ -46,6 +46,13 @@ body.editor-v2-layout {
   font-size: 12px;
   color: #64748b;
   line-height: 1;
+}
+
+.editor-v2-topbar__center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
 }
 
 .editor-v2-topbar__right {
