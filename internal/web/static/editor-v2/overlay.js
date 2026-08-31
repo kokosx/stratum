@@ -73,9 +73,10 @@ const OVERLAY_CSS = `
 .overlay-handle {
   position: fixed;
   pointer-events: none;
+  display: inline-flex;
+  align-items: center;
   height: 24px;
-  line-height: 24px;
-  padding: 0 8px;
+  padding: 0 0 0 8px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 11px;
   font-weight: 600;
@@ -84,14 +85,39 @@ const OVERLAY_CSS = `
   color: #fff;
   border-radius: 4px 4px 0 0;
   white-space: nowrap;
-  max-width: 200px;
+  max-width: 240px;
+  overflow: hidden;
+  box-sizing: border-box;
+  gap: 0;
+}
+.overlay-handle__label {
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
-  box-sizing: border-box;
+  white-space: nowrap;
+  padding-right: 8px;
 }
+.overlay-handle__plus {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-left: 1px solid rgba(255,255,255,.3);
+  background: rgba(255,255,255,.15);
+  color: #fff;
+  font: 700 13px/1 system-ui, sans-serif;
+  cursor: pointer;
+  pointer-events: auto;
+  border-radius: 0 4px 0 0;
+}
+.overlay-handle__plus:hover { background: rgba(255,255,255,.25); }
 .overlay-handle--external {
   background: #d97706;
 }
+.overlay-handle--external .overlay-handle__plus { border-left-color: rgba(255,255,255,.3); }
 .overlay-insertion-line {
   position: fixed;
   pointer-events: none;
@@ -119,18 +145,46 @@ const OVERLAY_CSS = `
   border: 2px solid #fff;
 }
 .overlay-insertion-plus:hover { background: #1d4ed8; }
+.overlay-blocks-target-line {
+  position: fixed;
+  pointer-events: none;
+  height: 2px;
+  background: #2563eb;
+  border-radius: 1px;
+  z-index: 2147483645;
+  opacity: .9;
+}
+.overlay-blocks-target-plus {
+  position: fixed;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font: 700 12px/1 system-ui, sans-serif;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(37,99,235,.3);
+  z-index: 2147483645;
+}
 .overlay-empty {
   position: fixed;
-  pointer-events: auto;
+  pointer-events: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 64px;
+  min-height: 48px;
   border: 1px dashed #cbd5e1;
   border-radius: 8px;
-  background: rgba(255,255,255,.96);
-  box-shadow: 0 1px 4px rgba(0,0,0,.04);
+  background: transparent;
   z-index: 2147483644;
+}
+.overlay-empty--subtle {
+  background: rgba(255,255,255,.35);
+  border-color: #cbd5e1;
 }
 .overlay-empty__button {
   display: inline-flex;
@@ -139,13 +193,14 @@ const OVERLAY_CSS = `
   padding: 6px 12px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
-  background: #fff;
+  background: rgba(255,255,255,.95);
   color: #334155;
   font: 600 12px/1 system-ui, sans-serif;
   cursor: pointer;
   pointer-events: auto;
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
-.overlay-empty__button:hover { border-color:#94a3b8; background:#f8fafc; }
+.overlay-empty__button:hover { border-color:#94a3b8; background:#fff; }
 .overlay-handle-plus {
   position: fixed;
   pointer-events: auto;
@@ -182,6 +237,8 @@ export class Overlay {
     this.handlePlusEl = null;
     this.insertionLineEl = null;
     this.insertionPlusEl = null;
+    this.blocksTargetLineEl = null;
+    this.blocksTargetPlusEl = null;
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map(); // nodeId -> element
     this._beforeHeight = 0;
@@ -290,7 +347,7 @@ export class Overlay {
     this.insertionPlusEl.style.display = "none";
     shadow.appendChild(this.insertionPlusEl);
 
-    // handle + for selected container
+    // handle + for selected container (now integrated in handle, keep legacy element hidden for compat)
     this.handlePlusEl = this.doc.createElement("button");
     this.handlePlusEl.className = "overlay-handle-plus";
     this.handlePlusEl.setAttribute("data-role", "handle-plus");
@@ -299,6 +356,19 @@ export class Overlay {
     this.handlePlusEl.textContent = "+";
     this.handlePlusEl.style.display = "none";
     shadow.appendChild(this.handlePlusEl);
+
+    // Persistent Blocks target indicator (§22)
+    this.blocksTargetLineEl = this.doc.createElement("div");
+    this.blocksTargetLineEl.className = "overlay-blocks-target-line";
+    this.blocksTargetLineEl.setAttribute("data-role", "blocks-target-line");
+    this.blocksTargetLineEl.style.display = "none";
+    shadow.appendChild(this.blocksTargetLineEl);
+    this.blocksTargetPlusEl = this.doc.createElement("div");
+    this.blocksTargetPlusEl.className = "overlay-blocks-target-plus";
+    this.blocksTargetPlusEl.setAttribute("data-role", "blocks-target-plus");
+    this.blocksTargetPlusEl.textContent = "+";
+    this.blocksTargetPlusEl.style.display = "none";
+    shadow.appendChild(this.blocksTargetPlusEl);
 
     // Verify host didn't change scrollHeight
     try {
@@ -326,6 +396,8 @@ export class Overlay {
     this.handlePlusEl = null;
     this.insertionLineEl = null;
     this.insertionPlusEl = null;
+    this.blocksTargetLineEl = null;
+    this.blocksTargetPlusEl = null;
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map();
     this.scopeTopEl = null;
@@ -351,6 +423,27 @@ export class Overlay {
   clearInsertion() {
     if (this.insertionLineEl) this.insertionLineEl.style.display = "none";
     if (this.insertionPlusEl) this.insertionPlusEl.style.display = "none";
+  }
+  clearBlocksTarget() {
+    if (this.blocksTargetLineEl) this.blocksTargetLineEl.style.display = "none";
+    if (this.blocksTargetPlusEl) this.blocksTargetPlusEl.style.display = "none";
+  }
+  setBlocksTarget(rect) {
+    if (!this.blocksTargetLineEl || !this.blocksTargetPlusEl || !rect) {
+      this.clearBlocksTarget();
+      return;
+    }
+    const line = this.blocksTargetLineEl;
+    const plus = this.blocksTargetPlusEl;
+    line.style.display = "block";
+    line.style.left = Math.round(rect.left) + "px";
+    line.style.top = Math.round(rect.top) + "px";
+    line.style.width = Math.round(rect.width) + "px";
+    plus.style.display = "inline-flex";
+    const left = Math.round(rect.left + rect.width / 2 - 9);
+    const top = Math.round(rect.top - 9);
+    plus.style.left = left + "px";
+    plus.style.top = top + "px";
   }
 
   clearEmptyStates() {
@@ -472,16 +565,18 @@ export class Overlay {
     line.style.left = Math.round(rect.left) + "px";
     line.style.top = Math.round(rect.top) + "px";
     line.style.width = Math.round(rect.width) + "px";
-    // plus centered
+    // plus centered on line — viewport-fixed coordinates
     plus.style.display = "inline-flex";
     const left = Math.round(rect.left + rect.width / 2 - 10);
     const top = Math.round(rect.top - 10);
     plus.style.left = left + "px";
     plus.style.top = top + "px";
-    // bind click
+    // bind click — capture anchor rect of the interactive control itself
     plus.onclick = (e) => {
       e.preventDefault(); e.stopPropagation();
-      if (typeof onPlusClick === "function") onPlusClick(e);
+      let anchor = null;
+      try { anchor = plus.getBoundingClientRect(); } catch (_) { anchor = rect; }
+      if (typeof onPlusClick === "function") onPlusClick(e, anchor);
     };
     plus.onpointerdown = (e) => { e.stopPropagation(); };
     plus.onmousedown = (e) => { e.stopPropagation(); };
@@ -491,17 +586,18 @@ export class Overlay {
     this.clearEmptyStates(); // root exclusive? keep but clear first
     if (!rect || !this.shadow) return;
     const wrap = this.doc.createElement("div");
-    wrap.className = "overlay-empty";
+    wrap.className = "overlay-empty overlay-empty--subtle";
     wrap.setAttribute("data-role", "empty-root");
     wrap.style.left = Math.round(rect.left) + "px";
     wrap.style.top = Math.round(rect.top) + "px";
     wrap.style.width = Math.round(rect.width) + "px";
-    wrap.style.height = Math.max(80, Math.round(rect.height)) + "px";
+    wrap.style.height = Math.max(72, Math.round(rect.height)) + "px";
+    wrap.style.pointerEvents = "none";
     const btn = this.doc.createElement("button");
     btn.type = "button";
     btn.className = "overlay-empty__button";
     btn.textContent = label || "+ Add block";
-    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof onClick === "function") onClick(e); });
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof onClick === "function") onClick(e, btn.getBoundingClientRect()); });
     btn.addEventListener("pointerdown", (e) => e.stopPropagation());
     btn.addEventListener("mousedown", (e) => e.stopPropagation());
     wrap.appendChild(btn);
@@ -515,22 +611,31 @@ export class Overlay {
     const existing = this.emptyContainerEls.get(nodeId);
     if (existing) try { existing.remove(); } catch (_) {}
     const wrap = this.doc.createElement("div");
-    wrap.className = "overlay-empty";
+    wrap.className = "overlay-empty overlay-empty--subtle";
     wrap.setAttribute("data-role", "empty-container");
     wrap.dataset.nodeId = nodeId;
-    // inset slightly inside container
-    const inset = 8;
+    // overlay existing rendered bounds without altering layout: use transparent dashed with centered button
+    // Do not cover whole theme with opaque white — subtle centered control only
+    const inset = 6;
+    // Keep wrap pointer-events none so underlying theme visible, button is interactive
     wrap.style.left = Math.round(rect.left + inset) + "px";
     wrap.style.top = Math.round(rect.top + inset) + "px";
-    wrap.style.width = Math.round(Math.max(120, rect.width - inset * 2)) + "px";
-    wrap.style.height = Math.max(56, Math.round(rect.height - inset * 2)) + "px";
-    wrap.style.minHeight = "56px";
-    // subtle dashed inside
+    wrap.style.width = Math.round(Math.max(100, rect.width - inset * 2)) + "px";
+    // Limit height to avoid huge white boxes: center vertically if container very tall, otherwise fit
+    const h = Math.max(48, Math.min(80, Math.round(rect.height - inset * 2)));
+    wrap.style.height = h + "px";
+    // center vertically within original rect if container taller
+    if (rect.height > 120) {
+      const extra = (rect.height - h) / 2;
+      wrap.style.top = Math.round(rect.top + extra) + "px";
+    }
+    wrap.style.minHeight = "48px";
+    wrap.style.pointerEvents = "none";
     const btn = this.doc.createElement("button");
     btn.type = "button";
     btn.className = "overlay-empty__button";
     btn.textContent = label || "+ Add block";
-    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof onClick === "function") onClick(e); });
+    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof onClick === "function") onClick(e, btn.getBoundingClientRect()); });
     btn.addEventListener("pointerdown", (e) => e.stopPropagation());
     btn.addEventListener("mousedown", (e) => e.stopPropagation());
     wrap.appendChild(btn);
@@ -559,14 +664,13 @@ export class Overlay {
       sel.classList.remove("overlay-outline--external");
     }
 
-    // Handle — attached to top-left of outline, slightly above
+    // Handle — coherent [ Section | + ] (plus is visually part of handle)
     const handle = this.handleEl;
     let text = label || "Block";
     if (isExternal && externalLabel) {
       text = externalLabel;
     }
     if (isExternal) {
-      // Append Read-only indicator for external selection
       if (!text.toLowerCase().includes("read-only") && !text.toLowerCase().includes("read–only")) {
         text = text + " · Read-only";
       }
@@ -574,25 +678,36 @@ export class Overlay {
     } else {
       handle.classList.remove("overlay-handle--external");
     }
-    handle.textContent = text;
-    handle.style.display = "block";
+    // Build handle content: label + optional plus inside handle (Add inside)
+    handle.replaceChildren();
+    const labelSpan = this.doc.createElement("span");
+    labelSpan.className = "overlay-handle__label";
+    labelSpan.textContent = text;
+    handle.appendChild(labelSpan);
+    let plusInside = null;
+    const showPlus = !isExternal && opts && opts.showHandlePlus;
+    if (showPlus) {
+      plusInside = this.doc.createElement("button");
+      plusInside.type = "button";
+      plusInside.className = "overlay-handle__plus";
+      const plusLabel = `Add inside ${text}`;
+      plusInside.setAttribute("aria-label", plusLabel);
+      plusInside.setAttribute("title", plusLabel);
+      plusInside.textContent = "+";
+      plusInside.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); if (typeof opts.onHandlePlusClick === "function") opts.onHandlePlusClick(e, plusInside.getBoundingClientRect()); });
+      plusInside.addEventListener("pointerdown", (e) => e.stopPropagation());
+      plusInside.addEventListener("mousedown", (e) => e.stopPropagation());
+      handle.appendChild(plusInside);
+    }
+    handle.style.display = "inline-flex";
 
-    // Measure handle size after text set
-    // Need to compute position: top-left of rect, but handle sits above or inside
-    // Spec: small tab attached to top-left outline
-    // We position handle so its bottom edge touches top edge of rect
-    // If rect near top of viewport (< 28px), show handle inside/top
+    // Position handle so its bottom edge touches top edge of rect
     let handleLeft = Math.round(rect.left);
     let handleTop = Math.round(rect.top - 24);
-    // Clamp to viewport visible
     try {
       const vw = this.doc.documentElement.clientWidth || (this.doc.defaultView && this.doc.defaultView.innerWidth) || 1024;
-      // Estimate handle width: we can measure via getBoundingClientRect after display, but before positioning we need width
-      // For now, approximate: text length * 7 + 16
-      // Instead, set left then measure and adjust if overflow right
       handle.style.left = handleLeft + "px";
       handle.style.top = handleTop + "px";
-      // Now measure and clamp
       const hr = handle.getBoundingClientRect();
       if (hr.width) {
         if (handleLeft + hr.width > vw - 4) {
@@ -601,7 +716,6 @@ export class Overlay {
         }
       }
       if (handleTop < 0) {
-        // Not enough space above, place handle inside top edge of rect
         handleTop = Math.round(rect.top);
         handle.style.top = handleTop + "px";
         handle.style.borderRadius = "0 0 4px 4px";
@@ -612,27 +726,11 @@ export class Overlay {
       handle.style.left = handleLeft + "px";
       handle.style.top = handleTop + "px";
     }
-
-    // Handle + for selected container (small plus action appended to handle)
-    try {
-      const showPlus = opts && opts.showHandlePlus && this.handlePlusEl;
-      if (showPlus) {
-        const hp = this.handlePlusEl;
-        hp.style.display = "inline-flex";
-        // position to right of handle
-        const hr2 = handle.getBoundingClientRect();
-        const hpLeft = Math.round(handleLeft + (hr2.width || 80) + 6);
-        const hpTop = handleTop;
-        hp.style.left = hpLeft + "px";
-        hp.style.top = hpTop + "px";
-        hp.onclick = (e) => { e.preventDefault(); e.stopPropagation(); if (typeof opts.onHandlePlusClick === "function") opts.onHandlePlusClick(e); };
-        hp.onpointerdown = (e) => e.stopPropagation();
-        hp.onmousedown = (e) => e.stopPropagation();
-      } else if (this.handlePlusEl) {
-        this.handlePlusEl.style.display = "none";
-        this.handlePlusEl.onclick = null;
-      }
-    } catch (_) {}
+    // Hide legacy detached handlePlusEl (now integrated)
+    if (this.handlePlusEl) {
+      this.handlePlusEl.style.display = "none";
+      this.handlePlusEl.onclick = null;
+    }
   }
 
   syncRects(hoverRect, selectedRect, hoverLabel, selectedLabel, selectedExternal) {

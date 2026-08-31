@@ -12,10 +12,24 @@ function isSafeKey(key) {
   return key !== "__proto__" && key !== "prototype" && key !== "constructor";
 }
 
+function sanitizeObject(value) {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(sanitizeObject);
+  const out = Object.create(null);
+  for (const [k, v] of Object.entries(value)) {
+    if (!isSafeKey(k)) continue;
+    out[k] = sanitizeObject(v);
+  }
+  return Object.assign({}, out);
+}
+
 function defaultValue(schema) {
   if (!schema) return "";
   if (schema.default !== null && schema.default !== undefined) {
-    try { return JSON.parse(JSON.stringify(schema.default)); } catch (_) { return schema.default; }
+    try {
+      const cloned = JSON.parse(JSON.stringify(schema.default));
+      return sanitizeObject(cloned);
+    } catch (_) { return sanitizeObject(schema.default); }
   }
   if (schema.type === "object") {
     const result = Object.create(null);
@@ -61,7 +75,11 @@ function createNode(definition, depth = 0) {
       }
       const child = createNode(childDef, depth + 1);
       if (!child) continue;
-      if (sc.version && child.version !== sc.version) child.version = sc.version;
+      // only override version if that version actually exists
+      if (sc.version && child.version !== sc.version) {
+        const versionExists = definitionForBlock(sc.block, sc.version);
+        if (versionExists) child.version = sc.version;
+      }
       node.children.push(child);
       created++;
     }

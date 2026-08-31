@@ -12,7 +12,7 @@ import {
   subscribeSelection,
   togglePanel,
 } from "./state.js";
-import { clearInsertionTarget, getInsertionTarget, legalBlocksFor, resolveGlobalInsertion, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
+import { clearInsertionTarget, describeBlocksTarget, getInsertionTarget, legalBlocksFor, resolveGlobalInsertion, setInsertionTarget, subscribeInsertionTarget, targetForBlocksFromSelection } from "./insertion.js";
 import { insertBlock } from "./commands.js";
 import { NavigatorView } from "./navigator.js";
 import { inspectorTitle, renderDocumentBody, renderInspectorBody } from "./inspector.js";
@@ -318,27 +318,23 @@ export class PanelController {
   }
 
   renderBlocks(body) {
-    // Target-aware header (§35)
-    const target = getInsertionTarget();
+    // Ensure explicit target when Blocks opened with selection (§19-20)
+    let target = getInsertionTarget();
+    if (!target && panelState.left === "blocks") {
+      const derived = targetForBlocksFromSelection();
+      if (derived) {
+        setInsertionTarget(derived);
+        target = getInsertionTarget();
+      }
+    }
+    // Target-aware header (§23)
     if (target) {
       const header = createElement("div", "editor-v2-insertion-context");
       header.style.cssText = "background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:8px";
       const left = createElement("div");
-      let label = "Add block";
-      let subLabel = "";
-      if (target.parentId == null) {
-        subLabel = "Between blocks";
-        // try to distinguish root vs inside? Use generic
-        const nodes = state.document.nodes || [];
-        if (target.index === 0 && nodes.length === 0) subLabel = "Page content";
-        else if (target.index === 0) subLabel = "Before first block";
-        else if (target.index === nodes.length) subLabel = "After last block";
-      } else {
-        const parentNode = findDocumentNode(target.parentId);
-        const display = parentNode ? displayNameForBlock(parentNode.block) : "Container";
-        label = `Add block`;
-        subLabel = `Inside ${display}`;
-      }
+      const desc = describeBlocksTarget(target, state.selection);
+      const label = desc.main;
+      const subLabel = desc.sub;
       const title = createElement("strong", "", label);
       title.style.fontSize = "12px";
       title.style.color = "#1e40af";
@@ -355,6 +351,25 @@ export class PanelController {
       cancel.addEventListener("click", () => { clearInsertionTarget(); });
       header.append(left, cancel);
       body.append(header);
+    } else {
+      // No explicit target: non-empty page with no selection (§24)
+      const nodes = state.document?.nodes || [];
+      if (nodes.length > 0 && !state.selection) {
+        const header = createElement("div", "editor-v2-insertion-context");
+        header.style.cssText = "background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:8px 10px;margin-bottom:10px;display:flex;align-items:center;gap:8px";
+        const left = createElement("div");
+        const title = createElement("strong", "", "Add block");
+        title.style.fontSize = "12px";
+        title.style.color = "#92400e";
+        left.append(title);
+        const sub = createElement("small", "", "Choose a position on the canvas");
+        sub.style.display = "block";
+        sub.style.color = "#b45309";
+        sub.style.fontSize = "11px";
+        left.append(sub);
+        header.append(left);
+        body.append(header);
+      }
     }
     const search = createElement("input", "editor-v2-panel__search");
     search.type = "search";
@@ -461,10 +476,15 @@ export class PanelController {
           }
           if (this._blocksHintEl) this._blocksHintEl.style.display = "none";
           this.selectedCatalogItem = key;
-          try { state.__pendingSelectionId = res.node.id; state.__pendingSelectionBlock = res.node.block; } catch (_) {}
-          // Advance target index for sequential inserts (§34 keeps exact target but we bump for next)
+          try {
+            state.__pendingSelectionIds ||= []; state.__pendingSelectionIds.push(res.node.id); state.__pendingSelectionBlock = res.node.block;
+            // mirror quick-inserter: set logical selection immediately so navigator updates before preview (§44)
+            state.selection = { nodeId: res.node.id, instanceKey: null, editable: true, block: res.node.block, version: res.node.version, logical: true };
+          } catch (_) {}
+          // After successful insert, clear insertion target per §27 (predictability > rapid multi-insert)
+          // Blocks panel returns to non-targeted state; next insert will re-derive from new selection if needed
           if (target) {
-            try { setInsertionTarget({ parentId: target.parentId, index: target.index + 1 }); } catch (_) {}
+            try { clearInsertionTarget(); } catch (_) {}
           }
           // Re-render catalog to reflect new max/legal
           this.renderCatalog(root);

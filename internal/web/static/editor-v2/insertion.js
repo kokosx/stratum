@@ -18,6 +18,12 @@ export function setInsertionTarget(next) {
   if (!next || typeof next !== "object") return;
   const normalized = { parentId: next.parentId ?? null, index: Number(next.index) || 0 };
   if (next.contextInstanceKey) normalized.contextInstanceKey = String(next.contextInstanceKey);
+  // validate parent existence; dangling parent treated as invalid, not root teleport
+  if (normalized.parentId != null && !findDocumentNode(normalized.parentId)) {
+    // stale target after undo/race — clear instead of teleporting to root
+    clearInsertionTarget();
+    return;
+  }
   // clamp index defensively (but validation will also clamp)
   if (normalized.parentId === null) {
     const len = state.document?.nodes?.length || 0;
@@ -101,7 +107,7 @@ export function hasLegalInsertion(parentNode, index) {
   const rule = ruleForDef(def);
   if (rule.mode === "none") return false;
   if (rule.max != null && parentNode.children && parentNode.children.length >= rule.max) return false;
-  if (rule.mode === "any") return true;
+  if (rule.mode === "any") return blockCatalog().some((c) => !c.hidden);
   if (rule.mode === "allowed") {
     if (!Array.isArray(rule.blocks) || rule.blocks.length === 0) return false;
     // need at least one allowed block that is actually in catalog and not hidden, and canInsert would succeed
@@ -122,10 +128,10 @@ export function hasLegalInsertion(parentNode, index) {
 }
 
 export function legalBlocksFor(parentNode, index) {
-  const catalog = blockCatalog();
+  const catalog = blockCatalog().filter((c) => !c.hidden);
   if (!catalog.length) return [];
   if (!parentNode) {
-    // root: all catalog blocks are legal (context already filtered server-side)
+    // root: all non-hidden catalog blocks are legal (context already filtered server-side)
     return catalog.slice();
   }
   const out = [];
@@ -184,5 +190,65 @@ export function resolveGlobalInsertion(definition) {
 }
 
 export function hasAnyLegalInsertion() {
-  return blockCatalog().length > 0;
+  return blockCatalog().some((c) => !c.hidden);
+}
+
+// --- Blocks panel explicit target (§19-20) ---
+
+export function targetForBlocksFromSelection() {
+  const sel = state.selection;
+  if (!sel || !sel.nodeId || sel.editable === false) return null;
+  const selNode = findDocumentNode(sel.nodeId);
+  if (!selNode) return null;
+  // 1. inside selected container if it has at least one legal child
+  if (isContainerNode(selNode)) {
+    const insideIdx = (selNode.children || []).length;
+    if (hasLegalInsertion(selNode, insideIdx)) {
+      return { parentId: selNode.id, index: insideIdx };
+    }
+  }
+  // 2. after selected node in its parent/root
+  const parentInfo = findDocumentParent(selNode.id);
+  if (!parentInfo) return null;
+  const parentNode = parentInfo.parent;
+  const afterIdx = parentInfo.index + 1;
+  if (hasLegalInsertion(parentNode, afterIdx)) {
+    return { parentId: parentNode ? parentNode.id : null, index: afterIdx };
+  }
+  return null;
+}
+
+export function describeBlocksTarget(target, selection) {
+  if (!target) return { main: "Add block", sub: "Choose a position on the canvas" };
+  const sel = selection || state.selection;
+  // Check if target corresponds to "after selected" (selected cannot contain or inside not legal)
+  if (sel && sel.nodeId) {
+    const selNode = findDocumentNode(sel.nodeId);
+    if (selNode) {
+      const parentInfo = findDocumentParent(selNode.id);
+      if (parentInfo) {
+        const afterParentId = parentInfo.parent ? parentInfo.parent.id : null;
+        const afterIdx = parentInfo.index + 1;
+        if (target.parentId === afterParentId && target.index === afterIdx) {
+          // after selected (selected is leaf or full)
+          const display = displayNameForBlock(selNode.block);
+          return { main: "Add block", sub: `After ${display}` };
+        }
+      }
+    }
+  }
+  // otherwise inside container
+  if (target.parentId != null) {
+    const parentNode = findDocumentNode(target.parentId);
+    if (parentNode) {
+      const display = displayNameForBlock(parentNode.block);
+      return { main: "Add block", sub: `Inside ${display}` };
+    }
+  }
+  // root between blocks
+  const nodes = state.document?.nodes || [];
+  if (target.index === 0 && nodes.length === 0) return { main: "Add block", sub: "Page content" };
+  if (target.index === 0) return { main: "Add block", sub: "Before first block" };
+  if (target.index === nodes.length) return { main: "Add block", sub: "After last block" };
+  return { main: "Add block", sub: "Between blocks" };
 }

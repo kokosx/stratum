@@ -2,8 +2,8 @@
 import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
-import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock } from "./state.js";
-import { hasLegalInsertion, getInsertionTarget } from "./insertion.js";
+import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument } from "./state.js";
+import { hasLegalInsertion, getInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -75,6 +75,24 @@ export class CanvasController {
     this._insertionRaf = 0;
     this._lastMoveEvent = null;
     this.quickInserter = null;
+    // invalidate stale hint immediately after SDT mutation (max reached etc.)
+    try {
+      subscribeDocument(() => {
+        if (this.insertionHint && this.overlay) {
+          const parentNode = this.insertionHint.parentId == null ? null : findDocumentNode(this.insertionHint.parentId);
+          if (!hasLegalInsertion(parentNode, this.insertionHint.index)) {
+            this.insertionHint = null;
+            this.overlay.clearInsertion();
+          }
+        }
+        // persistent Blocks target must recompute after document change (new children count shifts geometry)
+        this.requestSync();
+      });
+      subscribeInsertionTarget(() => {
+        // show/hide persistent Blocks target indicator (§22) — one geometry refresh path
+        this.requestSync();
+      });
+    } catch (_) {}
   }
 
   onSubmitBlock(e) {
@@ -271,6 +289,11 @@ export class CanvasController {
       // keep hint but not derive new one while inserter open
       return;
     }
+    // Only one active insertion target (§29) — while Blocks has explicit target, hide hover boundary
+    if (getInsertionTarget()) {
+      if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); }
+      return;
+    }
     // External template content has no insertion controls (§22)
     if (hit && !hit.editable) {
       if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); }
@@ -309,11 +332,28 @@ export class CanvasController {
     // Only one affordance at a time §18
     this.insertionHint = best;
     // Build insertion line rect: horizontal line spanning parent width (or page content width for root)
-    const lineRect = this.buildInsertionLineRect(best);
+    // Keep selection and insertion visually distinct: if line coincides with selected outline edge, offset slightly outside
+    let lineRect = this.buildInsertionLineRect(best);
     if (!lineRect) { this.overlay.clearInsertion(); return; }
-    this.overlay.setInsertion(lineRect, () => {
-      // clicking + opens Quick Inserter (§28-29)
-      this.openQuickInserter(best, lineRect);
+    // Offset insertion boundary slightly outside selected block when they coincide (§5)
+    try {
+      if (this.selected && this.selected.instanceKey) {
+        const selInst = this.index.get(this.selected.instanceKey);
+        const selRect = selInst ? this.visualRect(selInst) : null;
+        if (selRect) {
+          const selTop = Math.round(selRect.top);
+          const selBottom = Math.round(selRect.top + selRect.height);
+          const lineTop = Math.round(lineRect.top);
+          if (Math.abs(lineTop - selTop) <= 2) {
+            const newTop = lineRect.top - 6;
+            lineRect = { ...lineRect, top: Math.max(8, newTop) };
+          } else if (Math.abs(lineTop - selBottom) <= 2) lineRect = { ...lineRect, top: lineRect.top + 6 };
+        }
+      }
+    } catch (_) {}
+    this.overlay.setInsertion(lineRect, (e, anchorRect) => {
+      // clicking + opens Quick Inserter anchored to the interactive control itself (§7-9)
+      this.openQuickInserter(best, anchorRect || lineRect);
     });
   }
 
@@ -563,6 +603,10 @@ export class CanvasController {
   }
 
   onScroll() {
+    // Close Quick Inserter on scroll (simplest correct rule, do not float stale)
+    if (this.quickInserter && this.quickInserter.isOpen()) {
+      this.quickInserter.close();
+    }
     this.requestSync();
   }
 
@@ -580,8 +624,131 @@ export class CanvasController {
     });
   }
 
+  rectForTarget(target) {
+    if (!target) return null;
+    const parentId = target.parentId;
+    const idx = target.index;
+    if (parentId == null) {
+      const nodes = state.document?.nodes || [];
+      if (!nodes.length) {
+        const scope = this.editableScopeRect();
+        if (scope) return { left: scope.left, top: scope.top, width: scope.width, height: 2 };
+        return null;
+      }
+      if (idx < nodes.length) {
+        const n = nodes[idx];
+        const keys = this.nodeToKeys.get(n.id) || [];
+        for (const k of keys) {
+          const inst = this.index.get(k);
+          if (inst && inst.editable) {
+            const r = this.visualRect(inst);
+            if (r) return { left: r.left, top: r.top, width: r.width, height: 2 };
+          }
+        }
+        // fallback to scope
+        const scope = this.editableScopeRect();
+        if (scope) return { left: scope.left, top: scope.top, width: scope.width, height: 2 };
+        return null;
+      } else {
+        // after last
+        const n = nodes[nodes.length - 1];
+        const keys = this.nodeToKeys.get(n.id) || [];
+        for (const k of keys) {
+          const inst = this.index.get(k);
+          if (inst && inst.editable) {
+            const r = this.visualRect(inst);
+            if (r) return { left: r.left, top: r.top + r.height, width: r.width, height: 2 };
+          }
+        }
+        const scope = this.editableScopeRect();
+        if (scope) return { left: scope.left, top: scope.top + scope.height, width: scope.width, height: 2 };
+        return null;
+      }
+    } else {
+      const parent = findDocumentNode(parentId);
+      if (!parent) return null;
+      const kids = parent.children || [];
+      if (idx < kids.length) {
+        const n = kids[idx];
+        const keys = this.nodeToKeys.get(n.id) || [];
+        for (const k of keys) {
+          const inst = this.index.get(k);
+          if (inst && inst.editable) {
+            const r = this.visualRect(inst);
+            if (r) return { left: r.left, top: r.top, width: r.width, height: 2 };
+          }
+        }
+        // empty container case: if kids length 0, show inside container
+        const parentKeys = this.nodeToKeys.get(parentId) || [];
+        for (const k of parentKeys) {
+          const inst = this.index.get(k);
+          if (inst && inst.editable) {
+            const r = this.visualRect(inst);
+            if (r) {
+              if (kids.length === 0) return { left: r.left + 8, top: r.top + r.height / 2, width: r.width - 16, height: 2 };
+              return { left: r.left, top: r.top, width: r.width, height: 2 };
+            }
+          }
+        }
+        return null;
+      } else {
+        // append at end of container or after last child
+        if (kids.length > 0) {
+          const last = kids[kids.length - 1];
+          const keys = this.nodeToKeys.get(last.id) || [];
+          for (const k of keys) {
+            const inst = this.index.get(k);
+            if (inst && inst.editable) {
+              const r = this.visualRect(inst);
+              if (r) return { left: r.left, top: r.top + r.height, width: r.width, height: 2 };
+            }
+          }
+        }
+        const parentKeys = this.nodeToKeys.get(parentId) || [];
+        for (const k of parentKeys) {
+          const inst = this.index.get(k);
+          if (inst && inst.editable) {
+            const r = this.visualRect(inst);
+            if (r) {
+              if (kids.length === 0) return { left: r.left + 8, top: r.top + r.height / 2, width: r.width - 16, height: 2 };
+              return { left: r.left, top: r.top + r.height, width: r.width, height: 2 };
+            }
+          }
+        }
+        return null;
+      }
+    }
+  }
+
+  updateBlocksTarget() {
+    if (!this.overlay) return;
+    const target = getInsertionTarget();
+    if (!target) {
+      this.overlay.clearBlocksTarget();
+      return;
+    }
+    // Empty doc owns empty-state button, not persistent line (§24)
+    if ((state.document?.nodes || []).length === 0) {
+      this.overlay.clearBlocksTarget();
+      return;
+    }
+    // Only show persistent indicator when Quick Inserter is not open (to avoid duplicate line+plus)
+    if (this.quickInserter && this.quickInserter.isOpen()) {
+      this.overlay.clearBlocksTarget();
+      return;
+    }
+    const rect = this.rectForTarget(target);
+    if (!rect) {
+      this.overlay.clearBlocksTarget();
+      return;
+    }
+    this.overlay.setBlocksTarget(rect);
+  }
+
   syncGeometry() {
     if (!this.overlay || !this.doc) return;
+    // Persistent Blocks target indicator (§22) — show before hover/selection so it stays visible while panel open
+    this.updateBlocksTarget();
     // Update scope boundary (primary editable region)
     this.updateScope();
     // Hover
@@ -627,11 +794,12 @@ export class CanvasController {
             // hasLegalInsertion for append inside
             if (hasLegalInsertion(node, (node.children||[]).length)) {
               handleOpts.showHandlePlus = true;
-              handleOpts.onHandlePlusClick = (e) => {
+              handleOpts.onHandlePlusClick = (e, anchorRect) => {
                 e.preventDefault(); e.stopPropagation();
                 const target = { parentId: node.id, index: (node.children||[]).length };
-                const lineRect = { left: rect.left, top: rect.top + rect.height, width: rect.width, height: 2 };
-                this.openQuickInserter(target, lineRect);
+                // anchor to the handle plus control itself, not an estimated line
+                const anchor = anchorRect || (e && e.target ? e.target.getBoundingClientRect() : null) || rect;
+                this.openQuickInserter(target, anchor);
               };
             }
           }
@@ -718,7 +886,7 @@ export class CanvasController {
           }
         } catch (_) {}
         if (lineRect) {
-          this.overlay.setInsertion(lineRect, () => this.openQuickInserter(hint, lineRect));
+          this.overlay.setInsertion(lineRect, (e, anchorRect) => this.openQuickInserter(hint, anchorRect || lineRect));
         }
       }
     } else if (!this.insertionHint) {
@@ -751,10 +919,9 @@ export class CanvasController {
       if (hasLegalInsertion(null, 0)) {
         // don't recreate if already exists with same rect
         if (!this.overlay.emptyRootEl) {
-          this.overlay.setEmptyRoot(rect, "+ Add block", () => {
+          this.overlay.setEmptyRoot(rect, "+ Add block", (e, anchorRect) => {
             const target = { parentId: null, index: 0 };
-            const lineRect = { left: rect.left, top: rect.top, width: rect.width, height: 2 };
-            this.openQuickInserter(target, lineRect);
+            this.openQuickInserter(target, anchorRect || rect);
           });
         }
       } else {
@@ -804,10 +971,9 @@ export class CanvasController {
                     finalLabel = `+ Add ${displayNameForBlock(single)}`;
                   }
                 } catch (_) {}
-                this.overlay.setEmptyContainer(node.id, rect, finalLabel, () => {
+                this.overlay.setEmptyContainer(node.id, rect, finalLabel, (e, anchorRect) => {
                   const target = { parentId: node.id, index: 0 };
-                  const lineRect = { left: rect.left, top: rect.top + rect.height / 2, width: rect.width, height: 2 };
-                  this.openQuickInserter(target, rect);
+                  this.openQuickInserter(target, anchorRect || rect);
                 });
               }
             }

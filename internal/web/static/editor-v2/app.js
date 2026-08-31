@@ -61,9 +61,10 @@ class EditorApp {
     if (this._previewTimer) clearTimeout(this._previewTimer);
     this._previewTimer = setTimeout(() => {
       this._previewTimer = null;
-      // capture pending selection before preview
-      this._pendingSelectionId = state.__pendingSelectionId || null;
-      try { delete state.__pendingSelectionId; } catch (_) {}
+      // capture pending selection queue before preview (last-write-wins but queue prevents overwrite)
+      const queue = state.__pendingSelectionIds || (state.__pendingSelectionId ? [state.__pendingSelectionId] : []);
+      this._pendingSelectionId = queue.length ? queue[queue.length - 1] : null;
+      try { delete state.__pendingSelectionId; delete state.__pendingSelectionIds; } catch (_) {}
       this.refreshPreview();
     }, 80);
   }

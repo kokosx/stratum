@@ -141,15 +141,10 @@ export class QuickInserter {
       this.close();
       // keep exact target and open left Blocks panel target-aware (§34)
       setInsertionTarget(t);
-      // trigger panels open
+      // trigger panels open - single mechanism, panels subscribes to this event
       try { window.dispatchEvent(new CustomEvent("stratum:open-blocks", { detail: t })); } catch (_) {}
-      // fallback direct panel activation
-      try {
-        const blocksBtn = document.getElementById("editor-v2-blocks-btn");
-        if (blocksBtn) blocksBtn.click();
-        // ensure insertion target retained after panel open (some toggles clear?) re-set
-        setTimeout(() => setInsertionTarget(t), 0);
-      } catch (_) {}
+      // ensure insertion target retained after panel open
+      setTimeout(() => setInsertionTarget(t), 0);
     });
     browseBtn.addEventListener("click", (e) => e.stopPropagation());
     footer.appendChild(browseBtn);
@@ -171,7 +166,11 @@ export class QuickInserter {
       document.addEventListener("pointerdown", this._onDocClick, true);
       document.addEventListener("keydown", this._onKey, true);
       if (this.canvas.win) {
-        this.canvas.win.addEventListener("scroll", () => this.maybeCloseOnScroll(), { passive: true });
+        // close on scroll — do not float at stale coordinates (§10)
+        this._onWinScroll = () => this.close();
+        this.canvas.win.addEventListener("scroll", this._onWinScroll, { passive: true });
+        // also listen on doc scroll
+        try { this.canvas.doc.addEventListener("scroll", this._onWinScroll, true); } catch (_) {}
       }
     } catch (_) {}
     // autofocus
@@ -335,9 +334,10 @@ export class QuickInserter {
             const selParent = this.canvas;
             if (selParent && typeof selParent.selectNode === "function") {
               // delay until preview markers rebuilt; app will select after preview
-              // store pending selection id for app to pick up
+              // store pending selection id queue for app to pick up (prevents overwrite in 80ms debounce)
               if (!res.node) return;
-              state.__pendingSelectionId = res.node.id;
+              state.__pendingSelectionIds ||= [];
+              state.__pendingSelectionIds.push(res.node.id);
               // also set state.selection logically now for navigator
               state.selection = { nodeId: res.node.id, instanceKey: null, editable: true, block: res.node.block, version: res.node.version, logical: true };
             }
@@ -388,9 +388,14 @@ export class QuickInserter {
       if (doc) {
         doc.removeEventListener("pointerdown", this._onDocClick, true);
         doc.removeEventListener("keydown", this._onKey, true);
+        if (this._onWinScroll) doc.removeEventListener("scroll", this._onWinScroll, true);
       }
       document.removeEventListener("pointerdown", this._onDocClick, true);
       document.removeEventListener("keydown", this._onKey, true);
+      if (this.canvas?.win && this._onWinScroll) {
+        try { this.canvas.win.removeEventListener("scroll", this._onWinScroll); } catch (_) {}
+      }
+      this._onWinScroll = null;
     } catch (_) {}
   }
 
