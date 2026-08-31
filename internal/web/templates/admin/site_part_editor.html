@@ -4,19 +4,35 @@
   <input id="document-json" type="hidden" name="document_json" value="">
   <input type="hidden" name="site_part_id" id="site-part-id" value="{{ .Content.SitePartID }}">
   {{ if .Content.Location }}<input type="hidden" name="location" value="{{ .Content.Location }}">{{ end }}
-  <header class="editor-topbar">
-    <div class="editor-metadata">
-      <label class="form-label">Site Part Name<input class="form-control" id="site-part-name" name="name" value="{{ .Content.Name }}" required></label>
+  <header class="editor-app-topbar">
+    <div class="editor-app-topbar__left">
+      <a class="button button-small" href="{{ .Content.BackURL }}" aria-label="Back" title="Back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </a>
+      <div style="display:grid;gap:2px;min-width:0">
+        <div class="editor-app-topbar__title">Site Part — <span style="font-weight:400">{{ .Content.Name }}</span></div>
+        <div class="editor-app-topbar__subtitle">{{ .Content.Status }}{{ if .Content.Location }} · {{ .Content.Location }}{{ end }}</div>
+      </div>
+      <label for="site-part-name" class="sr-only">Name</label>
+      <input class="form-control editor-app-topbar__title-input" id="site-part-name" name="name" value="{{ .Content.Name }}" required placeholder="Site part name">
     </div>
-    <div class="admin-page-actions">
-      <a class="button button-secondary" href="{{ .Content.BackURL }}">Back</a>
-      <a class="button button-secondary" href="{{ .Content.RevisionsURL }}">Revision history</a>
-      <button class="button button-secondary" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
-      <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+    <div class="editor-app-topbar__center" id="editor-status-region">{{ template "editor-status-region" .Content }}</div>
+    <div class="editor-app-topbar__right">
+      <a class="button button-small" href="{{ .Content.RevisionsURL }}">History</a>
+      <button class="button button-small" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
+      <button class="button button-small button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+      <div style="width:1px;height:24px;background:var(--ui-border);margin:0 4px" aria-hidden="true"></div>
+      <button class="button button-small editor-topbar-icon" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1" opacity="0.3"/></svg>
+      </button>
+      <button class="button button-small editor-topbar-icon" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="1" opacity="0.3"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg>
+      </button>
     </div>
   </header>
-  <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
-  {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  <div style="padding:8px 16px;display:grid;gap:6px">
+    {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+  </div>
   {{template "editor_shell" .}}
   <div class="editor-meta-panel">
     <div class="editor-meta-panel__row">

@@ -5,7 +5,7 @@
 <div class="editor-workbench editor-workbench--shared">
   <div class="editor-workspace">
     <aside class="editor-panel block-library" aria-label="Block library" data-library-tabs>
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <div class="editor-panel__header">
         <h2>Library</h2>
         <button class="panel-collapse-btn" type="button" data-collapse="library" title="Collapse library" aria-label="Collapse library">×</button>
       </div>
@@ -42,10 +42,12 @@
           </select>
         </div>
         <div class="editor-canvas-actions">
-          <button class="button button-small" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library">◧</button>
-          <button class="button button-small" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector">◨</button>
-          <button class="button button-small" type="button" id="canvas-undo" title="Undo (Ctrl+Z)">↶</button>
-          <button class="button button-small" type="button" id="canvas-redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+          <button class="button button-small" type="button" id="canvas-undo" title="Undo (Ctrl+Z)" aria-label="Undo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5A6.5 6.5 0 0117 14.5"/></svg>
+          </button>
+          <button class="button button-small" type="button" id="canvas-redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5A6.5 6.5 0 007 15.5"/></svg>
+          </button>
         </div>
       </div>
       <div class="editor-canvas-scroller editor-canvas-frame-wrap" id="editor-canvas-wrap">
@@ -62,7 +64,7 @@
       </div>
     </section>
     <aside class="editor-panel block-inspector" aria-label="Inspector" data-inspector-tabs>
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <div class="editor-panel__header">
         <div class="inspector-tabs" role="tablist" data-inspector-tablist style="flex:1;">
           <button class="inspector-tab is-active" type="button" role="tab" aria-selected="true" data-inspector-tab="block">Block</button>
           <button class="inspector-tab" type="button" role="tab" aria-selected="false" data-inspector-tab="document">Document</button>

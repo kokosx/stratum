@@ -3,19 +3,37 @@
   <input type="hidden" name="csrf_token" value="{{ .Content.CSRFToken }}">
   <input id="document-json" type="hidden" name="document_json" value="">
   <input type="hidden" name="template_id" id="template-id" value="{{ .Content.TemplateID }}">
-  <header class="editor-topbar">
-    <div class="editor-metadata">
-      <label>Template Name<input id="template-name" name="name" value="{{ .Content.Name }}" required></label>
-      <label>Content Type<input type="text" value="{{ .Content.ContentTypeName }}" disabled></label>
+  <header class="editor-app-topbar">
+    <div class="editor-app-topbar__left">
+      <a class="button button-small" href="{{ .Content.BackURL }}" aria-label="Back" title="Back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </a>
+      <div style="display:grid;gap:2px;min-width:0">
+        <div class="editor-app-topbar__title">{{ if eq .Content.Kind "archive" }}Archive{{ else }}Single{{ end }} — <span style="font-weight:400">{{ .Content.Name }}</span></div>
+        <div class="editor-app-topbar__subtitle">{{ .Content.ContentTypeName }} · {{ .Content.Status }}</div>
+      </div>
+      <label for="template-name" class="sr-only">Template name</label>
+      <input class="form-control editor-app-topbar__title-input" id="template-name" name="name" value="{{ .Content.Name }}" required placeholder="Template name">
       <input type="hidden" name="content_type_id" value="{{ .Content.ContentTypeID }}">
     </div>
-    <div class="form-actions">
-      <a class="button" href="{{ .Content.BackURL }}">Back</a>
-      <a class="button" href="{{ .Content.RevisionsURL }}">Revision history</a>
-      <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
-      <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+    <div class="editor-app-topbar__center" id="editor-status-region">{{ template "editor-status-region" .Content }}</div>
+    <div class="editor-app-topbar__right">
+      <a class="button button-small" href="{{ .Content.RevisionsURL }}">History</a>
+      <button class="button button-small" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
+      <button class="button button-small button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+      <div style="width:1px;height:24px;background:var(--ui-border);margin:0 4px" aria-hidden="true"></div>
+      <button class="button button-small editor-topbar-icon" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1" opacity="0.3"/></svg>
+      </button>
+      <button class="button button-small editor-topbar-icon" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="1" opacity="0.3"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg>
+      </button>
     </div>
   </header>
+  <div style="padding:8px 16px;display:grid;gap:6px">
+    {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+    {{ if .Content.Warning }}<p class="notice notice-warning" role="status">{{ .Content.Warning }}</p>{{ end }}
+  </div>
   <div class="card template-meta-card" style="margin:12px 0; padding:12px 16px;">
     <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
       <span><strong>{{ if eq .Content.Kind "archive" }}Archive{{ else }}Single{{ end }} · {{ .Content.ContentTypeName }} · {{ .Content.Status }}</strong></span>
@@ -51,9 +69,6 @@
       {{ end }}
     </div>
   </div>
-  <div id="editor-status-region" class="editor-status-region">{{ template "editor-status-region" .Content }}</div>
-  {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
-  {{ if .Content.Warning }}<p class="notice notice-warning" role="status">{{ .Content.Warning }}</p>{{ end }}
   {{template "editor_shell" .}}
   <div class="editor-meta-panel">
     <div class="editor-meta-panel__row">

@@ -52,6 +52,111 @@ export class CanvasController {
     window.__stratum_canvasController = this;
   }
 
+  // === Stage coordinate system — single source of truth ===
+  // All overlay children live inside .editor-canvas-stage (position:relative).
+  // Rects from iframe.getBoundingClientRect() are iframe-viewport relative.
+  // Convert them once here; never mix scroller/viewport/iframe coords elsewhere.
+  getStageOffset() {
+    if (!this.iframe || !this.stage || !this.scroller) return { x: 0, y: 0 };
+    try {
+      const stageRect = this.stage.getBoundingClientRect();
+      const iframeRect = this.iframe.getBoundingClientRect();
+      return {
+        x: iframeRect.left - stageRect.left + this.scroller.scrollLeft,
+        y: iframeRect.top - stageRect.top + this.scroller.scrollTop,
+      };
+    } catch (_) {
+      return { x: this.iframe.offsetLeft || 0, y: this.iframe.offsetTop || 0 };
+    }
+  }
+  iframeViewportToStage(rect) {
+    const off = this.getStageOffset();
+    const w = rect.width || 0;
+    const h = rect.height || 0;
+    const l = rect.left || 0;
+    const t = rect.top || 0;
+    return {
+      left: off.x + l,
+      top: off.y + t,
+      width: w,
+      height: h,
+      right: off.x + l + w,
+      bottom: off.y + t + h,
+      _empty: !!rect._empty,
+      _visual: rect._visual,
+    };
+  }
+  unionRects(rects) {
+    if (!rects || !rects.length) return null;
+    const clean = rects.filter((r) => !r._empty && (r.width > 0 || r.height > 0));
+    const src = clean.length ? clean : rects;
+    if (!src.length) return null;
+    let l = src[0].left, t = src[0].top, r = (src[0].right ?? src[0].left + src[0].width), b = (src[0].bottom ?? src[0].top + src[0].height);
+    for (let i = 1; i < src.length; i++) {
+      const rr = src[i];
+      const rl = rr.left, rt = rr.top, rr2 = (rr.right ?? rr.left + rr.width), rb = (rr.bottom ?? rr.top + rr.height);
+      if (rl < l) l = rl;
+      if (rt < t) t = rt;
+      if (rr2 > r) r = rr2;
+      if (rb > b) b = rb;
+    }
+    return { left: l, top: t, right: r, bottom: b, width: r - l, height: b - t };
+  }
+  // Union in STAGE coordinates (after conversion)
+  stageUnionForInfo(info) {
+    if (!info || !info.rects || !info.rects.length) return null;
+    const stageRects = info.rects.map((r) => this.iframeViewportToStage(r));
+    return this.unionRects(stageRects);
+  }
+  iframePointFromClient(clientX, clientY) {
+    if (!this.iframe) return { x: clientX, y: clientY };
+    const fr = this.iframe.getBoundingClientRect();
+    return { x: clientX - fr.left, y: clientY - fr.top };
+  }
+  clampToVisibleStage(rect, w, h) {
+    if (!this.scroller) return rect;
+    const visibleTop = this.scroller.scrollTop;
+    const visibleBottom = visibleTop + this.scroller.clientHeight;
+    const visibleLeft = this.scroller.scrollLeft;
+    const visibleRight = visibleLeft + this.scroller.clientWidth;
+    let left = rect.left;
+    let top = rect.top;
+    if (left + w > visibleRight - 8) left = visibleRight - w - 8;
+    if (left < visibleLeft + 8) left = visibleLeft + 8;
+    if (top < visibleTop + 8) top = rect.bottom + 6;
+    if (top + h > visibleBottom - 8) top = visibleBottom - h - 8;
+    if (top < visibleTop + 8) top = visibleTop + 8;
+    return { left, top };
+  }
+  getContainerLayout(parentNode) {
+    if (!parentNode) return "vertical";
+    if (parentNode.block === "core/stack") {
+      const dir = parentNode.settings?.direction;
+      if (dir === "horizontal") return "horizontal";
+      return "vertical";
+    }
+    if (parentNode.block === "core/grid") return "grid";
+    if (parentNode.block === "core/collection") return "grid";
+    if (parentNode.block === "core/button-group") return "horizontal";
+    // Try computed style fallback via rendered element if available
+    try {
+      const rep = this.representativeKeyFor(parentNode.id);
+      if (rep) {
+        const info = this.index.get(rep);
+        if (info) {
+          let probe = info.startComment.nextSibling;
+          while (probe && probe.nodeType === Node.COMMENT_NODE) probe = probe.nextSibling;
+          if (probe && probe.nodeType === 1) {
+            const cs = this.iframe.contentWindow.getComputedStyle(probe);
+            if (cs.display === "grid" || cs.display === "inline-grid") return "grid";
+            if ((cs.display === "flex" || cs.display === "inline-flex") && (cs.flexDirection === "row" || cs.flexDirection === "row-reverse")) return "horizontal";
+          }
+        }
+      }
+    } catch (_) {}
+    return "vertical";
+  }
+
   refresh() {
     if (!this.iframe || !this.iframe.contentDocument) return;
     const doc = this.iframe.contentDocument;
@@ -95,37 +200,23 @@ export class CanvasController {
         const parts = payload.split(":");
         if (parts.length < 3) continue;
         let nodeId, instanceKey, editable = false, ownerType = "", ownerId = "", ownerLabel = "";
-        let isNew = (parts.length === 3 || parts.length === 5 || parts.length === 6);
-        if (isNew) {
-          try { nodeId = decodeURIComponent(parts[0]); } catch { nodeId = parts[0]; }
-          try { instanceKey = decodeURIComponent(parts[1]); } catch { instanceKey = parts[1]; }
-          editable = parts[2] === "true";
-          if (parts.length >= 5) {
-            try { ownerType = decodeURIComponent(parts[3]); } catch { ownerType = parts[3]; }
-            try { ownerId = decodeURIComponent(parts[4]); } catch { ownerId = parts[4]; }
-          }
-          if (parts.length === 6) {
-            try { ownerLabel = decodeURIComponent(parts[5]); } catch { ownerLabel = parts[5]; }
-          }
-        } else {
-          nodeId = parts[0];
-          try { nodeId = decodeURIComponent(nodeId); } catch {}
-          const editableStr = parts[parts.length - 1];
-          editable = editableStr === "true";
-          instanceKey = parts.slice(1, parts.length - 1).join(":");
-          try { instanceKey = decodeURIComponent(instanceKey); } catch {}
-          if (parts.length >= 5) {
-            const maybeEditable = parts[parts.length - 3];
-            if (maybeEditable === "true" || maybeEditable === "false") {
-              editable = maybeEditable === "true";
-              ownerType = parts[parts.length - 2];
-              ownerId = parts[parts.length - 1];
-              try { ownerType = decodeURIComponent(ownerType); } catch {}
-              try { ownerId = decodeURIComponent(ownerId); } catch {}
-              instanceKey = parts.slice(1, parts.length - 3).join(":");
-              try { instanceKey = decodeURIComponent(instanceKey); } catch {}
-            }
-          }
+        // Robust parse: nodeId is parts[0], editable is first "true"/"false" after it, instanceKey is between
+        let editableIdx = -1;
+        for (let i = 1; i < parts.length; i++) {
+          if (parts[i] === "true" || parts[i] === "false") { editableIdx = i; break; }
+        }
+        if (editableIdx === -1) continue;
+        try { nodeId = decodeURIComponent(parts[0]); } catch { nodeId = parts[0]; }
+        instanceKey = parts.slice(1, editableIdx).join(":");
+        try { instanceKey = decodeURIComponent(instanceKey); } catch {}
+        editable = parts[editableIdx] === "true";
+        const remaining = parts.length - editableIdx - 1;
+        if (remaining >= 2) {
+          try { ownerType = decodeURIComponent(parts[editableIdx+1]); } catch { ownerType = parts[editableIdx+1]; }
+          try { ownerId = decodeURIComponent(parts[editableIdx+2]); } catch { ownerId = parts[editableIdx+2]; }
+        }
+        if (remaining >= 3) {
+          try { ownerLabel = decodeURIComponent(parts[editableIdx+3]); } catch { ownerLabel = parts[editableIdx+3]; }
         }
         stack.push({ nodeId, instanceKey, editable, ownerType, ownerId, ownerLabel, startComment: node, range: null });
       } else if (data.startsWith("stratum-node-end:")) {
@@ -356,16 +447,18 @@ export class CanvasController {
     const y = clientY - iframeRect.top;
     const hit = this.hitTest(x, y);
     if (!hit) return { hit: null, position: "root", x, y, rect: null };
-    const rect = this.boundsForInfo(hit);
-    if (!rect) return { hit, position: "inside", x, y, rect: null };
-    const edge = Math.min(24, Math.max(8, rect.height * 0.25));
+    const rectVp = this.boundsForInfo(hit);
+    if (!rectVp) return { hit, position: "inside", x, y, rect: null };
+    const rect = this.iframeViewportToStage(rectVp);
+    const edge = Math.min(24, Math.max(8, rectVp.height * 0.25));
     let position = "inside";
-    if (y <= rect.top + edge) position = "before";
-    else if (y >= rect.bottom - edge) position = "after";
+    if (y <= rectVp.top + edge) position = "before";
+    else if (y >= rectVp.bottom - edge) position = "after";
     return { hit, position, x, y, rect };
   }
 
   boundsForInfo(info) {
+    // viewport coords — used for hitTest/dropIntent edge logic
     if (!info || !info.rects || !info.rects.length) return null;
     const rects = info.rects.filter((rect) => !rect._empty && (rect.width > 0 || rect.height > 0));
     if (!rects.length) return null;
@@ -389,6 +482,11 @@ export class CanvasController {
     const right = Math.max(...bounds.map((rect) => rect.right));
     const bottom = Math.max(...bounds.map((rect) => rect.bottom));
     return { left, top, right, bottom, width: right - left, height: bottom - top };
+  }
+  boundsForNodeStage(nodeId) {
+    const vp = this.boundsForNode(nodeId);
+    if (!vp) return null;
+    return this.iframeViewportToStage(vp);
   }
 
   showDropIndicator(rect, position, valid) {
@@ -421,29 +519,15 @@ export class CanvasController {
   }
 
   onOverlayMouseMove(e) {
-    const rect = this.overlay.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    // Convert overlay coords to iframe viewport coords
-    const iframeRect = this.iframe.getBoundingClientRect();
-    // overlay is positioned over iframe wrap, same size
-    // Need to map to iframe content coords (clientX/Y already iframe viewport relative plus iframe offset)
-    // Simpler: use iframe hitTest with same clientX/Y as overlay event is relative to viewport, but iframe contentWindow coordinates equal viewport coords offset by iframe rect
-    // For now use hitTest with e.clientX - iframeRect.left etc?
-    // Actually hitTest expects iframe content viewport client coords (same as iframe's contentWindow)
-    // e.clientX is page viewport, iframe content at iframeRect.left/top
-    const ix = e.clientX - iframeRect.left;
-    const iy = e.clientY - iframeRect.top;
-    const hit = this.hitTest(ix, iy);
+    const p = this.iframePointFromClient(e.clientX, e.clientY);
+    const hit = this.hitTest(p.x, p.y);
     if (hit) this.setHover(hit.instanceKey);
     else this.clearHover();
   }
 
   onOverlayClick(e) {
-    const iframeRect = this.iframe.getBoundingClientRect();
-    const ix = e.clientX - iframeRect.left;
-    const iy = e.clientY - iframeRect.top;
-    const hit = this.hitTest(ix, iy);
+    const p = this.iframePointFromClient(e.clientX, e.clientY);
+    const hit = this.hitTest(p.x, p.y);
     if (hit) {
       const now = Date.now();
       const isDoubleClick = this.lastClickKey === hit.instanceKey && now - this.lastClickAt < 500;
@@ -491,22 +575,14 @@ export class CanvasController {
     if (opts.scroll !== false && this.selectedKey && this.index.has(this.selectedKey)) {
       try {
         const info = this.index.get(this.selectedKey);
-        if (info && info.rects && info.rects.length) {
-          // scroll outer scroller to show selection (nearest)
+        const union = this.stageUnionForInfo(info);
+        if (union) {
           const scroller = this.scroller;
           if (scroller) {
-            const first = info.rects[0];
-            const scRect = scroller.getBoundingClientRect();
-            const stageRect = this.stage ? this.stage.getBoundingClientRect() : scRect;
-            // first.top is iframe viewport coordinate (0 = top of visible iframe content)
-            // Convert to scroller scroll offset: scroller.scrollTop + first.top - scRect.top + offset
-            // Simpler: compute overlay position: info rect is already relative to overlay (which is at 0,0 of stage)
-            // We can scroll scroller so that rect is visible with block:nearest
-            const overlayTop = first.top; // overlay is at stage 0,0
             const visibleTop = scroller.scrollTop;
             const visibleBottom = visibleTop + scroller.clientHeight;
-            const targetTop = overlayTop;
-            const targetBottom = overlayTop + (first.height || 44);
+            const targetTop = union.top;
+            const targetBottom = union.top + (union.height || 44);
             if (targetTop < visibleTop + 16) {
               scroller.scrollTo({ top: Math.max(0, targetTop - 24), behavior: opts.behavior || "smooth" });
             } else if (targetBottom > visibleBottom - 16) {
@@ -530,12 +606,12 @@ export class CanvasController {
     const keys = this.nodeToKeys.get(nodeId) || [];
     if (!keys.length) return;
     const info = this.index.get(keys[0]);
-    if (!info || !info.rects || !info.rects.length) return;
+    const union = this.stageUnionForInfo(info);
+    if (!union) return;
     const scroller = this.scroller;
     if (!scroller) return;
-    const first = info.rects[0];
-    const targetTop = first.top;
-    const targetBottom = targetTop + (first.height || 64);
+    const targetTop = union.top;
+    const targetBottom = targetTop + (union.height || 64);
     const visibleTop = scroller.scrollTop;
     const visibleBottom = visibleTop + scroller.clientHeight;
     if (targetTop < visibleTop || targetBottom > visibleBottom) {
@@ -626,11 +702,13 @@ export class CanvasController {
     this.renderEmptyPlaceholders(doc, iframeRect);
   }
 
-  // Resolve representative rect for a nodeId (for insertion lane positioning)
+  // Resolve representative rect for a nodeId (stage coords)
   representativeRect(nodeId) {
     const rep = this.representativeKeyFor(nodeId);
     if (!rep) return null;
-    return this.boundsForInfo(this.index.get(rep));
+    const vp = this.boundsForInfo(this.index.get(rep));
+    if (!vp) return null;
+    return this.iframeViewportToStage(vp);
   }
 
   createLane({ parentId, index, top, left, width, legal, reason }) {
@@ -645,9 +723,9 @@ export class CanvasController {
     lane.title = label;
     lane.style.position = "absolute";
     lane.style.left = (left || 8) + "px";
-    lane.style.top = (top - 16) + "px";
+    lane.style.top = (top - 18) + "px";
     lane.style.width = Math.max(80, width || 260) + "px";
-    lane.style.height = "32px";
+    lane.style.height = "36px";
     const plus = document.createElement("button");
     plus.type = "button";
     plus.className = "canvas-insertion-plus";
@@ -891,42 +969,89 @@ export class CanvasController {
     if (showMode === "hover") indicesToShow = indicesToShow.slice(0,2);
     if (showMode === "selected") indicesToShow = indicesToShow.slice(0,3);
 
+    const layout = this.getContainerLayout(parentNode);
+    // For grid, don't show insertion choinkă — only contextual single lane via selected child
+    if (layout === "grid" && showMode === "hover" && !state.insertionTarget) {
+      // grid hover: show only inside-end lane for container itself is already handled as showMode hover with indices [len]
+      // If we would show 2 lanes between items in grid, skip – toolbar + navigator are enough
+      // Keep only first to avoid christmas tree
+      indicesToShow = indicesToShow.slice(0,1);
+    }
     for (const idx of indicesToShow) {
       const b = boundaries.find(x=>x.index===idx);
       if (!b) continue;
-      // Compute lane geometry from neighboring rects (use representative)
+      // Skip empty parent lane — placeholder handles Add
+      if (!siblings.length && b.legal) continue;
       const beforeRect = idx>0 ? this.representativeRect(siblings[idx-1]?.id) : null;
       const afterRect = idx < siblings.length ? this.representativeRect(siblings[idx]?.id) : null;
       let top = 8;
       let left = 16;
       let width = this.iframe ? this.iframe.clientWidth - 32 : 300;
-      if (beforeRect && afterRect) {
-        top = (beforeRect.bottom + afterRect.top)/2;
-        left = Math.min(beforeRect.left, afterRect.left);
-        width = Math.max(beforeRect.width, afterRect.width);
-      } else if (beforeRect) {
-        top = beforeRect.bottom + 6;
-        left = beforeRect.left;
-        width = beforeRect.width;
-      } else if (afterRect) {
-        top = afterRect.top - 16;
-        left = afterRect.left;
-        width = afterRect.width;
-      } else {
-        // Parent bounds fallback (e.g. empty container but handled elsewhere)
-        const parentRep = parentNode ? this.representativeRect(parentNode.id) : null;
-        if (parentRep) {
-          top = parentRep.top + parentRep.height/2;
-          left = parentRep.left;
-          width = parentRep.width;
+      let isVertical = layout === "horizontal";
+      if (isVertical) {
+        // vertical boundary between horizontal siblings
+        if (beforeRect && afterRect) {
+          left = (beforeRect.right + afterRect.left)/2 - 18;
+          top = Math.min(beforeRect.top, afterRect.top);
+          width = 36;
+          // height will be set via lane style override
+        } else if (beforeRect) {
+          left = beforeRect.right + 6 - 18;
+          top = beforeRect.top;
+          width = 36;
+        } else if (afterRect) {
+          left = afterRect.left - 16 - 18;
+          top = afterRect.top;
+          width = 36;
         } else {
-          top = 40 + idx*32;
+          const parentRep = parentNode ? this.representativeRect(parentNode.id) : null;
+          if (parentRep) {
+            left = parentRep.left + parentRep.width/2 - 18;
+            top = parentRep.top;
+            width = 36;
+          } else {
+            top = 40 + idx*32;
+          }
+        }
+      } else {
+        if (beforeRect && afterRect) {
+          top = (beforeRect.bottom + afterRect.top)/2;
+          left = Math.min(beforeRect.left, afterRect.left);
+          width = Math.max(beforeRect.width, afterRect.width);
+        } else if (beforeRect) {
+          top = beforeRect.bottom + 6;
+          left = beforeRect.left;
+          width = beforeRect.width;
+        } else if (afterRect) {
+          top = afterRect.top - 16;
+          left = afterRect.left;
+          width = afterRect.width;
+        } else {
+          const parentRep = parentNode ? this.representativeRect(parentNode.id) : null;
+          if (parentRep) {
+            top = parentRep.top + parentRep.height/2;
+            left = parentRep.left;
+            width = parentRep.width;
+          } else {
+            top = 40 + idx*32;
+          }
         }
       }
       // Clamp to scroller viewport so lane stays visible
-      const scrollerRect = this.scroller ? this.scroller.getBoundingClientRect() : null;
-      // Lane is positioned inside overlay which is inside stage – already matches scroller coords
       const lane = this.createLane({ parentId: contextParentId, index: idx, top, left, width, legal: b.legal, reason: b.reason });
+      if (isVertical) {
+        lane.classList.add("canvas-insertion-lane--vertical");
+        let h = 80;
+        if (beforeRect && afterRect) h = Math.max(beforeRect.height, afterRect.height);
+        else if (beforeRect) h = beforeRect.height;
+        else if (afterRect) h = afterRect.height;
+        else if (parentNode) {
+          const pr = this.representativeRect(parentNode.id);
+          if (pr) h = pr.height;
+        }
+        lane.style.height = Math.max(40, h) + "px";
+        lane.style.width = "36px";
+      }
       // Highlight if this is current insertionTarget
       if (state.insertionTarget && state.insertionTarget.parentId === contextParentId && state.insertionTarget.index === idx) {
         lane.style.outline = "2px solid #2563eb";
@@ -957,45 +1082,36 @@ export class CanvasController {
       if (!isContainer) continue;
       // Skip if node actually has children but rendered empty due to collection zero? handled below
       // Improve placement for collapsed empty rect at 0,0: try parent bounds, previous sibling, or flow position
-      let placeLeft = r.left;
-      let placeTop = r.top;
-      let placeWidth = Math.max(160, r.width);
+      // Convert to stage coords for overlay placement
+      let stageR = this.iframeViewportToStage(r);
+      let placeLeft = stageR.left;
+      let placeTop = stageR.top;
+      let placeWidth = Math.max(160, stageR.width);
       let placeHeight = 72;
       const isFallback = r._empty && r.left===0 && r.top===0;
       if(isFallback){
         let parentRect=null;
         try{
-          if(found.parent && this.boundsForNode(found.parent.id)) parentRect=this.boundsForNode(found.parent.id);
+          const vp = found.parent && this.boundsForNode(found.parent.id);
+          if(vp) parentRect=this.iframeViewportToStage(vp);
         }catch(e){}
-        // Also try previous sibling bottom
         let siblingRect = null;
         try {
           if (found.parent) {
             for (let i = found.index - 1; i >= 0; i--) {
               const sib = found.siblings[i];
               const br = this.boundsForNode(sib.id);
-              if (br) { siblingRect = br; break; }
-            }
-          } else {
-            // root: try previous root node
-            const idx = (found.index !== undefined ? found.index : -1);
-            if (idx > 0) {
-              for (let i = idx - 1; i >= 0; i--) {
-                const n = window.__stratum_findNode ? null : null;
-              }
+              if (br) { siblingRect = this.iframeViewportToStage(br); break; }
             }
           }
         } catch(_) {}
         if(parentRect){
           placeLeft = parentRect.left + 16;
-          // Prefer below sibling if exists
           if (siblingRect) {
             placeTop = siblingRect.bottom + 8;
-            // clamp inside parent
             if (placeTop + placeHeight > parentRect.bottom - 8) placeTop = parentRect.top + 16;
           } else {
             placeTop = parentRect.top + 16;
-            // if parent tall, center
             if (parentRect.height > 120) placeTop = parentRect.top + parentRect.height/2 - 36;
           }
           placeWidth = Math.max(160, Math.min(parentRect.width - 32, 360));
@@ -1009,17 +1125,9 @@ export class CanvasController {
           placeTop = 40;
           placeWidth = 260;
         }
-        // also update interactive rect for hit test consistency (centered)
-        if(info.interactiveRects && info.interactiveRects[0]){
-          info.interactiveRects[0].left = placeLeft;
-          info.interactiveRects[0].top = placeTop;
-          info.interactiveRects[0].width = placeWidth;
-          info.interactiveRects[0].height = placeHeight;
-          info.interactiveRects[0].right = placeLeft + placeWidth;
-          info.interactiveRects[0].bottom = placeTop + placeHeight;
-          info.interactiveRects[0]._empty = true;
-        }
         r = {left: placeLeft, top: placeTop, width: placeWidth, height: placeHeight, _empty:true};
+      } else {
+        r = stageR;
       }
       const def = window.__stratum_definitionFor ? window.__stratum_definitionFor(found.node) : null;
       const label = def ? `Empty ${def.displayName}` : `Empty ${info.nodeId.slice(0,8)}`;
@@ -1118,33 +1226,57 @@ export class CanvasController {
       if (!isEmptyLeaf) continue;
       // Determine placement: use existing rect if not 0,0 else fallback near parent
       let r = info.rects.find(x=>!x._empty) || info.rects.find(x=>x._empty) || info.rects[0];
-      let placeLeft = r ? r.left : 0;
-      let placeTop = r ? r.top : 0;
-      let placeWidth = r ? Math.max(120, r.width) : 200;
+      // stage conversion for leaf
+      let stageR = r ? this.iframeViewportToStage(r) : null;
+      let placeLeft = stageR ? stageR.left : 0;
+      let placeTop = stageR ? stageR.top : 0;
+      let placeWidth = stageR ? Math.max(120, stageR.width) : 200;
       let placeHeight = 44;
       const isFallback = !r || (r._empty && r.left===0 && r.top===0) || (r && r.height < 4);
       if (isFallback) {
         let parentRect=null;
-        try{ if(found.parent && this.boundsForNode(found.parent.id)) parentRect=this.boundsForNode(found.parent.id); }catch(_){}
+        try{
+          const vp = found.parent && this.boundsForNode(found.parent.id);
+          if(vp) parentRect=this.iframeViewportToStage(vp);
+        }catch(_){}
+        // find previous sibling bottom for proper flow (no index*48 hack)
+        let siblingRect = null;
+        try {
+          if (found.parent) {
+            for (let i = found.index - 1; i >= 0; i--) {
+              const sib = found.siblings[i];
+              const br = this.boundsForNode(sib.id);
+              if (br) { siblingRect = this.iframeViewportToStage(br); break; }
+            }
+          }
+        } catch(_){}
+        let nextRect = null;
+        try {
+          if (found.parent) {
+            for (let i = found.index + 1; i < found.siblings.length; i++) {
+              const sib = found.siblings[i];
+              const br = this.boundsForNode(sib.id);
+              if (br) { nextRect = this.iframeViewportToStage(br); break; }
+            }
+          }
+        } catch(_){}
         if(parentRect){
           placeLeft = parentRect.left + 12;
-          placeTop = parentRect.top + 12;
-          // try to offset by index to avoid stacking
-          if (found.index !== undefined) placeTop += found.index * 48;
+          if (siblingRect) {
+            placeTop = siblingRect.bottom + 6;
+            if (nextRect && placeTop + placeHeight > nextRect.top - 6) placeTop = parentRect.top + 12;
+          } else if (nextRect) {
+            placeTop = nextRect.top - placeHeight - 6;
+            if (placeTop < parentRect.top + 8) placeTop = parentRect.top + 12;
+          } else {
+            placeTop = parentRect.top + 12;
+          }
           placeWidth = Math.max(180, Math.min(parentRect.width - 24, 320));
         } else {
           const scW = this.scroller ? this.scroller.clientWidth : 600;
           placeLeft = Math.max(12, (scW - 220)/2);
-          placeTop = 40 + (found.index||0)*48;
+          placeTop = 40;
           placeWidth = 220;
-        }
-        if (info.interactiveRects && info.interactiveRects[0]) {
-          info.interactiveRects[0].left = placeLeft;
-          info.interactiveRects[0].top = placeTop;
-          info.interactiveRects[0].width = placeWidth;
-          info.interactiveRects[0].height = placeHeight;
-          info.interactiveRects[0].right = placeLeft + placeWidth;
-          info.interactiveRects[0].bottom = placeTop + placeHeight;
         }
       }
       const box = document.createElement("div");
@@ -1204,12 +1336,12 @@ export class CanvasController {
         if (checkNested(found.node.children)) { hasRenderedChildren=true; break; }
       }
       if (hasRenderedChildren) continue;
-      const rect = this.boundsForInfo(info);
+      const rect = this.stageUnionForInfo(info);
       if (!rect) continue;
       const banner = document.createElement("div");
       banner.className = "canvas-collection-empty";
       banner.style.position = "absolute";
-      banner.style.left = (rect.left) + "px";
+      banner.style.left = rect.left + "px";
       banner.style.top = (rect.top + rect.height + 4) + "px";
       banner.style.background = "#fffbeb";
       banner.style.border = "1px solid #fde68a";
@@ -1269,49 +1401,50 @@ export class CanvasController {
   }
 
   renderRects(info, kind, doc, iframeRect) {
-    for (const r of info.rects) {
-      if (r._empty && kind !== "selected") continue;
-      const div = document.createElement("div");
-      div.className = `canvas-outline canvas-outline--${kind} ${info.editable ? "" : "is-external"}`;
-      // r is relative to iframe viewport, need to convert to overlay coords (which is same as iframeRect)
-      // r.left/top are viewport coords inside iframe (relative to iframe content viewport origin)
-      // overlay covers iframe, so position = r.left/top
-      // But need to account for iframe scroll? getClientRects already viewport-relative.
-      div.style.position = "absolute";
-      div.style.left = (r.left) + "px";
-      div.style.top = (r.top) + "px";
-      div.style.width = (r.width || 100) + "px";
-      div.style.height = (r.height || 24) + "px";
-      div.style.pointerEvents = "none";
-      div.style.boxSizing = "border-box";
-      if (kind === "hover") {
-        div.style.border = "1px dashed #3b82f6";
-        div.style.background = "rgba(59,130,246,0.06)";
-      } else if (kind === "selected") {
-        div.style.border = info.editable ? "2px solid #2563eb" : "2px dashed #f59e0b";
-        div.style.background = info.editable ? "rgba(37,99,235,0.06)" : "rgba(245,158,11,0.08)";
-      } else if (kind === "related") {
-        div.style.border = "1px dotted #93c5fd";
-        div.style.background = "rgba(147,197,253,0.08)";
-      }
-      this.overlay.append(div);
+    // Single visual bounds per node — union of all client rects in stage coords
+    const union = this.stageUnionForInfo(info);
+    if (!union) return;
+    // For hover/related, skip empty synthetic bounds
+    const hasEmpty = info.rects.some(r=>r._empty);
+    if (hasEmpty && kind !== "selected") return;
+    const div = document.createElement("div");
+    div.className = `canvas-outline canvas-outline--${kind} ${info.editable ? "" : "is-external"}`;
+    div.style.position = "absolute";
+    div.style.left = union.left + "px";
+    div.style.top = union.top + "px";
+    div.style.width = union.width + "px";
+    div.style.height = union.height + "px";
+    div.style.pointerEvents = "none";
+    div.style.boxSizing = "border-box";
+    if (kind === "hover") {
+      div.style.border = "1px solid rgba(37,99,235,0.5)";
+      div.style.background = "rgba(59,130,246,0.06)";
+    } else if (kind === "selected") {
+      div.style.border = info.editable ? "2px solid #2563eb" : "2px dashed #f59e0b";
+      div.style.background = info.editable ? "rgba(37,99,235,0.06)" : "rgba(245,158,11,0.08)";
+    } else if (kind === "related") {
+      div.style.border = "1px dashed #93c5fd";
+      div.style.background = "rgba(147,197,253,0.06)";
     }
+    div.style.borderRadius = "3px";
+    this.overlay.append(div);
   }
 
   renderLabel(info, label, kind, doc, iframeRect) {
-    if (!info.rects.length) return;
-    const first = info.rects[0];
+    const union = this.stageUnionForInfo(info);
+    if (!union) return;
     const div = document.createElement("div");
     div.className = `canvas-label canvas-label--${kind}`;
     div.textContent = label;
     div.style.position = "absolute";
-    div.style.left = (first.left) + "px";
-    div.style.top = Math.max(0, first.top - 18) + "px";
+    div.style.left = union.left + "px";
+    div.style.top = Math.max(0, union.top - 18) + "px";
     div.style.fontSize = "10px";
     div.style.padding = "1px 4px";
     div.style.borderRadius = "3px";
     div.style.pointerEvents = "none";
     div.style.fontFamily = "monospace";
+    div.style.zIndex = "5";
     if (kind === "selected") {
       div.style.background = info.editable ? "#2563eb" : "#f59e0b";
       div.style.color = "white";
@@ -1324,63 +1457,56 @@ export class CanvasController {
 
   renderToolbar(info, doc, iframeRect) {
     if (!info.editable) return;
-    const first = info.rects[0];
-    if (!first) return;
+    const union = this.stageUnionForInfo(info);
+    if (!union) return;
     const bar = document.createElement("div");
     bar.className = "canvas-toolbar";
-    // Clamp to scroller viewport
-    const scrollerRect = this.scroller ? this.scroller.getBoundingClientRect() : { left:0, right:window.innerWidth, top:0, bottom:window.innerHeight };
-    const barW = 220; // approx
-    const barH = 34;
-    let left = first.left;
-    let top = first.top - barH - 6;
-    if (left + barW > scrollerRect.right - 8) left = scrollerRect.right - barW - 8;
-    if (left < scrollerRect.left + 8) left = scrollerRect.left + 8;
-    if (top < scrollerRect.top + 8) top = first.bottom + 6;
-    if (top + barH > scrollerRect.bottom - 8) top = scrollerRect.bottom - barH - 8;
+    // Clamp to visible stage area (stage-local)
+    const clamped = this.clampToVisibleStage({ left: union.left, top: union.top - 38, bottom: union.top }, 220, 36);
+    let left = clamped.left;
+    let top = union.top - 38;
+    // If no space above, place inside top edge
+    if (top < (this.scroller.scrollTop + 8)) top = union.top + 6;
+    // Final clamp
+    const finalPos = this.clampToVisibleStage({ left: union.left, top, bottom: top+36 }, 220, 36);
+    left = finalPos.left;
+    top = finalPos.top;
+    // Override with precise calc above: use union.left/top
+    // Apply after clamp logic - ensure stage coords
     bar.style.position = "absolute";
-    bar.style.left = (left) + "px";
+    bar.style.left = left + "px";
     bar.style.top = Math.max(0, top) + "px";
-    bar.style.display = "flex";
-    bar.style.gap = "4px";
-    bar.style.background = "white";
-    bar.style.border = "1px solid #e5e7eb";
-    bar.style.borderRadius = "8px";
-    bar.style.padding = "2px 4px";
-    bar.style.boxShadow = "0 4px 12px rgba(0,0,0,0.12)";
-    bar.style.fontSize = "11px";
+    // Determine capabilities
     let inlineNode = null;
-    try {
-      inlineNode = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId)?.node : null;
-    } catch (_) {}
-    // Check constraints for toolbar
+    try { inlineNode = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId)?.node : null; } catch(_) {}
     let canDup = {ok:true, reason:""}, canDel = {ok:true, reason:""};
     try {
       if (window.__stratum_canDuplicate) canDup = window.__stratum_canDuplicate(info.nodeId);
       if (window.__stratum_canRemove) canDel = window.__stratum_canRemove(info.nodeId);
-    } catch (_) {}
-    // Preferred toolbar: [Drag] [↑] [↓] [⋯] [+] — Duplicate/Delete inside ⋯
-    const actions = [
-      ...(inlineNode && isInlineEditable(inlineNode) ? [{ label: "Edit", title: "Edit text", action: "edit" }] : []),
-      { label: "Drag", title: "Drag", action: "drag" },
-      { label: "↑", title: "Move up", action: "up" },
-      { label: "↓", title: "Move down", action: "down" },
-      { label: "⋯", title: "More actions", action: "more" },
+    } catch(_) {}
+    const svgDrag = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>';
+    const svgUp = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 15l-6-6-6 6"/></svg>';
+    const svgDown = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+    const svgMore = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>';
+    const svgPlus = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+    const svgEdit = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+    const definitions = [
+      ...(inlineNode && isInlineEditable(inlineNode) ? [{ key:"edit", title:"Edit text", label:"Edit", svg:svgEdit }] : []),
+      { key:"drag", title:"Drag to move", label:"Drag", svg:svgDrag, draggable:true },
+      { key:"up", title:"Move up", label:"Up", svg:svgUp },
+      { key:"down", title:"Move down", label:"Down", svg:svgDown },
+      { key:"more", title:"More actions", label:"More", svg:svgMore },
     ];
-    actions.forEach(a => {
+    definitions.forEach(def => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.textContent = a.label;
-      btn.title = a.title;
-      btn.style.padding = "2px 6px";
-      btn.style.border = "1px solid #e5e7eb";
-      btn.style.borderRadius = "4px";
-      btn.style.background = "#f8fafc";
-      btn.style.cursor = a.disabled ? "not-allowed" : "pointer";
-      if (a.disabled) { btn.disabled = true; btn.style.opacity = "0.45"; btn.style.background = "#f1f5f9"; }
-      if (a.action === "drag") {
+      btn.className = "canvas-toolbar__btn canvas-toolbar__btn--" + def.key;
+      if (def.key === "drag") btn.classList.add("canvas-toolbar__btn--drag");
+      btn.title = def.title;
+      btn.setAttribute("aria-label", def.title);
+      btn.innerHTML = def.svg;
+      if (def.draggable) {
         btn.draggable = true;
-        btn.setAttribute("aria-label", "Drag block");
         btn.addEventListener("dragstart", (e) => {
           window.__stratum_currentDrag = { type: "node", nodeId: info.nodeId };
           e.dataTransfer.effectAllowed = "move";
@@ -1393,28 +1519,17 @@ export class CanvasController {
         });
       }
       btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (a.disabled) {
-          if (window.stratumToast) window.stratumToast("error", a.reason || "Action not allowed");
-          return;
-        }
-        if (a.action === "edit") startInlineEdit(info.nodeId, info.instanceKey, this);
-        if (a.action === "up" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, -1);
-        if (a.action === "down" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, 1);
-        if (a.action === "duplicate" && window.__stratum_duplicateNode) window.__stratum_duplicateNode(info.nodeId);
-        if (a.action === "delete" && window.__stratum_removeNode) window.__stratum_removeNode(info.nodeId);
-        if (a.action === "more") {
+        e.preventDefault(); e.stopPropagation();
+        if (def.key === "edit") startInlineEdit(info.nodeId, info.instanceKey, this);
+        if (def.key === "up" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, -1);
+        if (def.key === "down" && window.__stratum_moveNode) window.__stratum_moveNode(info.nodeId, 1);
+        if (def.key === "more") {
           try { openContextMenu({ anchor: btn, nodeId: info.nodeId }); } catch(_) { if (window.__stratum_openContextMenu) window.__stratum_openContextMenu({ anchor: btn, nodeId: info.nodeId }); }
         }
       });
       bar.append(btn);
     });
     // Add inside for containers
-    try {
-      const def = window.__stratum_definitionFor ? window.__stratum_definitionFor({ block: "", version: 0 }) : null;
-    } catch (_) {}
-    // Check if container -> Add inside with validation (use hasLegalInsertion)
     if (info.nodeId && window.__stratum_isContainer) {
       try {
         const found = window.__stratum_findNode ? window.__stratum_findNode(info.nodeId) : null;
@@ -1433,41 +1548,32 @@ export class CanvasController {
           }
           const addBtn = document.createElement("button");
           addBtn.type = "button";
-          addBtn.textContent = "+";
+          addBtn.className = "canvas-toolbar__btn canvas-toolbar__btn--add";
           addBtn.title = canAdd ? "Add inside" : reason;
-          addBtn.disabled = !canAdd;
-          addBtn.style.padding = "2px 6px";
-          addBtn.style.border = "1px solid #e5e7eb";
-          addBtn.style.borderRadius = "4px";
-          addBtn.style.background = canAdd ? "#f8fafc" : "#f1f5f9";
-          addBtn.style.opacity = canAdd ? "1" : "0.45";
-          addBtn.style.cursor = canAdd ? "pointer" : "not-allowed";
+          addBtn.setAttribute("aria-label", canAdd ? "Add inside" : reason);
+          addBtn.innerHTML = svgPlus;
+          if (!canAdd) { addBtn.disabled = true; addBtn.style.opacity = "0.45"; }
           addBtn.addEventListener("click", (e) => {
             e.preventDefault(); e.stopPropagation();
-            if (!canAdd) {
-              if (window.stratumToast) window.stratumToast("error", reason);
-              return;
-            }
+            if (!canAdd) { if (window.stratumToast) window.stratumToast("error", reason); return; }
             if (window.__stratum_setInsertionTarget) window.__stratum_setInsertionTarget(found.node.id, found.node.children.length);
             document.querySelectorAll("[data-library-tab]").forEach(t=>{ if((t.getAttribute('data-library-tab')||t.dataset.tab)==="blocks") t.click(); });
-            const lib = document.querySelector(".block-library") || document.getElementById("block-catalog");
-            if (lib) lib.scrollIntoView({ behavior: "smooth" });
           });
           bar.append(addBtn);
         }
-      } catch (_) {}
+      } catch(_) {}
     }
     this.overlay.append(bar);
   }
 
   renderExternalNotice(info, doc, iframeRect) {
-    const first = info.rects[0];
-    if (!first) return;
+    const union = this.stageUnionForInfo(info);
+    if (!union) return;
     const notice = document.createElement("div");
     notice.className = "canvas-external-notice";
     notice.style.position = "absolute";
-    notice.style.left = (first.left) + "px";
-    notice.style.top = (first.top + (first.height || 24) + 4) + "px";
+    notice.style.left = union.left + "px";
+    notice.style.top = (union.top + union.height + 4) + "px";
     notice.style.background = "#fffbeb";
     notice.style.border = "1px solid #f59e0b";
     notice.style.borderRadius = "6px";
@@ -1475,22 +1581,21 @@ export class CanvasController {
     notice.style.fontSize = "12px";
     notice.style.maxWidth = "320px";
     notice.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)";
+    notice.style.pointerEvents = "auto";
     let label = info.ownerLabel || "";
-    // Fallback lookup in bootstrap siteParts
-    if (!label && info.ownerId) {
-      try {
-        const bs = document.getElementById("editor-bootstrap") ? JSON.parse(document.getElementById("editor-bootstrap").textContent) : bootstrap;
-        const parts = bs.siteParts || bs.SiteParts || [];
+    try {
+      const bs = document.getElementById("editor-bootstrap") ? JSON.parse(document.getElementById("editor-bootstrap").textContent) : bootstrap;
+      const parts = bs.siteParts || bs.SiteParts || [];
+      if (!label && info.ownerId) {
         if (Array.isArray(parts)) {
           const found = parts.find(p=>p.id===info.ownerId || p.ID===info.ownerId);
           if (found) label = found.name || found.Name || "";
         } else if (parts && typeof parts === "object") {
           for (const k in parts) if (k===info.ownerId) label = parts[k];
         }
-        // layout template name fallback
         if (!label && info.ownerType==="layout-template" && bs.resource && bs.resource.id===info.ownerId) label = bs.resource.label || "";
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
     if (!label) label = info.ownerId ? info.ownerId.slice(0,8) : "";
     const typeLabel = info.ownerType === "site-part" ? "Site Part" : info.ownerType === "layout-template" ? "Template" : info.ownerType || "External";
     const title = info.ownerLabel ? `${info.ownerLabel}` : (label ? `${label}` : (info.ownerType ? `${typeLabel} ${info.ownerId.slice(0,8)}` : "External content"));
@@ -1513,26 +1618,14 @@ export class CanvasController {
     btn.style.display = "block";
     btn.textContent = `Edit ${effectiveLabel || typeLabel}`;
     notice.append(strong, document.createElement("br"), spanSub, document.createElement("br"), meta, document.createElement("br"), btn);
-    if (btn) {
-      btn.addEventListener("click", () => {
-        // Navigate to owner editor
-        let url = "";
-        if (info.ownerType === "site-part" || info.ownerType === "sitepart") {
-          url = `/admin/appearance/site-parts/${info.ownerId}/edit`;
-        } else if (info.ownerType === "layout-template") {
-          url = `/admin/appearance/templates/${info.ownerId}/edit`;
-        } else if (info.ownerType === "entry") {
-          // try to infer content type from bootstrap? fallback to page
-          url = `/admin/pages/${info.ownerId}/edit`;
-        }
-        if (url) window.location.href = url;
-        else {
-          const forms = bootstrap.forms || [];
-          // fallback: show toast
-          if (window.stratumToast) window.stratumToast("info", "External content — edit its source.");
-        }
-      });
-    }
+    btn.addEventListener("click", () => {
+      let url = "";
+      if (info.ownerType === "site-part" || info.ownerType === "sitepart") url = `/admin/appearance/site-parts/${info.ownerId}/edit`;
+      else if (info.ownerType === "layout-template") url = `/admin/appearance/templates/${info.ownerId}/edit`;
+      else if (info.ownerType === "entry") url = `/admin/pages/${info.ownerId}/edit`;
+      if (url) window.location.href = url;
+      else if (window.stratumToast) window.stratumToast("info", "External content — edit its source.");
+    });
     this.overlay.append(notice);
   }
 

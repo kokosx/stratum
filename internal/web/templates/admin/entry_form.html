@@ -7,30 +7,47 @@
   <input type="hidden" name="entry_id" id="entry-id" value="{{ .Content.EntryID }}">
   <input type="hidden" name="content_type_id" id="entry-content-type" value="{{ .Content.ContentTypeID }}">
 
-  <header class="entry-global-header admin-section" style="display:grid; gap:12px;">
-    <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; justify-content:space-between;">
-      <div style="flex:1; min-width:240px; display:grid; gap:8px;">
-        <h1 style="margin:0; font-size:24px;">{{ .Content.Heading }}</h1>
-        <label class="form-label" for="entry-title">{{ if .Content.ShowContent }}Title{{ else }}Name{{ end }}</label>
-        <input class="form-control" id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required style="max-width:640px;">
-        <div id="editor-status-region" class="editor-status-region" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-size:12.5px;">
-          {{ template "editor-status-region" .Content }}
-        </div>
-        {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
-        {{ if .Content.HasUnpublishedChanges }}<div class="notice notice-warning" style="padding:8px 12px;">Unpublished changes — <a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a></div>{{ end }}
-        {{ if .Content.IsPostsPage }}<div class="notice notice-info" style="padding:8px 12px;">Posts Page — Public archive: <a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener">{{ .Content.PostsPagePath }}</a></div>{{ end }}
-        {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert">{{ .Content.PostsPageWarning }}</p>{{ end }}
+  <header class="editor-app-topbar">
+    <div class="editor-app-topbar__left">
+      <a class="button button-small" href="{{ .Content.BackURL }}" aria-label="Back" title="Back">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      </a>
+      <div style="display:grid;gap:2px;min-width:0">
+        <div class="editor-app-topbar__title" title="{{ .Content.Title }}">{{ .Content.Heading }} — <span id="editor-topbar-title-display" style="font-weight:400">{{ if .Content.Title }}{{ .Content.Title }}{{ else }}Untitled{{ end }}</span></div>
+        <div class="editor-app-topbar__subtitle">{{ if .Content.ContentTypeID }}{{ .Content.ContentTypeID }} · {{ end }}{{ .Content.Status }}{{ if .Content.PublicURL }} · <a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">View</a>{{ end }}</div>
       </div>
-      <div class="admin-page-actions" style="align-self:flex-start; flex-wrap:wrap;">
-        {{ if .Content.PublicURL }}<a class="button" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View</a>{{ end }}
-        <a class="button" href="{{ .Content.BackURL }}">Back</a>
-        <button class="button" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
-        <button class="button button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
-        <button class="button button-small" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library" style="margin-left:8px; min-width:32px;">◧</button>
-        <button class="button button-small" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector" style="min-width:32px;">◨</button>
-      </div>
+      <label for="entry-title" class="sr-only">{{ if .Content.ShowContent }}Title{{ else }}Name{{ end }}</label>
+      <input class="form-control editor-app-topbar__title-input" id="entry-title" name="title" value="{{ .Content.Title }}" data-auto-slug required placeholder="{{ if .Content.ShowContent }}Title{{ else }}Name{{ end }}" autocomplete="off">
+    </div>
+    <div class="editor-app-topbar__center" id="editor-status-region">
+      {{ template "editor-status-region" .Content }}
+    </div>
+    <div class="editor-app-topbar__right">
+      {{ if .Content.PublicURL }}<a class="button button-small" href="{{ .Content.PublicURL }}" target="_blank" rel="noopener" title="View public">View</a>{{ end }}
+      <button class="button button-small" type="submit" name="save" value="true" data-on:click__prevent="@post('{{ .Content.Action }}', {contentType: 'form'})">Save draft</button>
+      <button class="button button-small button-primary" type="submit" name="publish" value="true" formaction="{{ .Content.PublishAction }}" data-on:click__prevent="@post('{{ .Content.PublishAction }}', {contentType: 'form'})">Publish</button>
+      <div style="width:1px;height:24px;background:var(--ui-border);margin:0 4px" aria-hidden="true"></div>
+      <button class="button button-small editor-topbar-icon" type="button" data-panel-toggle="library" title="Toggle library" aria-label="Toggle library">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1" opacity="0.3"/></svg>
+      </button>
+      <button class="button button-small editor-topbar-icon" type="button" data-panel-toggle="inspector" title="Toggle inspector" aria-label="Toggle inspector">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="7" height="16" rx="1" opacity="0.3"/><rect x="14" y="4" width="7" height="16" rx="1"/></svg>
+      </button>
     </div>
   </header>
+  <script>
+    (function(){
+      const input=document.getElementById('entry-title');
+      const display=document.getElementById('editor-topbar-title-display');
+      if(input&&display){ const sync=()=> display.textContent=input.value.trim()||'Untitled'; input.addEventListener('input',sync); input.addEventListener('change',sync); }
+    })();
+  </script>
+  <div style="padding:8px 16px;display:grid;gap:6px">
+    {{ if .Content.Error }}<p id="editor-error" class="form-error" role="alert">{{ .Content.Error }}</p>{{ else }}<p id="editor-error" class="form-error" role="alert" hidden></p>{{ end }}
+    {{ if .Content.HasUnpublishedChanges }}<div class="notice notice-warning" style="padding:8px 12px">Unpublished changes — <a href="{{ .Content.PublicURL }}" target="_blank" rel="noopener">View published</a></div>{{ end }}
+    {{ if .Content.IsPostsPage }}<div class="notice notice-info" style="padding:8px 12px">Posts Page — Public archive: <a href="{{ .Content.PostsPagePath }}" target="_blank" rel="noopener">{{ .Content.PostsPagePath }}</a></div>{{ end }}
+    {{ if .Content.PostsPageWarning }}<p class="form-warning" role="alert">{{ .Content.PostsPageWarning }}</p>{{ end }}
+  </div>
 
   <div role="tablist" aria-label="Entry sections" class="entry-tabs" data-entry-tabs style="display:flex; gap:0; border-bottom:1px solid var(--ui-border); margin-bottom:16px;">
     <button type="button" role="tab" id="tab-btn-editor" aria-selected="true" aria-controls="tab-editor" data-entry-tab="editor" class="entry-tab is-active">Editor</button>
