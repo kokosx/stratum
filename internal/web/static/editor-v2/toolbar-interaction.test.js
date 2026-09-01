@@ -240,3 +240,54 @@ describe("behavioral — blur/commit guards", () => {
     assert.equal(popoverVisible, false);
   });
 });
+
+describe("M5B UX — caret and toolbar persistence", () => {
+  it("startInlineEdit does not auto-select whole paragraph", () => {
+    assert.match(inlineSrc, /placeCaretFromPoint/);
+    assert.match(inlineSrc, /placeCaretAtEnd/);
+    const startBlock = inlineSrc.slice(inlineSrc.indexOf("export function startInlineEdit"));
+    const endIdx = startBlock.indexOf("if (mode === \"rich\") attachRichHandlers");
+    const block = startBlock.slice(0, endIdx);
+    // old pattern without collapse should be gone
+    assert.doesNotMatch(block, /range\.selectNodeContents\(fieldEl\);\s*\n\s*const sel =/);
+    assert.match(block, /range\.collapse\(false\)/);
+  });
+
+  it("uses caretPositionFromPoint / caretRangeFromPoint with validation", () => {
+    assert.match(inlineSrc, /caretPositionFromPoint/);
+    assert.match(inlineSrc, /caretRangeFromPoint/);
+    assert.match(inlineSrc, /fieldEl\.contains\(/);
+  });
+
+  it("keyboard Enter places caret at end, not select-all", () => {
+    const startBlock = inlineSrc.slice(inlineSrc.indexOf("export function startInlineEdit"));
+    assert.match(startBlock, /placeCaretAtEnd/);
+  });
+
+  it("canvas second click enters edit at point, first selects", () => {
+    const canvasSrc = fs.readFileSync(path.join(__dirname, "canvas.js"), "utf8");
+    assert.match(canvasSrc, /Second click on already selected editable block/);
+    assert.match(canvasSrc, /startInlineEdit\(hit\.nodeId, hit\.instanceKey, this, undefined, \{ clientX: x, clientY: y \}\)/);
+  });
+
+  it("canvas onDblClick does not hijack when editing", () => {
+    const canvasSrc = fs.readFileSync(path.join(__dirname, "canvas.js"), "utf8");
+    const dbl = canvasSrc.slice(canvasSrc.indexOf("onDblClick"));
+    assert.match(dbl, /if \(isInlineEditing\(\)\) return;/);
+  });
+
+  it("toolbar remains after mark — applyRichMark calls showToolbar not hide", () => {
+    const applyBlock = inlineSrc.slice(inlineSrc.indexOf("function applyRichMark"));
+    const applyEnd = applyBlock.indexOf("\n}\n");
+    const block = applyBlock.slice(0, applyEnd);
+    assert.match(block, /RichToolbar\.showToolbar/);
+    assert.doesNotMatch(block, /hideToolbar/);
+  });
+
+  it("collapsed selection hides toolbar, drag/word selection native", () => {
+    assert.match(inlineSrc, /if \(!offsets \|\| offsets\.start === offsets\.end\) \{[^}]*hideToolbar/);
+    const canvasSrc = fs.readFileSync(path.join(__dirname, "canvas.js"), "utf8");
+    assert.match(canvasSrc, /if \(isInlineEditing\(\)\) \{[^}]*clearHover/);
+    assert.match(canvasSrc, /if \(activeEl && \(e\.target === activeEl/);
+  });
+});

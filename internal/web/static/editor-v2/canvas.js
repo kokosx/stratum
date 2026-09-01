@@ -640,6 +640,18 @@ export class CanvasController {
 
     const target = e.target;
     const hit = this.hitForTarget(target);
+    // Second click on already selected editable block -> enter inline editing at caret position
+    if (hit && this.selected && this.selected.instanceKey === hit.instanceKey && hit.editable && !isInlineEditing()) {
+      const x = e.clientX;
+      const y = e.clientY;
+      try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+      const started = startInlineEdit(hit.nodeId, hit.instanceKey, this, undefined, { clientX: x, clientY: y });
+      if (started) {
+        this.requestSync();
+        return;
+      }
+      // fallback to normal selection if start failed
+    }
     // In edit mode every interactive click is inert and selects its block.
     // No distinction between same-page anchor, cross-page, _blank, button, form.
     try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
@@ -1253,7 +1265,7 @@ export class CanvasController {
   onDblClick(e) {
     if (!this.doc || !this.overlay) return;
     if (this.isEditorUIEvent(e)) return;
-    // If active editing, ignore dblclick (already editing)
+    // If active editing, do not hijack native double-click word selection
     if (isInlineEditing()) return;
     const hit = this.hitForTarget(e.target);
     if (!hit || !hit.editable) return;
@@ -1261,9 +1273,9 @@ export class CanvasController {
     if (!node) return;
     // External/read-only never
     if (!hit.editable) return;
-    // Try to start inline edit
+    // Try to start inline edit at pointer position
     try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-    const started = startInlineEdit(hit.nodeId, hit.instanceKey, this);
+    const started = startInlineEdit(hit.nodeId, hit.instanceKey, this, undefined, { clientX: e.clientX, clientY: e.clientY });
     if (started) {
       this.selectInstance(hit);
       this.requestSync();

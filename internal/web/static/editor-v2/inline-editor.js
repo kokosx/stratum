@@ -59,7 +59,45 @@ function findFieldElement(canvas, instance, path) {
   return null;
 }
 
+function placeCaretFromPoint(fieldEl, clientX, clientY) {
+  if (typeof clientX !== "number" || typeof clientY !== "number") return false;
+  const doc = fieldEl.ownerDocument;
+  if (!doc) return false;
+  try {
+    let range = null;
+    if (typeof doc.caretPositionFromPoint === "function") {
+      const pos = doc.caretPositionFromPoint(clientX, clientY);
+      if (pos && pos.offsetNode && fieldEl.contains(pos.offsetNode)) {
+        range = doc.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      }
+    }
+    if (!range && typeof doc.caretRangeFromPoint === "function") {
+      const r = doc.caretRangeFromPoint(clientX, clientY);
+      if (r && r.startContainer && fieldEl.contains(r.startContainer)) {
+        range = r.cloneRange ? r.cloneRange() : r;
+        try { range.collapse(true); } catch (_) {}
+      }
+    }
+    if (range) {
+      const sel = doc.getSelection ? doc.getSelection() : (doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null);
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(range);
+        return true;
+      }
+    }
+  } catch (_) {}
+  return false;
+}
 
+function placeCaretAtEnd(fieldEl) {
+  try {
+    const len = fieldEl.textContent ? fieldEl.textContent.length : 0;
+    return restoreSelectionFromOffsets(fieldEl, len, len);
+  } catch (_) { return false; }
+}
 
 function detachHandlers() {
   if (!active || !active.fieldEl || !active.handlers) return;
@@ -338,7 +376,7 @@ export function cancelActiveEdit() {
   return true;
 }
 
-export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath) {
+export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOpts) {
   if (!nodeId || !instanceKey || !canvas) return false;
   const node = findDocumentNode(nodeId);
   if (!node) return false;
@@ -413,14 +451,23 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath) {
   } catch (_) {
     try { fieldEl.focus(); } catch (_) {}
   }
+  // Place caret: preserve pointer position if provided, else at end (keyboard), never select-all.
   try {
-    const doc = fieldEl.ownerDocument;
-    const range = doc.createRange();
-    range.selectNodeContents(fieldEl);
-    const sel = doc.getSelection ? doc.getSelection() : (fieldEl.ownerDocument.defaultView && fieldEl.ownerDocument.defaultView.getSelection ? fieldEl.ownerDocument.defaultView.getSelection() : null);
-    if (sel) {
-      sel.removeAllRanges();
-      sel.addRange(range);
+    let placed = false;
+    if (maybeOpts && (typeof maybeOpts.clientX === "number" || typeof maybeOpts.x === "number")) {
+      const x = typeof maybeOpts.clientX === "number" ? maybeOpts.clientX : maybeOpts.x;
+      const y = typeof maybeOpts.clientY === "number" ? maybeOpts.clientY : maybeOpts.y;
+      placed = placeCaretFromPoint(fieldEl, x, y);
+    }
+    if (!placed) {
+      if (!placeCaretAtEnd(fieldEl)) {
+        const doc = fieldEl.ownerDocument;
+        const range = doc.createRange();
+        range.selectNodeContents(fieldEl);
+        range.collapse(false);
+        const sel = doc.getSelection ? doc.getSelection() : (doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null);
+        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+      }
     }
   } catch (_) {}
 
