@@ -88,7 +88,7 @@ let activeCanvas = null;
 let savedOffsets = null; // for link popover {start,end}
 let savedToolbarOffsets = null; // for toolbar actions {start,end}
 let toolbarInteraction = false;
-let pointerActionHandled = false;
+let suppressNextClick = false;
 let callbacks = {
   toggleMark: null,
   openLink: null,
@@ -156,7 +156,7 @@ function ensureElements(canvas) {
     // Pointerdown is the primary action: happens before blur/selectionchange
     btn.addEventListener("pointerdown", (e) => {
       beginToolbarInteraction();
-      pointerActionHandled = true;
+      suppressNextClick = true;
       e.preventDefault();
       e.stopPropagation();
       performToolbarAction(b.mark);
@@ -164,13 +164,13 @@ function ensureElements(canvas) {
     });
     btn.addEventListener("mousedown", (e) => {
       // Fallback for devices without pointer events: same as pointerdown but only if not already handled
-      if (pointerActionHandled) {
+      if (suppressNextClick) {
         e.preventDefault();
         e.stopPropagation();
         return;
       }
       beginToolbarInteraction();
-      pointerActionHandled = true;
+      suppressNextClick = true;
       e.preventDefault();
       e.stopPropagation();
       performToolbarAction(b.mark);
@@ -178,9 +178,9 @@ function ensureElements(canvas) {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (pointerActionHandled) {
+      if (suppressNextClick) {
         // pointerdown already performed the action — consume click without double toggle
-        pointerActionHandled = false;
+        suppressNextClick = false;
         // End interaction on next microtask to allow blur/selectionchange guards to see true during this dispatch
         queueMicrotask(() => {
           // keep toolbar visible: do not hide, just end interaction state
@@ -192,30 +192,20 @@ function ensureElements(canvas) {
       performToolbarAction(b.mark);
       queueMicrotask(() => endToolbarInteraction());
     });
-    // Fallback if click never fires (drag away, pointercancel)
-    btn.addEventListener("pointerup", () => {
-      queueMicrotask(() => {
-        if (pointerActionHandled) {
-          pointerActionHandled = false;
-          endToolbarInteraction();
-        }
-      });
-    });
     btn.addEventListener("pointercancel", () => {
-      queueMicrotask(() => {
-        if (pointerActionHandled) {
-          pointerActionHandled = false;
-          endToolbarInteraction();
-        }
-      });
+      suppressNextClick = false;
+      endToolbarInteraction();
     });
-    btn.addEventListener("mouseup", () => {
-      queueMicrotask(() => {
-        if (pointerActionHandled) {
-          pointerActionHandled = false;
-          endToolbarInteraction();
-        }
-      });
+    // Fallback for drag outside where click never fires (task-level, not microtask)
+    btn.addEventListener("pointerup", () => {
+      if (suppressNextClick) {
+        setTimeout(() => {
+          if (suppressNextClick) {
+            suppressNextClick = false;
+            endToolbarInteraction();
+          }
+        }, 0);
+      }
     });
     toolbarEl.appendChild(btn);
   }
@@ -356,7 +346,7 @@ export function showPopover(canvas, fieldEl, href, offsets) {
   savedOffsets = offsets ? { ...offsets } : null;
   savedToolbarOffsets = offsets ? { ...offsets } : null;
   toolbarInteraction = true;
-  pointerActionHandled = false;
+  suppressNextClick = false;
   if (inputEl) {
     inputEl.value = href || "";
     hideError();
@@ -388,7 +378,7 @@ export function hidePopover() {
   hideError();
   savedOffsets = null;
   toolbarInteraction = false;
-  pointerActionHandled = false;
+  suppressNextClick = false;
 }
 
 export function getSavedOffsets() {
@@ -460,6 +450,6 @@ export function destroyToolbar() {
   savedOffsets = null;
   savedToolbarOffsets = null;
   toolbarInteraction = false;
-  pointerActionHandled = false;
+  suppressNextClick = false;
   callbacks = { toggleMark: null, openLink: null, applyLink: null, removeLink: null, closeLink: null };
 }

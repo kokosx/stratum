@@ -99,6 +99,46 @@ function placeCaretAtEnd(fieldEl) {
   } catch (_) { return false; }
 }
 
+function restoreRichEditingContext(fieldEl, offsets) {
+  if (!fieldEl || !offsets || typeof offsets.start !== "number" || typeof offsets.end !== "number") return false;
+  // Ensure field remains contenteditable
+  try {
+    if (!fieldEl.hasAttribute("contenteditable") || fieldEl.getAttribute("contenteditable") === "false") {
+      fieldEl.setAttribute("contenteditable", "true");
+    }
+    if (!fieldEl.hasAttribute("data-stratum-editing")) {
+      fieldEl.setAttribute("data-stratum-editing", "true");
+    }
+  } catch (_) {}
+  // FOCUS FIRST — focus may collapse selection, so restore after
+  try {
+    fieldEl.focus({ preventScroll: true });
+  } catch (_) {
+    try { fieldEl.focus(); } catch (_) {}
+  }
+  let restored = false;
+  try {
+    restored = restoreSelectionFromOffsets(fieldEl, offsets.start, offsets.end);
+  } catch (_) { restored = false; }
+  // Verify selection belongs to field
+  try {
+    const doc = fieldEl.ownerDocument;
+    const sel = doc.getSelection ? doc.getSelection() : (doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null);
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      const container = range.commonAncestorContainer;
+      if (!fieldEl.contains(container) && container !== fieldEl) {
+        restored = false;
+      }
+    } else {
+      restored = false;
+    }
+  } catch (_) { restored = false; }
+  // Preserve active.richSelection even if verify failed (still keep offsets)
+  if (active) active.richSelection = { start: offsets.start, end: offsets.end };
+  return restored;
+}
+
 function detachHandlers() {
   if (!active || !active.fieldEl || !active.handlers) return;
   const el = active.fieldEl;
@@ -226,9 +266,7 @@ function applyRichMark(markType, offsetsParam, href) {
   const current = domToRichText(fieldEl);
   const updated = toggleMarkInRichText(current, start, end, markType, href);
   renderRichTextToDOM(fieldEl, updated);
-  restoreSelectionFromOffsets(fieldEl, start, end);
-  // Keep saved selection
-  active.richSelection = { start, end };
+  restoreRichEditingContext(fieldEl, { start, end });
   try { active.canvas.requestSync(); } catch (_) {}
   // Keep toolbar visible with updated active states
   try {
@@ -624,8 +662,8 @@ function attachRichHandlers(fieldEl, canvas) {
       if (RichToolbar.isPopoverVisible()) {
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
         RichToolbar.hidePopover();
-        const saved = RichToolbar.getSavedOffsets();
-        if (saved) restoreSelectionFromOffsets(fieldEl, saved.start, saved.end);
+        const saved = RichToolbar.getSavedOffsets() || active.richSelection;
+        if (saved) restoreRichEditingContext(fieldEl, saved);
         return;
       }
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
@@ -844,8 +882,8 @@ function attachRichHandlers(fieldEl, canvas) {
     },
     closeLink: () => {
       try {
-        const curOffsets = active.richSelection;
-        if (curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
+        const curOffsets = active.richSelection || RichToolbar.getSavedOffsets();
+        if (curOffsets) restoreRichEditingContext(fieldEl, curOffsets);
       } catch (_) {}
     }
   });

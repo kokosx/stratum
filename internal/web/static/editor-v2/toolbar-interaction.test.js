@@ -21,9 +21,9 @@ before(() => {
 describe("static DoD — toolbar runtime shape", () => {
   it("uses pointerdown for formatting, not click-only", () => {
     assert.match(toolbarSrc, /btn\.addEventListener\("pointerdown"/);
-    // click handler must contain guard for pointerActionHandled
-    assert.match(toolbarSrc, /pointerActionHandled/);
-    assert.match(toolbarSrc, /if\s*\(pointerActionHandled\)/);
+    // click handler must contain guard for suppressNextClick (renamed from pointerActionHandled)
+    assert.match(toolbarSrc, /suppressNextClick/);
+    assert.match(toolbarSrc, /if\s*\(suppressNextClick\)/);
   });
 
   it("removes timer-based correctness 50/100/200 for toolbarInteraction", () => {
@@ -32,10 +32,11 @@ describe("static DoD — toolbar runtime shape", () => {
     assert.doesNotMatch(toolbarSrc, /setTimeout.*100/);
     // Old code had setTimeout with 200 for blur — should be gone
     assert.doesNotMatch(toolbarSrc, /setTimeout.*200/);
-    // Only allowed timer is 20ms for popover focus (UI sync) and maybe app.js timers
+    // Allowed timers: 20ms for popover focus (UI sync) + 0 fallback for drag-outside cleanup
     const toolbarTimeouts = (toolbarSrc.match(/setTimeout/g) || []).length;
-    assert.equal(toolbarTimeouts, 1, "toolbar should have exactly one setTimeout (20ms for input focus)");
+    assert.equal(toolbarTimeouts, 2, "toolbar should have two setTimeouts: 20ms focus + 0 fallback");
     assert.match(toolbarSrc, /setTimeout.*inputEl\.focus/);
+    assert.match(toolbarSrc, /setTimeout\(\(\) => \{\s*if \(suppressNextClick\)/);
   });
 
   it("explicit lifecycle: begin/end, microtask not timer", () => {
@@ -289,5 +290,47 @@ describe("M5B UX — caret and toolbar persistence", () => {
     const canvasSrc = fs.readFileSync(path.join(__dirname, "canvas.js"), "utf8");
     assert.match(canvasSrc, /if \(isInlineEditing\(\)\) \{[^}]*clearHover/);
     assert.match(canvasSrc, /if \(activeEl && \(e\.target === activeEl/);
+  });
+});
+
+describe("M5B Final Focus — double action + preserve focus", () => {
+  it("pointerup does not clear suppressNextClick via microtask", () => {
+    assert.doesNotMatch(toolbarSrc, /btn\.addEventListener\("pointerup", \(\) => \{\s*queueMicrotask/);
+    assert.match(toolbarSrc, /btn\.addEventListener\("pointerup"[\s\S]*setTimeout/);
+    assert.match(toolbarSrc, /suppressNextClick = true/);
+  });
+
+  it("pointerdown executes exactly once, click consumes", () => {
+    assert.match(toolbarSrc, /btn\.addEventListener\("pointerdown"[\s\S]*suppressNextClick = true[\s\S]*performToolbarAction/);
+    assert.match(toolbarSrc, /btn\.addEventListener\("click"[\s\S]*if \(suppressNextClick\)/);
+  });
+
+  it("restoreRichEditingContext focuses first then restores", () => {
+    assert.match(inlineSrc, /function restoreRichEditingContext/);
+    const fn = inlineSrc.slice(inlineSrc.indexOf("function restoreRichEditingContext"));
+    const focusIdx = fn.indexOf("fieldEl.focus");
+    const restoreIdx = fn.indexOf("restoreSelectionFromOffsets");
+    assert.ok(focusIdx !== -1 && restoreIdx !== -1 && focusIdx < restoreIdx, "focus must come before restore");
+    assert.match(fn, /fieldEl\.setAttribute\("contenteditable"/);
+  });
+
+  it("applyRichMark uses restore helper and preserves toolbar", () => {
+    const apply = inlineSrc.slice(inlineSrc.indexOf("function applyRichMark"));
+    const applyEnd = apply.indexOf("\n}\n");
+    const block = apply.slice(0, applyEnd);
+    assert.match(block, /restoreRichEditingContext/);
+    assert.match(block, /RichToolbar\.showToolbar/);
+    assert.doesNotMatch(block, /hideToolbar/);
+  });
+
+  it("link popover close restores via same helper", () => {
+    assert.match(inlineSrc, /closeLink[\s\S]*restoreRichEditingContext/);
+  });
+
+  it("toolbar click does not commit editing", () => {
+    // blur guard still
+    assert.match(inlineSrc, /if \(RichToolbar\.isPopoverVisible\(\) \|\| RichToolbar\.isToolbarInteraction\(\)\) return/);
+    // restore helper ensures field stays contenteditable
+    assert.match(inlineSrc, /fieldEl\.setAttribute\("data-stratum-editing"/);
   });
 });
