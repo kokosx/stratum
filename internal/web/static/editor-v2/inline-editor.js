@@ -36,7 +36,7 @@ function getCurrentRichText(node, path) {
   return { version: 1, content: [] };
 }
 
-function findFieldElement(canvas, instance, path) {
+export function findFieldElement(canvas, instance, path) {
   if (!canvas || !canvas.doc || !instance) return null;
   const doc = canvas.doc;
   for (const root of instance.rootElements || []) {
@@ -99,7 +99,7 @@ function placeCaretAtEnd(fieldEl) {
   } catch (_) { return false; }
 }
 
-function restoreRichEditingContext(fieldEl, offsets) {
+function restoreRichEditingContext(fieldEl, offsets, opts) {
   if (!fieldEl || !offsets || typeof offsets.start !== "number" || typeof offsets.end !== "number") return false;
   // Ensure field remains contenteditable
   try {
@@ -111,11 +111,33 @@ function restoreRichEditingContext(fieldEl, offsets) {
     }
   } catch (_) {}
   const doc = fieldEl.ownerDocument;
-  if (doc.activeElement !== fieldEl) {
-    try {
-      fieldEl.focus({ preventScroll: true });
-    } catch (_) {
-      try { fieldEl.focus(); } catch (_) {}
+  const skipFocusIfActive = !!(opts && opts.skipFocusIfActive);
+  if (!skipFocusIfActive || doc.activeElement !== fieldEl) {
+    // Only focus if not already active or caller didn't request skip when active
+    if (doc.activeElement !== fieldEl) {
+      if (!skipFocusIfActive) {
+        try {
+          fieldEl.focus({ preventScroll: true });
+        } catch (_) {
+          try { fieldEl.focus(); } catch (_) {}
+        }
+      } else {
+        // For internalMutation mark actions, keep existing focus; only refocus if lost
+        const needsFocus = doc.activeElement !== fieldEl && doc.activeElement !== doc.body;
+        // Check if focus is inside toolbar/popover — then don't force
+        const activeInsideToolbar = (() => {
+          try {
+            const ae = doc.activeElement;
+            if (!ae) return false;
+            if (ae.closest && ae.closest('[data-stratum-editor-ui="true"]')) return true;
+          } catch (_) {}
+          return false;
+        })();
+        if (!activeInsideToolbar && needsFocus) {
+          // Only if focus was lost unexpectedly
+          try { fieldEl.focus({ preventScroll: true }); } catch (_) {}
+        }
+      }
     }
   }
   let restored = false;
@@ -158,6 +180,7 @@ function detachHandlers() {
   try { if (h.onSelectionChange) el.ownerDocument.removeEventListener("selectionchange", h.onSelectionChange); } catch (_) {}
   try { if (h.onScroll) el.ownerDocument.removeEventListener("scroll", h.onScroll, true); } catch (_) {}
   try { if (h.onScroll && el.ownerDocument.defaultView) el.ownerDocument.defaultView.removeEventListener("scroll", h.onScroll, true); } catch (_) {}
+  try { if (h.onResize && el.ownerDocument.defaultView) el.ownerDocument.defaultView.removeEventListener("resize", h.onResize); } catch (_) {}
 }
 
 function cleanupEditingState() {
@@ -236,16 +259,35 @@ function getActiveMarks() {
   return common.map(m => m.type);
 }
 
-function rectForRichSelection() {
-  if (!active?.rich?.selection) return null;
-  const { fieldEl } = active;
-  const { start, end } = active.rich.selection;
+function snapshotRect(rect) {
+  if (!rect) return null;
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right != null ? rect.right : rect.left + (rect.width || 0),
+    bottom: rect.bottom != null ? rect.bottom : rect.top + (rect.height || 0),
+    width: rect.width || 0,
+    height: rect.height || 0,
+    x: rect.x != null ? rect.x : rect.left,
+    y: rect.y != null ? rect.y : rect.top,
+  };
+}
+
+function measureRectForSelection(fieldEl, selection) {
+  if (!fieldEl || !selection) return null;
+  const { start, end } = selection;
   try {
     const range = offsetsToRange(fieldEl, start, end);
     const rect = range?.getBoundingClientRect?.();
-    if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+    if (rect && (rect.width > 0 || rect.height > 0)) return snapshotRect(rect);
   } catch (_) {}
-  try { return fieldEl.getBoundingClientRect(); } catch (_) { return null; }
+  try { return snapshotRect(fieldEl.getBoundingClientRect()); } catch (_) { return null; }
+}
+
+function rectForRichSelection() {
+  if (!active?.rich?.selection) return null;
+  if (active.rich.toolbarAnchor) return active.rich.toolbarAnchor;
+  return measureRectForSelection(active.fieldEl, active.rich.selection);
 }
 
 function updateRichToolbar() {
@@ -254,11 +296,35 @@ function updateRichToolbar() {
   const selection = active.rich.selection;
   if (!selection || selection.start === selection.end) {
     RichToolbar.hideToolbar();
+    active.rich.toolbarAnchor = null;
     if (active.rich.ui !== "link") active.rich.ui = "none";
     return;
   }
   active.rich.ui = "toolbar";
-  RichToolbar.showToolbar(active.canvas, rectForRichSelection(), getActiveMarks());
+  if (!active.rich.toolbarAnchor) {
+    const measured = measureRectForSelection(active.fieldEl, selection);
+    if (measured) active.rich.toolbarAnchor = measured;
+  }
+  const anchor = active.rich.toolbarAnchor || rectForRichSelection();
+  RichToolbar.showToolbar(active.canvas, anchor, getActiveMarks());
+}
+
+function updateRichToolbarMarks() {
+  if (!active?.rich || !active.canvas) return;
+  if (active.rich.ui === "link") return;
+  const selection = active.rich.selection;
+  if (!selection || selection.start === selection.end) {
+    RichToolbar.hideToolbar();
+    active.rich.toolbarAnchor = null;
+    if (active.rich.ui !== "link") active.rich.ui = "none";
+    return;
+  }
+  if (typeof RichToolbar.updateMarks === "function") {
+    RichToolbar.updateMarks(getActiveMarks());
+  } else {
+    // Fallback: update marks without repositioning by calling show with same anchor
+    RichToolbar.showToolbar(active.canvas, active.rich.toolbarAnchor, getActiveMarks());
+  }
 }
 
 function applyRichMark(markType, href) {
@@ -277,17 +343,20 @@ function applyRichMark(markType, href) {
   const end = e;
   const current = domToRichText(fieldEl);
   const updated = toggleMarkInRichText(current, start, end, markType, href);
+  // Preserve frozen anchor
+  const frozenAnchor = session.rich.toolbarAnchor ? { ...session.rich.toolbarAnchor } : null;
   session.rich.internalMutation = true;
   try {
     renderRichTextToDOM(fieldEl, updated);
-    restoreRichEditingContext(fieldEl, { start, end });
+    restoreRichEditingContext(fieldEl, { start, end }, { skipFocusIfActive: true });
   } finally {
     session.rich.internalMutation = false;
   }
   if (active !== session) return false;
   session.rich.selection = { start, end };
+  if (frozenAnchor) session.rich.toolbarAnchor = frozenAnchor;
   try { session.canvas.requestSync(); } catch (_) {}
-  updateRichToolbar();
+  updateRichToolbarMarks();
   return true;
 }
 
@@ -310,8 +379,9 @@ function openLink() {
     pos = runEnd;
   }
   if (uniform && uniformHref) href = uniformHref;
+  const anchor = active.rich.toolbarAnchor || rectForRichSelection();
   active.rich.ui = "link";
-  RichToolbar.showPopover(active.canvas, rectForRichSelection(), href);
+  RichToolbar.showPopover(active.canvas, anchor, href);
   return true;
 }
 
@@ -319,17 +389,32 @@ function resumeRichToolbar() {
   if (!active?.rich?.selection) return false;
   const session = active;
   const selection = { ...session.rich.selection };
+  const frozenAnchor = session.rich.toolbarAnchor ? { ...session.rich.toolbarAnchor } : rectForRichSelection();
   RichToolbar.hidePopover();
   session.rich.ui = "toolbar";
   session.rich.internalMutation = true;
   try {
-    restoreRichEditingContext(session.fieldEl, selection);
+    restoreRichEditingContext(session.fieldEl, selection, { skipFocusIfActive: true });
   } finally {
     session.rich.internalMutation = false;
   }
   if (active !== session) return false;
   session.rich.selection = selection;
-  updateRichToolbar();
+  if (frozenAnchor) session.rich.toolbarAnchor = frozenAnchor;
+  // Ensure toolbar visible at frozen anchor
+  try {
+    RichToolbar.showToolbar(session.canvas, session.rich.toolbarAnchor, getActiveMarks());
+    session.rich.ui = "toolbar";
+  } catch (_) {
+    updateRichToolbar();
+  }
+  // Focus recovery only if actually lost (popover took focus)
+  try {
+    const doc = session.fieldEl.ownerDocument;
+    if (doc.activeElement !== session.fieldEl) {
+      session.fieldEl.focus({ preventScroll: true });
+    }
+  } catch (_) {}
   return true;
 }
 
@@ -486,6 +571,8 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOp
     try { fieldEl.textContent = originalValue; } catch (_) {}
   }
 
+  const nativePointer = !!(maybeOpts && maybeOpts.nativePointer);
+
   active = {
     fieldEl,
     nodeId,
@@ -496,7 +583,7 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOp
     mode,
     canvas,
     handlers: null,
-    rich: mode === "rich" ? { selection: null, ui: "none", internalMutation: false } : null,
+    rich: mode === "rich" ? { selection: null, toolbarAnchor: null, ui: "none", internalMutation: false } : null,
   };
   try { state.editing = { nodeId, instanceKey, path, mode, originalValue: mode === "rich" ? originalRichText : originalValue }; } catch (_) {}
 
@@ -523,37 +610,55 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOp
     }
   } catch (_) {}
 
-  try {
-    fieldEl.focus({ preventScroll: true });
-  } catch (_) {
-    try { fieldEl.focus(); } catch (_) {}
-  }
-  // Place caret: preserve pointer position if provided, else at end (keyboard), never select-all.
-  try {
-    let placed = false;
-    if (maybeOpts && (typeof maybeOpts.clientX === "number" || typeof maybeOpts.x === "number")) {
-      const x = typeof maybeOpts.clientX === "number" ? maybeOpts.clientX : maybeOpts.x;
-      const y = typeof maybeOpts.clientY === "number" ? maybeOpts.clientY : maybeOpts.y;
-      placed = placeCaretFromPoint(fieldEl, x, y);
-    }
-    if (!placed) {
-      if (!placeCaretAtEnd(fieldEl)) {
-        const doc = fieldEl.ownerDocument;
-        const range = doc.createRange();
-        range.selectNodeContents(fieldEl);
-        range.collapse(false);
-        const sel = doc.getSelection ? doc.getSelection() : (doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null);
-        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
-      }
-    }
-  } catch (_) {}
-
-  if (mode === "rich") {
+  if (nativePointer && mode === "rich") {
+    // Native pointer start: enable contenteditable, attach handlers, preserve SDT selection,
+    // but DO NOT focus, DO NOT synthesize Range/caret, DO NOT select contents.
+    // Browser pointer event performs caret/selection naturally.
     attachRichHandlers(fieldEl, canvas);
-    const initialSelection = selectionToOffsets(fieldEl);
-    if (initialSelection) active.rich.selection = { ...initialSelection };
+    // Do not set selection/anchor here; browser's selectionchange will populate after default.
+    // For keyboard-like nativePointer=false we still need anchor via selection; for native we wait.
   } else {
-    attachPlainHandlers(fieldEl, canvas);
+    try {
+      fieldEl.focus({ preventScroll: true });
+    } catch (_) {
+      try { fieldEl.focus(); } catch (_) {}
+    }
+    // Place caret: preserve pointer position if provided, else at end (keyboard), never select-all.
+    try {
+      let placed = false;
+      if (maybeOpts && (typeof maybeOpts.clientX === "number" || typeof maybeOpts.x === "number")) {
+        const x = typeof maybeOpts.clientX === "number" ? maybeOpts.clientX : maybeOpts.x;
+        const y = typeof maybeOpts.clientY === "number" ? maybeOpts.clientY : maybeOpts.y;
+        placed = placeCaretFromPoint(fieldEl, x, y);
+      }
+      if (!placed) {
+        if (!placeCaretAtEnd(fieldEl)) {
+          const doc = fieldEl.ownerDocument;
+          const range = doc.createRange();
+          range.selectNodeContents(fieldEl);
+          range.collapse(false);
+          const sel = doc.getSelection ? doc.getSelection() : (doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null);
+          if (sel) { sel.removeAllRanges(); sel.addRange(range); }
+        }
+      }
+    } catch (_) {}
+
+    if (mode === "rich") {
+      attachRichHandlers(fieldEl, canvas);
+      const initialSelection = selectionToOffsets(fieldEl);
+      if (initialSelection) {
+        active.rich.selection = { ...initialSelection };
+        // Toolbar anchor is set via selectionchange for user selections;
+        // for keyboard entry collapsed caret hides toolbar, so anchor stays null.
+        if (initialSelection.start !== initialSelection.end) {
+          const measured = measureRectForSelection(fieldEl, initialSelection);
+          if (measured) active.rich.toolbarAnchor = measured;
+          updateRichToolbar();
+        }
+      }
+    } else {
+      attachPlainHandlers(fieldEl, canvas);
+    }
   }
 
   try {
@@ -704,8 +809,18 @@ function attachRichHandlers(fieldEl, canvas) {
     if (active.rich.ui === "link") return false;
     const offsets = selectionToOffsets(fieldEl);
     if (!offsets) return false;
+    const isCollapsed = offsets.start === offsets.end;
     active.rich.selection = { start: offsets.start, end: offsets.end };
-    updateRichToolbar();
+    if (isCollapsed) {
+      active.rich.toolbarAnchor = null;
+      RichToolbar.hideToolbar();
+      active.rich.ui = "none";
+    } else {
+      const anchor = measureRectForSelection(fieldEl, active.rich.selection);
+      if (anchor) active.rich.toolbarAnchor = anchor;
+      active.rich.ui = "toolbar";
+      RichToolbar.showToolbar(active.canvas, active.rich.toolbarAnchor, getActiveMarks());
+    }
     try { canvas.requestSync(); } catch (_) {}
     return true;
   };
@@ -822,7 +937,7 @@ function attachRichHandlers(fieldEl, canvas) {
       }
     }
     try { canvas.requestSync(); } catch (_) {}
-    updateRichToolbar();
+    // toolbar already updated via captureBrowserSelection; no extra reposition
   };
   const onClick = (e) => { e.stopPropagation(); };
   const onPointerDown = (e) => {
@@ -832,9 +947,47 @@ function attachRichHandlers(fieldEl, canvas) {
     captureBrowserSelection();
   };
   const onScroll = () => {
-    if (!active?.rich || active.rich.ui !== "toolbar") return;
+    if (!active?.rich) return;
+    if (!active.rich.selection || active.rich.selection.start === active.rich.selection.end) {
+      if (active.rich.ui === "toolbar") {
+        RichToolbar.hideToolbar();
+        active.rich.ui = "none";
+      }
+      return;
+    }
+    if (active.rich.ui === "link" || active.rich.internalMutation) return;
+    // Hide while scrolling, then recompute from current canonical selection after frame
     RichToolbar.hideToolbar();
     active.rich.ui = "none";
+    const field = fieldEl;
+    const canv = canvas;
+    const recompute = () => {
+      if (!active?.rich || active.fieldEl !== field) return;
+      if (active.rich.ui === "link") return;
+      if (active.rich.internalMutation) return;
+      const cur = active.rich.selection;
+      if (!cur || cur.start === cur.end) return;
+      const anchor = measureRectForSelection(field, cur);
+      if (!anchor) return;
+      active.rich.toolbarAnchor = anchor;
+      active.rich.ui = "toolbar";
+      RichToolbar.showToolbar(canv, anchor, getActiveMarks());
+    };
+    try {
+      const win = field.ownerDocument.defaultView;
+      if (win && win.requestAnimationFrame) win.requestAnimationFrame(recompute);
+      else setTimeout(recompute, 16);
+    } catch (_) { setTimeout(recompute, 16); }
+  };
+  const onResize = () => {
+    if (!active?.rich || !active.rich.selection || active.rich.selection.start === active.rich.selection.end) return;
+    if (active.rich.internalMutation || active.rich.ui === "link") return;
+    const anchor = measureRectForSelection(fieldEl, active.rich.selection);
+    if (!anchor) return;
+    active.rich.toolbarAnchor = anchor;
+    // Always show after resize if selection non-collapsed
+    active.rich.ui = "toolbar";
+    RichToolbar.showToolbar(active.canvas, anchor, getActiveMarks());
   };
   fieldEl.addEventListener("compositionstart", onCompositionStart);
   fieldEl.addEventListener("compositionend", onCompositionEnd);
@@ -849,6 +1002,7 @@ function attachRichHandlers(fieldEl, canvas) {
   try { fieldEl.ownerDocument.addEventListener("selectionchange", onSelectionChange); } catch (_) {}
   try { fieldEl.ownerDocument.defaultView && fieldEl.ownerDocument.defaultView.addEventListener("scroll", onScroll, true); } catch (_) {}
   try { fieldEl.ownerDocument.addEventListener("scroll", onScroll, true); } catch (_) {}
+  try { fieldEl.ownerDocument.defaultView && fieldEl.ownerDocument.defaultView.addEventListener("resize", onResize); } catch (_) {}
   handlers.onCompositionStart = onCompositionStart;
   handlers.onCompositionEnd = onCompositionEnd;
   handlers.onKeyDown = onKeyDown;
@@ -861,21 +1015,53 @@ function attachRichHandlers(fieldEl, canvas) {
   handlers.onMouseDownFallback = onPointerDown;
   handlers.onSelectionChange = onSelectionChange;
   handlers.onScroll = onScroll;
+  handlers.onResize = onResize;
   handlers.fieldEl = fieldEl;
   RichToolbar.setToolbarCallbacks({
     toggleMark: (mark) => applyRichMark(mark),
     openLink: () => openLink(),
     applyLink: (href) => {
       if (!active?.rich) return;
+      // Close popover and apply link using canonical selection and frozen anchor
+      const anchor = active.rich.toolbarAnchor || rectForRichSelection();
       RichToolbar.hidePopover();
       active.rich.ui = "toolbar";
-      applyRichMark("link", href);
+      if (anchor) active.rich.toolbarAnchor = anchor;
+      const ok = applyRichMark("link", href);
+      // Focus recovery exceptional: popover had focus, need to restore to field
+      try {
+        if (active?.fieldEl && active.fieldEl.ownerDocument.activeElement !== active.fieldEl) {
+          active.fieldEl.focus({ preventScroll: true });
+          // Restore logical selection after focus
+          if (active.rich?.selection) {
+            active.rich.internalMutation = true;
+            try { restoreSelectionFromOffsets(active.fieldEl, active.rich.selection.start, active.rich.selection.end); } catch (_) {}
+            active.rich.internalMutation = false;
+          }
+          if (active.rich?.toolbarAnchor) RichToolbar.showToolbar(active.canvas, active.rich.toolbarAnchor, getActiveMarks());
+        }
+      } catch (_) {}
+      return ok;
     },
     removeLink: () => {
       if (!active?.rich) return;
+      const anchor = active.rich.toolbarAnchor || rectForRichSelection();
       RichToolbar.hidePopover();
       active.rich.ui = "toolbar";
-      applyRichMark("link", null);
+      if (anchor) active.rich.toolbarAnchor = anchor;
+      const ok = applyRichMark("link", null);
+      try {
+        if (active?.fieldEl && active.fieldEl.ownerDocument.activeElement !== active.fieldEl) {
+          active.fieldEl.focus({ preventScroll: true });
+          if (active.rich?.selection) {
+            active.rich.internalMutation = true;
+            try { restoreSelectionFromOffsets(active.fieldEl, active.rich.selection.start, active.rich.selection.end); } catch (_) {}
+            active.rich.internalMutation = false;
+          }
+          if (active.rich?.toolbarAnchor) RichToolbar.showToolbar(active.canvas, active.rich.toolbarAnchor, getActiveMarks());
+        }
+      } catch (_) {}
+      return ok;
     },
     closeLink: () => resumeRichToolbar(),
   });

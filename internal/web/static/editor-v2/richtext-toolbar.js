@@ -293,6 +293,17 @@ export function showToolbar(canvas, rect, activeMarks) {
   positionToolbar(rect, canvas);
 }
 
+export function updateMarks(activeMarks) {
+  if (!toolbarEl) return;
+  const marks = new Set(activeMarks || []);
+  for (const button of toolbarEl.querySelectorAll("[data-mark]")) {
+    const active = marks.has(button.getAttribute("data-mark"));
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+  // Do NOT reposition — toolbar stays at frozen anchor
+}
+
 export function hideToolbar() {
   toolbarEl?.classList.remove("is-visible");
 }

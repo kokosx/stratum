@@ -2,9 +2,9 @@
 import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
-import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument, primaryInlineFieldForNode } from "./state.js";
+import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument, primaryInlineFieldForNode, inlineFieldsForNode } from "./state.js";
 import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
-import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveEditorSessionEvent, commitBeforeEditorContextChange } from "./inline-editor.js";
+import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveEditorSessionEvent, isActiveFieldElement, commitBeforeEditorContextChange, findFieldElement } from "./inline-editor.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -624,9 +624,63 @@ export class CanvasController {
   }
 
   onPointerDown(event) {
-    if (!isInlineEditing()) return;
-    if (isActiveEditorSessionEvent(event)) return;
-    commitBeforeEditorContextChange();
+    if (event.type === "mousedown") {
+      try {
+        const view = event.view || this.win;
+        if (view && view.PointerEvent) return;
+      } catch (_) {}
+    }
+    if (this.isEditorUIEvent(event)) return;
+    if (isInlineEditing()) {
+      if (isActiveEditorSessionEvent(event) || isActiveFieldElement(event.target)) return;
+      // Inside active field browser owns caret/word selection
+      try {
+        const ae = event.target;
+        if (ae && ae.nodeType === 3) {
+          // text node, check parent
+          if (isActiveFieldElement(ae.parentElement)) return;
+        }
+      } catch (_) {}
+      commitBeforeEditorContextChange();
+      return;
+    }
+    // Not editing: if pointerdown inside already-selected editable field, start native pointer editing
+    const hit = this.hitForTarget(event.target);
+    if (!hit || !hit.editable) return;
+    if (!this.selected || this.selected.instanceKey !== hit.instanceKey) return;
+    const node = findDocumentNode(hit.nodeId);
+    if (!node) return;
+    const fields = inlineFieldsForNode(node);
+    if (!fields || fields.length === 0) return;
+    let insideField = false;
+    for (const p of fields) {
+      const fieldEl = findFieldElement(this, hit, p);
+      if (fieldEl && (event.target === fieldEl || (fieldEl.contains && fieldEl.contains(event.target)))) {
+        insideField = true;
+        break;
+      }
+      try {
+        const closest = event.target.closest ? event.target.closest('[data-stratum-editor-field]') : null;
+        if (closest && fieldEl && (closest === fieldEl || fieldEl.contains(closest))) {
+          insideField = true;
+          break;
+        }
+      } catch (_) {}
+    }
+    if (!insideField) {
+      try {
+        const closestField = event.target.closest ? event.target.closest('[data-stratum-editor-field]') : null;
+        if (closestField) {
+          const fieldHit = this.hitForTarget(closestField);
+          if (fieldHit && fieldHit.instanceKey === hit.instanceKey) insideField = true;
+        }
+      } catch (_) {}
+    }
+    if (!insideField) return;
+    const started = startInlineEdit(hit.nodeId, hit.instanceKey, this, undefined, { nativePointer: true });
+    if (started) {
+      try { this.requestSync(); } catch (_) {}
+    }
   }
 
   onClick(e) {
@@ -637,7 +691,11 @@ export class CanvasController {
     // so never reinterpret that click as an outside action. Keyboard-generated
     // clicks have detail=0 and explicitly commit here.
     if (isInlineEditing()) {
-      if (isActiveEditorSessionEvent(e)) return;
+      if (isActiveEditorSessionEvent(e) || isActiveFieldElement(e.target)) return;
+      try {
+        const ae = e.target;
+        if (ae && ae.nodeType === 3 && ae.parentElement && isActiveFieldElement(ae.parentElement)) return;
+      } catch (_) {}
       if (e.detail === 0) commitBeforeEditorContextChange();
       else return;
     }
@@ -651,20 +709,7 @@ export class CanvasController {
 
     const target = e.target;
     const hit = this.hitForTarget(target);
-    // Second click on already selected editable block -> enter inline editing at caret position
-    if (hit && this.selected && this.selected.instanceKey === hit.instanceKey && hit.editable && !isInlineEditing()) {
-      const x = e.clientX;
-      const y = e.clientY;
-      try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-      const started = startInlineEdit(hit.nodeId, hit.instanceKey, this, undefined, { clientX: x, clientY: y });
-      if (started) {
-        this.requestSync();
-        return;
-      }
-      // fallback to normal selection if start failed
-    }
-    // In edit mode every interactive click is inert and selects its block.
-    // No distinction between same-page anchor, cross-page, _blank, button, form.
+    // Second click activation removed — native pointerdown handles editing entry
     try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
     if (hit) {
       this.selectInstance(hit);
@@ -1276,20 +1321,23 @@ export class CanvasController {
   onDblClick(e) {
     if (!this.doc || !this.overlay) return;
     if (this.isEditorUIEvent(e)) return;
-    // If active editing, do not hijack native double-click word selection
-    if (isInlineEditing()) return;
+    // Once contenteditable active, browser owns caret/word/paragraph/drag selection
+    if (isInlineEditing() || isActiveFieldElement(e.target)) return;
+    try {
+      if (e.target && e.target.nodeType === 3 && e.target.parentElement && isActiveFieldElement(e.target.parentElement)) return;
+    } catch (_) {}
     const hit = this.hitForTarget(e.target);
     if (!hit || !hit.editable) return;
     const node = findDocumentNode(hit.nodeId);
     if (!node) return;
-    // External/read-only never
     if (!hit.editable) return;
-    // Try to start inline edit at pointer position
-    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-    const started = startInlineEdit(hit.nodeId, hit.instanceKey, this, undefined, { clientX: e.clientX, clientY: e.clientY });
+    // If already selected, native pointerdown already enabled editing — let browser do word selection
+    if (this.selected && this.selected.instanceKey === hit.instanceKey) return;
+    // First activation from unselected: select and enable editing without hijacking dblclick
+    this.selectInstance(hit);
+    const started = startInlineEdit(hit.nodeId, hit.instanceKey, this, undefined, { nativePointer: true });
     if (started) {
-      this.selectInstance(hit);
-      this.requestSync();
+      try { this.requestSync(); } catch (_) {}
     }
   }
 

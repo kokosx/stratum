@@ -374,12 +374,12 @@ func TestIsSameResourceFragmentMatrix(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		origin        string
-		path          string
-		search        string
-		href          string
-		want          bool
+		name   string
+		origin string
+		path   string
+		search string
+		href   string
+		want   bool
 	}{
 		{"hash only", "http://localhost:8080", "/long-page-scroll-test", "", "#pricing", true},
 		{"hash top", "http://localhost:8080", "/long-page-scroll-test", "", "#", true},
