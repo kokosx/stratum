@@ -1,10 +1,12 @@
-// preview.js — preview POST, debounce, iframe srcdoc refresh
+// preview.js — preview POST, debounce, iframe morph refresh
 import { state, bootstrap } from "./state.js";
 import { isDirtyNow } from "./state.js";
+import { parsePreviewDocument, patchPreviewDocument, isPreviewInitialized, markPreviewInitialized, fallbackReplacePreview } from "./preview-morph.js";
 
 let previewTimer = null;
 let lastGoodSrcdoc = null;
 let pendingController = null;
+let previewRevision = 0;
 
 export function schedulePreview() {
   clearTimeout(previewTimer);
@@ -23,6 +25,166 @@ function getMetaParams() {
   const featuredEl = document.getElementById("entry-featured-media-id");
   const archiveCtxEl = document.getElementById("archive-preview-context");
   return { titleEl, excerptEl, slugEl, seoTitleEl, seoDescEl, entryIdEl, layoutEl, ctEl, featuredEl, archiveCtxEl };
+}
+
+function refreshCanvasAfterPatch(canvas, scroller) {
+  const doRefresh = () => {
+    try {
+      if (window.__stratum_canvasController) {
+        window.__stratum_canvasController.refresh();
+        const pendingAtLoad = state.__pendingScrollToId || null;
+        if (pendingAtLoad) {
+          try { window.__stratum_canvasController.scrollToNode(pendingAtLoad, "auto"); } catch (_) {}
+          try { delete state.__pendingScrollToId; } catch (_) {}
+        }
+        if (state.selectedNodeId) {
+          try { window.__stratum_canvasController.selectNode(state.selectedNodeId, state.selectedInstanceKey, { scroll: false }); } catch (_) {}
+        }
+        try { window.__stratum_canvasController.updateOverlayPositions(); } catch (_) {}
+      }
+    } catch (_) {}
+  };
+  requestAnimationFrame(() => {
+    requestAnimationFrame(doRefresh);
+  });
+}
+
+function fullReloadFallback(canvas, html) {
+  try { canvas.dataset.previewInitialized = "0"; } catch (_) {}
+  const scroller = document.getElementById("editor-canvas-wrap") || document.getElementById("editor-canvas-scroller");
+  const savedTop = scroller ? scroller.scrollTop : 0;
+  const savedLeft = scroller ? scroller.scrollLeft : 0;
+  canvas.dataset.previewLoaded = "0";
+  canvas.onload = () => {
+    canvas.dataset.previewLoaded = "1";
+    try {
+      if (canvas.contentDocument && canvas.contentDocument.body) {
+        try { canvas.contentDocument.documentElement.style.overflow = "hidden"; } catch(_) {}
+        try { canvas.contentDocument.body.style.overflow = "hidden"; } catch(_) {}
+      }
+    } catch (_) {}
+    if (window.__stratum_canvasController) {
+      setTimeout(() => {
+        window.__stratum_canvasController.refresh();
+        if (scroller) {
+          const pendingAtLoad = state.__pendingScrollToId || null;
+          if (pendingAtLoad) {
+            window.__stratum_canvasController.scrollToNode(pendingAtLoad, "auto");
+            delete state.__pendingScrollToId;
+          } else {
+            scroller.scrollTop = savedTop;
+            scroller.scrollLeft = savedLeft;
+          }
+          window.__stratum_canvasController.updateOverlayPositions();
+        }
+      }, 50);
+    }
+    if (state.selectedNodeId && window.__stratum_canvasController) {
+      try { window.__stratum_canvasController.selectNode(state.selectedNodeId, state.selectedInstanceKey, { scroll: false }); } catch (_) {}
+    }
+    markPreviewInitialized(canvas);
+  };
+  canvas.srcdoc = html;
+  setTimeout(() => {
+    if (canvas.contentDocument && canvas.contentDocument.body && canvas.dataset.previewLoaded === "0") {
+      canvas.dataset.previewLoaded = "1";
+      if (window.__stratum_canvasController) window.__stratum_canvasController.refresh();
+      if (scroller) { scroller.scrollTop = savedTop; scroller.scrollLeft = savedLeft; }
+      markPreviewInitialized(canvas);
+    }
+  }, 300);
+  return true;
+}
+
+function applyPreviewHtml(canvas, html) {
+  if (!canvas) return false;
+  const scroller = document.getElementById("editor-canvas-wrap") || document.getElementById("editor-canvas-scroller");
+  const canMorph = isPreviewInitialized(canvas) && (() => {
+    try {
+      const doc = canvas.contentDocument;
+      return !!(doc && doc.documentElement && doc.body);
+    } catch (_) { return false; }
+  })();
+
+  if (!canMorph) {
+    const savedTop = scroller ? scroller.scrollTop : 0;
+    const savedLeft = scroller ? scroller.scrollLeft : 0;
+    canvas.dataset.previewLoaded = "0";
+    canvas.onload = () => {
+      canvas.dataset.previewLoaded = "1";
+      try {
+        if (canvas.contentDocument && canvas.contentDocument.body) {
+          try { canvas.contentDocument.documentElement.style.overflow = "hidden"; } catch(_) {}
+          try { canvas.contentDocument.body.style.overflow = "hidden"; } catch(_) {}
+        }
+      } catch (_) {}
+      if (window.__stratum_canvasController) {
+        setTimeout(() => {
+          window.__stratum_canvasController.refresh();
+          if (scroller) {
+            const pendingAtLoad = state.__pendingScrollToId || null;
+            if (pendingAtLoad) {
+              window.__stratum_canvasController.scrollToNode(pendingAtLoad, "auto");
+              delete state.__pendingScrollToId;
+            } else {
+              scroller.scrollTop = savedTop;
+              scroller.scrollLeft = savedLeft;
+            }
+            window.__stratum_canvasController.updateOverlayPositions();
+          } else if (window.__stratum_canvasController.refresh) {
+            window.__stratum_canvasController.refresh();
+          }
+        }, 50);
+      }
+      if (state.selectedNodeId && window.__stratum_canvasController) {
+        const inst = state.selectedInstanceKey;
+        try { window.__stratum_canvasController.selectNode(state.selectedNodeId, inst, { scroll: false }); } catch (_) {}
+      }
+      markPreviewInitialized(canvas);
+    };
+    canvas.srcdoc = html;
+    setTimeout(() => {
+      if (canvas.contentDocument && canvas.contentDocument.body && canvas.dataset.previewLoaded === "0") {
+        canvas.dataset.previewLoaded = "1";
+        if (window.__stratum_canvasController) window.__stratum_canvasController.refresh();
+        if (scroller) { scroller.scrollTop = savedTop; scroller.scrollLeft = savedLeft; }
+        markPreviewInitialized(canvas);
+      }
+    }, 300);
+    return true;
+  }
+
+  // Morph path: preserve scroll defensively
+  const curTop = scroller ? scroller.scrollTop : null;
+  const curLeft = scroller ? scroller.scrollLeft : null;
+  let nextDoc = null;
+  try { nextDoc = parsePreviewDocument(html); } catch (e) {
+    console.warn("[preview] parse failed fallback", e);
+    return fullReloadFallback(canvas, html);
+  }
+  if (!nextDoc || !nextDoc.documentElement || !nextDoc.body) {
+    console.warn("[preview] parse invalid fallback");
+    return fullReloadFallback(canvas, html);
+  }
+  const currentDoc = canvas.contentDocument;
+  let patched = false;
+  try { patched = patchPreviewDocument(currentDoc, nextDoc); } catch (e) {
+    console.warn("[preview] patch threw fallback", e);
+    patched = false;
+  }
+  if (!patched) {
+    console.warn("[preview] patch failed fallback");
+    return fullReloadFallback(canvas, html);
+  }
+  // Restore scroll if drifted
+  if (scroller && curTop != null) {
+    try {
+      if (scroller.scrollTop !== curTop) scroller.scrollTop = curTop;
+      if (scroller.scrollLeft !== curLeft) scroller.scrollLeft = curLeft;
+    } catch (_) {}
+  }
+  refreshCanvasAfterPatch(canvas, scroller);
+  return true;
 }
 
 export async function updatePreview() {
@@ -86,6 +248,7 @@ export async function updatePreview() {
     try { pendingController.abort(); } catch (_) {}
   }
   pendingController = new AbortController();
+  const revision = ++previewRevision;
 
   try {
     const response = await fetch(url.toString(), {
@@ -95,6 +258,7 @@ export async function updatePreview() {
       signal: pendingController.signal,
     });
     const output = await response.text();
+    if (revision !== previewRevision) return;
     if (!response.ok) throw new Error(output.trim() || "Preview failed");
     // Success — remember last good
     lastGoodSrcdoc = output;
@@ -103,49 +267,7 @@ export async function updatePreview() {
     }
     const canvas = document.getElementById("editor-canvas");
     if (canvas) {
-      const scroller = document.getElementById("editor-canvas-wrap") || document.getElementById("editor-canvas-scroller");
-      const savedTop = scroller ? scroller.scrollTop : 0;
-      const savedLeft = scroller ? scroller.scrollLeft : 0;
-      canvas.dataset.previewLoaded = "0";
-      canvas.onload = () => {
-        canvas.dataset.previewLoaded = "1";
-        try {
-          if (canvas.contentDocument && canvas.contentDocument.body) {
-            try { canvas.contentDocument.documentElement.style.overflow = "hidden"; } catch(_) {}
-            try { canvas.contentDocument.body.style.overflow = "hidden"; } catch(_) {}
-          }
-        } catch (_) {}
-        if (window.__stratum_canvasController) {
-          setTimeout(() => {
-            window.__stratum_canvasController.refresh();
-            if (scroller) {
-              const pendingAtLoad = state.__pendingScrollToId || null;
-              if (pendingAtLoad) {
-                window.__stratum_canvasController.scrollToNode(pendingAtLoad, "auto");
-                delete state.__pendingScrollToId;
-              } else {
-                scroller.scrollTop = savedTop;
-                scroller.scrollLeft = savedLeft;
-              }
-              window.__stratum_canvasController.updateOverlayPositions();
-            } else if (window.__stratum_canvasController.refresh) {
-              window.__stratum_canvasController.refresh();
-            }
-          }, 50);
-        }
-        if (state.selectedNodeId && window.__stratum_canvasController) {
-          const inst = state.selectedInstanceKey;
-          window.__stratum_canvasController.selectNode(state.selectedNodeId, inst, { scroll: false });
-        }
-      };
-      canvas.srcdoc = output;
-      setTimeout(() => {
-        if (canvas.contentDocument && canvas.contentDocument.body && canvas.dataset.previewLoaded === "0") {
-          canvas.dataset.previewLoaded = "1";
-          if (window.__stratum_canvasController) window.__stratum_canvasController.refresh();
-          if (scroller) { scroller.scrollTop = savedTop; scroller.scrollLeft = savedLeft; }
-        }
-      }, 300);
+      applyPreviewHtml(canvas, output);
     }
     const legacyFrame = previewElement ? previewElement.querySelector("iframe") : null;
     if (legacyFrame) {

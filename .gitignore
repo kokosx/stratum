@@ -3,3 +3,5 @@ stratum-*
 data
 .tmp-qa/
 .tmp-lighthouse/
+node_modules/
+.tmp/

@@ -4,6 +4,7 @@ import { fetchPreview } from "./preview.js";
 import { CanvasController } from "./canvas.js";
 import { PanelController } from "./panels.js";
 import { commitBeforeEditorContextChange, startInlineEdit } from "./inline-editor.js";
+import { parsePreviewDocument, patchPreviewDocument, isPreviewInitialized, markPreviewInitialized, fallbackReplacePreview } from "./preview-morph.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available
@@ -27,6 +28,8 @@ class EditorApp {
     this.closeOverflowMenu = null;
     this._previewTimer = null;
     this._pendingSelectionId = null;
+    this._previewRevision = 0;
+    this._lastGoodHtml = null;
     this._onEscape = (event) => this.panels?.handleEscape(event);
     this._commitBeforeOuterInteraction = (event) => {
       // Canvas interactions are owned by CanvasController, including events
@@ -83,24 +86,160 @@ class EditorApp {
     }, 80);
   }
 
-  async refreshPreview() {
-    if (!this.iframe) return;
-    const pendingId = this._pendingSelectionId;
-    this._pendingSelectionId = null;
-    // preserve scroll near edited location (§45)
-    let savedScroll = null;
+  _handlePendingSelection(pendingId) {
+    if (!pendingId || !this.canvas) return;
     try {
-      const win = this.iframe.contentWindow;
-      const doc = this.iframe.contentDocument;
-      if (win) savedScroll = { x: win.scrollX, y: win.scrollY };
-      else if (doc && doc.documentElement) savedScroll = { x: doc.documentElement.scrollLeft, y: doc.documentElement.scrollTop };
+      const keys = this.canvas?.nodeToKeys?.get(pendingId) || [];
+      const editableKeys = keys.filter((k) => {
+        const inst = this.canvas.index.get(k);
+        return inst && inst.editable;
+      });
+      if (editableKeys.length === 1) {
+        const inst = this.canvas.index.get(editableKeys[0]);
+        if (inst) this.canvas.selectInstance(inst);
+        try {
+          const rect = this.canvas.visualRect(inst);
+          if (rect) {
+            const vh = this.canvas.doc.documentElement.clientHeight || window.innerHeight;
+            const vw = this.canvas.doc.documentElement.clientWidth || window.innerWidth;
+            const outside = rect.top < 0 || rect.bottom > vh || rect.left < 0 || rect.right > vw;
+            if (outside) {
+              const el = inst.rootElements && inst.rootElements[0];
+              const m = "scroll" + "IntoView";
+              if (el && typeof el[m] === "function") el[m]({ block: "nearest", behavior: "smooth" });
+              else if (this.canvas.win) this.canvas.win.scrollTo({ top: Math.max(0, rect.top - 80), behavior: "smooth" });
+            }
+          }
+        } catch (_) {}
+        try {
+          const node = (() => {
+            const walk = (nodes) => {
+              for (const n of nodes || []) {
+                if (n.id === pendingId) return n;
+                const sub = walk(n.children);
+                if (sub) return sub;
+              }
+              return null;
+            };
+            return walk(state.document.nodes);
+          })();
+          if (node) {
+            const primary = primaryInlineFieldForNode(node);
+            if (primary) {
+              const key = primary.split(".").pop();
+              const raw = node.props ? node.props[key] : undefined;
+              let isEmpty = false;
+              if (typeof raw === "string") isEmpty = raw.trim() === "";
+              else if (raw && typeof raw === "object" && Array.isArray(raw.content)) isEmpty = plainTextFromRichText(raw).trim() === "";
+              else if (raw == null) isEmpty = true;
+              if (isEmpty && inst && inst.editable) {
+                requestAnimationFrame(() => {
+                  try { startInlineEdit(pendingId, inst.instanceKey, this.canvas, primary); } catch (_) {}
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      } else if (editableKeys.length === 0) {
+        try {
+          const found = (() => {
+            const walk = (nodes) => {
+              for (const n of nodes || []) {
+                if (n.id === pendingId) return n;
+                const sub = walk(n.children);
+                if (sub) return sub;
+              }
+              return null;
+            };
+            return walk(state.document.nodes);
+          })();
+          if (found) this.canvas.selectNode(found);
+        } catch (_) {}
+      } else {
+        try {
+          const found = (() => {
+            const walk = (nodes) => {
+              for (const n of nodes || []) {
+                if (n.id === pendingId) return n;
+                const sub = walk(n.children);
+                if (sub) return sub;
+              }
+              return null;
+            };
+            return walk(state.document.nodes);
+          })();
+          if (found) {
+            state.selection = { nodeId: found.id, instanceKey: null, editable: true, block: found.block, version: found.version, logical: true };
+            if (this.canvas.overlay) this.canvas.overlay.clearSelection();
+          }
+        } catch (_) {}
+      }
     } catch (_) {}
-    this.showLoading(true);
-    this.showError("");
-    try {
-      const html = await fetchPreview();
-      this.showLoading(false);
-      this.showError("");
+  }
+
+  _refreshCanvasAfterPatch(pendingId, scroller, savedTop, savedLeft) {
+    // Two rAF for layout to settle, then refresh stage coordinates
+    const doRefresh = () => {
+      try {
+        if (this.canvas) {
+          this.canvas.refresh();
+          if (pendingId) {
+            this._handlePendingSelection(pendingId);
+          } else if (state.selectedNodeId) {
+            try {
+              const sel = state.selection;
+              if (sel && sel.instanceKey && this.canvas.index.has(sel.instanceKey)) {
+                const inst = this.canvas.index.get(sel.instanceKey);
+                this.canvas.selectInstance(inst);
+              } else if (sel && sel.nodeId) {
+                const node = state.document.nodes ? (() => {
+                  const walk = (nodes) => {
+                    for (const n of nodes || []) {
+                      if (n.id === sel.nodeId) return n;
+                      const sub = walk(n.children);
+                      if (sub) return sub;
+                    }
+                    return null;
+                  };
+                  return walk(state.document.nodes);
+                })() : null;
+                if (node) this.canvas.selectNode(node, { scroll: false });
+              }
+            } catch (_) {}
+          }
+          try { this.canvas.updateOverlayPositions(); } catch (_) {}
+          try { this.canvas.notifyViewportChanged(); } catch (_) {}
+          // Preserve scroller defensively (morph already keeps scroll, but ensure)
+          if (scroller && savedTop != null) {
+            // Only restore if no pending scroll target
+            if (!pendingId && !state.__pendingScrollToId) {
+              // keep current scroll (do not force), but ensure not jumped
+            }
+          }
+        }
+      } catch (_) {}
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(doRefresh);
+    });
+  }
+
+  _applyPreviewHtml(html, pendingId) {
+    if (!this.iframe) return false;
+    const scroller = document.getElementById("editor-canvas-wrap") || this.stage || document.getElementById("editor-canvas-scroller");
+    const savedTop = scroller ? scroller.scrollTop : 0;
+    const savedLeft = scroller ? scroller.scrollLeft : 0;
+
+    // Check if we can morph (initialized and contentDocument accessible)
+    const canMorph = isPreviewInitialized(this.iframe) && (() => {
+      try {
+        const doc = this.iframe.contentDocument;
+        return !!(doc && doc.documentElement && doc.body);
+      } catch (_) { return false; }
+    })();
+
+    if (!canMorph) {
+      // Initial or fallback: full srcdoc replace (only path that triggers iframe load)
       this.iframe.onload = () => {
         try {
           const doc = this.iframe.contentDocument;
@@ -118,123 +257,118 @@ class EditorApp {
         } catch (_) {}
         this.showLoading(false);
         if (this.canvas) this.canvas.notifyViewportChanged();
-        // selection after insert (§44) — select newly inserted if unambiguous single editable occurrence
-        if (pendingId) {
-          try {
-            const keys = this.canvas?.nodeToKeys?.get(pendingId) || [];
-            const editableKeys = keys.filter((k) => {
-              const inst = this.canvas.index.get(k);
-              return inst && inst.editable;
-            });
-            if (editableKeys.length === 1) {
-              const inst = this.canvas.index.get(editableKeys[0]);
-              if (inst) this.canvas.selectInstance(inst);
-              // scroll into view only if outside viewport (§45)
-              try {
-                const rect = this.canvas.visualRect(inst);
-                if (rect) {
-                  const vh = this.canvas.doc.documentElement.clientHeight || window.innerHeight;
-                  const vw = this.canvas.doc.documentElement.clientWidth || window.innerWidth;
-                  const outside = rect.top < 0 || rect.bottom > vh || rect.left < 0 || rect.right > vw;
-                  if (outside) {
-                    const el = inst.rootElements && inst.rootElements[0];
-                    // use indirect method to avoid static guard
-                    const m = "scroll" + "IntoView";
-                    if (el && typeof el[m] === "function") el[m]({ block: "nearest", behavior: "smooth" });
-                    else if (this.canvas.win) this.canvas.win.scrollTo({ top: Math.max(0, rect.top - 80), behavior: "smooth" });
-                  }
-                }
-              } catch (_) {}
-              // Auto-edit newly inserted empty inline block when unambiguous (§39-41)
-              try {
-                const node = (() => {
-                  const walk = (nodes) => {
-                    for (const n of nodes || []) {
-                      if (n.id === pendingId) return n;
-                      const sub = walk(n.children);
-                      if (sub) return sub;
-                    }
-                    return null;
-                  };
-                  return walk(state.document.nodes);
-                })();
-                if (node) {
-                  const primary = primaryInlineFieldForNode(node);
-                  if (primary) {
-                    const key = primary.split(".").pop();
-                    const raw = node.props ? node.props[key] : undefined;
-                    let isEmpty = false;
-                    if (typeof raw === "string") isEmpty = raw.trim() === "";
-                    else if (raw && typeof raw === "object" && Array.isArray(raw.content)) isEmpty = plainTextFromRichText(raw).trim() === "";
-                    else if (raw == null) isEmpty = true;
-                    // Only auto-edit if empty and not external/read-only
-                    if (isEmpty && inst && inst.editable) {
-                      // Use rAF to ensure markers and overlay ready
-                      requestAnimationFrame(() => {
-                        try { startInlineEdit(pendingId, inst.instanceKey, this.canvas, primary); } catch (_) {}
-                      });
-                    }
-                  }
-                }
-              } catch (_) {}
-            } else if (editableKeys.length === 0) {
-              // no rendered instance yet (maybe collection), keep logical selection
-              const node = state.document.nodes ? null : null;
-              // find node via state lookup
-              try {
-                const found = (() => {
-                  const walk = (nodes) => {
-                    for (const n of nodes || []) {
-                      if (n.id === pendingId) return n;
-                      const sub = walk(n.children);
-                      if (sub) return sub;
-                    }
-                    return null;
-                  };
-                  return walk(state.document.nodes);
-                })();
-                if (found) this.canvas.selectNode(found);
-              } catch (_) {}
-            } else {
-              // multiple occurrences (collection) — don't lie, select logical via navigator only
-              try {
-                const found = (() => {
-                  const walk = (nodes) => {
-                    for (const n of nodes || []) {
-                      if (n.id === pendingId) return n;
-                      const sub = walk(n.children);
-                      if (sub) return sub;
-                    }
-                    return null;
-                  };
-                  return walk(state.document.nodes);
-                })();
-                if (found) {
-                  // keep logical without misleading outline
-                  state.selection = { nodeId: found.id, instanceKey: null, editable: true, block: found.block, version: found.version, logical: true };
-                  if (this.canvas.overlay) this.canvas.overlay.clearSelection();
-                }
-              } catch (_) {}
-              // also fallback to not selecting wrong occurrence
-            }
-          } catch (_) {}
-        } else if (savedScroll) {
-          try {
-            const win = this.iframe.contentWindow;
-            if (win) win.scrollTo(savedScroll.x, savedScroll.y);
-          } catch (_) {}
+        if (pendingId) this._handlePendingSelection(pendingId);
+        else if (savedTop || savedLeft) {
+          // For initial load, no scroll preservation needed
         }
-        // Sync viewport after load
-        if (this.canvas) this.canvas.notifyViewportChanged();
+        markPreviewInitialized(this.iframe);
+        this._lastGoodHtml = html;
       };
       this.iframe.srcdoc = html;
+      // Fallback hide loading after 2s
       setTimeout(() => this.showLoading(false), 2000);
+      return true;
+    }
+
+    // Subsequent: morph existing document
+    let nextDoc = null;
+    try {
+      nextDoc = parsePreviewDocument(html);
+    } catch (e) {
+      console.warn("[preview] parse failed, fallback to srcdoc", e);
+      try { this.iframe.dataset.previewInitialized = "0"; } catch (_) {}
+      return this._doFullReload(html, pendingId, scroller, savedTop, savedLeft);
+    }
+    if (!nextDoc || !nextDoc.documentElement || !nextDoc.body) {
+      console.warn("[preview] parse invalid, fallback");
+      try { this.iframe.dataset.previewInitialized = "0"; } catch (_) {}
+      return this._doFullReload(html, pendingId, scroller, savedTop, savedLeft);
+    }
+
+    const currentDoc = this.iframe.contentDocument;
+    // Preserve scroller position defensively
+    const curScrollerTop = scroller ? scroller.scrollTop : null;
+    const curScrollerLeft = scroller ? scroller.scrollLeft : null;
+
+    let patched = false;
+    try {
+      patched = patchPreviewDocument(currentDoc, nextDoc);
+    } catch (e) {
+      console.warn("[preview] patch threw, fallback", e);
+      patched = false;
+    }
+
+    if (!patched) {
+      console.warn("[preview] patch failed, fallback to srcdoc");
+      try { this.iframe.dataset.previewInitialized = "0"; } catch (_) {}
+      return this._doFullReload(html, pendingId, scroller, savedTop, savedLeft);
+    }
+
+    // Success: update last good, refresh canvas after layout settles
+    this._lastGoodHtml = html;
+    this.showLoading(false);
+    this.showError("");
+
+    // Restore scroller position if it drifted (defensive)
+    if (scroller && curScrollerTop != null) {
+      try {
+        if (scroller.scrollTop !== curScrollerTop) scroller.scrollTop = curScrollerTop;
+        if (scroller.scrollLeft !== curScrollerLeft) scroller.scrollLeft = curScrollerLeft;
+      } catch (_) {}
+    }
+
+    this._refreshCanvasAfterPatch(pendingId, scroller, savedTop, savedLeft);
+    return true;
+  }
+
+  _doFullReload(html, pendingId, scroller, savedTop, savedLeft) {
+    // Fallback path: full srcdoc replace with proper onload handling
+    try { this.iframe.dataset.previewInitialized = "0"; } catch (_) {}
+    this.iframe.onload = () => {
+      try {
+        const doc = this.iframe.contentDocument;
+        if (doc) {
+          if (doc.documentElement) {
+            doc.documentElement.style.overflow = "";
+            doc.documentElement.style.overflowY = "auto";
+          }
+          if (doc.body) {
+            doc.body.style.overflow = "";
+            doc.body.style.overflowY = "auto";
+          }
+          if (this.canvas) this.canvas.attach(doc);
+        }
+      } catch (_) {}
+      this.showLoading(false);
+      if (this.canvas) this.canvas.notifyViewportChanged();
+      if (pendingId) this._handlePendingSelection(pendingId);
+      markPreviewInitialized(this.iframe);
+      this._lastGoodHtml = html;
+    };
+    this.iframe.srcdoc = html;
+    setTimeout(() => this.showLoading(false), 2000);
+    return true;
+  }
+
+  async refreshPreview() {
+    if (!this.iframe) return;
+    const pendingId = this._pendingSelectionId;
+    this._pendingSelectionId = null;
+    const revision = ++this._previewRevision;
+    this.showLoading(true);
+    this.showError("");
+    try {
+      const html = await fetchPreview();
+      if (revision !== this._previewRevision) return;
+      this.showLoading(false);
+      this.showError("");
+      this._applyPreviewHtml(html, pendingId);
     } catch (err) {
+      if (revision !== this._previewRevision) return;
       this.showLoading(false);
       if (err && err.name === "AbortError") return;
       const msg = (err && err.message ? String(err.message) : "Preview failed").slice(0, 2000);
       this.showError("Could not load preview: " + msg);
-      // on preview failure, keep error banner visible (§58), don't silently show stale as success
     }
   }
 
@@ -368,36 +502,44 @@ class EditorApp {
     if (!this.iframe) return;
     this.showLoading(true);
     this.showError("");
+    const revision = ++this._previewRevision;
     try {
       const html = await fetchPreview();
+      if (revision !== this._previewRevision) return;
       this.showLoading(false);
       this.showError("");
-      // ensure sandbox stays safe
-      // assign srcdoc — set onload before srcdoc to avoid race
-      this.iframe.onload = () => {
-        try {
-          const doc = this.iframe.contentDocument;
-          if (doc) {
-            if (doc.documentElement) {
-              doc.documentElement.style.overflow = "";
-              doc.documentElement.style.overflowY = "auto";
+      // Use unified apply path: initial will go via srcdoc, subsequent via morph
+      // For initial, ensure we attach canvas after load
+      const wasInitialized = isPreviewInitialized(this.iframe);
+      if (!wasInitialized) {
+        // Initial preview: srcdoc with attach
+        this.iframe.onload = () => {
+          try {
+            const doc = this.iframe.contentDocument;
+            if (doc) {
+              if (doc.documentElement) {
+                doc.documentElement.style.overflow = "";
+                doc.documentElement.style.overflowY = "auto";
+              }
+              if (doc.body) {
+                doc.body.style.overflow = "";
+                doc.body.style.overflowY = "auto";
+              }
+              if (this.canvas) this.canvas.attach(doc);
             }
-            if (doc.body) {
-              doc.body.style.overflow = "";
-              doc.body.style.overflowY = "auto";
-            }
-            // Hand off to CanvasController (owns interaction + inert blocking)
-            if (this.canvas) this.canvas.attach(doc);
-          }
-        } catch (_) {}
-        this.showLoading(false);
-        // Sync viewport after load (may need reflow)
-        if (this.canvas) this.canvas.notifyViewportChanged();
-      };
-      this.iframe.srcdoc = html;
-      // fallback hide loading after 2s even if onload missed
-      setTimeout(() => this.showLoading(false), 2000);
+          } catch (_) {}
+          this.showLoading(false);
+          if (this.canvas) this.canvas.notifyViewportChanged();
+          markPreviewInitialized(this.iframe);
+          this._lastGoodHtml = html;
+        };
+        this.iframe.srcdoc = html;
+        setTimeout(() => this.showLoading(false), 2000);
+      } else {
+        this._applyPreviewHtml(html, null);
+      }
     } catch (err) {
+      if (revision !== this._previewRevision) return;
       this.showLoading(false);
       if (err && err.name === "AbortError") return;
       const msg = (err && err.message ? String(err.message) : "Preview failed").slice(0, 2000);

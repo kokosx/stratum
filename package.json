@@ -1,0 +1,24 @@
+{
+  "name": "stratum",
+  "version": "1.0.0",
+  "description": "Modern self-hosted CMS in Go — WordPress familiarity, modern architecture, one binary.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kokosx/stratum.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/kokosx/stratum/issues"
+  },
+  "homepage": "https://github.com/kokosx/stratum#readme",
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
