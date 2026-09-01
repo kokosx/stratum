@@ -620,6 +620,7 @@ export class CanvasController {
 
   onClick(e) {
     if (!this.doc || !this.overlay) return;
+    if (this.isEditorUIEvent(e)) return;
     // Inline editing: clicks inside active field must reach contenteditable normally
     if (isInlineEditing()) {
       const activeEl = getActiveFieldElement();
@@ -629,7 +630,6 @@ export class CanvasController {
       // Click outside active field: commit first, then proceed to select new block
       commitActiveEdit();
     }
-    if (this.isEditorUIEvent(e)) return;
     if (e.type === "submit") {
       try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
       const formEl = e.target;

@@ -265,8 +265,8 @@ function ensureElements(canvas) {
     }
     if (e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
-      hidePopover();
       if (callbacks.closeLink) callbacks.closeLink();
+      hidePopover();
     }
   });
   // Keep interaction true while popover focused; end only when popover hidden

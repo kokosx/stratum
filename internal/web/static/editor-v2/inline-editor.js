@@ -661,9 +661,9 @@ function attachRichHandlers(fieldEl, canvas) {
     if (e.key === "Escape") {
       if (RichToolbar.isPopoverVisible()) {
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
-        RichToolbar.hidePopover();
         const saved = RichToolbar.getSavedOffsets() || active.richSelection;
         if (saved) restoreRichEditingContext(fieldEl, saved);
+        RichToolbar.hidePopover();
         return;
       }
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
