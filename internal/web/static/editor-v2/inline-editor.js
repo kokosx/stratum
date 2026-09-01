@@ -642,15 +642,6 @@ function attachRichHandlers(fieldEl, canvas) {
       triggerLink();
       return;
     }
-
-          try {
-            const curOffsets = RichToolbar.getSavedOffsets() || offsets;
-            if (curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-          } catch (_) {}
-        }
-      );
-      return;
-    }
     if (mod && e.shiftKey && e.key.toLowerCase() === "x") {
       e.preventDefault(); e.stopPropagation();
       const offsets = selectionToOffsets(fieldEl);
