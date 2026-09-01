@@ -88,6 +88,7 @@ let activeCanvas = null;
 let savedOffsets = null; // for link popover {start,end}
 let savedToolbarOffsets = null; // for toolbar actions {start,end}
 let toolbarInteraction = false;
+let pointerActionHandled = false;
 let callbacks = {
   toggleMark: null,
   openLink: null,
@@ -95,6 +96,24 @@ let callbacks = {
   removeLink: null,
   closeLink: null,
 };
+
+function beginToolbarInteraction() {
+  toolbarInteraction = true;
+}
+
+function endToolbarInteraction() {
+  toolbarInteraction = false;
+}
+
+function performToolbarAction(mark) {
+  if (!savedToolbarOffsets) return;
+  const offsets = { start: savedToolbarOffsets.start, end: savedToolbarOffsets.end };
+  if (mark === "link") {
+    if (callbacks.openLink) callbacks.openLink();
+  } else {
+    if (callbacks.toggleMark) callbacks.toggleMark(mark, offsets);
+  }
+}
 
 function ensureElements(canvas) {
   if (!canvas || !canvas.overlay || !canvas.overlay.shadow) return false;
@@ -134,33 +153,69 @@ function ensureElements(canvas) {
     btn.setAttribute("title", b.title);
     btn.textContent = b.text;
     if (b.style) btn.style.cssText += b.style;
+    // Pointerdown is the primary action: happens before blur/selectionchange
     btn.addEventListener("pointerdown", (e) => {
-      toolbarInteraction = true;
+      beginToolbarInteraction();
+      pointerActionHandled = true;
       e.preventDefault();
       e.stopPropagation();
+      performToolbarAction(b.mark);
+      // keep toolbarInteraction true until click guard clears it
     });
     btn.addEventListener("mousedown", (e) => {
-      toolbarInteraction = true;
+      // Fallback for devices without pointer events: same as pointerdown but only if not already handled
+      if (pointerActionHandled) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      beginToolbarInteraction();
+      pointerActionHandled = true;
       e.preventDefault();
       e.stopPropagation();
+      performToolbarAction(b.mark);
     });
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const start = savedToolbarOffsets ? savedToolbarOffsets.start : null;
-      const end = savedToolbarOffsets ? savedToolbarOffsets.end : null;
-      // Validate offsets still within field length
-      if (b.mark === "link") {
-        if (callbacks.openLink) callbacks.openLink();
-      } else {
-        if (callbacks.toggleMark) callbacks.toggleMark(b.mark, savedToolbarOffsets ? { start, end } : null);
+      if (pointerActionHandled) {
+        // pointerdown already performed the action — consume click without double toggle
+        pointerActionHandled = false;
+        // End interaction on next microtask to allow blur/selectionchange guards to see true during this dispatch
+        queueMicrotask(() => {
+          // keep toolbar visible: do not hide, just end interaction state
+          endToolbarInteraction();
+        });
+        return;
       }
-      // Keep toolbarInteraction true briefly then false to allow selectionchange to update
-      setTimeout(() => { toolbarInteraction = false; }, 50);
+      // Keyboard activation (Space/Enter) has no pointerdown — perform once here
+      performToolbarAction(b.mark);
+      queueMicrotask(() => endToolbarInteraction());
     });
-    // Handle pointerup to not leave toolbarInteraction stuck
+    // Fallback if click never fires (drag away, pointercancel)
     btn.addEventListener("pointerup", () => {
-      setTimeout(() => { toolbarInteraction = false; }, 100);
+      queueMicrotask(() => {
+        if (pointerActionHandled) {
+          pointerActionHandled = false;
+          endToolbarInteraction();
+        }
+      });
+    });
+    btn.addEventListener("pointercancel", () => {
+      queueMicrotask(() => {
+        if (pointerActionHandled) {
+          pointerActionHandled = false;
+          endToolbarInteraction();
+        }
+      });
+    });
+    btn.addEventListener("mouseup", () => {
+      queueMicrotask(() => {
+        if (pointerActionHandled) {
+          pointerActionHandled = false;
+          endToolbarInteraction();
+        }
+      });
     });
     toolbarEl.appendChild(btn);
   }
@@ -185,18 +240,16 @@ function ensureElements(canvas) {
   const applyBtn = popoverEl.querySelector(".richtext-link-popover__btn--apply");
   [removeBtn, applyBtn, inputEl].forEach(el => {
     if (!el) return;
-    el.addEventListener("mousedown", (e) => { toolbarInteraction = true; e.preventDefault(); e.stopPropagation(); });
-    el.addEventListener("pointerdown", (e) => { toolbarInteraction = true; e.preventDefault(); e.stopPropagation(); });
+    el.addEventListener("mousedown", (e) => { beginToolbarInteraction(); e.preventDefault(); e.stopPropagation(); });
+    el.addEventListener("pointerdown", (e) => { beginToolbarInteraction(); e.preventDefault(); e.stopPropagation(); });
   });
   removeBtn.addEventListener("click", (e) => {
     e.preventDefault(); e.stopPropagation();
-    toolbarInteraction = false;
     if (callbacks.removeLink) callbacks.removeLink();
     hidePopover();
   });
   applyBtn.addEventListener("click", (e) => {
     e.preventDefault(); e.stopPropagation();
-    toolbarInteraction = false;
     const val = inputEl.value.trim();
     if (!val) {
       showError("Enter a URL");
@@ -217,28 +270,31 @@ function ensureElements(canvas) {
       if (!val) { showError("Enter a URL"); return; }
       if (!isSafeHref(val)) { showError("Invalid URL"); return; }
       hideError();
-      toolbarInteraction = false;
       if (callbacks.applyLink) callbacks.applyLink(val);
       hidePopover();
     }
     if (e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
-      toolbarInteraction = false;
       hidePopover();
       if (callbacks.closeLink) callbacks.closeLink();
     }
   });
-  // Keep interaction true while popover focused
-  inputEl.addEventListener("focus", () => { toolbarInteraction = true; });
+  // Keep interaction true while popover focused; end only when popover hidden
+  inputEl.addEventListener("focus", () => { beginToolbarInteraction(); });
   inputEl.addEventListener("blur", () => {
-    setTimeout(() => { toolbarInteraction = false; }, 200);
+    // If popover is still visible, keep interaction true; otherwise microtask ends it.
+    // Do not use 200ms timer — explicit lifecycle.
+    if (isPopoverVisible()) return;
+    queueMicrotask(() => {
+      if (!isPopoverVisible()) endToolbarInteraction();
+    });
   });
-  popoverEl.addEventListener("mousedown", (e) => { toolbarInteraction = true; e.stopPropagation(); });
-  popoverEl.addEventListener("pointerdown", (e) => { toolbarInteraction = true; e.stopPropagation(); });
+  popoverEl.addEventListener("mousedown", (e) => { beginToolbarInteraction(); e.stopPropagation(); });
+  popoverEl.addEventListener("pointerdown", (e) => { beginToolbarInteraction(); e.stopPropagation(); });
   popoverEl.addEventListener("click", (e) => e.stopPropagation());
   // Also track toolbar itself
-  toolbarEl.addEventListener("mousedown", () => { toolbarInteraction = true; });
-  toolbarEl.addEventListener("pointerdown", () => { toolbarInteraction = true; });
+  toolbarEl.addEventListener("mousedown", () => { beginToolbarInteraction(); });
+  toolbarEl.addEventListener("pointerdown", () => { beginToolbarInteraction(); });
   return true;
 }
 
@@ -300,6 +356,7 @@ export function showPopover(canvas, fieldEl, href, offsets) {
   savedOffsets = offsets ? { ...offsets } : null;
   savedToolbarOffsets = offsets ? { ...offsets } : null;
   toolbarInteraction = true;
+  pointerActionHandled = false;
   if (inputEl) {
     inputEl.value = href || "";
     hideError();
@@ -331,6 +388,7 @@ export function hidePopover() {
   hideError();
   savedOffsets = null;
   toolbarInteraction = false;
+  pointerActionHandled = false;
 }
 
 export function getSavedOffsets() {
@@ -402,5 +460,6 @@ export function destroyToolbar() {
   savedOffsets = null;
   savedToolbarOffsets = null;
   toolbarInteraction = false;
+  pointerActionHandled = false;
   callbacks = { toggleMark: null, openLink: null, applyLink: null, removeLink: null, closeLink: null };
 }
