@@ -25,6 +25,7 @@ type NavState struct {
 func AdminNav() []AdminNavItem {
 	return []AdminNavItem{
 		{ID: "dashboard", Label: "Dashboard", Href: "/admin", Icon: "dashboard"},
+		{ID: "analytics", Label: "Analytics", Href: "/admin/analytics", Icon: "analytics"},
 		{ID: "posts", Label: "Posts", Href: "/admin/posts", Icon: "posts", Children: []AdminNavItem{
 			{ID: "posts-all", Label: "All posts", Href: "/admin/posts"},
 			{ID: "posts-new", Label: "Add post", Href: "/admin/posts/new"},
@@ -89,6 +90,8 @@ func FilterAdminNav(nav []AdminNavItem, role string) []AdminNavItem {
 
 func navPermission(path string) authz.Permission {
 	switch {
+	case strings.HasPrefix(path, "/admin/analytics"):
+		return authz.ManageSite
 	case strings.HasPrefix(path, "/admin/users"):
 		return authz.ManageUsers
 	case strings.HasPrefix(path, "/admin/menus"):
@@ -113,6 +116,27 @@ func navPermission(path string) authz.Permission {
 // ResolveNav maps a request path to active section/item. It is the single
 // central route/navigation-state resolver; handlers must not guess active strings.
 func ResolveNav(path string) NavState {
+	// Analytics must be resolved before generic /admin catch-all
+	if strings.HasPrefix(path, "/admin/analytics") {
+		switch {
+		case path == "/admin/analytics" || path == "/admin/analytics/":
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-overview"}
+		case strings.HasPrefix(path, "/admin/analytics/content"):
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-content"}
+		case strings.HasPrefix(path, "/admin/analytics/acquisition"):
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-acquisition"}
+		case strings.HasPrefix(path, "/admin/analytics/technology"):
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-technology"}
+		case strings.HasPrefix(path, "/admin/analytics/crawlers"):
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-crawlers"}
+		case strings.HasPrefix(path, "/admin/analytics/performance"):
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-performance"}
+		case strings.HasPrefix(path, "/admin/analytics/settings"):
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-settings"}
+		default:
+			return NavState{ActiveSection: "analytics", ActiveItem: "analytics-overview"}
+		}
+	}
 	// Strip query string and normalization: remove trailing slash except root.
 	if i := strings.Index(path, "?"); i >= 0 {
 		path = path[:i]

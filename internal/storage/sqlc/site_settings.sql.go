@@ -22,38 +22,41 @@ func (q *Queries) GetOnboardingCompleted(ctx context.Context) (int64, error) {
 }
 
 const getSiteSettings = `-- name: GetSiteSettings :one
-SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, posts_base_path, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, site_social_media_id, twitter_site, site_represents, created_at, updated_at
+SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, posts_base_path, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, site_social_media_id, twitter_site, site_represents, analytics_enabled, analytics_retention_days, analytics_hourly_retention_days, created_at, updated_at
 FROM site_settings
 WHERE id = 1
 `
 
 type GetSiteSettingsRow struct {
-	ID                   int64          `json:"id"`
-	SiteTitle            string         `json:"site_title"`
-	SiteTagline          string         `json:"site_tagline"`
-	HomepageMode         string         `json:"homepage_mode"`
-	HomepageEntryID      sql.NullString `json:"homepage_entry_id"`
-	PostsPageEntryID     sql.NullString `json:"posts_page_entry_id"`
-	PostsPerPage         int64          `json:"posts_per_page"`
-	PostsBasePath        string         `json:"posts_base_path"`
-	Language             string         `json:"language"`
-	Timezone             string         `json:"timezone"`
-	ActiveTheme          string         `json:"active_theme"`
-	IndexingEnabled      int64          `json:"indexing_enabled"`
-	SiteUrl              string         `json:"site_url"`
-	SitemapEnabled       int64          `json:"sitemap_enabled"`
-	RobotsMode           string         `json:"robots_mode"`
-	RobotsCustom         string         `json:"robots_custom"`
-	SpeculationMode      string         `json:"speculation_mode"`
-	SpeculationEagerness string         `json:"speculation_eagerness"`
-	TitleSeparator       string         `json:"title_separator"`
-	SiteLogoMediaID      sql.NullString `json:"site_logo_media_id"`
-	SocialLinks          sql.NullString `json:"social_links"`
-	SiteSocialMediaID    sql.NullString `json:"site_social_media_id"`
-	TwitterSite          string         `json:"twitter_site"`
-	SiteRepresents       string         `json:"site_represents"`
-	CreatedAt            int64          `json:"created_at"`
-	UpdatedAt            int64          `json:"updated_at"`
+	ID                           int64          `json:"id"`
+	SiteTitle                    string         `json:"site_title"`
+	SiteTagline                  string         `json:"site_tagline"`
+	HomepageMode                 string         `json:"homepage_mode"`
+	HomepageEntryID              sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID             sql.NullString `json:"posts_page_entry_id"`
+	PostsPerPage                 int64          `json:"posts_per_page"`
+	PostsBasePath                string         `json:"posts_base_path"`
+	Language                     string         `json:"language"`
+	Timezone                     string         `json:"timezone"`
+	ActiveTheme                  string         `json:"active_theme"`
+	IndexingEnabled              int64          `json:"indexing_enabled"`
+	SiteUrl                      string         `json:"site_url"`
+	SitemapEnabled               int64          `json:"sitemap_enabled"`
+	RobotsMode                   string         `json:"robots_mode"`
+	RobotsCustom                 string         `json:"robots_custom"`
+	SpeculationMode              string         `json:"speculation_mode"`
+	SpeculationEagerness         string         `json:"speculation_eagerness"`
+	TitleSeparator               string         `json:"title_separator"`
+	SiteLogoMediaID              sql.NullString `json:"site_logo_media_id"`
+	SocialLinks                  sql.NullString `json:"social_links"`
+	SiteSocialMediaID            sql.NullString `json:"site_social_media_id"`
+	TwitterSite                  string         `json:"twitter_site"`
+	SiteRepresents               string         `json:"site_represents"`
+	AnalyticsEnabled             int64          `json:"analytics_enabled"`
+	AnalyticsRetentionDays       int64          `json:"analytics_retention_days"`
+	AnalyticsHourlyRetentionDays int64          `json:"analytics_hourly_retention_days"`
+	CreatedAt                    int64          `json:"created_at"`
+	UpdatedAt                    int64          `json:"updated_at"`
 }
 
 func (q *Queries) GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, error) {
@@ -84,6 +87,9 @@ func (q *Queries) GetSiteSettings(ctx context.Context) (GetSiteSettingsRow, erro
 		&i.SiteSocialMediaID,
 		&i.TwitterSite,
 		&i.SiteRepresents,
+		&i.AnalyticsEnabled,
+		&i.AnalyticsRetentionDays,
+		&i.AnalyticsHourlyRetentionDays,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -103,6 +109,29 @@ type SetOnboardingCompletedParams struct {
 
 func (q *Queries) SetOnboardingCompleted(ctx context.Context, arg SetOnboardingCompletedParams) error {
 	_, err := q.db.ExecContext(ctx, setOnboardingCompleted, arg.OnboardingCompleted, arg.UpdatedAt)
+	return err
+}
+
+const updateAnalyticsSettings = `-- name: UpdateAnalyticsSettings :exec
+UPDATE site_settings
+SET analytics_enabled = ?, analytics_retention_days = ?, analytics_hourly_retention_days = ?, updated_at = ?
+WHERE id = 1
+`
+
+type UpdateAnalyticsSettingsParams struct {
+	AnalyticsEnabled             int64 `json:"analytics_enabled"`
+	AnalyticsRetentionDays       int64 `json:"analytics_retention_days"`
+	AnalyticsHourlyRetentionDays int64 `json:"analytics_hourly_retention_days"`
+	UpdatedAt                    int64 `json:"updated_at"`
+}
+
+func (q *Queries) UpdateAnalyticsSettings(ctx context.Context, arg UpdateAnalyticsSettingsParams) error {
+	_, err := q.db.ExecContext(ctx, updateAnalyticsSettings,
+		arg.AnalyticsEnabled,
+		arg.AnalyticsRetentionDays,
+		arg.AnalyticsHourlyRetentionDays,
+		arg.UpdatedAt,
+	)
 	return err
 }
 

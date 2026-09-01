@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/kokosx/stratum/internal/analytics"
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/authz"
 	"github.com/kokosx/stratum/internal/blocks"
@@ -78,6 +79,7 @@ type Handler struct {
 	toolsImportCompleteTemplate  *template.Template
 	toolsBackupsTemplate         *template.Template
 	customCodeTemplate           *template.Template
+	analyticsTemplate            *template.Template
 	navigation                   *navigation.Service
 	navigationLoader             *navigation.Loader
 	themes                       *themes.Runtime
@@ -94,6 +96,8 @@ type Handler struct {
 	creator                      *creator.Service
 	customCode                   *customcode.Service
 	importManager                *wordpress.WordPressImportManager
+	analyticsService             *analytics.Service
+	analyticsReader              *analytics.Reader
 }
 
 type LayoutData struct {
@@ -158,6 +162,14 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		"add":      func(a, b int) int { return a + b },
 		"subtract": func(a, b int) int { return a - b },
 		"multiply": func(a, b int) int { return a * b },
+		"divide": func(a, b int) float64 {
+			if b == 0 {
+				return 0
+			}
+			return float64(a) / float64(b)
+		},
+		"mulFloat": func(a float64, b int) float64 { return a * float64(b) },
+		"float":    func(a int) float64 { return float64(a) },
 		"lower":    strings.ToLower,
 		"statusTone": func(s string) string {
 			lower := strings.ToLower(strings.TrimSpace(s))
@@ -355,6 +367,10 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	if err != nil {
 		return nil, err
 	}
+	analyticsTemplate, err := parseAdminTemplate(templateFS, adminFuncs, "analytics", "analytics.html")
+	if err != nil {
+		return nil, err
+	}
 
 	publisher := publishing.New(database, queries)
 	searchService := search.New(database, blockRegistry)
@@ -371,6 +387,7 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 	}
 	importerForManager := wordpress.New(database, queries, blockRegistry, mediaService, dataDir)
 	importManager := wordpress.NewManager(dataDir, importerForManager, runtime)
+	analyticsReader := analytics.NewReader(database)
 	return &Handler{
 		database:                     database,
 		queries:                      queries,
@@ -414,12 +431,14 @@ func NewHandler(database *sql.DB, queries *db.Queries, authService *auth.Service
 		toolsImportCompleteTemplate:  toolsImportCompleteTemplate,
 		toolsBackupsTemplate:         toolsBackupsTemplate,
 		customCodeTemplate:           customCodeTemplate,
+		analyticsTemplate:            analyticsTemplate,
 		navigation:                   navigation.NewService(database, queries),
 		navigationLoader:             navigation.NewLoader(queries),
 		themes:                       themeRuntime,
 		runtime:                      runtime,
 		layoutsService:               layouts.NewService(database, queries, blockRegistry),
 		sitePartsService:             siteparts.NewService(database, queries, blockRegistry),
+		analyticsReader:              analyticsReader,
 		publishing:                   publisher,
 		scheduler:                    scheduler,
 		comments:                     commentsService,
@@ -627,6 +646,17 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("POST /admin/tools/redirects/{id}/delete", h.requireAuth(h.toolsRedirectsDelete))
 	mux.HandleFunc("GET /admin/tools/not-found", h.requireAuth(h.toolsNotFoundList))
 	mux.HandleFunc("POST /admin/tools/not-found/delete", h.requireAuth(h.toolsNotFoundDelete))
+	// Analytics
+	mux.HandleFunc("GET /admin/analytics", h.requireAuth(h.analyticsOverview))
+	mux.HandleFunc("GET /admin/analytics/content", h.requireAuth(h.analyticsContent))
+	mux.HandleFunc("GET /admin/analytics/content/{entryID}", h.requireAuth(h.analyticsContentDetail))
+	mux.HandleFunc("GET /admin/analytics/acquisition", h.requireAuth(h.analyticsAcquisition))
+	mux.HandleFunc("GET /admin/analytics/technology", h.requireAuth(h.analyticsTechnology))
+	mux.HandleFunc("GET /admin/analytics/crawlers", h.requireAuth(h.analyticsCrawlers))
+	mux.HandleFunc("GET /admin/analytics/performance", h.requireAuth(h.analyticsPerformance))
+	mux.HandleFunc("GET /admin/analytics/settings", h.requireAuth(h.analyticsSettings))
+	mux.HandleFunc("POST /admin/analytics/settings", h.requireAuth(h.analyticsSaveSettings))
+	mux.HandleFunc("POST /admin/analytics/clear", h.requireAuth(h.analyticsClear))
 	mux.HandleFunc("POST /admin/preview-links", h.requireAuth(h.handleCreatePreviewLink))
 	mux.HandleFunc("POST /admin/preview-links/{id}/revoke", h.requireAuth(h.handleRevokePreviewLink))
 	mux.HandleFunc("GET /admin/preview-links", h.requireAuth(h.handleListPreviewLinks))
@@ -697,6 +727,13 @@ func (h *Handler) SetPreviewRenderer(renderer func(context.Context, string, stri
 // the block editor preview so it matches the live frontend exactly.
 func (h *Handler) SetDocumentPreviewRenderer(renderer func(context.Context, RenderInput) ([]byte, error)) {
 	h.documentPreview = renderer
+}
+
+func (h *Handler) SetAnalytics(svc *analytics.Service) {
+	h.analyticsService = svc
+	if svc != nil {
+		// Reader already initialized with database, no need to reinit
+	}
 }
 
 const flashCookieName = "stratum_flash"
@@ -843,7 +880,7 @@ func (h *Handler) authorized(r *http.Request, user auth.User) bool {
 		return authz.Allows(user.Role, authz.ManageUsers)
 	case strings.HasPrefix(path, "/admin/menus"):
 		return authz.Allows(user.Role, authz.ManageNavigation)
-	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/tools"), strings.HasPrefix(path, "/admin/creator"):
+	case strings.HasPrefix(path, "/admin/settings"), strings.HasPrefix(path, "/admin/appearance"), strings.HasPrefix(path, "/admin/tools"), strings.HasPrefix(path, "/admin/creator"), strings.HasPrefix(path, "/admin/analytics"):
 		return authz.Allows(user.Role, authz.ManageSite)
 	case strings.HasPrefix(path, "/admin/posts/categories"), strings.HasPrefix(path, "/admin/posts/tags"):
 		return authz.Allows(user.Role, authz.ManageTaxonomies)

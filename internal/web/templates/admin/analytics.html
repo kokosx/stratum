@@ -1,0 +1,284 @@
+{{ define "content" }}
+<header class="admin-page-header">
+  <div>
+    <h1>Analytics</h1>
+    <p class="muted">Local analytics. No analytics cookies. No persistent visitor identifiers. No third-party tracking.</p>
+  </div>
+  <div class="admin-page-actions">
+    <a class="button button-secondary" href="/" target="_blank" rel="noopener">View site</a>
+  </div>
+</header>
+{{ if .Flash }}<div class="flash-message" role="status">{{ .Flash }}</div>{{ end }}
+
+{{ if not .Content.IsEnabled }}
+<div class="notice notice-warning" style="margin-bottom:16px;">Analytics collection is disabled. Historical data is still visible but new pageviews are not being recorded. Enable it in <a href="/admin/analytics/settings">Settings</a>.</div>
+{{ end }}
+
+<div class="analytics-range" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+  {{ $r := .Content.Range }}
+  <a class="button {{ if eq $r "today" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics?range=today">Today</a>
+  <a class="button {{ if eq $r "7d" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics?range=7d">7 days</a>
+  <a class="button {{ if eq $r "30d" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics?range=30d">30 days</a>
+  <a class="button {{ if eq $r "90d" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics?range=90d">90 days</a>
+  <a class="button {{ if eq $r "12m" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics?range=12m">12 months</a>
+</div>
+
+<nav class="analytics-tabs" style="display:flex;gap:4px;margin-bottom:20px;flex-wrap:wrap;border-bottom:1px solid #dcdcde;padding-bottom:8px;">
+  <a class="button {{ if eq .Content.ActiveTab "overview" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics?range={{.Content.Range}}">Overview</a>
+  <a class="button {{ if eq .Content.ActiveTab "content" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics/content?range={{.Content.Range}}">Content</a>
+  <a class="button {{ if eq .Content.ActiveTab "acquisition" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics/acquisition?range={{.Content.Range}}">Acquisition</a>
+  <a class="button {{ if eq .Content.ActiveTab "technology" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics/technology?range={{.Content.Range}}">Technology</a>
+  <a class="button {{ if eq .Content.ActiveTab "crawlers" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics/crawlers?range={{.Content.Range}}">Crawlers</a>
+  <a class="button {{ if eq .Content.ActiveTab "performance" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics/performance?range={{.Content.Range}}">Performance</a>
+  <a class="button {{ if eq .Content.ActiveTab "settings" }}button-primary{{ else }}button-secondary{{ end }} button-small" href="/admin/analytics/settings">Settings</a>
+</nav>
+
+{{ if eq .Content.ActiveTab "overview" }}
+  {{ if not .Content.HasData }}
+    <div class="card"><div class="card-body muted">No analytics yet. Publish your site and share it — data will appear here shortly. <br><em>Server-only analytics measures requests that reach Stratum.</em></div></div>
+  {{ else }}
+  <section class="admin-section" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Views</div><div style="font-size:28px;font-weight:600;">{{ .Content.Overview.HumanViews }}</div><div class="muted">Human pageviews · {{ .Content.Overview.Views }} total incl. crawlers</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Search traffic</div><div style="font-size:28px;font-weight:600;">{{ .Content.Overview.SearchViews }}</div><div class="muted">Organic search</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">AI referrals</div><div style="font-size:28px;font-weight:600;">{{ .Content.Overview.AIViews }}</div><div class="muted">ChatGPT, Perplexity, Claude, Gemini, Copilot</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Form submissions</div><div style="font-size:28px;font-weight:600;">{{ .Content.Overview.FormSubmissions }}</div><div class="muted"><a href="/admin/forms">View forms</a></div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Cache hit ratio</div><div style="font-size:28px;font-weight:600;">{{ printf "%.0f%%" (mulFloat .Content.Overview.CacheHitRatio 100) }}</div><div class="muted">Stratum page cache</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Avg response time</div><div style="font-size:28px;font-weight:600;">{{ printf "%.0fms" .Content.Overview.AvgDurationMs }}</div><div class="muted">Stratum handler</div></div></div>
+  </section>
+
+  {{ if .Content.Overview.Daily }}
+  <section class="admin-section card">
+    <div class="card-header"><h2>Trend</h2></div>
+    <div class="card-body">
+      <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Day</th><th>Human</th><th>Crawler</th><th>Total</th></tr></thead><tbody>
+      {{ range .Content.Overview.Daily }}<tr><td>{{ .Day }}</td><td>{{ .HumanViews }}</td><td>{{ .CrawlerViews }}</td><td>{{ .Views }}</td></tr>{{ end }}
+      </tbody></table></div>
+      <p class="muted" style="margin-top:8px;font-size:12px;">Daily buckets (UTC). Human vs crawler separated.</p>
+    </div>
+  </section>
+  {{ end }}
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <section class="admin-section card">
+      <div class="card-header"><h2>Top content</h2></div>
+      <div class="card-body">
+        {{ if .Content.Overview.TopContent }}
+        <table class="data-table"><thead><tr><th>Path</th><th>Views</th></tr></thead><tbody>
+          {{ range .Content.Overview.TopContent }}<tr><td class="data-table__primary">{{ .Path }}</td><td>{{ .Views }}</td></tr>{{ end }}
+        </tbody></table>
+        {{ else }}<p class="muted">No content yet.</p>{{ end }}
+      </div>
+    </section>
+    <section class="admin-section card">
+      <div class="card-header"><h2>Traffic sources</h2></div>
+      <div class="card-body">
+        <div class="muted" style="display:grid;gap:6px;font-size:13px;">
+          <div>Direct — discovery via direct/no referrer</div>
+          <div>Internal — navigation within site</div>
+          <div>Organic Search — google/bing/duckduckgo</div>
+          <div>AI Referral — ChatGPT/Perplexity/Claude/Gemini/Copilot</div>
+          <div>Social / Referral / Campaign — as classified</div>
+        </div>
+        {{ if .Content.Overview.TopReferrers }}
+        <h3 style="margin-top:12px;">Top referring domains</h3>
+        <table class="data-table"><thead><tr><th>Host</th><th>Count</th></tr></thead><tbody>
+          {{ range .Content.Overview.TopReferrers }}<tr><td>{{ .Value }}</td><td>{{ .Count }}</td></tr>{{ end }}
+        </tbody></table>
+        {{ end }}
+      </div>
+    </section>
+  </div>
+
+  {{ if .Content.Overview.TopTransitions }}
+  <section class="admin-section card">
+    <div class="card-header"><h2>Top transitions</h2><p class="muted" style="font-size:12px;">Aggregate internal navigation — no session tracking. A → B counts.</p></div>
+    <div class="card-body">
+      <table class="data-table"><thead><tr><th>From</th><th>To</th><th>Count</th></tr></thead><tbody>
+        {{ range .Content.Overview.TopTransitions }}<tr><td>{{ .FromPath }}</td><td>→ {{ .ToPath }}</td><td>{{ .Count }}</td></tr>{{ end }}
+      </tbody></table>
+    </div>
+  </section>
+  {{ end }}
+
+  <p class="muted" style="font-size:12px;margin-top:12px;">Note: server-only analytics cannot see traffic served solely by a CDN/reverse proxy without hitting Stratum. Speculative prerenders are counted separately and excluded from human views.</p>
+  {{ end }}
+
+{{ else if eq .Content.ActiveTab "content" }}
+  {{ if .Content.ContentDetail }}
+    <section class="admin-section">
+      <h2>{{ .Content.ContentDetail.Title }}</h2>
+      <p class="muted">{{ .Content.ContentDetail.Path }} · {{ .Content.ContentDetail.EntryID }}</p>
+      {{ if not .Content.HasData }}
+        <div class="card"><div class="card-body muted">No views for this entry in the selected range.</div></div>
+      {{ else }}
+        <div class="card"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Day</th><th>Views</th><th>Human</th><th>Search</th><th>AI</th><th>Direct</th></tr></thead><tbody>
+          {{ range .Content.ContentDetail.Rows }}<tr><td>{{ .Day }}</td><td>{{ .Views }}</td><td>{{ .HumanViews }}</td><td>{{ .OrganicSearchViews }}</td><td>{{ .AiReferralViews }}</td><td>{{ .DirectViews }}</td></tr>{{ end }}
+        </tbody></table></div></div>
+        <p class="muted" style="margin-top:8px;">Resource key groups by entry + revision: revision-aware without schema change. Old revision titles no longer resolving show path snapshot.</p>
+      {{ end }}
+      <p><a href="/admin/analytics/content?range={{.Content.Range}}">← Back to content</a></p>
+    </section>
+  {{ else }}
+    <section class="admin-section">
+      <div class="card-header"><h2>Content</h2><p class="muted">Views grouped by resource identity (entry/revision aware), not just URL.</p></div>
+      {{ if not .Content.HasData }}
+        <div class="card"><div class="card-body muted">No content data yet.</div></div>
+      {{ else }}
+        <div class="card"><div class="data-table-wrap"><table class="data-table"><thead><tr><th>Content</th><th>Views</th><th>Search</th><th>AI</th><th>Direct</th></tr></thead><tbody>
+          {{ range .Content.ContentRows }}<tr><td class="data-table__primary"><a href="/admin/analytics/content/{{ .EntryID }}?range={{ $.Content.Range }}">{{ if .Title }}{{ .Title }}{{ else }}{{ .Path }}{{ end }}</a><br><span class="muted" style="font-size:12px;">{{ .Path }}</span></td><td>{{ .Views }}</td><td>{{ .SearchViews }}</td><td>{{ .AIViews }}</td><td>{{ .DirectViews }}</td></tr>{{ end }}
+        </tbody></table></div></div>
+      {{ end }}
+    </section>
+  {{ end }}
+
+{{ else if eq .Content.ActiveTab "acquisition" }}
+  <section class="admin-section card">
+    <div class="card-header"><h2>Traffic sources</h2></div>
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;">
+        <div><div class="muted">Direct</div><strong>{{ index .Content.Acquisition.Sources "direct" }}</strong></div>
+        <div><div class="muted">Internal</div><strong>{{ index .Content.Acquisition.Sources "internal" }}</strong></div>
+        <div><div class="muted">Organic Search</div><strong>{{ index .Content.Acquisition.Sources "organic_search" }}</strong></div>
+        <div><div class="muted">Organic Social</div><strong>{{ index .Content.Acquisition.Sources "organic_social" }}</strong></div>
+        <div><div class="muted">AI referrals</div><strong>{{ index .Content.Acquisition.Sources "ai_referral" }}</strong></div>
+        <div><div class="muted">Referral</div><strong>{{ index .Content.Acquisition.Sources "referral" }}</strong></div>
+        <div><div class="muted">Campaign</div><strong>{{ index .Content.Acquisition.Sources "campaign" }}</strong></div>
+      </div>
+    </div>
+  </section>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <section class="card"><div class="card-header"><h3>Top referring domains</h3></div><div class="card-body">{{ if .Content.Acquisition.TopReferrers }}<table class="data-table"><thead><tr><th>Host</th><th>Count</th></tr></thead><tbody>{{ range .Content.Acquisition.TopReferrers }}<tr><td>{{ .Value }}</td><td>{{ .Count }}</td></tr>{{ end }}</tbody></table>{{ else }}<p class="muted">No data.</p>{{ end }}</div></section>
+    <section class="card"><div class="card-header"><h3>Top UTM sources</h3></div><div class="card-body">{{ if .Content.Acquisition.TopSources }}<table class="data-table"><thead><tr><th>Value</th><th>Count</th></tr></thead><tbody>{{ range .Content.Acquisition.TopSources }}<tr><td>{{ .Value }}</td><td>{{ .Count }}</td></tr>{{ end }}</tbody></table>{{ else }}<p class="muted">No campaigns.</p>{{ end }}</div></section>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
+    <section class="card"><div class="card-header"><h3>UTM mediums</h3></div><div class="card-body">{{ if .Content.Acquisition.TopMediums }}<table class="data-table"><thead><tr><th>Value</th><th>Count</th></tr></thead><tbody>{{ range .Content.Acquisition.TopMediums }}<tr><td>{{ .Value }}</td><td>{{ .Count }}</td></tr>{{ end }}</tbody></table>{{ else }}<p class="muted">—</p>{{ end }}</div></section>
+    <section class="card"><div class="card-header"><h3>UTM campaigns</h3></div><div class="card-body">{{ if .Content.Acquisition.TopCampaigns }}<table class="data-table"><thead><tr><th>Value</th><th>Count</th></tr></thead><tbody>{{ range .Content.Acquisition.TopCampaigns }}<tr><td>{{ .Value }}</td><td>{{ .Count }}</td></tr>{{ end }}</tbody></table>{{ else }}<p class="muted">—</p>{{ end }}</div></section>
+  </div>
+  <p class="muted" style="font-size:12px;">Only external referrer hostname is stored (e.g., example.com). Never the path/query. UTM values are length-bounded and capped per day (other).</p>
+
+{{ else if eq .Content.ActiveTab "technology" }}
+  <section class="admin-section card">
+    <div class="card-header"><h2>Technology</h2><p class="muted">Aggregate client classes — no raw User-Agent stored.</p></div>
+    <div class="card-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+      <div><h3>Devices</h3>{{ range index .Content.Technology "device" }}<div style="display:flex;justify-content:space-between;"><span>{{ .Value }}</span><span>{{ .Count }}</span></div>{{ else }}<p class="muted">—</p>{{ end }}</div>
+      <div><h3>Browsers</h3>{{ range index .Content.Technology "browser" }}<div style="display:flex;justify-content:space-between;"><span>{{ .Value }}</span><span>{{ .Count }}</span></div>{{ else }}<p class="muted">—</p>{{ end }}</div>
+      <div><h3>Operating systems</h3>{{ range index .Content.Technology "os" }}<div style="display:flex;justify-content:space-between;"><span>{{ .Value }}</span><span>{{ .Count }}</span></div>{{ else }}<p class="muted">—</p>{{ end }}</div>
+      <div><h3>Languages</h3>{{ range index .Content.Technology "language" }}<div style="display:flex;justify-content:space-between;"><span>{{ .Value }}</span><span>{{ .Count }}</span></div>{{ else }}<p class="muted">—</p>{{ end }}</div>
+    </div>
+  </section>
+
+{{ else if eq .Content.ActiveTab "crawlers" }}
+  <section class="admin-section card">
+    <div class="card-header"><h2>Declared crawler traffic</h2><p class="muted">Based on declared User-Agent — may be spoofed. Separate from human views.</p></div>
+    <div class="card-body">
+      {{ if .Content.Crawlers }}
+      <table class="data-table"><thead><tr><th>Crawler</th><th>Views</th></tr></thead><tbody>
+        {{ range .Content.Crawlers }}<tr><td>{{ .Value }}</td><td>{{ .Count }}</td></tr>{{ end }}
+      </tbody></table>
+      {{ else }}<p class="muted">No crawler data.</p>{{ end }}
+      <p class="muted" style="margin-top:12px;font-size:12px;">Human Views exclude crawlers. Views total = human + crawler.</p>
+    </div>
+  </section>
+
+{{ else if eq .Content.ActiveTab "performance" }}
+  <section class="admin-section" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;">
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Cache hit ratio</div><div style="font-size:24px;font-weight:600;">{{ printf "%.0f%%" (mulFloat .Content.Performance.CacheHitRatio 100) }}</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Avg duration</div><div style="font-size:24px;font-weight:600;">{{ printf "%.0fms" .Content.Performance.AvgMs }}</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Speculative requests</div><div style="font-size:24px;font-weight:600;">{{ .Content.Performance.Speculative }}</div></div></div>
+    <div class="card"><div class="card-body"><div class="muted" style="font-size:12px;text-transform:uppercase;">Dropped observations</div><div style="font-size:24px;font-weight:600;">{{ .Content.Performance.Dropped }}</div><div class="muted" style="font-size:11px;">Queue full — site not slowed</div></div></div>
+  </section>
+  <section class="card">
+    <div class="card-header"><h2>Status distribution</h2></div>
+    <div class="card-body" style="display:flex;gap:12px;flex-wrap:wrap;">
+      <span>2xx: {{ .Content.Performance.SiteHourly.Total2xx }}</span>
+      <span>3xx: {{ .Content.Performance.SiteHourly.Total3xx }}</span>
+      <span>4xx: {{ .Content.Performance.SiteHourly.Total4xx }} <a class="muted" href="/admin/tools/not-found">Not Found</a></span>
+      <span>5xx: {{ .Content.Performance.SiteHourly.Total5xx }}</span>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-header"><h2>Latency buckets</h2><p class="muted">Stratum handler timing (not Web Vitals)</p></div>
+    <div class="card-body">
+      <table class="data-table"><thead><tr><th>Bucket</th><th>Count</th></tr></thead><tbody>
+        <tr><td>&lt;5ms</td><td>{{ .Content.Performance.SiteHourly.LLt5 }}</td></tr>
+        <tr><td>&lt;20ms</td><td>{{ .Content.Performance.SiteHourly.LLt20 }}</td></tr>
+        <tr><td>&lt;50ms</td><td>{{ .Content.Performance.SiteHourly.LLt50 }}</td></tr>
+        <tr><td>&lt;100ms</td><td>{{ .Content.Performance.SiteHourly.LLt100 }}</td></tr>
+        <tr><td>&lt;250ms</td><td>{{ .Content.Performance.SiteHourly.LLt250 }}</td></tr>
+        <tr><td>&lt;1s</td><td>{{ .Content.Performance.SiteHourly.LLt1000 }}</td></tr>
+        <tr><td>&ge;1s</td><td>{{ .Content.Performance.SiteHourly.LGte1000 }}</td></tr>
+      </tbody></table>
+    </div>
+  </section>
+  {{ if .Content.Performance.Slowest }}
+  <section class="card"><div class="card-header"><h2>Slowest resources</h2></div><div class="card-body"><table class="data-table"><thead><tr><th>Path</th><th>Views</th></tr></thead><tbody>{{ range .Content.Performance.Slowest }}<tr><td>{{ .Path }}</td><td>{{ .Views }}</td></tr>{{ end }}</tbody></table></div></section>
+  {{ end }}
+  <p class="muted" style="font-size:12px;">Response size, status and latency are Stratum handler telemetry. Not Core Web Vitals (requires browser).</p>
+
+{{ else if eq .Content.ActiveTab "settings" }}
+  <section class="card">
+    <div class="card-header"><h2>Local Analytics</h2></div>
+    <div class="card-body">
+      <form method="post" action="/admin/analytics/settings" data-on:submit__prevent="@post('/admin/analytics/settings', {contentType:'form'})">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <div class="form-group">
+          <label><input type="checkbox" name="analytics_enabled" value="1" {{ if .Content.Settings.Enabled }}checked{{ end }}> Enable local analytics</label>
+          <p class="form-help">Collect aggregate website statistics locally without analytics cookies, persistent visitor identifiers or third-party analytics services.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Retention (daily tables)</label>
+          <select name="analytics_retention_days" class="form-control" style="max-width:200px;">
+            {{ $ret := .Content.Settings.RetentionDays }}{{ range .Content.Settings.AllowedRetentions }}<option value="{{ . }}" {{ if eq . $ret }}selected{{ end }}>{{ . }} days</option>{{ end }}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Hourly retention</label>
+          <select name="analytics_hourly_retention_days" class="form-control" style="max-width:200px;">
+            {{ $hret := .Content.Settings.HourlyRetentionDays }}{{ range .Content.Settings.AllowedHourly }}<option value="{{ . }}" {{ if eq . $hret }}selected{{ end }}>{{ . }} days</option>{{ end }}
+          </select>
+        </div>
+        <button type="submit" class="button button-primary">Save settings</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header"><h2>Privacy</h2><p class="muted">Core analytics invariants — not configurable modes.</p></div>
+    <div class="card-body">
+      <table class="data-table"><tbody>
+        <tr><td>Analytics cookies</td><td>Never</td></tr>
+        <tr><td>Persistent visitor IDs</td><td>Never</td></tr>
+        <tr><td>Stored IP addresses</td><td>Never</td></tr>
+        <tr><td>Full referrer URLs</td><td>Never</td></tr>
+        <tr><td>Raw User-Agent stored</td><td>Never</td></tr>
+        <tr><td>Third-party analytics requests</td><td>Never</td></tr>
+        <tr><td>Cross-site tracking</td><td>Never</td></tr>
+      </tbody></table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header"><h2>Health</h2></div>
+    <div class="card-body muted" style="font-size:13px;">
+      <div>Accepted observations: {{ .Content.Health.Accepted }}</div>
+      <div>Dropped (queue full): {{ .Content.Health.Dropped }}</div>
+      <div>Flush errors: {{ .Content.Health.FlushErrors }}</div>
+      <div>Last flush: {{ .Content.Health.LastFlush }}</div>
+      <div>Queue: {{ .Content.Health.QueueLen }}/{{ .Content.Health.QueueCap }} · Pending: {{ .Content.Health.PendingCount }}</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header"><h2>Clear analytics data</h2><p class="muted">Deletes ONLY analytics aggregate tables. Forms, comments, 404 store and content remain.</p></div>
+    <div class="card-body">
+      <form method="post" action="/admin/analytics/clear" onsubmit="return confirm('Clear all analytics data? This cannot be undone.')">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <button type="submit" class="button button-secondary" style="background:#d63638;color:#fff;border-color:#d63638;">Clear analytics data</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin-top:8px;">Clear coordinates with the worker so pending counters do not reappear.</p>
+    </div>
+  </section>
+{{ end }}
+
+<div id="admin-toast-region"></div>
+{{ end }}

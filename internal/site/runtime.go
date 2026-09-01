@@ -55,6 +55,10 @@ type Snapshot struct {
 
 	TitleSeparator string
 	SiteRepresents string // "organization" or "person" (structured data publisher)
+
+	AnalyticsEnabled             bool
+	AnalyticsRetentionDays       int64
+	AnalyticsHourlyRetentionDays int64
 }
 
 func NewRuntime(queries *db.Queries) *Runtime {
@@ -79,29 +83,44 @@ func (r *Runtime) Reload(ctx context.Context) error {
 	}
 
 	snap := &Snapshot{
-		SiteTitle:            row.SiteTitle,
-		SiteTagline:          row.SiteTagline,
-		SiteURL:              row.SiteUrl,
-		Language:             row.Language,
-		TimezoneName:         row.Timezone,
-		Location:             loc,
-		IndexingEnabled:      row.IndexingEnabled != 0,
-		SitemapEnabled:       row.SitemapEnabled != 0,
-		RobotsMode:           row.RobotsMode,
-		RobotsCustom:         row.RobotsCustom,
-		SpeculationMode:      row.SpeculationMode,
-		SpeculationEagerness: row.SpeculationEagerness,
-		HomepageMode:         row.HomepageMode,
-		HomepageEntryID:      nullStringToStr(row.HomepageEntryID),
-		PostsPageEntryID:     nullStringToStr(row.PostsPageEntryID),
-		PostsBasePath:        row.PostsBasePath,
-		PostsPerPage:         row.PostsPerPage,
-		TitleSeparator:       row.TitleSeparator,
-		TwitterSite:          row.TwitterSite,
-		SiteRepresents:       row.SiteRepresents,
+		SiteTitle:                    row.SiteTitle,
+		SiteTagline:                  row.SiteTagline,
+		SiteURL:                      row.SiteUrl,
+		Language:                     row.Language,
+		TimezoneName:                 row.Timezone,
+		Location:                     loc,
+		IndexingEnabled:              row.IndexingEnabled != 0,
+		SitemapEnabled:               row.SitemapEnabled != 0,
+		RobotsMode:                   row.RobotsMode,
+		RobotsCustom:                 row.RobotsCustom,
+		SpeculationMode:              row.SpeculationMode,
+		SpeculationEagerness:         row.SpeculationEagerness,
+		HomepageMode:                 row.HomepageMode,
+		HomepageEntryID:              nullStringToStr(row.HomepageEntryID),
+		PostsPageEntryID:             nullStringToStr(row.PostsPageEntryID),
+		PostsBasePath:                row.PostsBasePath,
+		PostsPerPage:                 row.PostsPerPage,
+		TitleSeparator:               row.TitleSeparator,
+		TwitterSite:                  row.TwitterSite,
+		SiteRepresents:               row.SiteRepresents,
+		AnalyticsEnabled:             row.AnalyticsEnabled != 0,
+		AnalyticsRetentionDays:       row.AnalyticsRetentionDays,
+		AnalyticsHourlyRetentionDays: row.AnalyticsHourlyRetentionDays,
 	}
 	if snap.SiteRepresents == "" {
 		snap.SiteRepresents = "organization"
+	}
+	// Defaults for analytics if zero (pre-migration fallback)
+	if snap.AnalyticsRetentionDays == 0 {
+		snap.AnalyticsRetentionDays = 730
+	}
+	if snap.AnalyticsHourlyRetentionDays == 0 {
+		snap.AnalyticsHourlyRetentionDays = 90
+	}
+	// If analytics_enabled column not yet migrated, treat missing as enabled via default above, but sqlc returns 0? We already handle.
+	// Explicitly default enabled to true if not set? row will have default 1 due to migration, so fine.
+	if row.AnalyticsEnabled == 0 && snap.AnalyticsRetentionDays == 730 && snap.AnalyticsHourlyRetentionDays == 90 {
+		// Could be disabled explicitly; keep value.
 	}
 	if row.SiteSocialMediaID.Valid {
 		snap.GlobalSocialMediaID = row.SiteSocialMediaID.String

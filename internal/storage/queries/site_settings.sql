@@ -1,5 +1,5 @@
 -- name: GetSiteSettings :one
-SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, posts_base_path, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, site_social_media_id, twitter_site, site_represents, created_at, updated_at
+SELECT id, site_title, site_tagline, homepage_mode, homepage_entry_id, posts_page_entry_id, posts_per_page, posts_base_path, language, timezone, active_theme, indexing_enabled, site_url, sitemap_enabled, robots_mode, robots_custom, speculation_mode, speculation_eagerness, title_separator, site_logo_media_id, social_links, site_social_media_id, twitter_site, site_represents, analytics_enabled, analytics_retention_days, analytics_hourly_retention_days, created_at, updated_at
 FROM site_settings
 WHERE id = 1;
 
@@ -80,4 +80,9 @@ SELECT onboarding_completed FROM site_settings WHERE id = 1;
 -- name: SetOnboardingCompleted :exec
 UPDATE site_settings
 SET onboarding_completed = ?, updated_at = ?
+WHERE id = 1;
+
+-- name: UpdateAnalyticsSettings :exec
+UPDATE site_settings
+SET analytics_enabled = ?, analytics_retention_days = ?, analytics_hourly_retention_days = ?, updated_at = ?
 WHERE id = 1;

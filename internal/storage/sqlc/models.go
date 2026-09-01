@@ -8,6 +8,81 @@ import (
 	"database/sql"
 )
 
+type AnalyticsDimensionDaily struct {
+	Day       string `json:"day"`
+	Dimension string `json:"dimension"`
+	Value     string `json:"value"`
+	Count     int64  `json:"count"`
+}
+
+type AnalyticsPageDaily struct {
+	Day                 string         `json:"day"`
+	ResourceKey         string         `json:"resource_key"`
+	Path                string         `json:"path"`
+	RouteType           string         `json:"route_type"`
+	EntryID             sql.NullString `json:"entry_id"`
+	RevisionID          sql.NullString `json:"revision_id"`
+	ContentTypeID       sql.NullString `json:"content_type_id"`
+	TaxonomyID          sql.NullString `json:"taxonomy_id"`
+	TermID              sql.NullString `json:"term_id"`
+	Views               int64          `json:"views"`
+	HumanViews          int64          `json:"human_views"`
+	CrawlerViews        int64          `json:"crawler_views"`
+	DirectViews         int64          `json:"direct_views"`
+	InternalViews       int64          `json:"internal_views"`
+	OrganicSearchViews  int64          `json:"organic_search_views"`
+	OrganicSocialViews  int64          `json:"organic_social_views"`
+	AiReferralViews     int64          `json:"ai_referral_views"`
+	ReferralViews       int64          `json:"referral_views"`
+	CampaignViews       int64          `json:"campaign_views"`
+	CacheHits           int64          `json:"cache_hits"`
+	CacheMisses         int64          `json:"cache_misses"`
+	ResponseCount       int64          `json:"response_count"`
+	ResponseBytes       int64          `json:"response_bytes"`
+	ResponseDurationSum int64          `json:"response_duration_sum"`
+	LatencyLt5          int64          `json:"latency_lt5"`
+	LatencyLt20         int64          `json:"latency_lt20"`
+	LatencyLt50         int64          `json:"latency_lt50"`
+	LatencyLt100        int64          `json:"latency_lt100"`
+	LatencyLt250        int64          `json:"latency_lt250"`
+	LatencyLt1000       int64          `json:"latency_lt1000"`
+	LatencyGte1000      int64          `json:"latency_gte1000"`
+}
+
+type AnalyticsSiteHourly struct {
+	Hour                int64 `json:"hour"`
+	Requests            int64 `json:"requests"`
+	Views               int64 `json:"views"`
+	HumanViews          int64 `json:"human_views"`
+	CrawlerViews        int64 `json:"crawler_views"`
+	SpeculativeRequests int64 `json:"speculative_requests"`
+	CacheHits           int64 `json:"cache_hits"`
+	CacheMisses         int64 `json:"cache_misses"`
+	Status2xx           int64 `json:"status_2xx"`
+	Status3xx           int64 `json:"status_3xx"`
+	Status4xx           int64 `json:"status_4xx"`
+	Status5xx           int64 `json:"status_5xx"`
+	ResponseBytes       int64 `json:"response_bytes"`
+	ResponseCount       int64 `json:"response_count"`
+	ResponseDurationSum int64 `json:"response_duration_sum"`
+	LatencyLt5          int64 `json:"latency_lt5"`
+	LatencyLt20         int64 `json:"latency_lt20"`
+	LatencyLt50         int64 `json:"latency_lt50"`
+	LatencyLt100        int64 `json:"latency_lt100"`
+	LatencyLt250        int64 `json:"latency_lt250"`
+	LatencyLt1000       int64 `json:"latency_lt1000"`
+	LatencyGte1000      int64 `json:"latency_gte1000"`
+}
+
+type AnalyticsTransitionDaily struct {
+	Day             string `json:"day"`
+	FromResourceKey string `json:"from_resource_key"`
+	ToResourceKey   string `json:"to_resource_key"`
+	FromPath        string `json:"from_path"`
+	ToPath          string `json:"to_path"`
+	Count           int64  `json:"count"`
+}
+
 type BlockDefinition struct {
 	ID           string         `json:"id"`
 	Namespace    string         `json:"namespace"`
@@ -52,6 +127,20 @@ type ContentType struct {
 	UpdatedAt                int64          `json:"updated_at"`
 	DefaultLayoutTemplateID  sql.NullString `json:"default_layout_template_id"`
 	DefaultArchiveTemplateID sql.NullString `json:"default_archive_template_id"`
+}
+
+type CustomCodeSnippet struct {
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Scope     string         `json:"scope"`
+	ScopeID   sql.NullString `json:"scope_id"`
+	Kind      string         `json:"kind"`
+	Placement string         `json:"placement"`
+	Code      string         `json:"code"`
+	Enabled   int64          `json:"enabled"`
+	SortOrder int64          `json:"sort_order"`
+	CreatedAt int64          `json:"created_at"`
+	UpdatedAt int64          `json:"updated_at"`
 }
 
 type Entry struct {
@@ -222,6 +311,17 @@ type NotFoundPath struct {
 	LastSeenAt  int64  `json:"last_seen_at"`
 }
 
+type PreviewLink struct {
+	ID         string         `json:"id"`
+	TokenHash  string         `json:"token_hash"`
+	EntryID    string         `json:"entry_id"`
+	RevisionID string         `json:"revision_id"`
+	CreatedBy  sql.NullString `json:"created_by"`
+	ExpiresAt  int64          `json:"expires_at"`
+	RevokedAt  sql.NullInt64  `json:"revoked_at"`
+	CreatedAt  int64          `json:"created_at"`
+}
+
 type PublicationJob struct {
 	ID          string         `json:"id"`
 	EntryID     string         `json:"entry_id"`
@@ -298,34 +398,37 @@ type SitePartRevision struct {
 }
 
 type SiteSetting struct {
-	ID                   int64          `json:"id"`
-	SiteTitle            string         `json:"site_title"`
-	SiteTagline          string         `json:"site_tagline"`
-	HomepageMode         string         `json:"homepage_mode"`
-	HomepageEntryID      sql.NullString `json:"homepage_entry_id"`
-	PostsPageEntryID     sql.NullString `json:"posts_page_entry_id"`
-	PostsPerPage         int64          `json:"posts_per_page"`
-	Language             string         `json:"language"`
-	Timezone             string         `json:"timezone"`
-	ActiveTheme          string         `json:"active_theme"`
-	IndexingEnabled      int64          `json:"indexing_enabled"`
-	CreatedAt            int64          `json:"created_at"`
-	UpdatedAt            int64          `json:"updated_at"`
-	SiteUrl              string         `json:"site_url"`
-	SitemapEnabled       int64          `json:"sitemap_enabled"`
-	RobotsMode           string         `json:"robots_mode"`
-	RobotsCustom         string         `json:"robots_custom"`
-	SpeculationMode      string         `json:"speculation_mode"`
-	SpeculationEagerness string         `json:"speculation_eagerness"`
-	TitleSeparator       string         `json:"title_separator"`
-	SiteIconMediaID      sql.NullString `json:"site_icon_media_id"`
-	SiteLogoMediaID      sql.NullString `json:"site_logo_media_id"`
-	SocialLinks          sql.NullString `json:"social_links"`
-	SiteSocialMediaID    sql.NullString `json:"site_social_media_id"`
-	TwitterSite          string         `json:"twitter_site"`
-	SiteRepresents       string         `json:"site_represents"`
-	PostsBasePath        string         `json:"posts_base_path"`
-	OnboardingCompleted  int64          `json:"onboarding_completed"`
+	ID                           int64          `json:"id"`
+	SiteTitle                    string         `json:"site_title"`
+	SiteTagline                  string         `json:"site_tagline"`
+	HomepageMode                 string         `json:"homepage_mode"`
+	HomepageEntryID              sql.NullString `json:"homepage_entry_id"`
+	PostsPageEntryID             sql.NullString `json:"posts_page_entry_id"`
+	PostsPerPage                 int64          `json:"posts_per_page"`
+	Language                     string         `json:"language"`
+	Timezone                     string         `json:"timezone"`
+	ActiveTheme                  string         `json:"active_theme"`
+	IndexingEnabled              int64          `json:"indexing_enabled"`
+	CreatedAt                    int64          `json:"created_at"`
+	UpdatedAt                    int64          `json:"updated_at"`
+	SiteUrl                      string         `json:"site_url"`
+	SitemapEnabled               int64          `json:"sitemap_enabled"`
+	RobotsMode                   string         `json:"robots_mode"`
+	RobotsCustom                 string         `json:"robots_custom"`
+	SpeculationMode              string         `json:"speculation_mode"`
+	SpeculationEagerness         string         `json:"speculation_eagerness"`
+	TitleSeparator               string         `json:"title_separator"`
+	SiteIconMediaID              sql.NullString `json:"site_icon_media_id"`
+	SiteLogoMediaID              sql.NullString `json:"site_logo_media_id"`
+	SocialLinks                  sql.NullString `json:"social_links"`
+	SiteSocialMediaID            sql.NullString `json:"site_social_media_id"`
+	TwitterSite                  string         `json:"twitter_site"`
+	SiteRepresents               string         `json:"site_represents"`
+	PostsBasePath                string         `json:"posts_base_path"`
+	OnboardingCompleted          int64          `json:"onboarding_completed"`
+	AnalyticsEnabled             int64          `json:"analytics_enabled"`
+	AnalyticsRetentionDays       int64          `json:"analytics_retention_days"`
+	AnalyticsHourlyRetentionDays int64          `json:"analytics_hourly_retention_days"`
 }
 
 type Taxonomy struct {

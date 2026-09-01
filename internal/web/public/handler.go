@@ -53,6 +53,7 @@ type Handler struct {
 	hub            *runtimehub.Runtime
 	layoutsService *layouts.Service
 	dev            bool
+	analytics      AnalyticsRecorder
 	// warnNoSiteURL guards the one-time production warning about canonical
 	// URLs falling back to the request Host.
 	warnNoSiteURL sync.Once
@@ -197,8 +198,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	cw := &analyticsResponseWriter{ResponseWriter: w}
+	var (
+		normalizedPathForAnalytics string
+		routeForAnalytics          *routing.Route
+		cacheHitForAnalytics       bool
+	)
+	// Use cw as the writer for all responses so we capture status/bytes.
+	// All internal writes will go through cw.
+	w = cw
+	defer func() {
+		if h.analytics == nil || !h.analytics.Enabled() {
+			return
+		}
+		status := cw.statusCode()
+		// If status still 0 (no WriteHeader called), infer from cw bytes? net/http will default to 200 on Write.
+		if status == 0 {
+			status = http.StatusOK
+		}
+		npath := normalizedPathForAnalytics
+		if npath == "" {
+			npath = routing.NormalizePath(r.URL.Path)
+		}
+		h.recordPublic(r, npath, routeForAnalytics, status, cw.bytes, time.Since(start), cacheHitForAnalytics)
+	}()
 	siteSnap := h.hub.Site.Current()
 	origin := requestOrigin(r)
+
 	// In production, canonical/OG/schema URLs must come from the configured
 	// Site URL, never accidentally from the request Host. The origin fallback
 	// remains for development/local setups; warn once when it is doing the work.
@@ -248,6 +275,11 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 	// Password-protected entry routes bypass the shared full-page cache entirely.
 	// The route snapshot carries the immutable visibility so we can decide before the cache lookup (zero DB for normal public).
 	normalizedPath := routing.NormalizePath(r.URL.Path)
+	normalizedPathForAnalytics = normalizedPath
+	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok {
+		r := rt
+		routeForAnalytics = &r
+	}
 	if rt, ok := h.hub.Routes.Lookup(normalizedPath); ok && rt.RouteType == routing.RouteTypeEntry && rt.EntryID.Valid {
 		if rt.Visibility == "private" {
 			http.NotFound(w, r)
@@ -284,9 +316,20 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 		// For public visibility, proceed to cache; private has no route.
 	}
 
+	if routeForAnalytics == nil {
+		if rt, ok := h.hub.Routes.Lookup(normalizedPathForAnalytics); ok {
+			r := rt
+			routeForAnalytics = &r
+		}
+	}
 	// Full-page cache HIT: serve without touching the database (including
 	// redirect lookups). Redirects and renders run only on miss.
 	if cached, ok := h.hub.Pages.Get(key); ok {
+		cacheHitForAnalytics = true
+		if rt, ok := h.hub.Routes.Lookup(routing.NormalizePath(r.URL.Path)); ok {
+			r := rt
+			routeForAnalytics = &r
+		}
 		if h.dev {
 			w.Header().Set("Server-Timing", "cache;desc=\"hit\"")
 		}
@@ -296,6 +339,10 @@ func (h *Handler) serveCachedPage(w http.ResponseWriter, r *http.Request) {
 
 	// Redirect routes left by slug changes (e.g. /old → /new). Checked only on
 	// page-cache miss so a warm cache never pays for DB.
+	if route, ok := h.hub.Routes.Lookup(r.URL.Path); ok && route.RouteType == "redirect" {
+		r := route
+		routeForAnalytics = &r
+	}
 	if route, ok := h.hub.Routes.Lookup(r.URL.Path); ok && route.RouteType == "redirect" && route.RedirectTo.Valid && route.RedirectTo.String != "" {
 		status := http.StatusMovedPermanently
 		if route.RedirectStatus.Valid && route.RedirectStatus.Int64 != 0 {

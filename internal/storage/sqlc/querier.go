@@ -58,6 +58,14 @@ type Querier interface {
 	CreateTaxonomy(ctx context.Context, arg CreateTaxonomyParams) error
 	CreateTerm(ctx context.Context, arg CreateTermParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
+	DeleteAllAnalyticsDimensionDaily(ctx context.Context) error
+	DeleteAllAnalyticsPageDaily(ctx context.Context) error
+	DeleteAllAnalyticsSiteHourly(ctx context.Context) error
+	DeleteAllAnalyticsTransitionDaily(ctx context.Context) error
+	DeleteAnalyticsDimensionDailyBefore(ctx context.Context, day string) error
+	DeleteAnalyticsPageDailyBefore(ctx context.Context, day string) error
+	DeleteAnalyticsSiteHourlyBefore(ctx context.Context, hour int64) error
+	DeleteAnalyticsTransitionDailyBefore(ctx context.Context, day string) error
 	DeleteComment(ctx context.Context, id string) error
 	DeleteContentType(ctx context.Context, id string) error
 	DeleteEntry(ctx context.Context, id string) error
@@ -78,7 +86,11 @@ type Querier interface {
 	DeleteTerm(ctx context.Context, id string) error
 	DeleteTermsForRevision(ctx context.Context, revisionID string) error
 	DisableBlockDefinition(ctx context.Context, arg DisableBlockDefinitionParams) error
+	// For cardinality protection: count distinct values per dimension per day already via GetAnalyticsDimensionCount, but we also need to check existence of value
+	ExistsAnalyticsDimensionValue(ctx context.Context, arg ExistsAnalyticsDimensionValueParams) (bool, error)
 	GetActivePublicationJobByEntry(ctx context.Context, entryID string) (PublicationJob, error)
+	GetAnalyticsDimensionCount(ctx context.Context, arg GetAnalyticsDimensionCountParams) (int64, error)
+	GetAnalyticsPageDaily(ctx context.Context, arg GetAnalyticsPageDailyParams) (AnalyticsPageDaily, error)
 	GetArchiveRouteByContentType(ctx context.Context, contentTypeID sql.NullString) (Route, error)
 	GetBlockDefinition(ctx context.Context, arg GetBlockDefinitionParams) (BlockDefinition, error)
 	GetComment(ctx context.Context, id string) (Comment, error)
@@ -137,6 +149,12 @@ type Querier interface {
 	HasAdmin(ctx context.Context) (bool, error)
 	ListActiveForms(ctx context.Context) ([]Form, error)
 	ListAllFormSubmissions(ctx context.Context, formID string) ([]FormSubmission, error)
+	ListAnalyticsDimensionDaily(ctx context.Context, arg ListAnalyticsDimensionDailyParams) ([]AnalyticsDimensionDaily, error)
+	ListAnalyticsDimensionValues(ctx context.Context, arg ListAnalyticsDimensionValuesParams) ([]string, error)
+	ListAnalyticsPageDaily(ctx context.Context, arg ListAnalyticsPageDailyParams) ([]AnalyticsPageDaily, error)
+	ListAnalyticsPageDailyByEntry(ctx context.Context, arg ListAnalyticsPageDailyByEntryParams) ([]AnalyticsPageDaily, error)
+	ListAnalyticsSiteHourly(ctx context.Context, arg ListAnalyticsSiteHourlyParams) ([]AnalyticsSiteHourly, error)
+	ListAnalyticsTransitions(ctx context.Context, arg ListAnalyticsTransitionsParams) ([]AnalyticsTransitionDaily, error)
 	ListApprovedCommentsByEntry(ctx context.Context, arg ListApprovedCommentsByEntryParams) ([]Comment, error)
 	ListArchiveRoutes(ctx context.Context) ([]Route, error)
 	ListBlockDefinitions(ctx context.Context) ([]BlockDefinition, error)
@@ -230,6 +248,10 @@ type Querier interface {
 	SetSitePartLocation(ctx context.Context, arg SetSitePartLocationParams) error
 	SetSitePartPublishedRevision(ctx context.Context, arg SetSitePartPublishedRevisionParams) error
 	SetTermsForRevision(ctx context.Context, arg SetTermsForRevisionParams) error
+	SumAnalyticsPageDaily(ctx context.Context, arg SumAnalyticsPageDailyParams) (SumAnalyticsPageDailyRow, error)
+	// Aggregates for overview: site hourly sum
+	SumAnalyticsSiteHourly(ctx context.Context, arg SumAnalyticsSiteHourlyParams) (SumAnalyticsSiteHourlyRow, error)
+	UpdateAnalyticsSettings(ctx context.Context, arg UpdateAnalyticsSettingsParams) error
 	UpdateCommentParent(ctx context.Context, arg UpdateCommentParentParams) error
 	UpdateCommentStatus(ctx context.Context, arg UpdateCommentStatusParams) error
 	UpdateContentType(ctx context.Context, arg UpdateContentTypeParams) error
@@ -256,6 +278,14 @@ type Querier interface {
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpdateUserRole(ctx context.Context, arg UpdateUserRoleParams) error
 	UpdateUserStatus(ctx context.Context, arg UpdateUserStatusParams) error
+	// Dimension upsert
+	UpsertAnalyticsDimensionDaily(ctx context.Context, arg UpsertAnalyticsDimensionDailyParams) error
+	// Page daily upsert
+	UpsertAnalyticsPageDaily(ctx context.Context, arg UpsertAnalyticsPageDailyParams) error
+	// Site hourly upsert
+	UpsertAnalyticsSiteHourly(ctx context.Context, arg UpsertAnalyticsSiteHourlyParams) error
+	// Transition upsert
+	UpsertAnalyticsTransitionDaily(ctx context.Context, arg UpsertAnalyticsTransitionDailyParams) error
 	UpsertNavigationLocation(ctx context.Context, arg UpsertNavigationLocationParams) error
 	UpsertThemeCustomization(ctx context.Context, arg UpsertThemeCustomizationParams) error
 }

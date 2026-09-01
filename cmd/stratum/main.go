@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kokosx/stratum/internal/analytics"
 	"github.com/kokosx/stratum/internal/app"
 	"github.com/kokosx/stratum/internal/auth"
 	"github.com/kokosx/stratum/internal/backup"
@@ -280,6 +281,16 @@ func serve(application *app.App, serveCfg ServeConfig) error {
 	}
 	adminHandler.SetPreviewRenderer(publicHandler.RenderPreview)
 	adminHandler.SetDocumentPreviewRenderer(publicHandler.RenderEditableDocument)
+
+	// Analytics Core: enabled by default, server-side, aggregate-first, no persistent visitor IDs.
+	analyticsService := analytics.New(application.Database.DB, hub.Site)
+	publicHandler.SetAnalytics(analyticsService)
+	adminHandler.SetAnalytics(analyticsService)
+	defer func() {
+		if err := analyticsService.Close(); err != nil {
+			log.Printf("analytics shutdown: %v", err)
+		}
+	}()
 
 	// Scheduled publishing runs as part of stratum serve.
 	scheduler := publishing.NewSchedulerWithHub(application.Database.DB, application.Queries, hub)
