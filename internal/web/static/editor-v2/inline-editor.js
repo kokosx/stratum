@@ -561,10 +561,12 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOp
   if (isRich) {
     mode = "rich";
     originalRichText = getCurrentRichText(node, path);
-    // Normalize for comparison
+    // Normalize for comparison (used for cancel/change detection)
     originalRichText = normalizeRichText(originalRichText);
-    // Render current rich text into fieldEl before editing
-    renderRichTextToDOM(fieldEl, originalRichText);
+    // IMPORTANT: Do NOT call renderRichTextToDOM here. The server-rendered DOM
+    // is already the visual projection of SDT and is the editing surface.
+    // Replacing child text nodes during an active browser pointer gesture
+    // (pointerdown -> dblclick) breaks native word selection.
   } else {
     originalValue = getCurrentPlain(node, path);
     if (typeof originalValue === "string" && originalValue.trim() === "") originalValue = "";
@@ -809,6 +811,14 @@ function attachRichHandlers(fieldEl, canvas) {
     if (active.rich.ui === "link") return false;
     const offsets = selectionToOffsets(fieldEl);
     if (!offsets) return false;
+    const previous = active.rich.selection;
+    const sameSelection = previous && previous.start === offsets.start && previous.end === offsets.end;
+    if (sameSelection && active.rich.toolbarAnchor) {
+      // Same logical offsets as before (e.g., programmatic restore after Bold
+      // emits a delayed selectionchange) — do NOT re-measure/re-anchor.
+      // Keep existing anchor and toolbar position frozen.
+      return true;
+    }
     const isCollapsed = offsets.start === offsets.end;
     active.rich.selection = { start: offsets.start, end: offsets.end };
     if (isCollapsed) {
@@ -1078,4 +1088,14 @@ export function __resetForTest() {
   composing = false;
   try { if (state.editing) state.editing = null; } catch (_) {}
   try { RichToolbar.hideToolbar(); RichToolbar.hidePopover(); } catch (_) {}
+}
+
+export function __getActiveRichStateForTest() {
+  if (!active?.rich) return null;
+  return {
+    selection: active.rich.selection ? { ...active.rich.selection } : null,
+    toolbarAnchor: active.rich.toolbarAnchor ? { ...active.rich.toolbarAnchor } : null,
+    ui: active.rich.ui,
+    internalMutation: !!active.rich.internalMutation,
+  };
 }
