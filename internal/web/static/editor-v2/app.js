@@ -3,7 +3,7 @@ import { state, bootstrap, subscribeDocument, primaryInlineFieldForNode, plainTe
 import { fetchPreview } from "./preview.js";
 import { CanvasController } from "./canvas.js";
 import { PanelController } from "./panels.js";
-import { commitActiveEdit, isInlineEditing, startInlineEdit } from "./inline-editor.js";
+import { commitBeforeEditorContextChange, startInlineEdit } from "./inline-editor.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available
@@ -28,6 +28,12 @@ class EditorApp {
     this._previewTimer = null;
     this._pendingSelectionId = null;
     this._onEscape = (event) => this.panels?.handleEscape(event);
+    this._commitBeforeOuterInteraction = (event) => {
+      // Canvas interactions are owned by CanvasController, including events
+      // retargeted to the iframe element by browser tooling.
+      if (event?.target === this.iframe || this.iframe?.contains?.(event?.target)) return;
+      commitBeforeEditorContextChange();
+    };
     this._onDocumentChange = (doc, meta) => {
       if (meta && meta.renderHint === "defer") return;
       this.schedulePreview();
@@ -35,6 +41,11 @@ class EditorApp {
   }
 
   mount() {
+    // The outer admin shell is a separate document from the canvas. Any
+    // pointer interaction here explicitly ends the active inline session
+    // before its controller changes editor context.
+    this.root.addEventListener("pointerdown", this._commitBeforeOuterInteraction, true);
+    this.root.addEventListener("click", this._commitBeforeOuterInteraction, true);
     this.bindViewport();
     this.bindOverflow();
     this.applyViewport(state.viewport);
@@ -269,7 +280,7 @@ class EditorApp {
   setViewport(viewport) {
     if (!["desktop", "tablet", "mobile"].includes(viewport)) return;
     // Commit active inline edit before viewport switch (§53)
-    try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
+    try { commitBeforeEditorContextChange(); } catch (_) {}
     // optionally preserve scroll ratio
     let ratio = 0;
     let maxOld = 0;

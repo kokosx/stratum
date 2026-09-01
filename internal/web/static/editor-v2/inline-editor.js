@@ -1,12 +1,12 @@
 // inline-editor.js — M5A/M5B inline content editing (plain + rich)
 // Manages contenteditable lifecycle on real rendered field element inside iframe.
 
-import { state, findDocumentNode, definitionForBlock, plainTextFromRichText, placeholderForInlineField, inlineFieldsForNode, isRichTextValid } from "./state.js";
+import { state, findDocumentNode, definitionForBlock, plainTextFromRichText, placeholderForInlineField, inlineFieldsForNode } from "./state.js";
 import { updateNodeField } from "./commands.js";
 import { renderRichTextToDOM, domToRichText, selectionToOffsets, offsetsToRange, restoreSelectionFromOffsets, toggleMarkInRichText, normalizeRichText, htmlToRichText, insertRichTextAtSelection, isSafeHref } from "./richtext-editor.js";
 import * as RichToolbar from "./richtext-toolbar.js";
 
-let active = null; // { fieldEl, nodeId, instanceKey, path, originalValue, originalRichText, mode, canvas, handlers }
+let active = null; // rich mode additionally owns { rich: { selection, ui, internalMutation } }
 let composing = false;
 
 function getCurrentPlain(node, path) {
@@ -110,11 +110,13 @@ function restoreRichEditingContext(fieldEl, offsets) {
       fieldEl.setAttribute("data-stratum-editing", "true");
     }
   } catch (_) {}
-  // FOCUS FIRST — focus may collapse selection, so restore after
-  try {
-    fieldEl.focus({ preventScroll: true });
-  } catch (_) {
-    try { fieldEl.focus(); } catch (_) {}
+  const doc = fieldEl.ownerDocument;
+  if (doc.activeElement !== fieldEl) {
+    try {
+      fieldEl.focus({ preventScroll: true });
+    } catch (_) {
+      try { fieldEl.focus(); } catch (_) {}
+    }
   }
   let restored = false;
   try {
@@ -122,7 +124,6 @@ function restoreRichEditingContext(fieldEl, offsets) {
   } catch (_) { restored = false; }
   // Verify selection belongs to field
   try {
-    const doc = fieldEl.ownerDocument;
     const sel = doc.getSelection ? doc.getSelection() : (doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null);
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
@@ -134,8 +135,7 @@ function restoreRichEditingContext(fieldEl, offsets) {
       restored = false;
     }
   } catch (_) { restored = false; }
-  // Preserve active.richSelection even if verify failed (still keep offsets)
-  if (active) active.richSelection = { start: offsets.start, end: offsets.end };
+  if (active?.rich) active.rich.selection = { start: offsets.start, end: offsets.end };
   return restored;
 }
 
@@ -150,9 +150,11 @@ function detachHandlers() {
   try { el.removeEventListener("drop", h.onDrop); } catch (_) {}
   try { el.removeEventListener("beforeinput", h.onBeforeInput); } catch (_) {}
   try { el.removeEventListener("input", h.onInput); } catch (_) {}
-  try { el.removeEventListener("blur", h.onBlur); } catch (_) {}
+  try { if (h.onBlur) el.removeEventListener("blur", h.onBlur); } catch (_) {}
   try { el.removeEventListener("click", h.onClick, true); } catch (_) {}
-  try { el.removeEventListener("mousedown", h.onMouseDown, true); } catch (_) {}
+  try { if (h.onMouseDown) el.removeEventListener("mousedown", h.onMouseDown, true); } catch (_) {}
+  try { if (h.onPointerDown) el.removeEventListener("pointerdown", h.onPointerDown, true); } catch (_) {}
+  try { if (h.onMouseDownFallback) el.removeEventListener("mousedown", h.onMouseDownFallback, true); } catch (_) {}
   try { if (h.onSelectionChange) el.ownerDocument.removeEventListener("selectionchange", h.onSelectionChange); } catch (_) {}
   try { if (h.onScroll) el.ownerDocument.removeEventListener("scroll", h.onScroll, true); } catch (_) {}
   try { if (h.onScroll && el.ownerDocument.defaultView) el.ownerDocument.defaultView.removeEventListener("scroll", h.onScroll, true); } catch (_) {}
@@ -180,6 +182,11 @@ function cleanupEditingState() {
 export function isInlineEditing() {
   return !!active && !!state.editing;
 }
+
+export function commitBeforeEditorContextChange() {
+  if (!active) return false;
+  return commitActiveEdit();
+}
 export function getActiveFieldElement() {
   return active ? active.fieldEl : null;
 }
@@ -192,17 +199,31 @@ export function isActiveFieldElement(target) {
   return false;
 }
 
+export function isActiveEditorSessionEvent(event) {
+  if (!active || !event) return false;
+  try {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const node of path) {
+      if (node === active.fieldEl) return true;
+      if (node?.getAttribute?.("data-stratum-editor-ui") === "true") return true;
+    }
+    if (isActiveFieldElement(event.target)) return true;
+    if (event.target?.closest?.('[data-stratum-editor-ui="true"]')) return true;
+  } catch (_) {}
+  return false;
+}
+
 // Helpers for rich toolbar
-function getActiveMarks(offsets) {
-  if (!active || !active.fieldEl || active.mode !== "rich") return [];
-  const o = offsets || active.richSelection || selectionToOffsets(active.fieldEl);
-  if (!o || o.start === o.end) return [];
+function getActiveMarks() {
+  if (!active?.rich || !active.fieldEl) return [];
+  const selection = active.rich.selection;
+  if (!selection || selection.start === selection.end) return [];
   const rich = domToRichText(active.fieldEl);
   let pos = 0;
   const selectedRuns = [];
   for (const run of rich.content) {
     const runEnd = pos + run.text.length;
-    if (runEnd <= o.start || pos >= o.end) { pos = runEnd; continue; }
+    if (runEnd <= selection.start || pos >= selection.end) { pos = runEnd; continue; }
     selectedRuns.push(run);
     pos = runEnd;
   }
@@ -215,47 +236,38 @@ function getActiveMarks(offsets) {
   return common.map(m => m.type);
 }
 
-function updateToolbar() {
-  if (!active || active.mode !== "rich" || !active.canvas) return;
-  if (RichToolbar.isToolbarInteraction()) return;
-  const fieldEl = active.fieldEl;
-  const offsets = selectionToOffsets(fieldEl);
-  if (!offsets || offsets.start === offsets.end) {
-    RichToolbar.hideToolbar();
-    active.richSelection = null;
-    return;
-  }
-  const sel = fieldEl.ownerDocument.getSelection();
-  if (!sel || sel.rangeCount === 0) {
-    RichToolbar.hideToolbar(); active.richSelection = null;
-    return;
-  }
-  const range = sel.getRangeAt(0);
-  if (!fieldEl.contains(range.commonAncestorContainer) && range.commonAncestorContainer !== fieldEl) {
-    RichToolbar.hideToolbar(); active.richSelection = null;
-    return;
-  }
-  // Save stable offsets
-  active.richSelection = { start: offsets.start, end: offsets.end };
-  let rect = null;
-  try { rect = range.getBoundingClientRect(); } catch (_) {}
-  if (!rect || (rect.width === 0 && rect.height === 0)) {
-    try { rect = fieldEl.getBoundingClientRect(); } catch (_) {}
-  }
-  const marks = getActiveMarks(offsets);
-  RichToolbar.showToolbar(active.canvas, fieldEl, rect, marks, offsets);
+function rectForRichSelection() {
+  if (!active?.rich?.selection) return null;
+  const { fieldEl } = active;
+  const { start, end } = active.rich.selection;
+  try {
+    const range = offsetsToRange(fieldEl, start, end);
+    const rect = range?.getBoundingClientRect?.();
+    if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+  } catch (_) {}
+  try { return fieldEl.getBoundingClientRect(); } catch (_) { return null; }
 }
 
-function applyRichMark(markType, offsetsParam, href) {
-  if (!active || active.mode !== "rich") return false;
-  const fieldEl = active.fieldEl;
-  // offsetsParam is the canonical saved offsets; fall back to active.richSelection or live selection
-  let offsets = offsetsParam;
-  if (!offsets || typeof offsets.start !== "number" || typeof offsets.end !== "number") {
-    offsets = active.richSelection || selectionToOffsets(fieldEl);
+function updateRichToolbar() {
+  if (!active?.rich || !active.canvas) return;
+  if (active.rich.ui === "link") return;
+  const selection = active.rich.selection;
+  if (!selection || selection.start === selection.end) {
+    RichToolbar.hideToolbar();
+    if (active.rich.ui !== "link") active.rich.ui = "none";
+    return;
   }
+  active.rich.ui = "toolbar";
+  RichToolbar.showToolbar(active.canvas, rectForRichSelection(), getActiveMarks());
+}
+
+function applyRichMark(markType, href) {
+  if (!active?.rich) return false;
+  if (markType === "link" && href != null && href !== "" && !isSafeHref(href)) return false;
+  const session = active;
+  const fieldEl = active.fieldEl;
+  const offsets = active.rich.selection;
   if (!offsets || offsets.start === offsets.end) return false;
-  // Validate/clamp saved offsets against current text length and ensure start <= end
   const len = fieldEl.textContent ? fieldEl.textContent.length : 0;
   let s = Math.max(0, Math.min(offsets.start, len));
   let e = Math.max(0, Math.min(offsets.end, len));
@@ -265,35 +277,32 @@ function applyRichMark(markType, offsetsParam, href) {
   const end = e;
   const current = domToRichText(fieldEl);
   const updated = toggleMarkInRichText(current, start, end, markType, href);
-  renderRichTextToDOM(fieldEl, updated);
-  restoreRichEditingContext(fieldEl, { start, end });
-  try { active.canvas.requestSync(); } catch (_) {}
-  // Keep toolbar visible with updated active states
+  session.rich.internalMutation = true;
   try {
-    let rect = null;
-    try {
-      const sel = fieldEl.ownerDocument.getSelection();
-      if (sel && sel.rangeCount > 0) rect = sel.getRangeAt(0).getBoundingClientRect();
-    } catch (_) {}
-    const marks = getActiveMarks({ start, end });
-    RichToolbar.showToolbar(active.canvas, fieldEl, rect, marks, { start, end });
-  } catch (_) {}
+    renderRichTextToDOM(fieldEl, updated);
+    restoreRichEditingContext(fieldEl, { start, end });
+  } finally {
+    session.rich.internalMutation = false;
+  }
+  if (active !== session) return false;
+  session.rich.selection = { start, end };
+  try { session.canvas.requestSync(); } catch (_) {}
+  updateRichToolbar();
   return true;
 }
 
-function triggerLink() {
-  if (!active || active.mode !== "rich") return;
-  const fieldEl = active.fieldEl;
-  const offsets = selectionToOffsets(fieldEl);
-  if (!offsets || offsets.start === offsets.end) return;
-  const current = domToRichText(fieldEl);
+function openLink() {
+  if (!active?.rich) return false;
+  const selection = active.rich.selection;
+  if (!selection || selection.start === selection.end) return false;
+  const current = domToRichText(active.fieldEl);
   let href = "";
   let pos = 0;
   let uniformHref = null;
   let uniform = true;
   for (const run of current.content) {
     const runEnd = pos + run.text.length;
-    if (runEnd <= offsets.start || pos >= offsets.end) { pos = runEnd; continue; }
+    if (runEnd <= selection.start || pos >= selection.end) { pos = runEnd; continue; }
     const link = run.marks && run.marks.find(m => m.type === "link");
     const curHref = link ? link.href : null;
     if (uniformHref === null) uniformHref = curHref;
@@ -301,8 +310,27 @@ function triggerLink() {
     pos = runEnd;
   }
   if (uniform && uniformHref) href = uniformHref;
-  active.richSelection = { ...offsets };
-  RichToolbar.showPopover(active.canvas, fieldEl, href, offsets);
+  active.rich.ui = "link";
+  RichToolbar.showPopover(active.canvas, rectForRichSelection(), href);
+  return true;
+}
+
+function resumeRichToolbar() {
+  if (!active?.rich?.selection) return false;
+  const session = active;
+  const selection = { ...session.rich.selection };
+  RichToolbar.hidePopover();
+  session.rich.ui = "toolbar";
+  session.rich.internalMutation = true;
+  try {
+    restoreRichEditingContext(session.fieldEl, selection);
+  } finally {
+    session.rich.internalMutation = false;
+  }
+  if (active !== session) return false;
+  session.rich.selection = selection;
+  updateRichToolbar();
+  return true;
 }
 
 export function commitActiveEdit() {
@@ -458,7 +486,18 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOp
     try { fieldEl.textContent = originalValue; } catch (_) {}
   }
 
-  active = { fieldEl, nodeId, instanceKey, path, originalValue, originalRichText, mode, canvas, handlers: null };
+  active = {
+    fieldEl,
+    nodeId,
+    instanceKey,
+    path,
+    originalValue,
+    originalRichText,
+    mode,
+    canvas,
+    handlers: null,
+    rich: mode === "rich" ? { selection: null, ui: "none", internalMutation: false } : null,
+  };
   try { state.editing = { nodeId, instanceKey, path, mode, originalValue: mode === "rich" ? originalRichText : originalValue }; } catch (_) {}
 
   try {
@@ -509,8 +548,13 @@ export function startInlineEdit(nodeId, instanceKey, canvas, forcedPath, maybeOp
     }
   } catch (_) {}
 
-  if (mode === "rich") attachRichHandlers(fieldEl, canvas);
-  else attachPlainHandlers(fieldEl, canvas);
+  if (mode === "rich") {
+    attachRichHandlers(fieldEl, canvas);
+    const initialSelection = selectionToOffsets(fieldEl);
+    if (initialSelection) active.rich.selection = { ...initialSelection };
+  } else {
+    attachPlainHandlers(fieldEl, canvas);
+  }
 
   try {
     if (canvas.overlay) {
@@ -533,11 +577,6 @@ function attachPlainHandlers(fieldEl, canvas) {
   const onKeyDown = (e) => {
     if (composing || e.isComposing) return;
     if (e.key === "Escape") {
-      if (RichToolbar.isPopoverVisible()) {
-        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
-        RichToolbar.hidePopover();
-        return;
-      }
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
       cancelActiveEdit();
       return;
@@ -620,7 +659,6 @@ function attachPlainHandlers(fieldEl, canvas) {
   };
   const onBlur = () => {
     queueMicrotask(() => {
-      if (RichToolbar.isPopoverVisible() || RichToolbar.isToolbarInteraction()) return;
       if (active && active.fieldEl === fieldEl) {
         commitActiveEdit();
       }
@@ -655,15 +693,29 @@ function attachRichHandlers(fieldEl, canvas) {
   if (!fieldEl) return;
   const handlers = {};
   const onCompositionStart = () => { composing = true; };
-  const onCompositionEnd = () => { composing = false; try { canvas.requestSync(); } catch (_) {} };
+  const onCompositionEnd = () => {
+    composing = false;
+    captureBrowserSelection();
+    try { canvas.requestSync(); } catch (_) {}
+  };
+
+  const captureBrowserSelection = () => {
+    if (!active?.rich || active.fieldEl !== fieldEl || active.rich.internalMutation) return false;
+    if (active.rich.ui === "link") return false;
+    const offsets = selectionToOffsets(fieldEl);
+    if (!offsets) return false;
+    active.rich.selection = { start: offsets.start, end: offsets.end };
+    updateRichToolbar();
+    try { canvas.requestSync(); } catch (_) {}
+    return true;
+  };
+
   const onKeyDown = (e) => {
     if (composing || e.isComposing) return;
     if (e.key === "Escape") {
       if (RichToolbar.isPopoverVisible()) {
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
-        const saved = RichToolbar.getSavedOffsets() || active.richSelection;
-        if (saved) restoreRichEditingContext(fieldEl, saved);
-        RichToolbar.hidePopover();
+        resumeRichToolbar();
         return;
       }
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation && e.stopImmediatePropagation();
@@ -681,62 +733,57 @@ function attachRichHandlers(fieldEl, canvas) {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && !e.shiftKey && e.key.toLowerCase() === "b") {
       e.preventDefault(); e.stopPropagation();
-      const offsets = selectionToOffsets(fieldEl);
-      applyRichMark("bold", offsets);
+      applyRichMark("bold");
       return;
     }
     if (mod && !e.shiftKey && e.key.toLowerCase() === "i") {
       e.preventDefault(); e.stopPropagation();
-      const offsets = selectionToOffsets(fieldEl);
-      applyRichMark("italic", offsets);
+      applyRichMark("italic");
       return;
     }
     if (mod && e.key.toLowerCase() === "k") {
       e.preventDefault(); e.stopPropagation();
-      triggerLink();
+      openLink();
       return;
     }
     if (mod && e.shiftKey && e.key.toLowerCase() === "x") {
       e.preventDefault(); e.stopPropagation();
-      const offsets = selectionToOffsets(fieldEl);
-      applyRichMark("strike", offsets);
+      applyRichMark("strike");
       return;
     }
   };
   const onPaste = (e) => {
     try { e.preventDefault(); } catch (_) {}
+    captureBrowserSelection();
     let html = "";
     let text = "";
     try { html = (e.clipboardData || window.clipboardData).getData("text/html") || ""; } catch (_) {}
     try { text = (e.clipboardData || window.clipboardData).getData("text/plain") || ""; } catch (_) {}
-    if (html && html.trim() !== "") {
-      const pasted = htmlToRichText(html);
-      if (pasted.content.length === 0 && text) {
+    const session = active;
+    if (!session?.rich) return;
+    session.rich.internalMutation = true;
+    try {
+      if (html && html.trim() !== "") {
+        let pasted = htmlToRichText(html);
+        if (pasted.content.length === 0 && text) {
+          const plain = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, " ");
+          pasted = { version: 1, content: plain ? [{ text: plain }] : [] };
+        }
+        if (!insertRichTextAtSelection(fieldEl, pasted)) {
+          const current = domToRichText(fieldEl);
+          const merged = normalizeRichText({ version: 1, content: [...current.content, ...pasted.content] });
+          renderRichTextToDOM(fieldEl, merged);
+          const newPosition = merged.content.reduce((total, run) => total + run.text.length, 0);
+          restoreSelectionFromOffsets(fieldEl, newPosition, newPosition);
+        }
+      } else if (text) {
         const plain = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, " ");
-        const offsets = selectionToOffsets(fieldEl);
-        if (!offsets) return;
-        const inserted = { version: 1, content: plain ? [{ text: plain }] : [] };
-        insertRichTextAtSelection(fieldEl, inserted);
-        try { canvas.requestSync(); } catch (_) {}
-        return;
+        insertRichTextAtSelection(fieldEl, { version: 1, content: plain ? [{ text: plain }] : [] });
       }
-      const offsets = selectionToOffsets(fieldEl);
-      if (!offsets) {
-        const current = domToRichText(fieldEl);
-        const merged = normalizeRichText({ version: 1, content: [...current.content, ...pasted.content] });
-        renderRichTextToDOM(fieldEl, merged);
-        const newPos = merged.content.reduce((a, r) => a + r.text.length, 0);
-        restoreSelectionFromOffsets(fieldEl, newPos, newPos);
-      } else {
-        insertRichTextAtSelection(fieldEl, pasted);
-      }
-    } else if (text) {
-      const plain = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n/g, " ");
-      const offsets = selectionToOffsets(fieldEl);
-      if (!offsets) return;
-      const pasted = { version: 1, content: plain ? [{ text: plain }] : [] };
-      insertRichTextAtSelection(fieldEl, pasted);
+    } finally {
+      session.rich.internalMutation = false;
     }
+    captureBrowserSelection();
     try { canvas.requestSync(); } catch (_) {}
   };
   const onDrop = (e) => { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} };
@@ -746,7 +793,7 @@ function attachRichHandlers(fieldEl, canvas) {
     if (e.inputType === "insertParagraph" || e.inputType === "insertLineBreak") e.preventDefault();
   };
   const onInput = () => {
-    // Sanitize: remove disallowed tags, keep only allowed
+    captureBrowserSelection();
     let needsSanitize = false;
     if (fieldEl.querySelector) {
       const disallowed = fieldEl.querySelector("span, div, p, ul, ol, li, h1, h2, h3, h4, h5, h6, blockquote, pre, img, svg, script, style, iframe, figure, table, tr, td, th");
@@ -763,85 +810,32 @@ function attachRichHandlers(fieldEl, canvas) {
       }
     }
     if (needsSanitize) {
-      // Re-serialize via RichText to normalize, then re-render, preserving selection
-      const offsets = selectionToOffsets(fieldEl);
+      const session = active;
+      const offsets = session?.rich?.selection ? { ...session.rich.selection } : null;
       const rich = domToRichText(fieldEl);
-      renderRichTextToDOM(fieldEl, rich);
-      if (offsets) restoreSelectionFromOffsets(fieldEl, offsets.start, offsets.end);
+      if (session?.rich) session.rich.internalMutation = true;
+      try {
+        renderRichTextToDOM(fieldEl, rich);
+        if (offsets) restoreSelectionFromOffsets(fieldEl, offsets.start, offsets.end);
+      } finally {
+        if (session?.rich) session.rich.internalMutation = false;
+      }
     }
     try { canvas.requestSync(); } catch (_) {}
-    // Update toolbar position
-    try {
-      const offsets = selectionToOffsets(fieldEl);
-      if (offsets && offsets.start !== offsets.end) {
-        const sel = fieldEl.ownerDocument.getSelection();
-        let rect = null;
-        if (sel && sel.rangeCount>0) rect = sel.getRangeAt(0).getBoundingClientRect();
-        const marks = (() => {
-          const rich = domToRichText(fieldEl);
-          let pos=0, selectedRuns=[];
-          for (const run of rich.content) {
-            const runEnd=pos+run.text.length;
-            if (runEnd<=offsets.start || pos>=offsets.end) {pos=runEnd; continue;}
-            selectedRuns.push(run);
-            pos=runEnd;
-          }
-          if (selectedRuns.length===0) return [];
-          let common = selectedRuns[0].marks ? [...selectedRuns[0].marks] : [];
-          for (let i=1;i<selectedRuns.length;i++) {
-            const cur = selectedRuns[i].marks||[];
-            common = common.filter(cm=> cur.some(m=> m.type===cm.type && (cm.type!=="link" || m.href===cm.href)));
-          }
-          return common.map(m=>m.type);
-        })();
-        RichToolbar.showToolbar(canvas, fieldEl, rect, marks, offsets);
-      } else {
-        if (!RichToolbar.isToolbarInteraction()) RichToolbar.hideToolbar();
-      }
-    } catch (_) {}
-  };
-  const onBlur = () => {
-    queueMicrotask(() => {
-      if (RichToolbar.isPopoverVisible() || RichToolbar.isToolbarInteraction()) return;
-      if (active && active.fieldEl === fieldEl) commitActiveEdit();
-    });
+    updateRichToolbar();
   };
   const onClick = (e) => { e.stopPropagation(); };
-  const onMouseDown = (e) => { e.stopPropagation(); };
-  const onSelectionChange = () => {
-    if (!active || active.fieldEl !== fieldEl) return;
-    if (RichToolbar.isToolbarInteraction()) return;
-    // Update toolbar visibility
-    try {
-      const offsets = selectionToOffsets(fieldEl);
-      if (!offsets || offsets.start===offsets.end) { RichToolbar.hideToolbar(); return; }
-      const sel = fieldEl.ownerDocument.getSelection();
-      if (!sel || sel.rangeCount===0) { RichToolbar.hideToolbar(); return; }
-      const range = sel.getRangeAt(0);
-      if (!fieldEl.contains(range.commonAncestorContainer) && range.commonAncestorContainer!==fieldEl) { RichToolbar.hideToolbar(); return; }
-      const rect = range.getBoundingClientRect();
-      const rich = domToRichText(fieldEl);
-      let pos=0, selectedRuns=[];
-      for (const run of rich.content) {
-        const runEnd=pos+run.text.length;
-        if (runEnd<=offsets.start || pos>=offsets.end) {pos=runEnd; continue;}
-        selectedRuns.push(run);
-        pos=runEnd;
-      }
-      let common=[];
-      if (selectedRuns.length>0) {
-        common = selectedRuns[0].marks ? [...selectedRuns[0].marks] : [];
-        for (let i=1;i<selectedRuns.length;i++) {
-          const cur=selectedRuns[i].marks||[];
-          common=common.filter(cm=> cur.some(m=> m.type===cm.type && (cm.type!=="link" || m.href===cm.href)));
-        }
-      }
-      const marks = common.map(m=>m.type);
-      RichToolbar.showToolbar(canvas, fieldEl, rect, marks, offsets);
-    } catch (_) { RichToolbar.hideToolbar(); }
-    try { canvas.requestSync(); } catch (_) {}
+  const onPointerDown = (e) => {
+    e.stopPropagation();
   };
-  const onScroll = () => { if (!RichToolbar.isToolbarInteraction()) RichToolbar.hideToolbar(); };
+  const onSelectionChange = () => {
+    captureBrowserSelection();
+  };
+  const onScroll = () => {
+    if (!active?.rich || active.rich.ui !== "toolbar") return;
+    RichToolbar.hideToolbar();
+    active.rich.ui = "none";
+  };
   fieldEl.addEventListener("compositionstart", onCompositionStart);
   fieldEl.addEventListener("compositionend", onCompositionEnd);
   fieldEl.addEventListener("keydown", onKeyDown, true);
@@ -849,9 +843,9 @@ function attachRichHandlers(fieldEl, canvas) {
   fieldEl.addEventListener("drop", onDrop);
   fieldEl.addEventListener("beforeinput", onBeforeInput);
   fieldEl.addEventListener("input", onInput);
-  fieldEl.addEventListener("blur", onBlur);
   fieldEl.addEventListener("click", onClick, true);
-  fieldEl.addEventListener("mousedown", onMouseDown, true);
+  fieldEl.addEventListener("pointerdown", onPointerDown, true);
+  fieldEl.addEventListener("mousedown", onPointerDown, true);
   try { fieldEl.ownerDocument.addEventListener("selectionchange", onSelectionChange); } catch (_) {}
   try { fieldEl.ownerDocument.defaultView && fieldEl.ownerDocument.defaultView.addEventListener("scroll", onScroll, true); } catch (_) {}
   try { fieldEl.ownerDocument.addEventListener("scroll", onScroll, true); } catch (_) {}
@@ -862,30 +856,28 @@ function attachRichHandlers(fieldEl, canvas) {
   handlers.onDrop = onDrop;
   handlers.onBeforeInput = onBeforeInput;
   handlers.onInput = onInput;
-  handlers.onBlur = onBlur;
   handlers.onClick = onClick;
-  handlers.onMouseDown = onMouseDown;
+  handlers.onPointerDown = onPointerDown;
+  handlers.onMouseDownFallback = onPointerDown;
   handlers.onSelectionChange = onSelectionChange;
   handlers.onScroll = onScroll;
   handlers.fieldEl = fieldEl;
-  // Single callback registration — one object style
   RichToolbar.setToolbarCallbacks({
-    toggleMark: (mark, offsets) => applyRichMark(mark, offsets),
-    openLink: () => triggerLink(),
+    toggleMark: (mark) => applyRichMark(mark),
+    openLink: () => openLink(),
     applyLink: (href) => {
-      const offsets = active.richSelection || selectionToOffsets(fieldEl);
-      applyRichMark("link", offsets, href);
+      if (!active?.rich) return;
+      RichToolbar.hidePopover();
+      active.rich.ui = "toolbar";
+      applyRichMark("link", href);
     },
     removeLink: () => {
-      const offsets = active.richSelection || selectionToOffsets(fieldEl);
-      applyRichMark("link", offsets, null);
+      if (!active?.rich) return;
+      RichToolbar.hidePopover();
+      active.rich.ui = "toolbar";
+      applyRichMark("link", null);
     },
-    closeLink: () => {
-      try {
-        const curOffsets = active.richSelection || RichToolbar.getSavedOffsets();
-        if (curOffsets) restoreRichEditingContext(fieldEl, curOffsets);
-      } catch (_) {}
-    }
+    closeLink: () => resumeRichToolbar(),
   });
 
   if (active) active.handlers = handlers;

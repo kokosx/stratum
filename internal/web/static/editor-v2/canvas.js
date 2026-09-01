@@ -4,7 +4,7 @@ import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
 import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument, primaryInlineFieldForNode } from "./state.js";
 import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
-import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveFieldElement, getActiveFieldElement } from "./inline-editor.js";
+import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveEditorSessionEvent, commitBeforeEditorContextChange } from "./inline-editor.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -132,6 +132,7 @@ export class CanvasController {
     this.selected = null; // {nodeId, instanceKey, editable, owner...}
     this._rafPending = false;
     this._onMove = this.onMove.bind(this);
+    this._onPointerDown = this.onPointerDown.bind(this);
     this._onClick = this.onClick.bind(this);
     this._onScroll = this.onScroll.bind(this);
     this._onResize = this.onResize.bind(this);
@@ -197,6 +198,8 @@ export class CanvasController {
     try {
       doc.addEventListener("pointermove", this._onMove, true);
       doc.addEventListener("mousemove", this._onMove, true);
+      doc.addEventListener("pointerdown", this._onPointerDown, true);
+      doc.addEventListener("mousedown", this._onPointerDown, true);
       doc.addEventListener("click", this._onClick, true);
       doc.addEventListener("dblclick", this._onDblClick, true);
       doc.addEventListener("auxclick", this._onAux, true);
@@ -236,6 +239,8 @@ export class CanvasController {
       if (this.doc) {
         this.doc.removeEventListener("pointermove", this._onMove, true);
         this.doc.removeEventListener("mousemove", this._onMove, true);
+        this.doc.removeEventListener("pointerdown", this._onPointerDown, true);
+        this.doc.removeEventListener("mousedown", this._onPointerDown, true);
         this.doc.removeEventListener("click", this._onClick, true);
         this.doc.removeEventListener("dblclick", this._onDblClick, true);
         this.doc.removeEventListener("auxclick", this._onAux, true);
@@ -618,17 +623,23 @@ export class CanvasController {
     if (this.quickInserter) this.quickInserter.close();
   }
 
+  onPointerDown(event) {
+    if (!isInlineEditing()) return;
+    if (isActiveEditorSessionEvent(event)) return;
+    commitBeforeEditorContextChange();
+  }
+
   onClick(e) {
     if (!this.doc || !this.overlay) return;
     if (this.isEditorUIEvent(e)) return;
-    // Inline editing: clicks inside active field must reach contenteditable normally
+    // Pointer intent was already decided on pointerdown. An owned control may
+    // hide itself before the resulting click (Link swaps toolbar for popover),
+    // so never reinterpret that click as an outside action. Keyboard-generated
+    // clicks have detail=0 and explicitly commit here.
     if (isInlineEditing()) {
-      const activeEl = getActiveFieldElement();
-      if (activeEl && (e.target === activeEl || (activeEl.contains && activeEl.contains(e.target)))) {
-        return;
-      }
-      // Click outside active field: commit first, then proceed to select new block
-      commitActiveEdit();
+      if (isActiveEditorSessionEvent(e)) return;
+      if (e.detail === 0) commitBeforeEditorContextChange();
+      else return;
     }
     if (e.type === "submit") {
       try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
@@ -1284,6 +1295,7 @@ export class CanvasController {
 
   onKey(e) {
     if (!e) return;
+    if (this.isEditorUIEvent(e)) return;
     // Inline editing gets first Escape priority
     if (isInlineEditing()) {
       if (e.key === "Escape") {

@@ -16,7 +16,7 @@ import { clearInsertionTarget, describeBlocksTarget, getInsertionSource, getInse
 import { insertBlock } from "./commands.js";
 import { NavigatorView } from "./navigator.js";
 import { inspectorTitle, renderDocumentBody, renderInspectorBody } from "./inspector.js";
-import { commitActiveEdit, isInlineEditing } from "./inline-editor.js";
+import { commitBeforeEditorContextChange } from "./inline-editor.js";
 
 function createElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -134,7 +134,7 @@ export class PanelController {
     if (!button) return;
     button.addEventListener("click", () => {
       // Commit active inline edit before switching panels (§51/52)
-      try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
+      try { commitBeforeEditorContextChange(); } catch (_) {}
       this.lastFocusedButton[slot] = button;
       this.focusNext[slot] = panelState[slot] !== panel;
       // Switching Blocks → Layers clears insertionTarget (§37)

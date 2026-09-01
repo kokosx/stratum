@@ -1,4 +1,4 @@
-// richtext-toolbar.js — floating selection toolbar + link popover for rich Text
+// richtext-toolbar.js — stateless floating rich-text controls
 
 import { isSafeHref } from "./richtext-editor.js";
 
@@ -64,8 +64,8 @@ const TOOLBAR_CSS = `
   border-radius: 6px;
   font: 400 13px/1 system-ui;
 }
-.richtext-link-popover__input:focus{ outline: 2px solid #2563eb; outline-offset: 1px; border-color: #2563eb; }
-.richtext-link-popover__actions{ display:flex; gap:8px; justify-content: space-between; }
+.richtext-link-popover__input:focus{ outline: 2px solid #2563eb; outline-offset: 1px; border-color:#2563eb; }
+.richtext-link-popover__actions{ display:flex; gap:8px; justify-content:flex-end; }
 .richtext-link-popover__btn{
   height: 30px;
   padding: 0 12px;
@@ -73,142 +73,123 @@ const TOOLBAR_CSS = `
   font: 600 12px/1 system-ui;
   cursor: pointer;
 }
-.richtext-link-popover__btn--remove{ background:#fff; border:1px solid #e2e8f0; color:#475569; }
+.richtext-link-popover__btn--remove,
+.richtext-link-popover__btn--cancel{ background:#fff; border:1px solid #e2e8f0; color:#475569; }
 .richtext-link-popover__btn--apply{ background:#2563eb; border:1px solid #2563eb; color:#fff; }
-.richtext-link-popover__error{ color:#dc2626; font: 400 11px/1.2 system-ui; display:none; }
+.richtext-link-popover__error{ color:#dc2626; font:400 11px/1.2 system-ui; display:none; }
 .richtext-link-popover__error.is-visible{ display:block; }
 `;
 
+let styleEl = null;
 let toolbarEl = null;
 let popoverEl = null;
 let inputEl = null;
 let errorEl = null;
-let activeFieldEl = null;
-let activeCanvas = null;
-let savedOffsets = null; // for link popover {start,end}
-let savedToolbarOffsets = null; // for toolbar actions {start,end}
-let toolbarInteraction = false;
-let suppressNextClick = false;
-let callbacks = {
-  toggleMark: null,
-  openLink: null,
-  applyLink: null,
-  removeLink: null,
-  closeLink: null,
-};
+let callbacks = emptyCallbacks();
 
-function beginToolbarInteraction() {
-  toolbarInteraction = true;
+function emptyCallbacks() {
+  return {
+    toggleMark: null,
+    openLink: null,
+    applyLink: null,
+    removeLink: null,
+    closeLink: null,
+  };
 }
 
-function endToolbarInteraction() {
-  toolbarInteraction = false;
+function scheduleFrame(canvas, callback) {
+  const win = canvas?.doc?.defaultView;
+  const frame = win?.requestAnimationFrame || globalThis.requestAnimationFrame;
+  if (typeof frame === "function") frame.call(win || globalThis, callback);
+  else callback();
 }
 
-function performToolbarAction(mark) {
-  if (!savedToolbarOffsets) return;
-  const offsets = { start: savedToolbarOffsets.start, end: savedToolbarOffsets.end };
-  if (mark === "link") {
-    if (callbacks.openLink) callbacks.openLink();
-  } else {
-    if (callbacks.toggleMark) callbacks.toggleMark(mark, offsets);
-  }
+function emitMark(mark) {
+  if (mark === "link") callbacks.openLink?.();
+  else callbacks.toggleMark?.(mark);
+}
+
+function bindToolbarButton(button, mark) {
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    emitMark(mark);
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    emitMark(mark);
+  });
+}
+
+function stopOwnedEvent(event) {
+  event.stopPropagation();
 }
 
 function ensureElements(canvas) {
-  if (!canvas || !canvas.overlay || !canvas.overlay.shadow) return false;
+  if (!canvas?.overlay?.shadow || !canvas.doc) return false;
   const shadow = canvas.overlay.shadow;
-  if (toolbarEl && toolbarEl.parentNode === shadow) return true;
-  try {
-    const style = canvas.doc.createElement("style");
-    style.setAttribute("data-richtext-toolbar", "true");
-    style.textContent = TOOLBAR_CSS;
-    shadow.appendChild(style);
-  } catch (_) {}
+  if (toolbarEl?.parentNode === shadow && popoverEl?.parentNode === shadow) return true;
+  if (toolbarEl && toolbarEl.parentNode !== shadow) {
+    try { toolbarEl.remove(); } catch (_) { try { toolbarEl.parentNode?.removeChild(toolbarEl); } catch (_) {} }
+    toolbarEl = null;
+  }
+  if (popoverEl && popoverEl.parentNode !== shadow) {
+    try { popoverEl.remove(); } catch (_) { try { popoverEl.parentNode?.removeChild(popoverEl); } catch (_) {} }
+    popoverEl = null;
+  }
+  if (styleEl && styleEl.parentNode !== shadow) {
+    try { styleEl.remove(); } catch (_) { try { styleEl.parentNode?.removeChild(styleEl); } catch (_) {} }
+    styleEl = null;
+  }
+  if (!styleEl) {
+    styleEl = canvas.doc.createElement("style");
+    styleEl.setAttribute("data-richtext-toolbar", "true");
+    styleEl.textContent = TOOLBAR_CSS;
+    shadow.appendChild(styleEl);
+  }
+
   toolbarEl = canvas.doc.createElement("div");
   toolbarEl.className = "richtext-toolbar";
   toolbarEl.setAttribute("role", "toolbar");
+  toolbarEl.setAttribute("aria-label", "Text formatting");
   toolbarEl.setAttribute("data-stratum-editor-ui", "true");
-  const btns = [
+  const buttons = [
     { mark: "bold", label: "Bold", text: "B", title: "Bold (⌘B)" },
     { mark: "italic", label: "Italic", text: "I", title: "Italic (⌘I)", style: "font-style:italic" },
-    { sep: true },
+    { separator: true },
     { mark: "link", label: "Link", text: "🔗", title: "Link (⌘K)" },
-    { sep: true },
+    { separator: true },
     { mark: "strike", label: "Strikethrough", text: "S", title: "Strikethrough" },
     { mark: "code", label: "Inline code", text: "</>", title: "Code" },
   ];
-  for (const b of btns) {
-    if (b.sep) {
-      const sep = canvas.doc.createElement("div");
-      sep.className = "richtext-toolbar__sep";
-      toolbarEl.appendChild(sep);
+  for (const definition of buttons) {
+    if (definition.separator) {
+      const separator = canvas.doc.createElement("div");
+      separator.className = "richtext-toolbar__sep";
+      separator.setAttribute("aria-hidden", "true");
+      toolbarEl.appendChild(separator);
       continue;
     }
-    const btn = canvas.doc.createElement("button");
-    btn.type = "button";
-    btn.className = "richtext-toolbar__btn";
-    btn.setAttribute("data-mark", b.mark);
-    btn.setAttribute("aria-label", b.label);
-    btn.setAttribute("title", b.title);
-    btn.textContent = b.text;
-    if (b.style) btn.style.cssText += b.style;
-    // Pointerdown is the primary action: happens before blur/selectionchange
-    btn.addEventListener("pointerdown", (e) => {
-      beginToolbarInteraction();
-      suppressNextClick = true;
-      e.preventDefault();
-      e.stopPropagation();
-      performToolbarAction(b.mark);
-      // keep toolbarInteraction true until click guard clears it
-    });
-    btn.addEventListener("mousedown", (e) => {
-      // Fallback for devices without pointer events: same as pointerdown but only if not already handled
-      if (suppressNextClick) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      beginToolbarInteraction();
-      suppressNextClick = true;
-      e.preventDefault();
-      e.stopPropagation();
-      performToolbarAction(b.mark);
-    });
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (suppressNextClick) {
-        // pointerdown already performed the action — consume click without double toggle
-        suppressNextClick = false;
-        // End interaction on next microtask to allow blur/selectionchange guards to see true during this dispatch
-        queueMicrotask(() => {
-          // keep toolbar visible: do not hide, just end interaction state
-          endToolbarInteraction();
-        });
-        return;
-      }
-      // Keyboard activation (Space/Enter) has no pointerdown — perform once here
-      performToolbarAction(b.mark);
-      queueMicrotask(() => endToolbarInteraction());
-    });
-    btn.addEventListener("pointercancel", () => {
-      suppressNextClick = false;
-      endToolbarInteraction();
-    });
-    // Fallback for drag outside where click never fires (task-level, not microtask)
-    btn.addEventListener("pointerup", () => {
-      if (suppressNextClick) {
-        setTimeout(() => {
-          if (suppressNextClick) {
-            suppressNextClick = false;
-            endToolbarInteraction();
-          }
-        }, 0);
-      }
-    });
-    toolbarEl.appendChild(btn);
+    const button = canvas.doc.createElement("button");
+    button.type = "button";
+    button.className = "richtext-toolbar__btn";
+    button.setAttribute("data-mark", definition.mark);
+    button.setAttribute("aria-label", definition.label);
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("title", definition.title);
+    button.textContent = definition.text;
+    if (definition.style) button.style.cssText = definition.style;
+    bindToolbarButton(button, definition.mark);
+    toolbarEl.appendChild(button);
   }
+  toolbarEl.addEventListener("pointerdown", stopOwnedEvent);
+  toolbarEl.addEventListener("click", stopOwnedEvent);
   shadow.appendChild(toolbarEl);
 
   popoverEl = canvas.doc.createElement("div");
@@ -220,79 +201,69 @@ function ensureElements(canvas) {
     <div class="richtext-link-popover__error"></div>
     <div class="richtext-link-popover__actions">
       <button class="richtext-link-popover__btn richtext-link-popover__btn--remove" type="button">Remove</button>
+      <button class="richtext-link-popover__btn richtext-link-popover__btn--cancel" type="button">Cancel</button>
       <button class="richtext-link-popover__btn richtext-link-popover__btn--apply" type="button">Apply</button>
     </div>
   `;
+  popoverEl.addEventListener("pointerdown", stopOwnedEvent);
+  popoverEl.addEventListener("click", stopOwnedEvent);
   shadow.appendChild(popoverEl);
+
   inputEl = popoverEl.querySelector("input");
   errorEl = popoverEl.querySelector(".richtext-link-popover__error");
-  const removeBtn = popoverEl.querySelector(".richtext-link-popover__btn--remove");
-  const applyBtn = popoverEl.querySelector(".richtext-link-popover__btn--apply");
-  [removeBtn, applyBtn, inputEl].forEach(el => {
-    if (!el) return;
-    el.addEventListener("mousedown", (e) => { beginToolbarInteraction(); e.preventDefault(); e.stopPropagation(); });
-    el.addEventListener("pointerdown", (e) => { beginToolbarInteraction(); e.preventDefault(); e.stopPropagation(); });
+  const removeButton = popoverEl.querySelector(".richtext-link-popover__btn--remove");
+  const cancelButton = popoverEl.querySelector(".richtext-link-popover__btn--cancel");
+  const applyButton = popoverEl.querySelector(".richtext-link-popover__btn--apply");
+
+  removeButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    callbacks.removeLink?.();
   });
-  removeBtn.addEventListener("click", (e) => {
-    e.preventDefault(); e.stopPropagation();
-    if (callbacks.removeLink) callbacks.removeLink();
-    hidePopover();
+  cancelButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    callbacks.closeLink?.();
   });
-  applyBtn.addEventListener("click", (e) => {
-    e.preventDefault(); e.stopPropagation();
-    const val = inputEl.value.trim();
-    if (!val) {
-      showError("Enter a URL");
-      return;
-    }
-    if (!isSafeHref(val)) {
-      showError("Invalid URL. Use /path, #anchor, https://, mailto:, tel:");
-      return;
-    }
-    hideError();
-    if (callbacks.applyLink) callbacks.applyLink(val);
-    hidePopover();
+  applyButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    applyInputLink();
   });
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const val = inputEl.value.trim();
-      if (!val) { showError("Enter a URL"); return; }
-      if (!isSafeHref(val)) { showError("Invalid URL"); return; }
-      hideError();
-      if (callbacks.applyLink) callbacks.applyLink(val);
-      hidePopover();
-    }
-    if (e.key === "Escape") {
-      e.preventDefault(); e.stopPropagation();
-      if (callbacks.closeLink) callbacks.closeLink();
-      hidePopover();
+  inputEl?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      applyInputLink();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      callbacks.closeLink?.();
     }
   });
-  // Keep interaction true while popover focused; end only when popover hidden
-  inputEl.addEventListener("focus", () => { beginToolbarInteraction(); });
-  inputEl.addEventListener("blur", () => {
-    // If popover is still visible, keep interaction true; otherwise microtask ends it.
-    // Do not use 200ms timer — explicit lifecycle.
-    if (isPopoverVisible()) return;
-    queueMicrotask(() => {
-      if (!isPopoverVisible()) endToolbarInteraction();
-    });
-  });
-  popoverEl.addEventListener("mousedown", (e) => { beginToolbarInteraction(); e.stopPropagation(); });
-  popoverEl.addEventListener("pointerdown", (e) => { beginToolbarInteraction(); e.stopPropagation(); });
-  popoverEl.addEventListener("click", (e) => e.stopPropagation());
-  // Also track toolbar itself
-  toolbarEl.addEventListener("mousedown", () => { beginToolbarInteraction(); });
-  toolbarEl.addEventListener("pointerdown", () => { beginToolbarInteraction(); });
   return true;
 }
 
-function showError(msg) {
+function applyInputLink() {
+  const href = inputEl?.value?.trim() || "";
+  if (!href) {
+    showError("Enter a URL");
+    return;
+  }
+  if (!isSafeHref(href)) {
+    showError("Invalid URL. Use /path, #anchor, https://, mailto:, tel:");
+    return;
+  }
+  hideError();
+  callbacks.applyLink?.(href);
+}
+
+function showError(message) {
   if (!errorEl) return;
-  errorEl.textContent = msg;
+  errorEl.textContent = message;
   errorEl.classList.add("is-visible");
 }
+
 function hideError() {
   if (!errorEl) return;
   errorEl.textContent = "";
@@ -300,156 +271,109 @@ function hideError() {
 }
 
 export function isPopoverVisible() {
-  return !!(popoverEl && popoverEl.classList.contains("is-visible"));
+  return !!popoverEl?.classList.contains("is-visible");
 }
 
 export function isToolbarVisible() {
-  return !!(toolbarEl && toolbarEl.classList.contains("is-visible"));
+  return !!toolbarEl?.classList.contains("is-visible");
 }
 
-export function isToolbarInteraction() {
-  return toolbarInteraction;
-}
-
-export function showToolbar(canvas, fieldEl, rect, activeMarks, offsets) {
-  if (!ensureElements(canvas)) return;
-  activeFieldEl = fieldEl;
-  activeCanvas = canvas;
-  if (offsets && typeof offsets.start === "number" && typeof offsets.end === "number") {
-    savedToolbarOffsets = { start: offsets.start, end: offsets.end };
-  }
-  if (!rect) {
+export function showToolbar(canvas, rect, activeMarks) {
+  if (!ensureElements(canvas) || !rect) {
     hideToolbar();
     return;
   }
   const marks = new Set(activeMarks || []);
-  for (const btn of toolbarEl.querySelectorAll("[data-mark]")) {
-    const mark = btn.getAttribute("data-mark");
-    const isActive = marks.has(mark);
-    btn.classList.toggle("is-active", isActive);
-    btn.setAttribute("aria-pressed", String(isActive));
+  for (const button of toolbarEl.querySelectorAll("[data-mark]")) {
+    const active = marks.has(button.getAttribute("data-mark"));
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
   }
   toolbarEl.classList.add("is-visible");
   positionToolbar(rect, canvas);
 }
 
 export function hideToolbar() {
-  if (toolbarEl) toolbarEl.classList.remove("is-visible");
-  // Do not clear savedToolbarOffsets immediately; keep for click handling if toolbarInteraction
-  if (!toolbarInteraction) savedToolbarOffsets = null;
+  toolbarEl?.classList.remove("is-visible");
 }
 
-export function showPopover(canvas, fieldEl, href, offsets) {
-  if (!ensureElements(canvas)) return;
-  activeFieldEl = fieldEl;
-  activeCanvas = canvas;
-  savedOffsets = offsets ? { ...offsets } : null;
-  savedToolbarOffsets = offsets ? { ...offsets } : null;
-  toolbarInteraction = true;
-  suppressNextClick = false;
-  if (inputEl) {
-    inputEl.value = href || "";
-    hideError();
-  }
-  let rect = null;
-  try {
-    const sel = fieldEl.ownerDocument.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const r = sel.getRangeAt(0);
-      rect = r.getBoundingClientRect();
-    }
-  } catch (_) {}
-  if (!rect || (rect.width === 0 && rect.height === 0)) {
-    try { rect = fieldEl.getBoundingClientRect(); } catch (_) {}
-  }
-  popoverEl.classList.add("is-visible");
+export function showPopover(canvas, rect, href) {
+  if (!ensureElements(canvas)) return false;
+  if (inputEl) inputEl.value = href || "";
+  hideError();
   hideToolbar();
-  requestAnimationFrame(() => positionPopover(rect, canvas));
-  if (inputEl) {
-    setTimeout(() => { try { inputEl.focus(); inputEl.select(); } catch (_) {} }, 20);
-  }
-  return savedOffsets;
+  popoverEl.classList.add("is-visible");
+  scheduleFrame(canvas, () => {
+    positionPopover(rect, canvas);
+    try {
+      inputEl?.focus({ preventScroll: true });
+      inputEl?.select();
+    } catch (_) {
+      try { inputEl?.focus(); } catch (_) {}
+    }
+  });
+  return true;
 }
-
-
 
 export function hidePopover() {
-  if (popoverEl) popoverEl.classList.remove("is-visible");
+  popoverEl?.classList.remove("is-visible");
   hideError();
-  savedOffsets = null;
-  toolbarInteraction = false;
-  suppressNextClick = false;
-}
-
-export function getSavedOffsets() {
-  return savedOffsets ? { ...savedOffsets } : null;
-}
-
-export function getSavedToolbarOffsets() {
-  return savedToolbarOffsets ? { ...savedToolbarOffsets } : null;
 }
 
 function positionToolbar(rect, canvas) {
   if (!toolbarEl || !rect) return;
-  const doc = canvas.doc;
-  const vw = doc.documentElement.clientWidth || window.innerWidth;
-  const vh = doc.documentElement.clientHeight || window.innerHeight;
-  const tbRect = { width: 220, height: 36 };
+  const viewportWidth = canvas.doc.documentElement.clientWidth || canvas.doc.defaultView?.innerWidth || 1024;
+  const viewportHeight = canvas.doc.documentElement.clientHeight || canvas.doc.defaultView?.innerHeight || 768;
+  let width = 220;
+  let height = 36;
   try {
-    const r = toolbarEl.getBoundingClientRect();
-    if (r.width > 0) { tbRect.width = r.width; tbRect.height = r.height; }
+    const measured = toolbarEl.getBoundingClientRect();
+    if (measured.width > 0) { width = measured.width; height = measured.height; }
   } catch (_) {}
-  let left = Math.round(rect.left + rect.width / 2 - tbRect.width / 2);
-  let top = Math.round(rect.top - tbRect.height - 8);
+  let left = Math.round(rect.left + rect.width / 2 - width / 2);
+  let top = Math.round(rect.top - height - 8);
   if (top < 4) top = Math.round(rect.bottom + 8);
-  if (left < 4) left = 4;
-  if (left + tbRect.width > vw - 4) left = Math.round(vw - tbRect.width - 4);
-  if (top + tbRect.height > vh - 4) top = Math.max(4, vh - tbRect.height - 4);
-  toolbarEl.style.left = left + "px";
-  toolbarEl.style.top = top + "px";
+  left = Math.max(4, Math.min(left, viewportWidth - width - 4));
+  top = Math.max(4, Math.min(top, viewportHeight - height - 4));
+  toolbarEl.style.left = `${left}px`;
+  toolbarEl.style.top = `${top}px`;
 }
 
 function positionPopover(rect, canvas) {
-  if (!popoverEl || !rect) return;
-  const doc = canvas.doc;
-  const vw = doc.documentElement.clientWidth || window.innerWidth;
-  const vh = doc.documentElement.clientHeight || window.innerHeight;
-  let w = 260, h = 110;
+  if (!popoverEl) return;
+  const anchor = rect || { left: 8, top: 8, right: 8, bottom: 8, width: 0, height: 0 };
+  const viewportWidth = canvas.doc.documentElement.clientWidth || canvas.doc.defaultView?.innerWidth || 1024;
+  const viewportHeight = canvas.doc.documentElement.clientHeight || canvas.doc.defaultView?.innerHeight || 768;
+  let width = 260;
+  let height = 110;
   try {
-    const r = popoverEl.getBoundingClientRect();
-    if (r.width > 0) { w = r.width; h = r.height; }
+    const measured = popoverEl.getBoundingClientRect();
+    if (measured.width > 0) { width = measured.width; height = measured.height; }
   } catch (_) {}
-  let left = Math.round(rect.left + rect.width / 2 - w / 2);
-  let top = Math.round(rect.bottom + 8);
-  if (top + h > vh - 4) top = Math.round(rect.top - h - 8);
-  if (top < 4) top = 4;
-  if (left < 4) left = 4;
-  if (left + w > vw - 4) left = Math.round(vw - w - 4);
-  popoverEl.style.left = left + "px";
-  popoverEl.style.top = top + "px";
+  let left = Math.round(anchor.left + anchor.width / 2 - width / 2);
+  let top = Math.round(anchor.bottom + 8);
+  if (top + height > viewportHeight - 4) top = Math.round(anchor.top - height - 8);
+  left = Math.max(4, Math.min(left, viewportWidth - width - 4));
+  top = Math.max(4, Math.min(top, viewportHeight - height - 4));
+  popoverEl.style.left = `${left}px`;
+  popoverEl.style.top = `${top}px`;
 }
 
-export function setToolbarCallbacks(callbacksObj) {
-  if (!callbacksObj || typeof callbacksObj !== "object") return;
-  callbacks.toggleMark = callbacksObj.toggleMark || null;
-  callbacks.openLink = callbacksObj.openLink || null;
-  callbacks.applyLink = callbacksObj.applyLink || null;
-  callbacks.removeLink = callbacksObj.removeLink || null;
-  callbacks.closeLink = callbacksObj.closeLink || null;
+export function setToolbarCallbacks(nextCallbacks) {
+  callbacks = {
+    ...emptyCallbacks(),
+    ...(nextCallbacks && typeof nextCallbacks === "object" ? nextCallbacks : {}),
+  };
 }
 
 export function destroyToolbar() {
-  try { if (toolbarEl && toolbarEl.parentNode) toolbarEl.parentNode.removeChild(toolbarEl); } catch (_) {}
-  try { if (popoverEl && popoverEl.parentNode) popoverEl.parentNode.removeChild(popoverEl); } catch (_) {}
+  try { toolbarEl?.remove(); } catch (_) { try { toolbarEl?.parentNode?.removeChild(toolbarEl); } catch (_) {} }
+  try { popoverEl?.remove(); } catch (_) { try { popoverEl?.parentNode?.removeChild(popoverEl); } catch (_) {} }
+  try { styleEl?.remove(); } catch (_) { try { styleEl?.parentNode?.removeChild(styleEl); } catch (_) {} }
+  styleEl = null;
   toolbarEl = null;
   popoverEl = null;
   inputEl = null;
   errorEl = null;
-  activeFieldEl = null;
-  activeCanvas = null;
-  savedOffsets = null;
-  savedToolbarOffsets = null;
-  toolbarInteraction = false;
-  suppressNextClick = false;
-  callbacks = { toggleMark: null, openLink: null, applyLink: null, removeLink: null, closeLink: null };
+  callbacks = emptyCallbacks();
 }
