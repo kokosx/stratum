@@ -3,7 +3,9 @@ import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
 import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument, primaryInlineFieldForNode, inlineFieldsForNode } from "./state.js";
-import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget } from "./insertion.js";
+import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget, canMove } from "./insertion.js";
+import { moveNode } from "./commands.js";
+import { startSession, clearSession, getSession } from "./drag-session.js";
 import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveEditorSessionEvent, isActiveFieldElement, commitBeforeEditorContextChange, findFieldElement } from "./inline-editor.js";
 
 function labelForInstance(instance) {
@@ -140,6 +142,11 @@ export class CanvasController {
     this._onAux = this.onAuxClick.bind(this);
     this._onDblClick = this.onDblClick.bind(this);
     this._onSubmitBlock = this.onSubmitBlock.bind(this);
+    this._onDragStart = this.onDragStart.bind(this);
+    this._onDragOver = this.onDragOver.bind(this);
+    this._onDragLeave = this.onDragLeave.bind(this);
+    this._onDrop = this.onDrop.bind(this);
+    this._onDragEnd = this.onDragEnd.bind(this);
     this._boundWinEvents = false;
     this.onEscape = null;
     // insertion affordance (runtime only, never SDT)
@@ -147,6 +154,11 @@ export class CanvasController {
     this._insertionRaf = 0;
     this._lastMoveEvent = null;
     this.quickInserter = null;
+    // drag session — transient runtime only
+    this.dragTarget = null;
+    this._autoScrollRAF = 0;
+    this._autoScrollDir = 0;
+    this._dragOverY = 0;
     // invalidate stale hint immediately after SDT mutation (max reached etc.)
     try {
       subscribeDocument(() => {
@@ -155,6 +167,14 @@ export class CanvasController {
           if (!hasLegalInsertion(parentNode, this.insertionHint.index)) {
             this.insertionHint = null;
             this.overlay.clearInsertion();
+          }
+        }
+        if (this.dragTarget) {
+          const sess = getSession();
+          if (sess && sess.kind === "node") {
+            const legal = canMove(sess.nodeId, this.dragTarget.parentId, this.dragTarget.index);
+            if (!legal.ok) this.clearDragState();
+            else this.overlay && this.overlay.setDragTarget(this.dragTarget.rect);
           }
         }
         // persistent Blocks target must recompute after document change (new children count shifts geometry)
@@ -205,6 +225,11 @@ export class CanvasController {
       doc.addEventListener("auxclick", this._onAux, true);
       doc.addEventListener("submit", this._onSubmitBlock, true);
       doc.addEventListener("keydown", this._onKey, true);
+      doc.addEventListener("dragstart", this._onDragStart, true);
+      doc.addEventListener("dragover", this._onDragOver, true);
+      doc.addEventListener("dragleave", this._onDragLeave, true);
+      doc.addEventListener("drop", this._onDrop, true);
+      doc.addEventListener("dragend", this._onDragEnd, true);
       // Inject editor placeholder CSS for inline fields
       try { this.injectInlineCSS(doc); } catch (_) {}
     } catch (_) {}
@@ -235,6 +260,7 @@ export class CanvasController {
   destroy() {
     // Commit active edit before tearing down (avoid stale contenteditable)
     try { if (isInlineEditing()) commitActiveEdit(); } catch (_) {}
+    try { this.clearDragState(); } catch (_) {}
     try {
       if (this.doc) {
         this.doc.removeEventListener("pointermove", this._onMove, true);
@@ -246,6 +272,11 @@ export class CanvasController {
         this.doc.removeEventListener("auxclick", this._onAux, true);
         this.doc.removeEventListener("submit", this._onSubmitBlock, true);
         this.doc.removeEventListener("keydown", this._onKey, true);
+        this.doc.removeEventListener("dragstart", this._onDragStart, true);
+        this.doc.removeEventListener("dragover", this._onDragOver, true);
+        this.doc.removeEventListener("dragleave", this._onDragLeave, true);
+        this.doc.removeEventListener("drop", this._onDrop, true);
+        this.doc.removeEventListener("dragend", this._onDragEnd, true);
       }
     } catch (_) {}
     try {
@@ -270,6 +301,9 @@ export class CanvasController {
     this.hoverInst = null;
     this.selected = null;
     this.insertionHint = null;
+    this.dragTarget = null;
+    this._autoScrollRAF = 0;
+    this._autoScrollDir = 0;
     // Do not clear state.selection here — attach restores it when the same
     // rendered occurrence still exists in the reloaded preview.
     this._rafPending = false;
@@ -316,8 +350,166 @@ export class CanvasController {
     return visualRectForInstance(instance, this.doc);
   }
 
+  getContainerLayout(parentNode) {
+    if (!parentNode) return "vertical";
+    if (parentNode.block === "core/stack") {
+      const dir = parentNode.settings?.direction;
+      if (dir === "horizontal") return "horizontal";
+      return "vertical";
+    }
+    if (parentNode.block === "core/grid") return "grid";
+    if (parentNode.block === "core/button-group") return "horizontal";
+    try {
+      const keys = this.nodeToKeys.get(parentNode.id) || [];
+      for (const k of keys) {
+        const inst = this.index.get(k);
+        if (!inst || !inst.editable) continue;
+        const el = inst.rootElements && inst.rootElements[0];
+        if (!el) continue;
+        try {
+          const cs = this.doc.defaultView ? this.doc.defaultView.getComputedStyle(el) : null;
+          if (!cs) continue;
+          if (cs.display === "grid" || cs.display === "inline-grid") return "grid";
+          if ((cs.display === "flex" || cs.display === "inline-flex") && (cs.flexDirection === "row" || cs.flexDirection === "row-reverse")) return "horizontal";
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return "vertical";
+  }
+
+  rawBoundaries(hit, e) {
+    if (!hit) {
+      if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
+        const probed = this.probeGapTarget(e.clientX, e.clientY);
+        if (probed) return [probed];
+      }
+      const scopeRect = this.editableScopeRect();
+      if (!scopeRect || !e) return null;
+      const y = e.clientY;
+      const outsideThreshold = 40;
+      const nodes = state.document?.nodes || [];
+      if (!nodes.length) return null;
+      if (Math.abs(y - scopeRect.top) < outsideThreshold) {
+        const firstNode = nodes[0];
+        const firstKeys = this.nodeToKeys.get(firstNode.id) || [];
+        if (firstKeys.length) {
+          const inst = this.index.get(firstKeys[0]);
+          if (inst && inst.editable) {
+            const r = this.visualRect(inst);
+            if (r) return [{ parentId: null, index: 0, rect: { left: r.left, top: r.top, width: r.width, height: 2 }, contextInstanceKey: inst.instanceKey }];
+          }
+        }
+        return [{ parentId: null, index: 0, rect: { left: scopeRect.left, top: scopeRect.top, width: scopeRect.width, height: 2 } }];
+      }
+      if (Math.abs(y - (scopeRect.top + scopeRect.height)) < outsideThreshold) {
+        const lastNode = nodes[nodes.length - 1];
+        const lastKeys = this.nodeToKeys.get(lastNode.id) || [];
+        let r = null;
+        if (lastKeys.length) {
+          const inst = this.index.get(lastKeys[0]);
+          if (inst) r = this.visualRect(inst);
+        }
+        if (r) return [{ parentId: null, index: nodes.length, rect: { left: r.left, top: r.top + r.height, width: r.width, height: 2 } }];
+        return [{ parentId: null, index: nodes.length, rect: { left: scopeRect.left, top: scopeRect.top + scopeRect.height, width: scopeRect.width, height: 2 } }];
+      }
+      return null;
+    }
+    const nodeId = hit.instanceKey ? hit.nodeId : null;
+    if (!nodeId) return null;
+    const sdtInfo = this.findSDTParent(nodeId);
+    if (!sdtInfo || !sdtInfo.node) return null;
+    const parentIdForBoundaries = sdtInfo.parent ? sdtInfo.parent.id : null;
+    const idx = sdtInfo.index;
+    const rect = this.visualRect(hit);
+    if (!rect) return null;
+    const candidates = [];
+    candidates.push({ parentId: parentIdForBoundaries, index: idx, rect: { left: rect.left, top: rect.top, width: rect.width, height: 2 }, contextInstanceKey: hit.instanceKey });
+    candidates.push({ parentId: parentIdForBoundaries, index: idx + 1, rect: { left: rect.left, top: rect.top + rect.height, width: rect.width, height: 2 }, contextInstanceKey: hit.instanceKey });
+    return candidates;
+  }
+
+  deriveDragBoundaries(hit, e, session) {
+    if (!session || session.kind !== "node") return null;
+    let base = this.rawBoundaries(hit, e);
+    if (hit && hit.editable) {
+      const node = findDocumentNode(hit.nodeId);
+      if (node && isContainerNode(node) && (node.children || []).length === 0) {
+        const r = this.visualRect(hit);
+        if (r) {
+          const inside = { parentId: node.id, index: 0, rect: { left: r.left + 8, top: r.top + r.height / 2, width: r.width - 16, height: 2 }, contextInstanceKey: hit.instanceKey };
+          base = base ? [...base, inside] : [inside];
+        }
+      } else if (node && isContainerNode(node) && (node.children || []).length > 0) {
+        const r = this.visualRect(hit);
+        if (r && e && typeof e.clientY === "number") {
+          const insideEnd = { parentId: node.id, index: (node.children || []).length, rect: { left: r.left + 8, top: r.top + r.height - 4, width: r.width - 16, height: 2 }, contextInstanceKey: hit.instanceKey };
+          if (!base || !base.some(c => c.parentId === insideEnd.parentId && c.index === insideEnd.index)) {
+            base = base ? [...base, insideEnd] : [insideEnd];
+          }
+        }
+      }
+    }
+    if (!hit && e && typeof e.clientX === "number") {
+      const under = this.hitFromPoint(e.clientX, e.clientY);
+      if (under && under.editable) {
+        const node = findDocumentNode(under.nodeId);
+        if (node && isContainerNode(node) && (node.children || []).length === 0) {
+          const r = this.visualRect(under);
+          if (r) return [{ parentId: node.id, index: 0, rect: { left: r.left + 8, top: r.top + r.height / 2, width: r.width - 16, height: 2 }, contextInstanceKey: under.instanceKey }];
+        }
+        if (node && isContainerNode(node) && (node.children || []).length > 0) {
+          const r = this.visualRect(under);
+          if (r && e.clientY > r.top + r.height - 36) {
+            return [{ parentId: node.id, index: (node.children || []).length, rect: { left: r.left + 8, top: r.top + r.height - 2, width: r.width - 16, height: 2 }, contextInstanceKey: under.instanceKey }];
+          }
+        }
+      }
+    }
+    return base;
+  }
+
+  clearDragState() {
+    if (this.dragTarget) {
+      this.dragTarget = null;
+      try { this.overlay && this.overlay.clearDragTarget(); } catch (_) {}
+    }
+    try { this.overlay && this.overlay.setDragging(false); } catch (_) {}
+    try { clearSession(); } catch (_) {}
+    this.stopAutoScroll();
+    this._dragOverY = 0;
+  }
+
+  startAutoScroll(dir) {
+    if (this._autoScrollRAF) return;
+    this._autoScrollDir = dir;
+    const step = () => {
+      if (!this._autoScrollDir || !this.doc || !this.win) { this._autoScrollRAF = 0; return; }
+      try {
+        const scrollEl = this.doc.documentElement || this.doc.body;
+        const curTop = scrollEl.scrollTop || this.doc.body.scrollTop || 0;
+        const nextTop = curTop + this._autoScrollDir * 12;
+        this.win.scrollTo({ top: Math.max(0, nextTop), behavior: "auto" });
+        try { this.requestSync(); } catch (_) {}
+      } catch (_) {}
+      this._autoScrollRAF = (this.win.requestAnimationFrame || requestAnimationFrame).call(this.win || window, step);
+    };
+    this._autoScrollRAF = (this.win.requestAnimationFrame || requestAnimationFrame).call(this.win || window, step);
+  }
+
+  stopAutoScroll() {
+    this._autoScrollDir = 0;
+    if (this._autoScrollRAF) {
+      try {
+        const caf = this.win && this.win.cancelAnimationFrame ? this.win.cancelAnimationFrame.bind(this.win) : cancelAnimationFrame;
+        caf(this._autoScrollRAF);
+      } catch (_) {}
+      this._autoScrollRAF = 0;
+    }
+  }
+
   onMove(e) {
     if (!this.doc || !this.overlay) return;
+    if (getSession() && getSession().kind === "node") return;
     if (isInlineEditing()) {
       if (this.hoverInst) { this.hoverInst = null; state.hoveredKey = null; try { this.overlay.clearHover(); } catch (_) {} }
       if (this.insertionHint) { this.insertionHint = null; try { this.overlay.clearInsertion(); } catch (_) {} }
@@ -373,6 +565,7 @@ export class CanvasController {
 
   updateInsertionHint(e, hit) {
     if (!this.doc || !this.overlay) return;
+    if (getSession() && getSession().kind === "node") return;
     if (isInlineEditing()) {
       if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); }
       return;
@@ -450,6 +643,165 @@ export class CanvasController {
   }
 
   // Helpers for gap probing (§10) — bounded offsets, no global scan
+  // === Drag handlers (native DnD) ===
+  onDragStart(e) {
+    if (!this.doc || !this.overlay) return;
+    if (this.isEditorUIEvent(e)) return;
+    // Only grip starts drag — use composedPath for Shadow DOM retargeting
+    let grip = null;
+    try {
+      const path = e.composedPath ? e.composedPath() : [];
+      for (const n of path) {
+        if (n && n.getAttribute && n.getAttribute("draggable") === "true" && n.classList && n.classList.contains("overlay-handle__drag")) { grip = n; break; }
+        if (n && n.matches && n.matches('button.overlay-handle__drag[draggable="true"]')) { grip = n; break; }
+      }
+      if (!grip && e.target && e.target.closest) grip = e.target.closest('button.overlay-handle__drag[draggable="true"]');
+      if (!grip) grip = e.target;
+    } catch (_) { grip = e.target; }
+    if (!grip || grip.getAttribute?.("draggable") !== "true" || !grip.classList?.contains("overlay-handle__drag")) return;
+    // Prevent text selection drag inside contenteditable
+    try { if (isActiveFieldElement(e.target) || isActiveFieldElement(document.activeElement)) { } } catch (_) {}
+    // Commit inline edit first (§20)
+    try { if (isInlineEditing()) commitBeforeEditorContextChange(); } catch (_) {}
+    if (isInlineEditing()) { e.preventDefault(); return; }
+    const selected = this.selected;
+    if (!selected || !selected.nodeId) { e.preventDefault(); return; }
+    const node = findDocumentNode(selected.nodeId);
+    if (!node) { e.preventDefault(); return; }
+    // External/template-owned non-editable nodes have no grip, but guard
+    if (selected.editable === false) { e.preventDefault(); return; }
+    // Select source if needed (§41) — grip drag always from selected, but ensure
+    // If drag starts from not-selected? Grip only exists on selected, so it's selected.
+    const srcInfo = this.findSDTParent(selected.nodeId);
+    if (!srcInfo || !srcInfo.node) { e.preventDefault(); return; }
+    // Clear hover/insertion that would conflict
+    try { this.hoverInst = null; state.hoveredKey = null; this.overlay.clearHover(); } catch (_) {}
+    try { if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); } } catch (_) {}
+    startSession({ kind: "node", nodeId: selected.nodeId, instanceKey: selected.instanceKey, source: { parentId: srcInfo.parentId, index: srcInfo.index } });
+    try { this.overlay.setDragging(true); } catch (_) {}
+    try {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", selected.nodeId);
+      // Firefox requires data
+      if (e.dataTransfer.setDragImage && grip) {
+        try { e.dataTransfer.setDragImage(grip, 8, 12); } catch (_) {}
+      }
+    } catch (_) {}
+    try { e.stopPropagation(); } catch (_) {}
+  }
+
+  onDragOver(e) {
+    if (!this.doc || !this.overlay) return;
+    const sess = getSession();
+    if (!sess || sess.kind !== "node") return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+    this._dragOverY = e.clientY || 0;
+    // Auto-scroll near viewport edges (§40)
+    try {
+      const vh = this.doc.documentElement?.clientHeight || this.win?.innerHeight || 700;
+      if (e.clientY < 48) this.startAutoScroll(-1);
+      else if (e.clientY > vh - 48) this.startAutoScroll(1);
+      else this.stopAutoScroll();
+    } catch (_) {}
+    const hit = this.hitForTarget(e.target) || this.hitFromPoint(e.clientX, e.clientY);
+    // Derive candidates shared geometry
+    let candidates = this.deriveDragBoundaries(hit, e, sess);
+    if (!candidates || !candidates.length) {
+      // Fallback to raw insertion candidates filtered for drag
+      candidates = this.rawBoundaries(hit, e);
+    }
+    if (!candidates || !candidates.length) {
+      if (this.dragTarget) { this.dragTarget = null; this.overlay.clearDragTarget(); try{ e.dataTransfer.dropEffect = "none"; } catch(_){} }
+      return;
+    }
+    // Filter illegal via canMove (§31) and hide no-op (§33)
+    const legal = [];
+    for (const c of candidates) {
+      const res = canMove(sess.nodeId, c.parentId, c.index);
+      if (!res.ok) continue;
+      legal.push(c);
+    }
+    if (!legal.length) {
+      if (this.dragTarget) { this.dragTarget = null; this.overlay.clearDragTarget(); }
+      try { e.dataTransfer.dropEffect = "none"; } catch (_) {}
+      return;
+    }
+    // Pick closest to pointer — per-candidate layout awareness
+    let best = legal[0];
+    let bestDist = Infinity;
+    for (const c of legal) {
+      const pNode = c.parentId == null ? null : findDocumentNode(c.parentId);
+      const layout = this.getContainerLayout(pNode);
+      const isHoriz = layout === "horizontal";
+      let d;
+      if (isHoriz && e.clientX != null) {
+        d = Math.abs((c.rect.left + c.rect.width / 2) - e.clientX);
+      } else {
+        d = Math.abs((c.rect.top + c.rect.height / 2) - (e.clientY || 0));
+        if (e.clientX != null && c.rect.left != null) {
+          const xDist = Math.max(0, c.rect.left - e.clientX, e.clientX - (c.rect.left + c.rect.width));
+          d += xDist * 0.3;
+        }
+      }
+      if (d < bestDist) { best = c; bestDist = d; }
+    }
+    // Container body heuristic already in derive
+    // Show strong blue insertion line without plus (§32)
+    this.dragTarget = { parentId: best.parentId, index: best.index, rect: best.rect };
+    this.overlay.setDragTarget(best.rect);
+    try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+  }
+
+  onDragLeave(e) {
+    if (!this.doc || !this.overlay) return;
+    // Only clear if leaving iframe viewport entirely
+    try {
+      const related = e.relatedTarget;
+      if (related && this.doc.contains(related)) return;
+      // Check if still inside doc
+      const x = e.clientX, y = e.clientY;
+      if (x != null && y != null && x >= 0 && y >= 0) {
+        const el = this.doc.elementFromPoint ? this.doc.elementFromPoint(x, y) : null;
+        if (el && this.doc.contains(el)) return;
+      }
+    } catch (_) {}
+    // If we still have a session, keep dragTarget until dragover updates or dragend
+  }
+
+  onDrop(e) {
+    if (!this.doc || !this.overlay) return;
+    const sess = getSession();
+    if (!sess || sess.kind !== "node") return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.stopAutoScroll();
+    const target = this.dragTarget;
+    if (!target) { this.clearDragState(); return; }
+    // Validate again before mutation
+    const legal = canMove(sess.nodeId, target.parentId, target.index);
+    if (!legal.ok) { this.clearDragState(); return; }
+    const result = moveNode({ nodeId: sess.nodeId, parentId: target.parentId, index: target.index });
+    this.clearDragState();
+    if (!result || !result.ok) {
+      // Optionally toast error if available
+      try {
+        const msg = result?.reason || "Could not move block.";
+        if (typeof window !== "undefined" && window.stratumToast) window.stratumToast("error", msg);
+      } catch (_) {}
+      return;
+    }
+    // Keep moved node selected — moveNode already queued pending selection; just ensure overlay reflects
+    try { this.requestSync(); } catch (_) {}
+  }
+
+  onDragEnd(e) {
+    try { e.preventDefault(); } catch (_) {}
+    this.clearDragState();
+    try { this.requestSync(); } catch (_) {}
+  }
+
   hitFromPoint(x, y) {
     if (!this.doc || typeof this.doc.elementsFromPoint !== "function") return null;
     try {
@@ -509,78 +861,8 @@ export class CanvasController {
   }
 
   deriveInsertionCandidates(hit, e) {
-    if (!hit) {
-      // Local gap probing first (§10) — whitespace between adjacent siblings
-      if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
-        const probed = this.probeGapTarget(e.clientX, e.clientY);
-        if (probed) return [probed];
-      }
-      // Fallback: empty root / scope edges only
-      const scopeRect = this.editableScopeRect();
-      if (!scopeRect || !e) return null;
-      const y = e.clientY;
-      const outsideThreshold = 40;
-      const nodes = state.document?.nodes || [];
-      if (!nodes.length) return null;
-      // near top of scope -> before first
-      if (Math.abs(y - scopeRect.top) < outsideThreshold) {
-        const firstNode = nodes[0];
-        const firstKeys = this.nodeToKeys.get(firstNode.id) || [];
-        if (firstKeys.length) {
-          const inst = this.index.get(firstKeys[0]);
-          if (inst && inst.editable) {
-            const r = this.visualRect(inst);
-            if (r) {
-              return [{ parentId: null, index: 0, rect: { left: r.left, top: r.top, width: r.width, height: 2 }, contextInstanceKey: inst.instanceKey }];
-            }
-          }
-        }
-        return [{ parentId: null, index: 0, rect: { left: scopeRect.left, top: scopeRect.top, width: scopeRect.width, height: 2 } }];
-      }
-      if (Math.abs(y - (scopeRect.top + scopeRect.height)) < outsideThreshold) {
-        const lastNode = nodes[nodes.length - 1];
-        const lastKeys = this.nodeToKeys.get(lastNode.id) || [];
-        let r = null;
-        if (lastKeys.length) {
-          const inst = this.index.get(lastKeys[0]);
-          if (inst) r = this.visualRect(inst);
-        }
-        if (r) return [{ parentId: null, index: nodes.length, rect: { left: r.left, top: r.top + r.height, width: r.width, height: 2 } }];
-        return [{ parentId: null, index: nodes.length, rect: { left: scopeRect.left, top: scopeRect.top + scopeRect.height, width: scopeRect.width, height: 2 } }];
-      }
-      return null;
-    }
-    // hit exists and editable
-    const nodeId = hit.instanceKey ? hit.nodeId : null;
-    if (!nodeId) return null;
-    const sdtInfo = this.findSDTParent(nodeId);
-    if (!sdtInfo || !sdtInfo.node) return null; // should not happen
-    const sdtNode = sdtInfo.node;
-    const parentIdForBoundaries = sdtInfo.parent ? sdtInfo.parent.id : null;
-    const siblings = sdtInfo.siblings || state.document.nodes;
-    const idx = sdtInfo.index;
-    // Need actual SDT parent for canInsert check uses parentNode object (not hit's immediate visual parent)
-    // For sibling boundaries: before current and after current in its SDT parent/root
-    const rect = this.visualRect(hit);
-    if (!rect) return null;
-    const candidates = [];
-    // before
-    candidates.push({
-      parentId: parentIdForBoundaries,
-      index: idx,
-      rect: { left: rect.left, top: rect.top, width: rect.width, height: 2 },
-      contextInstanceKey: hit.instanceKey,
-    });
-    // after
-    candidates.push({
-      parentId: parentIdForBoundaries,
-      index: idx + 1,
-      rect: { left: rect.left, top: rect.top + rect.height, width: rect.width, height: 2 },
-      contextInstanceKey: hit.instanceKey,
-    });
-    // If container and empty, also consider inside (already same as parent boundaries but handle empty special)
-    // The overlay empty state handles empty container click, so no line needed inside empty; but we still allow parent boundary
-    return candidates;
+    // Reuse shared raw geometry for consistency with drag (§30)
+    return this.rawBoundaries(hit, e);
   }
 
   editableScopeRect() {
@@ -1012,18 +1294,20 @@ export class CanvasController {
 
   syncGeometry() {
     if (!this.overlay || !this.doc) return;
+    const isDragging = !!(getSession() && getSession().kind === "node");
     // During inline editing, suppress hover/insertion affordances (§29)
     if (isInlineEditing()) {
       try { this.overlay.clearHover(); } catch (_) {}
       try { this.overlay.clearInsertion(); } catch (_) {}
       try { this.overlay.clearBlocksTarget(); } catch (_) {}
     }
-    // Persistent Blocks target indicator (§22) — show before hover/selection so it stays visible while panel open
-    if (!isInlineEditing()) this.updateBlocksTarget();
+    // Persistent Blocks target indicator — hide during drag (transient drag target replaces it)
+    if (!isInlineEditing() && !isDragging) this.updateBlocksTarget();
+    else if (isDragging) try { this.overlay.clearBlocksTarget(); } catch (_) {}
     // Update scope boundary (primary editable region)
     this.updateScope();
-    // Hover (suppressed while editing)
-    if (isInlineEditing()) {
+    // Hover (suppressed while editing or dragging)
+    if (isInlineEditing() || isDragging) {
       if (this.overlay) this.overlay.clearHover();
     } else if (this.hoverInst) {
       const inst = this.index.get(this.hoverInst.instanceKey) || this.hoverInst;
@@ -1064,22 +1348,24 @@ export class CanvasController {
       }
       // Decide if selected container can Add inside (§27) — small plus on handle
       let handleOpts = { external: isExternal, editing: !!editing };
+      // Drag grip for movable editable block
       try {
         if (!editing && isExternal === false) {
           const node = findDocumentNode(this.selected.nodeId);
+          if (node) {
+            handleOpts.showDragGrip = true;
+            handleOpts.onDragStart = (e) => this.onDragStart(e);
+            handleOpts.onDragEnd = (e) => this.onDragEnd(e);
+          }
           if (node && isContainerNode(node) && (node.children || []).length >= 0) {
-            // hasLegalInsertion for append inside
             if (hasLegalInsertion(node, (node.children||[]).length)) {
               handleOpts.showHandlePlus = true;
               handleOpts.onHandlePlusClick = (e, anchorRect) => {
                 e.preventDefault(); e.stopPropagation();
                 const target = { parentId: node.id, index: (node.children||[]).length };
-                // Establish exact contextual target so canvas shows Add here at container end (§12)
                 try { setInsertionTarget(target, { source: "contextual" }); } catch (_) {}
-                // anchor to the handle plus control itself, not an estimated line
                 const anchor = anchorRect || (e && e.target ? e.target.getBoundingClientRect() : null) || rect;
                 this.openQuickInserter(target, anchor);
-                // Ensure geometry reflects new contextual target even while inserter is open
                 try { this.requestSync(); } catch (_) {}
               };
             }
@@ -1092,8 +1378,8 @@ export class CanvasController {
     }
     // Empty states (overlay/editor instrumentation, never SDT) (§24-25) — suppressed while editing
     if (!isInlineEditing()) this.updateEmptyStates(); else this.overlay.clearEmptyStates();
-    // Re-establish insertion line after geometry sync if we still have a hint (recompute rect) — suppressed while editing
-    if (!isInlineEditing() && this.insertionHint && !(this.quickInserter && this.quickInserter.isOpen())) {
+    // Re-establish insertion line after geometry sync if we still have a hint (recompute rect) — suppressed while editing or dragging
+    if (!isInlineEditing() && !isDragging && this.insertionHint && !(this.quickInserter && this.quickInserter.isOpen())) {
       const hint = this.insertionHint;
       const parentNode = hint.parentId == null ? null : findDocumentNode(hint.parentId);
       if (!hasLegalInsertion(parentNode, hint.index)) {
@@ -1171,9 +1457,15 @@ export class CanvasController {
         }
       }
     } else if (!this.insertionHint) {
-      // ensure no stale line when nothing hinted
-      // don't clear if quick inserter open (it may have hidden line intentionally)
-      if (!(this.quickInserter && this.quickInserter.isOpen())) this.overlay.clearInsertion();
+      if (!(this.quickInserter && this.quickInserter.isOpen()) && !isDragging) this.overlay.clearInsertion();
+    }
+    // Drag target line persistence (separate from insertion hint)
+    if (isDragging && this.dragTarget && this.overlay) {
+      this.overlay.setDragTarget(this.dragTarget.rect);
+      this.overlay.setDragging(true);
+    } else if (!isDragging && this.overlay) {
+      // ensure drag line cleared when not dragging
+      // (clearDragTarget already does, but ensure)
     }
   }
 
@@ -1344,6 +1636,11 @@ export class CanvasController {
   onKey(e) {
     if (!e) return;
     if (this.isEditorUIEvent(e)) return;
+    if (getSession() && getSession().kind === "node" && e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      this.clearDragState();
+      return;
+    }
     // Inline editing gets first Escape priority
     if (isInlineEditing()) {
       if (e.key === "Escape") {

@@ -65,16 +65,30 @@ function ruleForDef(def) {
   return def?.schema?.children || { mode: "none" };
 }
 
-export function canInsert(parentNode, definition, index) {
-  // parent null => root: allowed if block is available in current editor context (catalog)
+// Shared structural placement core. Operation distinguishes creation vs relocation.
+// creation ("insert") enforces catalog/hidden; relocation ("move") does not block
+// an already-existing valid node solely because catalog marks it hidden (§14).
+function coreCanPlace({ parentNode, block, operation, isSameParent, index }) {
+  const op = operation === "move" ? "move" : "insert";
+  // root: context-sensitive
   if (!parentNode) {
-    if (!definition || !definition.block) return { ok: false, reason: "Unknown block." };
-    const catalog = blockCatalog();
-    const entry = catalog.find((item) => item.block === definition.block);
-    if (!entry || entry.hidden) return { ok: false, reason: `"${definition.displayName || definition.block}" is not available in this context.` };
+    if (op === "insert") {
+      if (!block) return { ok: false, reason: "Unknown block." };
+      const catalog = blockCatalog();
+      const entry = catalog.find((item) => item.block === block);
+      if (!entry || entry.hidden) return { ok: false, reason: `"${block}" is not available in this context.` };
+      if (index != null) {
+        const count = state.document?.nodes ? state.document.nodes.length : 0;
+        if (index < 0 || index > count) return { ok: false, reason: "Invalid insertion index." };
+      }
+      return { ok: true, reason: "" };
+    }
+    // move to root: schema-agnostic, only index bounds (root has no children mode)
     if (index != null) {
       const count = state.document?.nodes ? state.document.nodes.length : 0;
-      if (index < 0 || index > count) return { ok: false, reason: "Invalid insertion index." };
+      // for same-parent root move, count is root length including moving node; raw index valid 0..count
+      const maxIdx = count;
+      if (index < 0 || index > maxIdx) return { ok: false, reason: "Invalid insertion index." };
     }
     return { ok: true, reason: "" };
   }
@@ -82,26 +96,133 @@ export function canInsert(parentNode, definition, index) {
   if (!def) return { ok: false, reason: "Unknown container." };
   const rule = ruleForDef(def);
   if (rule.mode === "none") return { ok: false, reason: `${displayNameForBlock(parentNode.block)} does not allow child blocks.` };
-  if (rule.mode === "allowed" && !rule.blocks.includes(definition.block)) {
-    const label = definition.displayName || displayNameForBlock(definition.block);
+  if (rule.mode === "allowed" && !rule.blocks.includes(block)) {
+    const label = displayNameForBlock(block);
     return { ok: false, reason: `"${label}" is not allowed inside ${displayNameForBlock(parentNode.block)}.` };
   }
-  // enforce catalog + hidden for nested insertion as well (§5, §36 legal-only UI is not enough if API allows illegal)
-  const catalogEntry = blockCatalog().find((item) => item.block === definition.block);
-  if (!catalogEntry || catalogEntry.hidden) return { ok: false, reason: `"${definition.displayName || definition.block}" is not available in this context.` };
-  if (rule.max != null) {
-    const count = parentNode.children ? parentNode.children.length : 0;
-    if (count >= rule.max) {
-      const label = displayNameForBlock(parentNode.block);
-      const unit = rule.max === 1 ? "child block" : "child blocks";
-      return { ok: false, reason: `${label} allows at most ${rule.max} ${unit}.` };
+  if (op === "insert") {
+    const catalogEntry = blockCatalog().find((item) => item.block === block);
+    if (!catalogEntry || catalogEntry.hidden) return { ok: false, reason: `"${block}" is not available in this context.` };
+    if (rule.max != null) {
+      const count = parentNode.children ? parentNode.children.length : 0;
+      if (count >= rule.max) {
+        const label = displayNameForBlock(parentNode.block);
+        const unit = rule.max === 1 ? "child block" : "child blocks";
+        return { ok: false, reason: `${label} allows at most ${rule.max} ${unit}.` };
+      }
+    }
+  } else {
+    // move: skip catalog/hidden, enforce max on POST-MOVE structure
+    if (rule.max != null) {
+      const count = parentNode.children ? parentNode.children.length : 0;
+      // same-parent reorder does not increase count
+      if (!isSameParent && count >= rule.max) {
+        const label = displayNameForBlock(parentNode.block);
+        const unit = rule.max === 1 ? "child block" : "child blocks";
+        return { ok: false, reason: `${label} allows at most ${rule.max} ${unit}.` };
+      }
     }
   }
   if (index != null) {
     const count = parentNode.children ? parentNode.children.length : 0;
-    if (index < 0 || index > count) return { ok: false, reason: "Invalid insertion index." };
+    if (index < 0 || index > count) {
+      // Special: for move cross-parent, count is dest count pre-move, so same bound
+      // For same-parent, count is source==dest length, still 0..count valid
+      return { ok: false, reason: "Invalid insertion index." };
+    }
   }
   return { ok: true, reason: "" };
+}
+
+export function canInsert(parentNode, definition, index) {
+  if (!definition || !definition.block) return { ok: false, reason: "Unknown block." };
+  const block = definition.block;
+  return coreCanPlace({ parentNode, block, operation: "insert", isSameParent: false, index });
+}
+
+function containsDescendant(ancestorNode, targetId) {
+  if (!ancestorNode || !targetId) return false;
+  if (ancestorNode.id === targetId) return true;
+  for (const ch of ancestorNode.children || []) {
+    if (containsDescendant(ch, targetId)) return true;
+  }
+  return false;
+}
+
+export function canRemove(nodeId) {
+  const found = findDocumentParent(nodeId);
+  if (!found) return { ok: false, reason: "Block not found." };
+  const parent = found.parent;
+  if (!parent) return { ok: true, reason: "" };
+  const parentDef = definitionForBlock(parent.block, parent.version);
+  if (!parentDef) return { ok: true, reason: "" };
+  const rule = ruleForDef(parentDef);
+  if (rule.min != null) {
+    const after = (parent.children || []).length - 1;
+    if (after < rule.min) {
+      const label = displayNameForBlock(parent.block);
+      const unit = rule.min === 1 ? "child block" : "child blocks";
+      return { ok: false, reason: `${label} requires at least ${rule.min} ${unit}.` };
+    }
+  }
+  return { ok: true, reason: "" };
+}
+
+export function canMove(nodeId, parentId, index) {
+  if (!nodeId || typeof nodeId !== "string") return { ok: false, reason: "Block not found." };
+  const src = findDocumentParent(nodeId);
+  if (!src) return { ok: false, reason: "Block not found." };
+  const movingNode = src.node;
+  const block = movingNode.block;
+  // block definition must exist (§15)
+  const movingDef = definitionForBlock(movingNode.block, movingNode.version);
+  if (!movingDef) return { ok: false, reason: "Unknown block." };
+  const targetParentId = parentId ?? null;
+  let targetParentNode = null;
+  if (targetParentId != null) {
+    targetParentNode = findDocumentNode(targetParentId);
+    if (!targetParentNode) return { ok: false, reason: "Parent not found." };
+  }
+  // cycle protection §8
+  if (targetParentNode) {
+    if (containsDescendant(movingNode, targetParentNode.id)) {
+      return { ok: false, reason: "Cannot move a block inside itself." };
+    }
+  }
+  const sameParent = (src.parent ? src.parent.id : null) === targetParentId;
+  // index bounds pre-removal — strict finite check (NaN/undefined must reject, not coerce to 0)
+  const rawIndex = Number(index);
+  if (!Number.isFinite(rawIndex)) return { ok: false, reason: "Invalid insertion index." };
+  // destination length pre-move
+  const destCount = targetParentNode ? (targetParentNode.children || []).length : (state.document?.nodes?.length || 0);
+  if (rawIndex < 0 || rawIndex > destCount) return { ok: false, reason: "Invalid insertion index." };
+  // source min when moving out
+  if (!sameParent) {
+    const rem = canRemove(nodeId);
+    if (!rem.ok) return rem;
+  }
+  // effective index after removal for no-op detection (§5) and final placement
+  let effective = rawIndex;
+  if (sameParent && src.index < rawIndex) effective = rawIndex - 1;
+  if (sameParent && src.index === effective) {
+    // No-op boundaries before/after self
+    return { ok: false, reason: "Already at that position." };
+  }
+  const canPlace = coreCanPlace({ parentNode: targetParentNode, block, operation: "move", isSameParent: sameParent, index: effective });
+  if (!canPlace.ok) return canPlace;
+  return { ok: true, reason: "" };
+}
+
+export function findSource(nodeId) {
+  const info = findDocumentParent(nodeId);
+  if (!info) return null;
+  return {
+    node: info.node,
+    parent: info.parent,
+    parentId: info.parent ? info.parent.id : null,
+    siblings: info.siblings,
+    index: info.index,
+  };
 }
 
 // Whether parent could accept at least one legal insertion at given index

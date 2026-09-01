@@ -1,6 +1,6 @@
-// commands.js — SDT mutations + node factory (single command for M4)
-import { state, setDocument, findDocumentNode, definitionForBlock } from "./state.js";
-import { canInsert } from "./insertion.js";
+// commands.js — SDT mutations + node factory (single command for M4/M6)
+import { state, setDocument, findDocumentNode, findDocumentParent, definitionForBlock } from "./state.js";
+import { canInsert, canMove, findSource } from "./insertion.js";
 
 function randomID() {
   const bytes = new Uint8Array(16);
@@ -170,6 +170,109 @@ function findCloneNode(cloneDoc, nodeId) {
     return null;
   };
   return walk(cloneDoc.nodes);
+}
+
+function findCloneInfo(cloneDoc, nodeId) {
+  const walk = (nodes, parent) => {
+    for (let i = 0; i < (nodes || []).length; i++) {
+      const n = nodes[i];
+      if (n && n.id === nodeId) return { parent, index: i, siblings: nodes, node: n };
+      const nested = walk(n.children, n);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  return walk(cloneDoc.nodes || [], null);
+}
+
+export function moveNode({ nodeId, parentId, index }) {
+  if (!nodeId || typeof nodeId !== "string") return { ok: false, reason: "Block not found." };
+  const rawParentId = parentId ?? null;
+  const rawIndex = Number(index);
+  if (!Number.isFinite(rawIndex)) return { ok: false, reason: "Invalid insertion index." };
+
+  // Use findSource for consistent lookup (§6)
+  const src = findSource(nodeId);
+  if (!src) return { ok: false, reason: "Block not found." };
+  const movingNode = src.node;
+  // Block definition must exist (§15)
+  const movingDef = definitionForBlock(movingNode.block, movingNode.version);
+  if (!movingDef) return { ok: false, reason: "Unknown block." };
+
+  // Destination parent must exist if provided (§7)
+  let destParentNode = null;
+  if (rawParentId != null) {
+    destParentNode = findDocumentNode(rawParentId);
+    if (!destParentNode) return { ok: false, reason: "Parent not found." };
+  }
+
+  // Validate via shared legality engine (cycle, min, max, allowed)
+  const legal = canMove(nodeId, rawParentId, rawIndex);
+  // No-op case maps to ok:true unchanged:true (§5)
+  if (!legal.ok && legal.reason === "Already at that position.") {
+    return {
+      ok: true,
+      nodeId,
+      parentId: src.parentId,
+      index: src.index,
+      previousParentId: src.parentId,
+      previousIndex: src.index,
+      unchanged: true,
+    };
+  }
+  if (!legal.ok) return { ok: false, reason: legal.reason };
+
+  // Atomic mutation (§16): validate done against live state, clone once
+  const next = cloneDocument(state.document);
+  next.nodes ||= [];
+
+  // Find cloned source
+  const cloneSrc = findCloneInfo(next, nodeId);
+  if (!cloneSrc) return { ok: false, reason: "Block not found." };
+  const { parent: cloneSrcParent, siblings: cloneSrcSiblings, index: cloneSrcIndex, node: cloneNode } = cloneSrc;
+
+  // Remove source node (preserve same subtree object, no cloning)
+  cloneSrcSiblings.splice(cloneSrcIndex, 1);
+
+  // Find cloned destination (post-removal structure)
+  let targetArr;
+  if (rawParentId == null) {
+    targetArr = next.nodes;
+  } else {
+    const cloneDestParent = findCloneNode(next, rawParentId);
+    if (!cloneDestParent) {
+      // Should not happen after live validation, but be safe — revert not needed because we haven't setDocument yet
+      return { ok: false, reason: "Parent not found." };
+    }
+    cloneDestParent.children ||= [];
+    targetArr = cloneDestParent.children;
+  }
+
+  // Adjust same-parent forward index (§4): insertion-boundary semantics before removal
+  const sameParent = (src.parentId ?? null) === rawParentId;
+  let finalIndex = rawIndex;
+  if (sameParent && cloneSrcIndex < rawIndex) finalIndex = rawIndex - 1;
+
+  const clamped = Math.max(0, Math.min(finalIndex, targetArr.length));
+  // Insert SAME subtree object (stable IDs, props, settings, children preserved)
+  targetArr.splice(clamped, 0, cloneNode);
+
+  const previousParentId = src.parentId;
+  const previousIndex = src.index;
+  setDocument(next);
+
+  // Preserve selection (§43): queue pending selection for preview morph handling
+  try {
+    state.__pendingSelectionIds ||= [];
+    state.__pendingSelectionIds.push(nodeId);
+    // Keep logical selection if already selected; app.js will resolve to instance after morph
+    // If selection was different, update to moved node (drag always selects source first)
+    if (!state.selection || state.selection.nodeId !== nodeId) {
+      state.selection = { nodeId, instanceKey: null, editable: true, block: movingNode.block, version: movingNode.version, logical: true };
+    }
+  } catch (_) {}
+
+  return { ok: true, nodeId, parentId: rawParentId, index: clamped, previousParentId, previousIndex };
 }
 
 function getRawValue(node, path) {

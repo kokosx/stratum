@@ -114,6 +114,55 @@ const OVERLAY_CSS = `
   border-radius: 0 4px 0 0;
 }
 .overlay-handle__plus:hover { background: rgba(255,255,255,.25); }
+.overlay-handle__drag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 24px;
+  border: 0;
+  border-right: 1px solid rgba(255,255,255,.3);
+  background: transparent;
+  color: #fff;
+  font: 700 12px/1 system-ui, sans-serif;
+  cursor: grab;
+  pointer-events: auto;
+  user-select: none;
+  padding: 0;
+  margin-right: 6px;
+  letter-spacing: 0;
+}
+.overlay-handle__drag:active { cursor: grabbing; }
+.overlay-handle__drag:hover { background: rgba(255,255,255,.15); }
+.overlay-handle--dragging .overlay-handle__drag { cursor: grabbing; }
+.overlay-outline--dragging { opacity: 0.55; }
+.overlay-drag-line {
+  position: fixed;
+  pointer-events: none;
+  height: 3px;
+  background: #2563eb;
+  border-radius: 2px;
+  z-index: 2147483645;
+  box-shadow: 0 0 0 2px rgba(37,99,235,.18);
+}
+.overlay-drag-chip {
+  position: fixed;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  padding: 0 8px;
+  font: 600 11px/1 system-ui, sans-serif;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 999px;
+  border: 1px solid #fff;
+  box-shadow: 0 1px 6px rgba(37,99,235,.3);
+  z-index: 2147483645;
+  white-space: nowrap;
+}
 .overlay-handle--external {
   background: #d97706;
 }
@@ -245,6 +294,8 @@ export class Overlay {
     this.blocksTargetLineEl = null;
     this.blocksTargetPlusEl = null;
     this.blocksTargetChipEl = null;
+    this.dragLineEl = null;
+    this.dragChipEl = null;
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map(); // nodeId -> element
     this._beforeHeight = 0;
@@ -354,6 +405,20 @@ export class Overlay {
     this.insertionPlusEl.style.display = "none";
     shadow.appendChild(this.insertionPlusEl);
 
+    // Drag drop indicator (transient, separate from insertion)
+    this.dragLineEl = this.doc.createElement("div");
+    this.dragLineEl.className = "overlay-drag-line";
+    this.dragLineEl.setAttribute("data-role", "drag-line");
+    this.dragLineEl.style.display = "none";
+    shadow.appendChild(this.dragLineEl);
+
+    this.dragChipEl = this.doc.createElement("div");
+    this.dragChipEl.className = "overlay-drag-chip";
+    this.dragChipEl.setAttribute("data-role", "drag-chip");
+    this.dragChipEl.textContent = "Move here";
+    this.dragChipEl.style.display = "none";
+    shadow.appendChild(this.dragChipEl);
+
     // Persistent Blocks target indicator (§22) — line + Add here chip
     this.blocksTargetLineEl = this.doc.createElement("div");
     this.blocksTargetLineEl.className = "overlay-blocks-target-line";
@@ -401,6 +466,8 @@ export class Overlay {
     this.blocksTargetLineEl = null;
     this.blocksTargetPlusEl = null;
     this.blocksTargetChipEl = null;
+    this.dragLineEl = null;
+    this.dragChipEl = null;
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map();
     this.scopeTopEl = null;
@@ -431,6 +498,33 @@ export class Overlay {
   clearInsertion() {
     if (this.insertionLineEl) this.insertionLineEl.style.display = "none";
     if (this.insertionPlusEl) this.insertionPlusEl.style.display = "none";
+  }
+  clearDragTarget() {
+    if (this.dragLineEl) this.dragLineEl.style.display = "none";
+    if (this.dragChipEl) this.dragChipEl.style.display = "none";
+  }
+  setDragTarget(rect, label) {
+    if (!this.dragLineEl || !rect) {
+      this.clearDragTarget();
+      return;
+    }
+    const line = this.dragLineEl;
+    line.style.display = "block";
+    line.style.left = Math.round(rect.left) + "px";
+    line.style.top = Math.round(rect.top) + "px";
+    line.style.width = Math.round(rect.width) + "px";
+    if (this.dragChipEl) {
+      const chip = this.dragChipEl;
+      chip.textContent = label || "Move here";
+      chip.style.display = "inline-flex";
+      chip.style.left = Math.round(rect.left + rect.width / 2) + "px";
+      chip.style.top = Math.round(rect.top - 14) + "px";
+      chip.style.transform = "translateX(-50%)";
+    }
+  }
+  setDragging(isDragging) {
+    if (this.selectedEl) this.selectedEl.classList.toggle("overlay-outline--dragging", !!isDragging);
+    if (this.handleEl) this.handleEl.classList.toggle("overlay-handle--dragging", !!isDragging);
   }
   clearBlocksTarget() {
     if (this.blocksTargetLineEl) this.blocksTargetLineEl.style.display = "none";
@@ -700,8 +794,32 @@ export class Overlay {
     }
     if (isEditing) handle.classList.add("overlay-handle--editing");
     else handle.classList.remove("overlay-handle--editing");
-    // Build handle content: label + optional plus inside handle (Add inside)
+    // Build handle content: drag grip + label + optional plus inside handle (Add inside)
     handle.replaceChildren();
+    // Drag grip for movable editable block (§21-22)
+    const showGrip = !isExternal && !isEditing && opts && opts.showDragGrip;
+    if (showGrip) {
+      const grip = this.doc.createElement("button");
+      grip.type = "button";
+      grip.className = "overlay-handle__drag";
+      grip.setAttribute("data-stratum-editor-ui", "true");
+      grip.setAttribute("draggable", "true");
+      const gripLabel = `Move ${text}`;
+      grip.setAttribute("aria-label", gripLabel);
+      grip.setAttribute("title", "Move block");
+      grip.textContent = "⠿";
+      // Prevent handle click from selecting; grip handles drag
+      grip.addEventListener("pointerdown", (e) => e.stopPropagation());
+      grip.addEventListener("mousedown", (e) => e.stopPropagation());
+      grip.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+      if (opts && typeof opts.onDragStart === "function") {
+        grip.addEventListener("dragstart", (e) => opts.onDragStart(e));
+      }
+      if (opts && typeof opts.onDragEnd === "function") {
+        grip.addEventListener("dragend", (e) => opts.onDragEnd(e));
+      }
+      handle.appendChild(grip);
+    }
     const labelSpan = this.doc.createElement("span");
     labelSpan.className = "overlay-handle__label";
     labelSpan.textContent = text;
