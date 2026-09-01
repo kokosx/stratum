@@ -16,6 +16,7 @@ const TOOLBAR_CSS = `
   box-shadow: 0 8px 24px rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.15);
   z-index: 2147483647;
   font-family: system-ui, -apple-system, sans-serif;
+  pointer-events: auto;
 }
 .richtext-toolbar.is-visible{ display: inline-flex; }
 .richtext-toolbar__btn{
@@ -30,6 +31,7 @@ const TOOLBAR_CSS = `
   color: #e2e8f0;
   font: 700 13px/1 system-ui, sans-serif;
   cursor: pointer;
+  pointer-events: auto;
 }
 .richtext-toolbar__btn:hover{ background: rgba(255,255,255,0.15); color: #fff; }
 .richtext-toolbar__btn.is-active{ background: #334155; color: #fff; }
@@ -49,6 +51,7 @@ const TOOLBAR_CSS = `
   box-shadow: 0 12px 32px rgba(0,0,0,0.15);
   z-index: 2147483647;
   font-family: system-ui, -apple-system, sans-serif;
+  pointer-events: auto;
 }
 .richtext-link-popover.is-visible{ display: flex; }
 .richtext-link-popover__title{ font: 600 12px/1 system-ui; color:#475569; }
@@ -290,33 +293,13 @@ export function hideToolbar() {
   if (!toolbarInteraction) savedToolbarOffsets = null;
 }
 
-export function showPopover(canvas, fieldEl, href, offsets, applyCb, removeCb, closeCb) {
+export function showPopover(canvas, fieldEl, href, offsets) {
   if (!ensureElements(canvas)) return;
   activeFieldEl = fieldEl;
   activeCanvas = canvas;
   savedOffsets = offsets ? { ...offsets } : null;
   savedToolbarOffsets = offsets ? { ...offsets } : null;
   toolbarInteraction = true;
-  // Store callbacks for popover (using new explicit object)
-  callbacks.applyLink = applyCb ? (hrefVal) => applyCb("link", hrefVal) : null;
-  // For showPopover, the applyCb is actually applyLink with href
-  // But we passed applyCb as generic; we need to handle
-  // The caller passes applyCb as (mark, val) => toggleMark; for popover we passed specific
-  // So we override for popover context
-  if (typeof applyCb === "function" && applyCb.length === 2) {
-    // It's the generic apply, but for popover we want applyLink
-    // Do nothing, keep as is
-  }
-  // For our explicit flow, the caller will have set callbacks via setToolbarCallbacks before, but for popover we set directly
-  // Instead, we store the passed callbacks for popover buttons
-  // We already set onApplyCallback etc via setToolbarCallbacks; for popover we use saved callbacks
-  // To avoid confusion, we store popover-specific callbacks separately
-  popoverApplyCb = applyCb;
-  popoverRemoveCb = removeCb;
-  popoverCloseCb = closeCb;
-  onApplyCallback = applyCb;
-  onRemoveCallback = removeCb;
-  onCloseCallback = closeCb;
   if (inputEl) {
     inputEl.value = href || "";
     hideError();
@@ -341,12 +324,7 @@ export function showPopover(canvas, fieldEl, href, offsets, applyCb, removeCb, c
   return savedOffsets;
 }
 
-let popoverApplyCb = null;
-let popoverRemoveCb = null;
-let popoverCloseCb = null;
-let onApplyCallback = null;
-let onRemoveCallback = null;
-let onCloseCallback = null;
+
 
 export function hidePopover() {
   if (popoverEl) popoverEl.classList.remove("is-visible");
@@ -410,31 +388,6 @@ export function setToolbarCallbacks(callbacksObj) {
   callbacks.applyLink = callbacksObj.applyLink || null;
   callbacks.removeLink = callbacksObj.removeLink || null;
   callbacks.closeLink = callbacksObj.closeLink || null;
-  // Also keep legacy onApply for compatibility if needed
-  onApplyCallback = callbacks.toggleMark;
-  onRemoveCallback = callbacks.removeLink;
-  onCloseCallback = callbacks.closeLink;
-  // For toolbar link button, we need to trigger openLink
-  // The toolbar's link button currently checks onApplyCallback._triggerLink; we now handle via callbacks.openLink
-  // Patch the toolbar link button handler to use callbacks.openLink
-  // But the handler was already set in ensureElements with closure over old onApplyCallback; we need to update that handler to use callbacks.openLink
-  // Instead, we will just ensure that when link button is clicked, it calls callbacks.openLink if available
-  // The ensureElements link button handler already checks onApplyCallback._triggerLink, but we can make it check callbacks.openLink
-  // To avoid re-creating toolbar, we update the toolbar's link button handler to use new callbacks
-  // Simplest: if toolbarEl exists, update its link button's click to use callbacks
-  try {
-    if (toolbarEl) {
-      const linkBtn = toolbarEl.querySelector('[data-mark="link"]');
-      if (linkBtn) {
-        // Remove old listeners by cloning? Instead, we just ensure the click handler checks callbacks
-        // The existing handler checks onApplyCallback._triggerLink; we can make onApplyCallback point to an object that has _triggerLink that calls callbacks.openLink
-        if (onApplyCallback && typeof onApplyCallback === "function") {
-          onApplyCallback._triggerLink = () => { if (callbacks.openLink) callbacks.openLink(); };
-          onApplyCallback._applyLink = (href) => { if (callbacks.applyLink) callbacks.applyLink(href); };
-        }
-      }
-    }
-  } catch (_) {}
 }
 
 export function destroyToolbar() {

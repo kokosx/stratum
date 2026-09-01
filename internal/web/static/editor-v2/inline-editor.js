@@ -206,7 +206,6 @@ function triggerLink() {
   const offsets = selectionToOffsets(fieldEl);
   if (!offsets || offsets.start === offsets.end) return;
   const current = domToRichText(fieldEl);
-  // Find uniform link href in selection
   let href = "";
   let pos = 0;
   let uniformHref = null;
@@ -221,42 +220,8 @@ function triggerLink() {
     pos = runEnd;
   }
   if (uniform && uniformHref) href = uniformHref;
-  const saved = { ...offsets };
-  RichToolbar.showPopover(active.canvas, fieldEl, href, saved,
-    // apply callback
-    (mark, val) => {
-      // val is href for link
-      const curOffsets = RichToolbar.getSavedOffsets() || saved;
-      // Restore selection first
-      restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-      if (mark === "link") {
-        const cur = domToRichText(fieldEl);
-        const updated = toggleMarkInRichText(cur, curOffsets.start, curOffsets.end, "link", val);
-        renderRichTextToDOM(fieldEl, updated);
-        restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-        try { active.canvas.requestSync(); } catch (_) {}
-        updateToolbar();
-      }
-    },
-    // remove callback
-    () => {
-      const curOffsets = RichToolbar.getSavedOffsets() || saved;
-      restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-      const cur = domToRichText(fieldEl);
-      const updated = toggleMarkInRichText(cur, curOffsets.start, curOffsets.end, "link", null);
-      renderRichTextToDOM(fieldEl, updated);
-      restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-      try { active.canvas.requestSync(); } catch (_) {}
-      updateToolbar();
-    },
-    // close callback
-    () => {
-      try {
-        const curOffsets = RichToolbar.getSavedOffsets() || saved;
-        if (curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-      } catch (_) {}
-    }
-  );
+  active.richSelection = { ...offsets };
+  RichToolbar.showPopover(active.canvas, fieldEl, href, offsets);
   // Also set toolbar callbacks for link
   RichToolbar.setToolbarCallbacks(
     (mark, hrefVal) => {
@@ -674,44 +639,10 @@ function attachRichHandlers(fieldEl, canvas) {
     }
     if (mod && e.key.toLowerCase() === "k") {
       e.preventDefault(); e.stopPropagation();
-      // trigger link UI
-      const offsets = selectionToOffsets(fieldEl);
-      if (!offsets || offsets.start === offsets.end) return;
-      // Save offsets for popover
-      const cur = domToRichText(fieldEl);
-      let href = "";
-      // find uniform href
-      let pos = 0, uniformHref = null, uniform = true;
-      for (const run of cur.content) {
-        const runEnd = pos + run.text.length;
-        if (runEnd <= offsets.start || pos >= offsets.end) { pos = runEnd; continue; }
-        const link = run.marks && run.marks.find(m => m.type === "link");
-        const curHref = link ? link.href : null;
-        if (uniformHref === null) uniformHref = curHref;
-        else if (uniformHref !== curHref) uniform = false;
-        pos = runEnd;
-      }
-      if (uniform && uniformHref) href = uniformHref;
-      RichToolbar.showPopover(canvas, fieldEl, href, offsets,
-        (mark, val) => {
-          const curOffsets = RichToolbar.getSavedOffsets() || offsets;
-          restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-          const cur2 = domToRichText(fieldEl);
-          const updated = toggleMarkInRichText(cur2, curOffsets.start, curOffsets.end, "link", val);
-          renderRichTextToDOM(fieldEl, updated);
-          restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-          try { canvas.requestSync(); } catch (_) {}
-        },
-        () => {
-          const curOffsets = RichToolbar.getSavedOffsets() || offsets;
-          restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-          const cur2 = domToRichText(fieldEl);
-          const updated = toggleMarkInRichText(cur2, curOffsets.start, curOffsets.end, "link", null);
-          renderRichTextToDOM(fieldEl, updated);
-          restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
-          try { canvas.requestSync(); } catch (_) {}
-        },
-        () => {
+      triggerLink();
+      return;
+    }
+
           try {
             const curOffsets = RichToolbar.getSavedOffsets() || offsets;
             if (curOffsets) restoreSelectionFromOffsets(fieldEl, curOffsets.start, curOffsets.end);
