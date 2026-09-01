@@ -4,7 +4,7 @@ import { fetchPreview } from "./preview.js";
 import { CanvasController } from "./canvas.js";
 import { PanelController } from "./panels.js";
 import { commitBeforeEditorContextChange, startInlineEdit } from "./inline-editor.js";
-import { parsePreviewDocument, patchPreviewDocument, isPreviewInitialized, markPreviewInitialized, fallbackReplacePreview } from "./preview-morph.js";
+import { parsePreviewDocument, patchPreviewDocument, isPreviewInitialized, markPreviewInitialized } from "./preview-morph.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available

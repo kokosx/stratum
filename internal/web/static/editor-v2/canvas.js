@@ -627,7 +627,7 @@ export class CanvasController {
     if (event.type === "mousedown") {
       try {
         const view = event.view || this.win;
-        if (view && view.PointerEvent) return;
+        if (view && typeof view.PointerEvent !== "undefined" && "onpointerdown" in (view || {})) return;
       } catch (_) {}
     }
     if (this.isEditorUIEvent(event)) return;

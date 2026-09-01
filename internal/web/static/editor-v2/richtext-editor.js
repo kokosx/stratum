@@ -18,6 +18,18 @@ const MARK_TO_TAG = {
   "code": "code",
 };
 
+export function isSafeHref(href) {
+  if (!href || typeof href !== "string") return false;
+  const t = href.trim();
+  if (t === "") return false;
+  if (t.startsWith("#") || t.startsWith("/")) return !t.startsWith("//");
+  try {
+    const u = new URL(t, "http://example.com");
+    const scheme = u.protocol.replace(":", "").toLowerCase();
+    return ["http", "https", "mailto", "tel"].includes(scheme);
+  } catch (_) { return false; }
+}
+
 // Canonical mark order: alphabetical (bold, code, italic, link, strike) matching Go's sort
 function sortMarks(marks) {
   return [...marks].sort((a, b) => {
@@ -33,21 +45,10 @@ function dedupMarks(marks) {
     if (!ALLOWED_MARKS.has(m.type)) continue;
     const key = m.type + "\x00" + (m.href || "");
     if (m.type === "link" && (!m.href || typeof m.href !== "string")) continue;
+    if (m.type === "link" && !isSafeHref(m.href)) continue;
     map.set(key, { type: m.type, ...(m.href ? { href: m.href } : {}) });
   }
   return sortMarks(Array.from(map.values()));
-}
-
-export function isSafeHref(href) {
-  if (!href || typeof href !== "string") return false;
-  const t = href.trim();
-  if (t === "") return false;
-  if (t.startsWith("#") || t.startsWith("/")) return !t.startsWith("//");
-  try {
-    const u = new URL(t, "http://example.com");
-    const scheme = u.protocol.replace(":", "").toLowerCase();
-    return ["http", "https", "mailto", "tel"].includes(scheme);
-  } catch (_) { return false; }
 }
 
 export function normalizeRichText(richText) {
