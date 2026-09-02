@@ -65,6 +65,20 @@ function ruleForDef(def) {
   return def?.schema?.children || { mode: "none" };
 }
 
+function canChildAcceptParent(childBlock, parentNode) {
+  const childDef = definitionForBlock(childBlock);
+  if (!childDef) return { ok: true, reason: "" };
+  const parents = childDef.schema?.placement?.parents;
+  if (!parents || parents.length === 0) return { ok: true, reason: "" };
+  if (!parentNode) {
+    return { ok: false, reason: `"${displayNameForBlock(childBlock)}" cannot be placed at the top level.` };
+  }
+  if (!parents.includes(parentNode.block)) {
+    return { ok: false, reason: `"${displayNameForBlock(childBlock)}" cannot be placed inside "${displayNameForBlock(parentNode.block)}".` };
+  }
+  return { ok: true, reason: "" };
+}
+
 // Shared structural placement core. Operation distinguishes creation vs relocation.
 // creation ("insert") enforces catalog/hidden; relocation ("move") does not block
 // an already-existing valid node solely because catalog marks it hidden (§14).
@@ -77,13 +91,17 @@ function coreCanPlace({ parentNode, block, operation, isSameParent, index }) {
       const catalog = blockCatalog();
       const entry = catalog.find((item) => item.block === block);
       if (!entry || entry.hidden) return { ok: false, reason: `"${block}" is not available in this context.` };
+      const placement = canChildAcceptParent(block, null);
+      if (!placement.ok) return placement;
       if (index != null) {
         const count = state.document?.nodes ? state.document.nodes.length : 0;
         if (index < 0 || index > count) return { ok: false, reason: "Invalid insertion index." };
       }
       return { ok: true, reason: "" };
     }
-    // move to root: schema-agnostic, only index bounds (root has no children mode)
+    // move to root: enforce placement.parents then index bounds (root has no children mode)
+    const placement = canChildAcceptParent(block, null);
+    if (!placement.ok) return placement;
     if (index != null) {
       const count = state.document?.nodes ? state.document.nodes.length : 0;
       // for same-parent root move, count is root length including moving node; raw index valid 0..count
@@ -95,6 +113,8 @@ function coreCanPlace({ parentNode, block, operation, isSameParent, index }) {
   const def = definitionForBlock(parentNode.block, parentNode.version);
   if (!def) return { ok: false, reason: "Unknown container." };
   const rule = ruleForDef(def);
+  const placementEarly = canChildAcceptParent(block, parentNode);
+  if (!placementEarly.ok) return placementEarly;
   if (rule.mode === "none") return { ok: false, reason: `${displayNameForBlock(parentNode.block)} does not allow child blocks.` };
   if (rule.mode === "allowed" && !rule.blocks.includes(block)) {
     const label = displayNameForBlock(block);
@@ -228,15 +248,27 @@ export function findSource(nodeId) {
 // Whether parent could accept at least one legal insertion at given index
 export function hasLegalInsertion(parentNode, index) {
   if (!parentNode) {
-    // root: true if any non-hidden catalog entry
-    return blockCatalog().some((c) => !c.hidden);
+    // root: true if any non-hidden catalog entry can be legally inserted (respects placement.parents)
+    for (const item of blockCatalog()) {
+      if (item.hidden) continue;
+      const res = canInsert(null, item, index != null ? index : (state.document?.nodes ? state.document.nodes.length : 0));
+      if (res.ok) return true;
+    }
+    return false;
   }
   const def = definitionForBlock(parentNode.block, parentNode.version);
   if (!def) return false;
   const rule = ruleForDef(def);
   if (rule.mode === "none") return false;
   if (rule.max != null && parentNode.children && parentNode.children.length >= rule.max) return false;
-  if (rule.mode === "any") return blockCatalog().some((c) => !c.hidden);
+  if (rule.mode === "any") {
+    for (const item of blockCatalog()) {
+      if (item.hidden) continue;
+      const ch = canInsert(parentNode, item, index);
+      if (ch.ok) return true;
+    }
+    return false;
+  }
   if (rule.mode === "allowed") {
     if (!Array.isArray(rule.blocks) || rule.blocks.length === 0) return false;
     // need at least one allowed block that is actually in catalog and not hidden, and canInsert would succeed
@@ -260,8 +292,12 @@ export function legalBlocksFor(parentNode, index) {
   const catalog = blockCatalog().filter((c) => !c.hidden);
   if (!catalog.length) return [];
   if (!parentNode) {
-    // root: all non-hidden catalog blocks are legal (context already filtered server-side)
-    return catalog.slice();
+    const outRoot = [];
+    for (const item of catalog) {
+      const res = canInsert(null, item, index != null ? index : (state.document?.nodes ? state.document.nodes.length : 0));
+      if (res.ok) outRoot.push(item);
+    }
+    return outRoot;
   }
   const out = [];
   for (const item of catalog) {
@@ -319,7 +355,7 @@ export function resolveGlobalInsertion(definition) {
 }
 
 export function hasAnyLegalInsertion() {
-  return blockCatalog().some((c) => !c.hidden);
+  return hasLegalInsertion(null, 0);
 }
 
 // --- Blocks panel explicit target (§19-20) ---

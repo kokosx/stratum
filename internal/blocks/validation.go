@@ -49,20 +49,37 @@ func (s *snapshot) validateDocument(doc *document.Document) error {
 		return err
 	}
 	for i, node := range doc.Nodes {
-		if err := s.validateNode(node, fmt.Sprintf("nodes[%d]", i)); err != nil {
+		if err := s.validateNode(node, fmt.Sprintf("nodes[%d]", i), ""); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *snapshot) validateNode(node document.Node, path string) error {
+func (s *snapshot) validateNode(node document.Node, path string, parentBlock string) error {
 	definition, ok := s.definitions[BlockKey{Name: node.Block, Version: int64(node.Version)}]
 	if !ok {
 		return fmt.Errorf("unknown block %s@%d", node.Block, node.Version)
 	}
 	name := definition.DisplayName
 	label := fmt.Sprintf("%q block", name)
+	if len(definition.Schema.Placement.Parents) > 0 {
+		allowed := false
+		for _, p := range definition.Schema.Placement.Parents {
+			if p == parentBlock {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			if parentBlock == "" {
+				return fmt.Errorf("the %s cannot be placed at the top level", label)
+			}
+			parentName := s.displayNameForBlock(parentBlock)
+			parentLabel := fmt.Sprintf("%q block", parentName)
+			return fmt.Errorf("the %s cannot be placed inside the %s", label, parentLabel)
+		}
+	}
 	props, err := decodeJSONValue(node.Props, map[string]any{})
 	if err != nil {
 		return fmt.Errorf("%s.props: %w", path, err)
@@ -111,7 +128,7 @@ func (s *snapshot) validateNode(node document.Node, path string) error {
 			}
 			return fmt.Errorf("the %q block is not allowed inside the %s", childName, label)
 		}
-		if err := s.validateNode(child, childPath); err != nil {
+		if err := s.validateNode(child, childPath, node.Block); err != nil {
 			return err
 		}
 	}
@@ -133,6 +150,21 @@ func validateRichTextFields(schema Schema, value any, path string) error {
 		}
 	}
 	return nil
+}
+
+func (s *snapshot) displayNameForBlock(blockName string) string {
+	bestVer := int64(-1)
+	var bestName string
+	for k, d := range s.definitions {
+		if k.Name == blockName && k.Version > bestVer {
+			bestVer = k.Version
+			bestName = d.DisplayName
+		}
+	}
+	if bestName != "" {
+		return bestName
+	}
+	return blockName
 }
 
 func decodeJSONValue(data json.RawMessage, empty any) (any, error) {

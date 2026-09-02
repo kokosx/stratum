@@ -10,14 +10,19 @@ import (
 	"strings"
 )
 
+type PlacementSchema struct {
+	Parents []string `json:"parents,omitempty"`
+}
+
 // Schema is the supported Stratum Block Schema v1 contract. It intentionally
 // models only the subset understood by both the server and the editor.
 type Schema struct {
-	SchemaVersion int            `json:"schemaVersion"`
-	Props         ValueSchema    `json:"props"`
-	Settings      ValueSchema    `json:"settings"`
-	Children      ChildrenSchema `json:"children"`
-	Editor        EditorSchema   `json:"editor"`
+	SchemaVersion int             `json:"schemaVersion"`
+	Placement     PlacementSchema `json:"placement,omitempty"`
+	Props         ValueSchema     `json:"props"`
+	Settings      ValueSchema     `json:"settings"`
+	Children      ChildrenSchema  `json:"children"`
+	Editor        EditorSchema    `json:"editor"`
 }
 
 type ValueSchema struct {
@@ -83,6 +88,7 @@ var blockNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*/[a-z0-9][a-z0-9_
 func ParseSchema(data string) (Schema, error) {
 	var raw struct {
 		SchemaVersion int             `json:"schemaVersion"`
+		Placement     PlacementSchema `json:"placement"`
 		Props         json.RawMessage `json:"props"`
 		Settings      json.RawMessage `json:"settings"`
 		Children      ChildrenSchema  `json:"children"`
@@ -102,7 +108,7 @@ func ParseSchema(data string) (Schema, error) {
 	if err != nil {
 		return Schema{}, err
 	}
-	schema := Schema{SchemaVersion: 1, Props: props, Settings: settings, Children: raw.Children, Editor: raw.Editor}
+	schema := Schema{SchemaVersion: 1, Placement: raw.Placement, Props: props, Settings: settings, Children: raw.Children, Editor: raw.Editor}
 	if err := schema.validateContract(); err != nil {
 		return Schema{}, err
 	}
@@ -212,6 +218,16 @@ func (s *Schema) validateContract() error {
 	}
 	if s.Children.Min != nil && s.Children.Max != nil && *s.Children.Min > *s.Children.Max {
 		return fmt.Errorf("children.min cannot exceed children.max")
+	}
+	seenPlacement := make(map[string]bool, len(s.Placement.Parents))
+	for _, parent := range s.Placement.Parents {
+		if !blockNamePattern.MatchString(parent) {
+			return fmt.Errorf("placement.parents: invalid block name %q", parent)
+		}
+		if seenPlacement[parent] {
+			return fmt.Errorf("placement.parents: duplicate block name %q", parent)
+		}
+		seenPlacement[parent] = true
 	}
 	for i, sc := range s.Editor.StarterChildren {
 		if !blockNamePattern.MatchString(sc.Block) {

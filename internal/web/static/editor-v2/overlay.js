@@ -99,6 +99,31 @@ const OVERLAY_CSS = `
   white-space: nowrap;
   padding-right: 8px;
 }
+.overlay-handle__parent {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  margin-right: 4px;
+  height: 18px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+  font: 600 11px/1 system-ui, sans-serif;
+  cursor: pointer;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.overlay-handle__parent:hover { background: rgba(255,255,255,0.28); }
+.overlay-handle__sep {
+  flex: 0 0 auto;
+  margin-right: 6px;
+  opacity: 0.75;
+  color: rgba(255,255,255,0.9);
+  font-weight: 400;
+}
 .overlay-handle__plus {
   flex: 0 0 auto;
   display: inline-flex;
@@ -830,7 +855,7 @@ export class Overlay {
     }
     if (isEditing) handle.classList.add("overlay-handle--editing");
     else handle.classList.remove("overlay-handle--editing");
-    // Build handle content: drag grip + label + optional plus inside handle (Add inside)
+    // Build handle content: drag grip + [parent › current] + optional plus inside handle (Add inside)
     // During active native drag this full rebuild must be avoided (handled via setSelectedGeometry).
     handle.replaceChildren();
     // Drag grip for movable editable block (§21-22) — document owns drag lifecycle, grip only exposes draggable attribute.
@@ -850,6 +875,28 @@ export class Overlay {
       grip.addEventListener("mousedown", (e) => e.stopPropagation());
       grip.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
       handle.appendChild(grip);
+    }
+    // Parent breadcrumb (nearest editable SDT parent) — generic, no block hardcode
+    const parentLabel = opts && opts.parentLabel;
+    const parentNodeId = opts && opts.parentNodeId;
+    const onParentClick = opts && opts.onParentClick;
+    if (!isExternal && !isEditing && parentLabel && parentNodeId && typeof onParentClick === "function") {
+      const parentBtn = this.doc.createElement("button");
+      parentBtn.type = "button";
+      parentBtn.className = "overlay-handle__parent";
+      parentBtn.setAttribute("data-stratum-editor-ui", "true");
+      parentBtn.setAttribute("aria-label", `Go to parent ${parentLabel}`);
+      parentBtn.setAttribute("title", `Select parent ${parentLabel}`);
+      parentBtn.textContent = parentLabel;
+      parentBtn.addEventListener("pointerdown", (e) => { e.stopPropagation(); });
+      parentBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+      parentBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); try { onParentClick(); } catch (_) {} });
+      handle.appendChild(parentBtn);
+      const sep = this.doc.createElement("span");
+      sep.className = "overlay-handle__sep";
+      sep.textContent = "›";
+      sep.setAttribute("aria-hidden", "true");
+      handle.appendChild(sep);
     }
     const labelSpan = this.doc.createElement("span");
     labelSpan.className = "overlay-handle__label";

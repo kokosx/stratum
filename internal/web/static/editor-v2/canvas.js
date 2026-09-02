@@ -1449,6 +1449,33 @@ export class CanvasController {
       } else {
         // Decide if selected container can Add inside (§27) — small plus on handle
         let handleOpts = { external: isExternal, editing: !!editing };
+        // Generic nearest-parent breadcrumb (M6) — when selected has editable SDT parent
+        try {
+          if (!editing && !isExternal && this.selected && this.selected.nodeId) {
+            const parentInfo = findDocumentParent(this.selected.nodeId);
+            if (parentInfo && parentInfo.parent) {
+              const parentNode = parentInfo.parent;
+              const parentDef = definitionForBlock(parentNode.block, parentNode.version);
+              if (parentDef) {
+                const renderedParentId = parentNode.id;
+                const renderedNodeId = this.selected.nodeId;
+                handleOpts.parentLabel = displayNameForBlock(parentNode.block);
+                handleOpts.parentNodeId = renderedParentId;
+                handleOpts.onParentClick = () => {
+                  try {
+                    const cur = findDocumentParent(renderedNodeId);
+                    if (cur && cur.parent && cur.parent.id === renderedParentId) {
+                      this.selectNode(cur.parent);
+                      return;
+                    }
+                    const fallback = findDocumentParent(this.selected?.nodeId);
+                    if (fallback && fallback.parent) this.selectNode(fallback.parent);
+                  } catch (_) {}
+                };
+              }
+            }
+          }
+        } catch (_) {}
         // Drag grip for movable editable block — only grip is draggable, not whole handle
         try {
           if (!editing && isExternal === false) {

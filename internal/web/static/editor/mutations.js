@@ -9,6 +9,24 @@ function displayNameFor(def, fallback="block") {
   return def?.displayName || fallback;
 }
 
+function canChildAcceptParent(block, parentNode) {
+  const childDef = definitionForBlock(block);
+  if (!childDef) return { ok: true, reason: "" };
+  const parents = childDef.schema?.placement?.parents;
+  if (!parents || parents.length === 0) return { ok: true, reason: "" };
+  if (!parentNode) {
+    const label = childDef.displayName || block;
+    return { ok: false, reason: `"${label}" cannot be placed at the top level.` };
+  }
+  if (!parents.includes(parentNode.block)) {
+    const parentDef = definitionFor(parentNode);
+    const parentLabel = parentDef?.displayName || parentNode.block;
+    const childLabel = childDef.displayName || block;
+    return { ok: false, reason: `"${childLabel}" cannot be placed inside "${parentLabel}".` };
+  }
+  return { ok: true, reason: "" };
+}
+
 // Resolve definition by block name (latest version)
 function definitionForBlock(block) {
   let best = null;
@@ -106,12 +124,16 @@ function maxReason(parentDef) {
 }
 
 export function canInsert(parentNode, block, index, drag = null) {
-  // parentNode null => root
+  // parentNode null => root: enforce placement.parents
   if (!parentNode) {
+    const placement = canChildAcceptParent(block, null);
+    if (!placement.ok) return placement;
     return { ok: true, reason: "" };
   }
   const def = definitionFor(parentNode);
   if (!def) return { ok: false, reason: "Unknown container." };
+  const placementEarly = canChildAcceptParent(block, parentNode);
+  if (!placementEarly.ok) return placementEarly;
   const rule = ruleFor(def);
   if (rule.mode === "none") return { ok: false, reason: `${displayNameFor(def)} does not allow child blocks.` };
   if (rule.mode === "allowed" && !rule.blocks.includes(block)) {
@@ -131,6 +153,10 @@ export function canInsert(parentNode, block, index, drag = null) {
 }
 
 export function canInsertRoots(parentNode, roots, drag = null) {
+  for (const r of roots) {
+    const placement = canChildAcceptParent(r.block, parentNode);
+    if (!placement.ok) return placement;
+  }
   if (!parentNode) return { ok: true, reason: "" };
   const def = definitionFor(parentNode);
   if (!def) return { ok: false, reason: "Unknown container." };
@@ -234,15 +260,35 @@ export function canOutdent(nodeId) {
 
 // Whether a parent boundary could accept at least one insertable block.
 // Uses real catalog probe (not just mode check) – returns false when max reached
-// or allowed list empty. Root always true (root accepts any).
+// or allowed list empty. Root checks placement.
 export function hasLegalInsertion(parentNode, index) {
-  if (!parentNode) return true;
+  if (!parentNode) {
+    for (const d of definitions.values()) {
+      if (d.hidden) continue;
+      if (canInsert(null, d.block, index).ok) return true;
+    }
+    for (const d of state.catalog) {
+      if (d.hidden) continue;
+      if (canInsert(null, d.block, index).ok) return true;
+    }
+    return false;
+  }
   const def = definitionFor(parentNode);
   if (!def) return false;
   const rule = ruleFor(def);
   if (rule.mode === "none") return false;
   if (rule.max != null && parentNode.children && parentNode.children.length >= rule.max) return false;
-  if (rule.mode === "any") return true;
+  if (rule.mode === "any") {
+    for (const d of definitions.values()) {
+      if (d.hidden) continue;
+      if (canInsert(parentNode, d.block, index).ok) return true;
+    }
+    for (const d of state.catalog) {
+      if (d.hidden) continue;
+      if (canInsert(parentNode, d.block, index).ok) return true;
+    }
+    return false;
+  }
   if (rule.mode === "allowed") {
     if (!Array.isArray(rule.blocks) || rule.blocks.length === 0) return false;
     // Check if at least one allowed block is actually available in catalog and not hidden,

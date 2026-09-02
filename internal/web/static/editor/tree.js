@@ -142,7 +142,28 @@ export function clonePatternNodes(pattern) {
   return nodes;
 }
 
+function definitionForBlockLocal(block) {
+  for (const def of definitions.values()) {
+    if (def.block === block) return def;
+  }
+  for (const d of state.catalog) {
+    if (d.block === block) return d;
+  }
+  return null;
+}
+function canChildAcceptParentLocal(block, parentNode) {
+  const childDef = definitionForBlockLocal(block);
+  if (!childDef) return true;
+  const parents = childDef.schema?.placement?.parents;
+  if (!parents || parents.length === 0) return true;
+  if (!parentNode) return false;
+  return parents.includes(parentNode.block);
+}
+
 export function canInsertRoots(containerNode, roots) {
+  for (const r of roots) {
+    if (!canChildAcceptParentLocal(r.block, containerNode)) return false;
+  }
   if (!containerNode) return true;
   const def = definitionFor(containerNode);
   if (!def) return false;
