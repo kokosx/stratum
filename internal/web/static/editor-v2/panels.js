@@ -14,6 +14,7 @@ import {
 } from "./state.js";
 import { clearInsertionTarget, describeBlocksTarget, getInsertionSource, getInsertionTarget, legalBlocksFor, resolveGlobalInsertion, setInsertionTarget, subscribeInsertionTarget, targetForBlocksFromSelection } from "./insertion.js";
 import { insertBlock } from "./commands.js";
+import { startSession, clearSession, getSession } from "./drag-session.js";
 import { NavigatorView } from "./navigator.js";
 import { inspectorTitle, renderDocumentBody, renderInspectorBody } from "./inspector.js";
 import { commitBeforeEditorContextChange } from "./inline-editor.js";
@@ -478,8 +479,50 @@ export class PanelController {
         copy.append(createElement("span", "editor-v2-block-item__name", item.displayName));
         if (item.description) copy.append(createElement("span", "editor-v2-block-item__description", item.description));
         row.append(copy);
-        // insertion on click (§39, no draggable yet §40)
+        // Blocks drag to canvas (native cross-iframe DnD if iframe receives dragover)
+        // Do not remove click-to-insert — both coexist.
+        row.draggable = true;
+        row.setAttribute("draggable", "true");
+        let didDrag = false;
+        row.addEventListener("dragstart", (e) => {
+          const before = getSession();
+          try {
+            startSession({ kind: "block", definition: item });
+            const sess = getSession();
+            // Only mark as dragged if session was actually created (single-owner guard may block)
+            if (sess && sess.kind === "block" && sess !== before) {
+              didDrag = true;
+            } else {
+              didDrag = false;
+            }
+            if (didDrag) {
+              e.dataTransfer.effectAllowed = "copy";
+              try { e.dataTransfer.setData("text/plain", item.block); } catch (_) {}
+              if (e.dataTransfer.setDragImage) {
+                try { e.dataTransfer.setDragImage(row, 10, 10); } catch (_) {}
+              }
+            } else {
+              // No session created — cancel native drag
+              e.preventDefault();
+            }
+          } catch (_) {
+            didDrag = false;
+          }
+        });
+        row.addEventListener("dragend", (e) => {
+          // Clear session if drop didn't already (e.g., canceled drag)
+          try { clearSession(); } catch (_) {}
+          // Suppress the subsequent click that fires after a drag — keep flag until next tick
+          setTimeout(() => { didDrag = false; }, 0);
+        });
+        // insertion on click (§39) — suppressed when drag occurred
         row.addEventListener("click", (e) => {
+          if (didDrag) {
+            didDrag = false;
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
           e.preventDefault(); e.stopPropagation();
           let res;
           if (target) {

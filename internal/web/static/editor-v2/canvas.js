@@ -3,8 +3,8 @@ import { buildMarkerIndex, visualRectForInstance } from "./markers.js";
 import { Overlay } from "./overlay.js";
 import { QuickInserter } from "./quick-inserter.js";
 import { state, bootstrap, displayNameForBlock, findDocumentNode, findDocumentParent, isContainerNode, definitionForBlock, subscribeDocument, primaryInlineFieldForNode, inlineFieldsForNode } from "./state.js";
-import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget, canMove } from "./insertion.js";
-import { moveNode } from "./commands.js";
+import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeInsertionTarget, canMove, canInsert } from "./insertion.js";
+import { moveNode, insertBlock } from "./commands.js";
 import { startSession, clearSession, getSession } from "./drag-session.js";
 import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveEditorSessionEvent, isActiveFieldElement, commitBeforeEditorContextChange, findFieldElement } from "./inline-editor.js";
 
@@ -196,7 +196,12 @@ export class CanvasController {
           if (sess && sess.kind === "node") {
             const legal = canMove(sess.nodeId, this.dragTarget.parentId, this.dragTarget.index);
             if (!legal.ok) this.clearDragState();
-            else this.overlay && this.overlay.setDragTarget(this.dragTarget.rect);
+            else this.overlay && this.overlay.setDragTarget(this.dragTarget.rect, "Move here");
+          } else if (sess && sess.kind === "block" && sess.definition) {
+            const parentNode = this.dragTarget.parentId == null ? null : findDocumentNode(this.dragTarget.parentId);
+            const legal = canInsert(parentNode, sess.definition, this.dragTarget.index);
+            if (!legal.ok) this.clearDragState();
+            else this.overlay && this.overlay.setDragTarget(this.dragTarget.rect, "Add here");
           }
         }
         // persistent Blocks target must recompute after document change (new children count shifts geometry)
@@ -531,7 +536,7 @@ export class CanvasController {
   }
 
   deriveDragBoundaries(hit, e, session) {
-    if (!session || session.kind !== "node") return null;
+    if (!session || (session.kind !== "node" && session.kind !== "block")) return null;
     let base = this.rawBoundaries(hit, e);
     if (hit && hit.editable) {
       const node = findDocumentNode(hit.nodeId);
@@ -611,7 +616,7 @@ export class CanvasController {
 
   onMove(e) {
     if (!this.doc || !this.overlay) return;
-    if (getSession() && getSession().kind === "node") return;
+    if (getSession()) return;
     if (isInlineEditing()) {
       if (this.hoverInst) { this.hoverInst = null; state.hoveredKey = null; try { this.overlay.clearHover(); } catch (_) {} }
       if (this.insertionHint) { this.insertionHint = null; try { this.overlay.clearInsertion(); } catch (_) {} }
@@ -667,7 +672,7 @@ export class CanvasController {
 
   updateInsertionHint(e, hit) {
     if (!this.doc || !this.overlay) return;
-    if (getSession() && getSession().kind === "node") return;
+    if (getSession()) return;
     if (isInlineEditing()) {
       if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); }
       return;
@@ -749,7 +754,8 @@ export class CanvasController {
   onDragStart(e) {
     if (!this.doc || !this.overlay) return;
     // Prevent double startSession when both doc and grip listeners would fire (only one owner).
-    if (getSession() && getSession().kind === "node") return;
+    // Also blocks block-drag while node drag is active and vice versa.
+    if (getSession()) return;
     const grip = findCanvasDragGrip(e);
     if (!grip) return;
     // Prevent text selection drag inside contenteditable
@@ -786,10 +792,11 @@ export class CanvasController {
   onDragOver(e) {
     if (!this.doc || !this.overlay) return;
     const sess = getSession();
-    if (!sess || sess.kind !== "node") return;
+    if (!sess || (sess.kind !== "node" && sess.kind !== "block")) return;
+    const isBlock = sess.kind === "block";
     e.preventDefault();
     e.stopPropagation();
-    try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+    try { e.dataTransfer.dropEffect = isBlock ? "copy" : "move"; } catch (_) {}
     this._dragOverY = e.clientY || 0;
     // Auto-scroll near viewport edges (§40)
     try {
@@ -799,20 +806,26 @@ export class CanvasController {
       else this.stopAutoScroll();
     } catch (_) {}
     const hit = this.hitForTarget(e.target) || this.hitFromPoint(e.clientX, e.clientY);
-    // Derive candidates shared geometry
+    // Derive candidates shared geometry — same neutral geometry for both moves and inserts
     let candidates = this.deriveDragBoundaries(hit, e, sess);
     if (!candidates || !candidates.length) {
-      // Fallback to raw insertion candidates filtered for drag
       candidates = this.rawBoundaries(hit, e);
     }
     if (!candidates || !candidates.length) {
       if (this.dragTarget) { this.dragTarget = null; this.overlay.clearDragTarget(); try{ e.dataTransfer.dropEffect = "none"; } catch(_){} }
       return;
     }
-    // Filter illegal via canMove (§31) and hide no-op (§33)
+    // Filter illegal via canMove (nodes) or canInsert (blocks) and hide no-op
     const legal = [];
     for (const c of candidates) {
-      const res = canMove(sess.nodeId, c.parentId, c.index);
+      let res;
+      if (isBlock) {
+        if (!sess.definition) continue;
+        const parentNode = c.parentId == null ? null : findDocumentNode(c.parentId);
+        res = canInsert(parentNode, sess.definition, c.index);
+      } else {
+        res = canMove(sess.nodeId, c.parentId, c.index);
+      }
       if (!res.ok) continue;
       legal.push(c);
     }
@@ -840,11 +853,10 @@ export class CanvasController {
       }
       if (d < bestDist) { best = c; bestDist = d; }
     }
-    // Container body heuristic already in derive
-    // Show strong blue insertion line without plus (§32)
+    // Show strong blue line — same geometry, different semantics
     this.dragTarget = { parentId: best.parentId, index: best.index, rect: best.rect };
-    this.overlay.setDragTarget(best.rect);
-    try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+    this.overlay.setDragTarget(best.rect, isBlock ? "Add here" : "Move here");
+    try { e.dataTransfer.dropEffect = isBlock ? "copy" : "move"; } catch (_) {}
   }
 
   onDragLeave(e) {
@@ -866,32 +878,56 @@ export class CanvasController {
   onDrop(e) {
     if (!this.doc || !this.overlay) return;
     const sess = getSession();
-    if (!sess || sess.kind !== "node") return;
+    if (!sess || (sess.kind !== "node" && sess.kind !== "block")) return;
     e.preventDefault();
     e.stopPropagation();
     this.stopAutoScroll();
     const target = this.dragTarget;
     if (!target) { this.clearDragState(); return; }
-    // Validate again before mutation
+    if (sess.kind === "block") {
+      if (!sess.definition) { this.clearDragState(); return; }
+      const parentNode = target.parentId == null ? null : findDocumentNode(target.parentId);
+      const legal = canInsert(parentNode, sess.definition, target.index);
+      if (!legal.ok) { this.clearDragState(); return; }
+      const result = insertBlock({ definition: sess.definition, parentId: target.parentId, index: target.index });
+      // Queue pending selection for preview morph handling (mirrors moveNode and panels click)
+      try {
+        if (result && result.ok && result.node) {
+          state.__pendingSelectionIds ||= [];
+          state.__pendingSelectionIds.push(result.node.id);
+          state.__pendingSelectionBlock = result.node.block;
+          state.selection = { nodeId: result.node.id, instanceKey: null, editable: true, block: result.node.block, version: result.node.version, logical: true };
+        }
+      } catch (_) {}
+      this.clearDragState();
+      if (!result || !result.ok) {
+        try {
+          const msg = result?.reason || "Could not add block.";
+          if (typeof window !== "undefined" && window.stratumToast) window.stratumToast("error", msg);
+        } catch (_) {}
+        return;
+      }
+      try { this.requestSync(); } catch (_) {}
+      return;
+    }
+    // Validate again before mutation (node move)
     const legal = canMove(sess.nodeId, target.parentId, target.index);
     if (!legal.ok) { this.clearDragState(); return; }
     const result = moveNode({ nodeId: sess.nodeId, parentId: target.parentId, index: target.index });
     this.clearDragState();
     if (!result || !result.ok) {
-      // Optionally toast error if available
       try {
         const msg = result?.reason || "Could not move block.";
         if (typeof window !== "undefined" && window.stratumToast) window.stratumToast("error", msg);
       } catch (_) {}
       return;
     }
-    // Keep moved node selected — moveNode already queued pending selection; just ensure overlay reflects
     try { this.requestSync(); } catch (_) {}
   }
 
   onDragEnd(e) {
     const sess = getSession();
-    if (!sess || sess.kind !== "node") return;
+    if (!sess) return;
     try { e.preventDefault(); } catch (_) {}
     this.clearDragState();
     try { this.requestSync(); } catch (_) {}
@@ -1355,7 +1391,7 @@ export class CanvasController {
 
   syncGeometry() {
     if (!this.overlay || !this.doc) return;
-    const isDragging = !!(getSession() && getSession().kind === "node");
+    const isDragging = !!getSession();
     // During inline editing, suppress hover/insertion affordances (§29)
     if (isInlineEditing()) {
       try { this.overlay.clearHover(); } catch (_) {}
@@ -1525,11 +1561,18 @@ export class CanvasController {
     }
     // Drag target line persistence (separate from insertion hint)
     if (isDragging && this.dragTarget && this.overlay) {
-      this.overlay.setDragTarget(this.dragTarget.rect);
-      this.overlay.setDragging(true);
+      const sess = getSession();
+      const label = sess && sess.kind === "block" ? "Add here" : "Move here";
+      this.overlay.setDragTarget(this.dragTarget.rect, label);
+      // Only node moves show dragging outline; block insertions use copy semantics
+      this.overlay.setDragging(!!(sess && sess.kind === "node"));
     } else if (!isDragging && this.overlay) {
-      // ensure drag line cleared when not dragging
-      // (clearDragTarget already does, but ensure)
+      try { this.overlay.setDragging(false); } catch (_) {}
+      // Clear stale drag target when no session (e.g., block drag canceled outside iframe)
+      if (this.dragTarget) {
+        this.dragTarget = null;
+        try { this.overlay.clearDragTarget(); } catch (_) {}
+      }
     }
   }
 
@@ -1700,7 +1743,7 @@ export class CanvasController {
   onKey(e) {
     if (!e) return;
     if (this.isEditorUIEvent(e)) return;
-    if (getSession() && getSession().kind === "node" && e.key === "Escape") {
+    if (getSession() && e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
       this.clearDragState();
       return;

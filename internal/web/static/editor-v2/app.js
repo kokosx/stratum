@@ -178,46 +178,56 @@ class EditorApp {
   }
 
   _refreshCanvasAfterPatch(pendingId, scroller, savedTop, savedLeft) {
-    // Two rAF for layout to settle, then refresh stage coordinates
+    // Two rAF for layout to settle, then rebuild marker index and sync geometry
     const doRefresh = () => {
+      if (!this.canvas) return;
       try {
-        if (this.canvas) {
-          this.canvas.refresh();
-          if (pendingId) {
-            this._handlePendingSelection(pendingId);
-          } else if (state.selectedNodeId) {
-            try {
-              const sel = state.selection;
-              if (sel && sel.instanceKey && this.canvas.index.has(sel.instanceKey)) {
-                const inst = this.canvas.index.get(sel.instanceKey);
+        try {
+          this.canvas.rebuildIndex();
+        } catch (err) {
+          console.error("[editor-v2] canvas rebuild failed", err);
+        }
+        if (pendingId) {
+          this._handlePendingSelection(pendingId);
+        } else if (state.selection && state.selection.nodeId) {
+          try {
+            const sel = state.selection;
+            // Do not trust stale instanceKey after structural move — resolve via nodeId → current instance
+            const keys = this.canvas.nodeToKeys?.get(sel.nodeId) || [];
+            const editableKeys = keys.filter((k) => {
+              const inst = this.canvas.index.get(k);
+              return inst && inst.editable;
+            });
+            if (editableKeys.length > 0) {
+              const key = editableKeys[0];
+              if (this.canvas.index.has(key)) {
+                const inst = this.canvas.index.get(key);
                 this.canvas.selectInstance(inst);
-              } else if (sel && sel.nodeId) {
-                const node = state.document.nodes ? (() => {
-                  const walk = (nodes) => {
-                    for (const n of nodes || []) {
-                      if (n.id === sel.nodeId) return n;
-                      const sub = walk(n.children);
-                      if (sub) return sub;
-                    }
-                    return null;
-                  };
-                  return walk(state.document.nodes);
-                })() : null;
-                if (node) this.canvas.selectNode(node, { scroll: false });
               }
-            } catch (_) {}
-          }
-          try { this.canvas.updateOverlayPositions(); } catch (_) {}
-          try { this.canvas.notifyViewportChanged(); } catch (_) {}
-          // Preserve scroller defensively (morph already keeps scroll, but ensure)
-          if (scroller && savedTop != null) {
-            // Only restore if no pending scroll target
-            if (!pendingId && !state.__pendingScrollToId) {
-              // keep current scroll (do not force), but ensure not jumped
+            } else {
+              const node = (() => {
+                const walk = (nodes) => {
+                  for (const n of nodes || []) {
+                    if (n.id === sel.nodeId) return n;
+                    const sub = walk(n.children);
+                    if (sub) return sub;
+                  }
+                  return null;
+                };
+                return walk(state.document?.nodes || []);
+              })();
+              if (node) this.canvas.selectNode(node);
             }
+          } catch (err) {
+            console.error("[editor-v2] canvas selection restore failed", err);
           }
         }
-      } catch (_) {}
+        try { this.canvas.notifyViewportChanged(); } catch (err) {
+          console.error("[editor-v2] canvas notifyViewport failed", err);
+        }
+      } catch (err) {
+        console.error("[editor-v2] canvas refresh failed", err);
+      }
     };
     requestAnimationFrame(() => {
       requestAnimationFrame(doRefresh);

@@ -1,6 +1,8 @@
 // overlay.js — Shadow DOM editor UI inside iframe
 // Parent V2 JS controls everything, but overlay lives inside iframe document.
 
+const HANDLE_HEIGHT = 28;
+
 const OVERLAY_CSS = `
 :host {
   position: fixed;
@@ -75,7 +77,7 @@ const OVERLAY_CSS = `
   pointer-events: none;
   display: inline-flex;
   align-items: center;
-  height: 24px;
+  height: ${HANDLE_HEIGHT}px;
   padding: 0 0 0 8px;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 11px;
@@ -102,8 +104,8 @@ const OVERLAY_CSS = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border: 0;
   border-left: 1px solid rgba(255,255,255,.3);
   background: rgba(255,255,255,.15);
@@ -119,13 +121,13 @@ const OVERLAY_CSS = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 24px;
+  width: 32px;
+  height: 28px;
   border: 0;
   border-right: 1px solid rgba(255,255,255,.3);
   background: transparent;
   color: #fff;
-  font: 700 12px/1 system-ui, sans-serif;
+  font: 700 15px/1 system-ui, sans-serif;
   cursor: grab;
   pointer-events: auto;
   user-select: none;
@@ -767,7 +769,7 @@ export class Overlay {
     const handle = this.handleEl;
     handle.style.display = "inline-flex";
     let handleLeft = Math.round(rect.left);
-    let handleTop = Math.round(rect.top - 24);
+    let handleTop = Math.round(rect.top - HANDLE_HEIGHT);
     try {
       const vw = this.doc.documentElement.clientWidth || (this.doc.defaultView && this.doc.defaultView.innerWidth) || 1024;
       // Clamp without measuring: max-width 240px per CSS
@@ -875,7 +877,7 @@ export class Overlay {
 
     // Position handle so its bottom edge touches top edge of rect
     let handleLeft = Math.round(rect.left);
-    let handleTop = Math.round(rect.top - 24);
+    let handleTop = Math.round(rect.top - HANDLE_HEIGHT);
     try {
       const vw = this.doc.documentElement.clientWidth || (this.doc.defaultView && this.doc.defaultView.innerWidth) || 1024;
       handle.style.left = handleLeft + "px";
