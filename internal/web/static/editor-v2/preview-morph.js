@@ -1,6 +1,12 @@
 // preview-morph.js — DOM morph for editor preview (V2)
 // Small, focused morph that preserves stable nodes via keys.
 // No framework, only native DOMParser + keyed diff.
+// M6: structural mutations bypass morph entirely via renderHint:"structural" → full srcdoc replacement.
+// This file remains for non-structural refresh fallback only. If all refreshes can use full replacement,
+// this morph can be removed. Marker parsing uses shared parseStratumMarker (see markers.js) to handle
+// instanceKey containing ":" correctly. Editor blocks are single-render-root; duplicate data-stratum-key
+// is not silently supported (Map invariant).
+import { parseStratumMarker } from "./markers.js";
 
 export function parsePreviewDocument(html) {
   try {
@@ -21,33 +27,16 @@ function isStratumEndComment(node) {
 }
 
 function getStratumKeyFromStart(commentData) {
-  const raw = String(commentData || "").trim();
-  if (!raw.startsWith("stratum-node-start:")) return null;
-  const payload = raw.slice("stratum-node-start:".length);
-  const parts = payload.split(":");
-  // InstanceKey may contain unescaped colon in test data, so find editable flag ("true"/"false") and treat everything between nodeId and it as instanceKey
-  let editableIdx = -1;
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i] === "true" || parts[i] === "false") { editableIdx = i; break; }
-  }
-  if (editableIdx === -1) {
-    if (parts.length < 2) return null;
-    try {
-      const nodeId = decodeURIComponent(parts[0]);
-      const inst = decodeURIComponent(parts[1]);
-      return `${nodeId}::${inst}`;
-    } catch (_) {
-      return `${parts[0]}::${parts[1]}`;
-    }
-  }
-  const nodeId = parts[0];
-  const instParts = parts.slice(1, editableIdx);
-  const inst = instParts.join(":");
-  try {
-    return `${decodeURIComponent(nodeId)}::${decodeURIComponent(inst)}`;
-  } catch (_) {
-    return `${nodeId}::${inst}`;
-  }
+  // Delegate to shared parser (handles ":" in instanceKey via editable token scan).
+  const parsed = parseStratumMarker(String(commentData || "").trim());
+  if (!parsed || parsed.kind !== "start") return null;
+  return `${parsed.nodeId}::${parsed.instanceKey}`;
+}
+
+function getStratumKeyFromEnd(commentData) {
+  const parsed = parseStratumMarker(String(commentData || "").trim());
+  if (!parsed || parsed.kind !== "end") return null;
+  return `${parsed.nodeId}::${parsed.instanceKey}`;
 }
 
 // Annotate block wrapper elements with data-stratum-key derived from surrounding markers.
@@ -81,19 +70,11 @@ export function annotatePreviewDocument(doc) {
       if (probe.nodeType === 8) {
         const d = String(probe.data || "").trim();
         if (d.startsWith("stratum-node-end:")) {
-          // Check if this end corresponds to this start (same nodeId/instanceKey)
-          const payload = d.slice("stratum-node-end:".length);
-          const parts = payload.split(":");
-          if (parts.length >= 2) {
-            try {
-              const eNode = decodeURIComponent(parts[0]);
-              const eInst = decodeURIComponent(parts[1]);
-              const eKey = `${eNode}::${eInst}`;
-              if (eKey === key) {
-                foundEnd = probe;
-                break;
-              }
-            } catch (_) {}
+          // Use shared parser so instanceKey containing ":" is not truncated (M6 fix).
+          const eKey = getStratumKeyFromEnd(d);
+          if (eKey && eKey === key) {
+            foundEnd = probe;
+            break;
           }
           // If not matching, it's an inner block's end, continue (since nested)
           // But nested markers are inside wrapper, not siblings, so we won't encounter them here as siblings.
@@ -105,18 +86,28 @@ export function annotatePreviewDocument(doc) {
       }
       if (probe.nodeType === 1) {
         toAnnotate.push(probe);
-        // If block wrapper is single element, we break after first element? But if block renders multiple top-level elements, we should annotate all until end.
-        // Continue to collect all element siblings before end, so we annotate each.
+        // Invariant: editor blocks are single-render-root. Multiple top-level elements sharing one key
+        // would collide in Map<key,node> and silently corrupt morph (M6 multi-root bug). We assert
+        // single-root and warn if violated instead of silently supporting duplicates.
+        if (toAnnotate.length > 1) {
+          // Multi-root would collide in Map<key,node>. Establish unique occurrence key per root
+          // (M6 §8) so morph does not silently drop roots. Structural path is bypassed, so this only fires for refresh morphs.
+          try { console.warn(`[preview-morph] multi-root block detected for ${key}: ${toAnnotate.length} roots — using occurrence-qualified keys`); } catch (_) {}
+        }
       }
       probe = probe.nextSibling;
       // Safety: limit to avoid infinite loop; if we passed foundEnd, break.
       if (foundEnd) break;
     }
-    for (const el of toAnnotate) {
+    // Annotate roots. If multiple, use occurrence-qualified keys to keep Map invariant.
+    toAnnotate.forEach((el, idx) => {
       if (!el.hasAttribute("data-stratum-key")) {
-        try { el.setAttribute("data-stratum-key", key); } catch (_) {}
+        try {
+          const uniqueKey = toAnnotate.length > 1 ? `${key}#part${idx}` : key;
+          el.setAttribute("data-stratum-key", uniqueKey);
+        } catch (_) {}
       }
-    }
+    });
   }
 }
 

@@ -866,6 +866,12 @@ export class Overlay {
       grip.className = "overlay-handle__drag";
       grip.setAttribute("data-stratum-editor-ui", "true");
       grip.setAttribute("draggable", "true");
+      // Drag grip carries explicit identity (M6): must not rely solely on this.selected
+      const gripNodeId = (opts && opts.gripNodeId) ? String(opts.gripNodeId) : (this._lastGripNodeId || "");
+      const gripInstanceKey = (opts && opts.gripInstanceKey) ? String(opts.gripInstanceKey) : (this._lastGripInstanceKey || "");
+      if (gripNodeId) grip.setAttribute("data-node-id", gripNodeId);
+      if (gripInstanceKey) grip.setAttribute("data-instance-key", gripInstanceKey);
+      if (opts && opts.gripBlock) grip.setAttribute("data-block", String(opts.gripBlock));
       const gripLabel = `Move ${text}`;
       grip.setAttribute("aria-label", gripLabel);
       grip.setAttribute("title", "Move block");

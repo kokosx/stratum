@@ -81,13 +81,13 @@ export function annotatePreviewDocument(doc) {
       if (probe.nodeType === 8) {
         const d = String(probe.data || "").trim();
         if (d.startsWith("stratum-node-end:")) {
-          // Check if this end corresponds to this start (same nodeId/instanceKey)
+          // Check if this end corresponds to this start (same nodeId/instanceKey) — join remainder to handle ":" in instanceKey
           const payload = d.slice("stratum-node-end:".length);
           const parts = payload.split(":");
           if (parts.length >= 2) {
             try {
               const eNode = decodeURIComponent(parts[0]);
-              const eInst = decodeURIComponent(parts[1]);
+              const eInst = decodeURIComponent(parts.slice(1).join(":"));
               const eKey = `${eNode}::${eInst}`;
               if (eKey === key) {
                 foundEnd = probe;

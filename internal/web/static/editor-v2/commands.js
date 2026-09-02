@@ -156,7 +156,13 @@ export function insertBlock({ definition, parentId, index }) {
   const clamped = Math.max(0, Math.min(targetIndex, targetArr.length));
   targetArr.splice(clamped, 0, node);
 
-  setDocument(next);
+  setDocument(next, { renderHint: "structural" });
+  // Queue pending selection for consistent preview/selection handling (mirrors moveNode)
+  try {
+    state.__pendingSelectionIds ||= [];
+    state.__pendingSelectionIds.push(node.id);
+    state.selection = { nodeId: node.id, instanceKey: null, editable: true, block: node.block, version: node.version, logical: true };
+  } catch (_) {}
   return { ok: true, node, parentId: targetParentId, index: clamped };
 }
 
@@ -259,13 +265,13 @@ export function moveNode({ nodeId, parentId, index }) {
 
   const previousParentId = src.parentId;
   const previousIndex = src.index;
-  setDocument(next);
+  setDocument(next, { renderHint: "structural" });
 
-  // Preserve selection (§43): queue pending selection for preview morph handling
+  // Preserve selection (§43): queue pending selection for preview handling (structural uses full reload)
   try {
     state.__pendingSelectionIds ||= [];
     state.__pendingSelectionIds.push(nodeId);
-    // Keep logical selection if already selected; app.js will resolve to instance after morph
+    // Keep logical selection if already selected; app.js will resolve to instance after reload
     // If selection was different, update to moved node (drag always selects source first)
     if (!state.selection || state.selection.nodeId !== nodeId) {
       state.selection = { nodeId, instanceKey: null, editable: true, block: movingNode.block, version: movingNode.version, logical: true };

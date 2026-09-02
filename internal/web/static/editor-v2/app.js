@@ -28,6 +28,8 @@ class EditorApp {
     this.closeOverflowMenu = null;
     this._previewTimer = null;
     this._pendingSelectionId = null;
+    this._pendingRenderHint = null;
+    this._nextRenderHint = null;
     this._previewRevision = 0;
     this._lastGoodHtml = null;
     this._onEscape = (event) => this.panels?.handleEscape(event);
@@ -39,6 +41,11 @@ class EditorApp {
     };
     this._onDocumentChange = (doc, meta) => {
       if (meta && meta.renderHint === "defer") return;
+      // Structural mutations must use authoritative full replacement (M6).
+      const hint = (meta && meta.renderHint) ? meta.renderHint : "refresh";
+      // Coalesce: structural wins over refresh if multiple mutations are debounced.
+      if (hint === "structural") this._nextRenderHint = "structural";
+      else if (!this._nextRenderHint) this._nextRenderHint = hint;
       this.schedulePreview();
     };
   }
@@ -80,9 +87,12 @@ class EditorApp {
       this._previewTimer = null;
       // capture pending selection queue before preview (last-write-wins but queue prevents overwrite)
       const queue = state.__pendingSelectionIds || (state.__pendingSelectionId ? [state.__pendingSelectionId] : []);
-      this._pendingSelectionId = queue.length ? queue[queue.length - 1] : null;
+      const pendingId = queue.length ? queue[queue.length - 1] : null;
       try { delete state.__pendingSelectionId; delete state.__pendingSelectionIds; } catch (_) {}
-      this.refreshPreview();
+      // Capture render hint locally (structural wins). Hint is transport-local, not stored on domain state.
+      const hint = this._nextRenderHint || "refresh";
+      this._nextRenderHint = null;
+      this.refreshPreview(pendingId, hint);
     }, 80);
   }
 
@@ -234,11 +244,18 @@ class EditorApp {
     });
   }
 
-  _applyPreviewHtml(html, pendingId) {
+  _applyPreviewHtml(html, pendingId, renderHint) {
     if (!this.iframe) return false;
+    const hint = renderHint || "refresh";
+    // Structural mutations must bypass incremental morph and use authoritative full replacement (M6).
+    const forceFull = hint === "structural";
     const scroller = document.getElementById("editor-canvas-wrap") || this.stage || document.getElementById("editor-canvas-scroller");
     const savedTop = scroller ? scroller.scrollTop : 0;
     const savedLeft = scroller ? scroller.scrollLeft : 0;
+
+    if (forceFull) {
+      return this._doFullReload(html, pendingId, scroller, savedTop, savedLeft);
+    }
 
     // Check if we can morph (initialized and contentDocument accessible)
     const canMorph = isPreviewInitialized(this.iframe) && (() => {
@@ -332,7 +349,7 @@ class EditorApp {
   }
 
   _doFullReload(html, pendingId, scroller, savedTop, savedLeft) {
-    // Fallback path: full srcdoc replace with proper onload handling
+    // Full authoritative replacement for structural mutations (M6): must restore outer scroller position and selection.
     try { this.iframe.dataset.previewInitialized = "0"; } catch (_) {}
     this.iframe.onload = () => {
       try {
@@ -350,20 +367,49 @@ class EditorApp {
         }
       } catch (_) {}
       this.showLoading(false);
-      if (this.canvas) this.canvas.notifyViewportChanged();
-      if (pendingId) this._handlePendingSelection(pendingId);
-      markPreviewInitialized(this.iframe);
-      this._lastGoodHtml = html;
+      // Restore outer canvas scroller after layout is ready (double rAF), then selection.
+      const restoreScrollAndSelection = () => {
+        if (scroller) {
+          try {
+            // Restore exactly the saved outer scroll; do not jump to top.
+            scroller.scrollTop = savedTop;
+            scroller.scrollLeft = savedLeft;
+          } catch (_) {}
+        }
+        if (this.canvas) this.canvas.notifyViewportChanged();
+        if (pendingId) this._handlePendingSelection(pendingId);
+        else if (this.canvas && state.selection && state.selection.nodeId) {
+          // Ensure selection survives full replacement even when no explicit pendingId.
+          try {
+            const sel = state.selection;
+            const keys = this.canvas.nodeToKeys?.get(sel.nodeId) || [];
+            const editableKeys = keys.filter((k) => {
+              const inst = this.canvas.index.get(k);
+              return inst && inst.editable;
+            });
+            if (editableKeys.length > 0) {
+              const inst = this.canvas.index.get(editableKeys[0]);
+              if (inst) this.canvas.selectInstance(inst);
+            }
+          } catch (_) {}
+        }
+        markPreviewInitialized(this.iframe);
+        this._lastGoodHtml = html;
+      };
+      requestAnimationFrame(() => requestAnimationFrame(restoreScrollAndSelection));
     };
     this.iframe.srcdoc = html;
     setTimeout(() => this.showLoading(false), 2000);
     return true;
   }
 
-  async refreshPreview() {
+  async refreshPreview(pendingIdArg, hintArg) {
     if (!this.iframe) return;
-    const pendingId = this._pendingSelectionId;
-    this._pendingSelectionId = null;
+    // pendingId/hint may be passed via schedulePreview closure (preferred), or fallback to globals for direct calls.
+    const pendingId = pendingIdArg !== undefined ? pendingIdArg : this._pendingSelectionId;
+    const pendingHint = hintArg !== undefined ? hintArg : (this._pendingRenderHint || "refresh");
+    if (pendingIdArg === undefined) this._pendingSelectionId = null;
+    if (hintArg === undefined) this._pendingRenderHint = null;
     const revision = ++this._previewRevision;
     this.showLoading(true);
     this.showError("");
@@ -372,7 +418,7 @@ class EditorApp {
       if (revision !== this._previewRevision) return;
       this.showLoading(false);
       this.showError("");
-      this._applyPreviewHtml(html, pendingId);
+      this._applyPreviewHtml(html, pendingId, pendingHint);
     } catch (err) {
       if (revision !== this._previewRevision) return;
       this.showLoading(false);
@@ -546,7 +592,7 @@ class EditorApp {
         this.iframe.srcdoc = html;
         setTimeout(() => this.showLoading(false), 2000);
       } else {
-        this._applyPreviewHtml(html, null);
+        this._applyPreviewHtml(html, null, "refresh");
       }
     } catch (err) {
       if (revision !== this._previewRevision) return;

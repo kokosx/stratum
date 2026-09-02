@@ -791,22 +791,62 @@ export class CanvasController {
     if (isInlineEditing()) { e.preventDefault(); return; }
     const selected = this.selected;
     if (!selected || !selected.nodeId) { e.preventDefault(); return; }
-    const node = findDocumentNode(selected.nodeId);
+    // Physical grip identity must be unambiguous (M6): read from DOM, verify existence/editable.
+    let gripNodeId = null;
+    let gripInstanceKey = null;
+    try {
+      gripNodeId = grip.getAttribute("data-node-id") || (grip.dataset && grip.dataset.nodeId) || null;
+      gripInstanceKey = grip.getAttribute("data-instance-key") || (grip.dataset && grip.dataset.instanceKey) || null;
+    } catch (_) {}
+    // Grip should carry identity; if present, it must match selected (or be valid). If mismatch, trust grip if it resolves.
+    let effectiveNodeId = selected.nodeId;
+    let effectiveInstanceKey = selected.instanceKey;
+    if (gripNodeId) {
+      const gripNode = findDocumentNode(gripNodeId);
+      if (!gripNode) { e.preventDefault(); return; }
+      // Verify grip node is editable (non-editable never has grip, but guard)
+      const gripInstKey = gripInstanceKey;
+      let isEditable = true;
+      if (gripInstKey && this.index && this.index.has(gripInstKey)) {
+        const inst = this.index.get(gripInstKey);
+        if (inst && inst.editable === false) isEditable = false;
+      } else if (selected.editable === false) {
+        isEditable = false;
+      }
+      if (!isEditable) { e.preventDefault(); return; }
+      effectiveNodeId = gripNodeId;
+      if (gripInstanceKey) effectiveInstanceKey = gripInstanceKey;
+      // If grip vs selected mismatch, selection should have been that node — still allow but ensure SDT parent exists.
+      if (gripNodeId !== selected.nodeId) {
+        // Sync both canvas-local and domain selection to grip's node for consistency (generic, no hardcode)
+        try {
+          const inst = gripInstanceKey && this.index.get(gripInstanceKey);
+          if (inst) {
+            const sel = { nodeId: inst.nodeId, instanceKey: inst.instanceKey, editable: inst.editable, block: inst.block, version: inst.version, ownerType: inst.ownerType, ownerId: inst.ownerId, ownerLabel: inst.ownerLabel };
+            this.selected = sel;
+            try { state.selection = sel; } catch (_) {}
+          } else {
+            const sel = { nodeId: gripNode.id, instanceKey: gripInstanceKey || null, editable: true, block: gripNode.block, version: gripNode.version, logical: true };
+            this.selected = sel;
+            try { state.selection = sel; } catch (_) {}
+          }
+        } catch (_) {}
+      }
+    }
+    const node = findDocumentNode(effectiveNodeId);
     if (!node) { e.preventDefault(); return; }
     // External/template-owned non-editable nodes have no grip, but guard
-    if (selected.editable === false) { e.preventDefault(); return; }
-    // Select source if needed (§41) — grip drag always from selected, but ensure
-    // If drag starts from not-selected? Grip only exists on selected, so it's selected.
-    const srcInfo = this.findSDTParent(selected.nodeId);
+    if (selected.editable === false && !gripNodeId) { e.preventDefault(); return; }
+    const srcInfo = this.findSDTParent(effectiveNodeId);
     if (!srcInfo || !srcInfo.node) { e.preventDefault(); return; }
     // Clear hover/insertion that would conflict
     try { this.hoverInst = null; state.hoveredKey = null; this.overlay.clearHover(); } catch (_) {}
     try { if (this.insertionHint) { this.insertionHint = null; this.overlay.clearInsertion(); } } catch (_) {}
-    startSession({ kind: "node", nodeId: selected.nodeId, instanceKey: selected.instanceKey, source: { parentId: srcInfo.parentId, index: srcInfo.index } });
+    startSession({ kind: "node", nodeId: effectiveNodeId, instanceKey: effectiveInstanceKey, source: { parentId: srcInfo.parentId, index: srcInfo.index } });
     try { this.overlay.setDragging(true); } catch (_) {}
     try {
       e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", selected.nodeId);
+      e.dataTransfer.setData("text/plain", effectiveNodeId);
       // Firefox requires data
       if (e.dataTransfer.setDragImage && grip) {
         try { e.dataTransfer.setDragImage(grip, 8, 12); } catch (_) {}
@@ -1520,6 +1560,10 @@ export class CanvasController {
             const node = findDocumentNode(this.selected.nodeId);
             if (node) {
               handleOpts.showDragGrip = true;
+              // Physical drag source must be unambiguous (M6): grip carries explicit identity
+              handleOpts.gripNodeId = this.selected.nodeId;
+              handleOpts.gripInstanceKey = this.selected.instanceKey || "";
+              handleOpts.gripBlock = this.selected.block || node.block || "";
             }
             if (node && isContainerNode(node) && (node.children || []).length >= 0) {
               if (hasLegalInsertion(node, (node.children||[]).length)) {

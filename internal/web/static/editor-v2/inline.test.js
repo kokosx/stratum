@@ -193,7 +193,7 @@ describe("document change metadata", () => {
     const unsub = stateMod.subscribeDocument((doc, meta) => { hint = meta?.renderHint; });
     const res = insertBlock({definition: hDef, parentId: null, index:0});
     assert.equal(res.ok, true);
-    assert.equal(hint, "refresh");
+    assert.equal(hint, "structural");
     unsub();
   });
 });

@@ -10,7 +10,7 @@ const catalog = [
   { block: "core/text", version: 1, displayName: "Text", schema: { props: { type: "object", properties: { text: { type: "string", default: "" } } }, settings: { type: "object", properties: {} }, children: { mode: "none" }, editor: { category: "text" } } },
   { block: "core/button", version: 1, displayName: "Button", schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "none" }, editor: { category: "design" } } },
   { block: "core/accordion", version: 1, displayName: "Accordion", schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "allowed", blocks: ["core/accordion-item"], min: 1, max: 3 }, editor: { category: "design" } } },
-  { block: "core/accordion-item", version: 1, displayName: "Accordion Item", schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "any", min: 0 }, editor: { category: "design" } } },
+  { block: "core/accordion-item", version: 1, displayName: "Accordion Item", schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "any", min: 0 }, placement: { parents: ["core/accordion"] }, editor: { category: "design" } } },
   { block: "core/button-group", version: 1, displayName: "Button Group", schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "allowed", blocks: ["core/button"], min: 1, max: 1 }, editor: { category: "design" } } },
   { block: "core/image", version: 1, displayName: "Image", schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "none" }, editor: { category: "media" } } },
   { block: "core/hidden-block", version: 1, displayName: "Hidden", hidden: true, schema: { props: { type: "object", properties: {} }, settings: { type: "object", properties: {} }, children: { mode: "none" }, editor: { category: "design" } } },
@@ -33,9 +33,11 @@ try { globalThis.crypto.getRandomValues = (arr)=>{ for(let i=0;i<arr.length;i++)
 const stateMod = await import("./state.js");
 const insMod = await import("./insertion.js");
 const cmdMod = await import("./commands.js");
+const treeMod = await import("./tree-integrity.js");
 const { state, findDocumentNode, definitionForBlock } = stateMod;
 const { canMove, findSource, canInsert } = insMod;
 const { createNode, moveNode } = cmdMod;
+const { assertTreeIntegrity } = treeMod;
 
 function reset(nodes){
   state.document = { version:1, nodes: JSON.parse(JSON.stringify(nodes)) };
@@ -145,11 +147,23 @@ describe("moveNode - spec §59-71", ()=>{
     const r1=moveNode({nodeId:"X", parentId:null, index:1});
     assert.equal(r1.ok,false);
     assert.match(r1.reason,/requires at least/);
-    // add Y then legal
+    assertTreeIntegrity(state.document, { definitionForBlock });
+    // add Y then reorder inside same accordion is legal, but moving to root/section still illegal due placement
     acc.children.push({id:"Y", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[]});
     reset([acc]);
-    const r2=moveNode({nodeId:"X", parentId:null, index:1});
-    assert.equal(r2.ok,true);
+    const rRoot=moveNode({nodeId:"X", parentId:null, index:1});
+    assert.equal(rRoot.ok,false);
+    assert.match(rRoot.reason,/cannot be placed/);
+    const rReorder=moveNode({nodeId:"X", parentId:"acc", index:1});
+    assert.equal(rReorder.ok,true);
+    assertTreeIntegrity(state.document, { definitionForBlock });
+    // also placement: cannot move to Section/Stack
+    reset([acc, {id:"sec1", block:"core/section", version:1, props:{}, settings:{}, children:[]}]);
+    // need fresh acc with 2 items for min to allow leaving
+    const acc2={id:"acc", block:"core/accordion", version:1, props:{}, settings:{}, children:[{id:"X", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[]},{id:"Y", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[]}]};
+    reset([acc2, {id:"sec1", block:"core/section", version:1, props:{}, settings:{}, children:[]}]);
+    assert.equal(moveNode({nodeId:"X", parentId:"sec1", index:0}).ok,false);
+    assert.equal(moveNode({nodeId:"X", parentId:null, index:0}).ok,false);
   });
 
   it("67 destination max cross reject, same reorder allow", ()=>{
@@ -243,5 +257,98 @@ describe("moveNode - spec §59-71", ()=>{
     const res=moveNode({nodeId:"B", parentId:null, index:0});
     assert.equal(res.ok,true);
     assert.equal(state.selection.nodeId,"B");
+  });
+
+  it("subtree integrity - move Accordion with nested items between sections (M6 §12)", ()=>{
+    const acc={id:"acc1", block:"core/accordion", version:1, props:{title:"A"}, settings:{color:"blue"}, children:[
+      {id:"itemA", block:"core/accordion-item", version:1, props:{title:"IA"}, settings:{open:true}, children:[{id:"textA", block:"core/text", version:1, props:{text:"Text A"}, settings:{}, children:[]}]},
+      {id:"itemB", block:"core/accordion-item", version:1, props:{title:"IB"}, settings:{open:false}, children:[{id:"textB", block:"core/text", version:1, props:{text:"Text B"}, settings:{}, children:[]}]}
+    ]};
+    const secA={id:"secA", block:"core/section", version:1, props:{}, settings:{}, children:[acc]};
+    const secB={id:"secB", block:"core/section", version:1, props:{}, settings:{}, children:[]};
+    reset([secA, secB]);
+    // capture original props
+    const origProps=JSON.stringify(acc.props);
+    const origSettings=JSON.stringify(acc.settings);
+    const itemAProps=JSON.stringify(acc.children[0].props);
+    const itemBProps=JSON.stringify(acc.children[1].props);
+    const res=moveNode({nodeId:"acc1", parentId:"secB", index:0});
+    assert.equal(res.ok,true);
+    // exact structure
+    assert.equal(state.document.nodes.length,2);
+    assert.equal(state.document.nodes[0].id,"secA");
+    assert.equal(state.document.nodes[0].children.length,0);
+    assert.equal(state.document.nodes[1].id,"secB");
+    assert.equal(state.document.nodes[1].children.length,1);
+    const moved=findDocumentNode("acc1");
+    assert.ok(moved);
+    assert.equal(moved.id,"acc1");
+    assert.equal(moved.children.length,2);
+    assert.equal(moved.children[0].id,"itemA");
+    assert.equal(moved.children[1].id,"itemB");
+    assert.equal(moved.children[0].children[0].id,"textA");
+    assert.equal(moved.children[1].children[0].id,"textB");
+    // shallow id checks
+    const ids=collectIds(state.document.nodes);
+    assert.equal(ids.length,new Set(ids).size,"no duplicate IDs");
+    assert.equal(ids.includes("acc1"),true);
+    assert.equal(ids.includes("itemA"),true);
+    assert.equal(ids.includes("itemB"),true);
+    assert.equal(ids.includes("textA"),true);
+    assert.equal(ids.includes("textB"),true);
+    // old parent contains none of subtree
+    assert.equal(findDocumentNode("secA").children.some(c=>c.id==="acc1"),false);
+    assert.equal(findDocumentNode("secA").children.some(c=>c.id==="itemA"),false);
+    // props/settings unchanged
+    assert.equal(JSON.stringify(moved.props),origProps);
+    assert.equal(JSON.stringify(moved.settings),origSettings);
+    assert.equal(JSON.stringify(moved.children[0].props),itemAProps);
+    assert.equal(JSON.stringify(moved.children[1].props),itemBProps);
+    assertTreeIntegrity(state.document, { definitionForBlock });
+  });
+
+  it("subtree integrity - move whole Section containing nested Accordion at root (M6 §12)", ()=>{
+    const acc={id:"acc1", block:"core/accordion", version:1, props:{}, settings:{}, children:[
+      {id:"itemA", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[{id:"textA", block:"core/text", version:1, props:{text:"A"}, settings:{}, children:[]}]},
+      {id:"itemB", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[{id:"textB", block:"core/text", version:1, props:{text:"B"}, settings:{}, children:[]}]}
+    ]};
+    const secA={id:"secA", block:"core/section", version:1, props:{layout:"wide"}, settings:{}, children:[acc]};
+    const secB={id:"secB", block:"core/section", version:1, props:{}, settings:{}, children:[mk("core/text","t0")]};
+    const other=mk("core/heading","other");
+    reset([secA, secB, other]);
+    const beforeIds=collectIds(state.document.nodes).sort().join(",");
+    const res=moveNode({nodeId:"secA", parentId:null, index:3});
+    assert.equal(res.ok,true);
+    assert.deepEqual(state.document.nodes.map(n=>n.id), ["secB","other","secA"]);
+    const afterIds=collectIds(state.document.nodes).sort().join(",");
+    assert.equal(beforeIds,afterIds);
+    const movedSec=findDocumentNode("secA");
+    assert.equal(movedSec.children[0].id,"acc1");
+    assert.equal(movedSec.children[0].children[0].id,"itemA");
+    assert.equal(movedSec.children[0].children[1].id,"itemB");
+    assertTreeIntegrity(state.document, { definitionForBlock });
+  });
+
+  it("placement respects accordion-item constraints via integrity helper", ()=>{
+    reset([]);
+    assertTreeIntegrity(state.document, { definitionForBlock });
+    const acc={id:"acc", block:"core/accordion", version:1, props:{}, settings:{}, children:[
+      {id:"a1", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[]},
+      {id:"a2", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[]}
+    ]};
+    const sec={id:"sec", block:"core/section", version:1, props:{}, settings:{}, children:[]};
+    reset([acc, sec]);
+    assertTreeIntegrity(state.document, { definitionForBlock });
+    // Item cannot move to root/section/stack
+    assert.equal(canMove("a1", null, 1).ok,false);
+    assert.equal(canMove("a1", "sec", 0).ok,false);
+    // But can move inside same (to end) or other accordion
+    // a1 at 0, moving to 1 is no-op (already there); moving to 2 is reorder to end
+    assert.equal(canMove("a1", "acc", 2).ok,true);
+    const accB={id:"accB", block:"core/accordion", version:1, props:{}, settings:{}, children:[{id:"b1", block:"core/accordion-item", version:1, props:{}, settings:{}, children:[]} ]};
+    reset([acc, accB]);
+    const mv=moveNode({nodeId:"a1", parentId:"accB", index:1});
+    assert.equal(mv.ok,true);
+    assertTreeIntegrity(state.document, { definitionForBlock });
   });
 });

@@ -84,6 +84,24 @@ export function parseEndComment(data) {
   return { nodeId, instanceKey };
 }
 
+// Single shared parser for stratum markers (M6 fix): START and END use one implementation.
+// Returns {kind:"start"|"end", nodeId, instanceKey, editable?, block?, version?, ownerType?, ownerId?, ownerLabel?}
+export function parseStratumMarker(data) {
+  if (!data || typeof data !== "string") return null;
+  const trimmed = data.trim();
+  if (trimmed.startsWith("stratum-node-start:")) {
+    const parsed = parseStartComment(trimmed);
+    if (!parsed) return null;
+    return { kind: "start", nodeId: parsed.nodeId, instanceKey: parsed.instanceKey, editable: parsed.editable, block: parsed.block, version: parsed.version, ownerType: parsed.ownerType, ownerId: parsed.ownerId, ownerLabel: parsed.ownerLabel };
+  }
+  if (trimmed.startsWith("stratum-node-end:")) {
+    const parsed = parseEndComment(trimmed);
+    if (!parsed) return null;
+    return { kind: "end", nodeId: parsed.nodeId, instanceKey: parsed.instanceKey };
+  }
+  return null;
+}
+
 // Build index from iframe document.
 // Returns { index: Map<instanceKey, RenderedNodeInstance>, elementToNode: WeakMap<Element, RenderedNodeInstance> }
 // RenderedNodeInstance = { nodeId, instanceKey, block, version, editable, ownerType, ownerId, ownerLabel, rootElements: Element[] }
