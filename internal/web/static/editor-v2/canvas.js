@@ -73,6 +73,32 @@ export function isEditorUIEvent(event) {
   return false;
 }
 
+export function allowsPreviewDefault(target) {
+  if (!target) return false;
+  let el = target;
+  // text node → parent element
+  if (el.nodeType === 3) {
+    el = el.parentElement;
+    if (!el) return false;
+  }
+  // non-element without closest
+  if (!el || typeof el.closest !== "function") return false;
+  try {
+    const summary = el.closest("summary");
+    if (!summary) return false;
+    const details = summary.parentElement;
+    if (!details) return false;
+    if (typeof details.matches === "function") {
+      try {
+        if (details.matches("details")) return true;
+      } catch (_) {}
+    }
+    return !!(details.tagName && details.tagName.toLowerCase() === "details");
+  } catch (_) {
+    return false;
+  }
+}
+
 export function findCanvasDragGrip(event) {
   if (!event) return null;
   try {
@@ -1087,13 +1113,21 @@ export class CanvasController {
     }
 
     const target = e.target;
+    const allowNativeDefault = allowsPreviewDefault(target);
+    if (!allowNativeDefault) {
+      try { e.preventDefault(); } catch (_) {}
+    }
+    try { e.stopPropagation(); } catch (_) {}
     const hit = this.hitForTarget(target);
     // Second click activation removed — native pointerdown handles editing entry
-    try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
     if (hit) {
       this.selectInstance(hit);
       // clear stale insertion hint after selection (hover will repopulate)
       if (this.insertionHint) { this.insertionHint = null; if (this.overlay) this.overlay.clearInsertion(); }
+      if (allowNativeDefault) {
+        const raf = (this.win && this.win.requestAnimationFrame) ? this.win.requestAnimationFrame.bind(this.win) : (typeof requestAnimationFrame !== "undefined" ? requestAnimationFrame : (cb) => setTimeout(cb, 16));
+        try { raf(() => this.requestSync()); } catch (_) {}
+      }
       return;
     }
     // No mapped block: if click was on anchor/button/form without mapping, keep blocking navigation but don't select.
@@ -1104,6 +1138,10 @@ export class CanvasController {
     } catch (_) {}
     this.clearSelection();
     if (this.insertionHint) { this.insertionHint = null; if (this.overlay) this.overlay.clearInsertion(); }
+    if (allowNativeDefault) {
+      const raf = (this.win && this.win.requestAnimationFrame) ? this.win.requestAnimationFrame.bind(this.win) : (typeof requestAnimationFrame !== "undefined" ? requestAnimationFrame : (cb) => setTimeout(cb, 16));
+      try { raf(() => this.requestSync()); } catch (_) {}
+    }
   }
 
   onAuxClick(e) {
