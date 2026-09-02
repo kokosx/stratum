@@ -5,6 +5,8 @@ let current = null;
 
 export function startSession(session) {
   if (!session) { current = null; return; }
+  // Single owner: any active session blocks a second concurrent start (canvas vs navigator)
+  if (current) return;
   current = { ...session };
   if (session.source) current.source = { ...session.source };
   if (session.definition) current.definition = { ...session.definition };

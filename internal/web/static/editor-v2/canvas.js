@@ -73,6 +73,28 @@ export function isEditorUIEvent(event) {
   return false;
 }
 
+export function findCanvasDragGrip(event) {
+  if (!event) return null;
+  try {
+    const path = event.composedPath ? event.composedPath() : [];
+    for (const n of path) {
+      if (!n) continue;
+      if (n.getAttribute && typeof n.getAttribute === "function" && n.getAttribute("draggable") === "true" && n.classList && n.classList.contains("overlay-handle__drag")) return n;
+      if (n.matches && typeof n.matches === "function") {
+        try { if (n.matches('button.overlay-handle__drag[draggable="true"]')) return n; } catch (_) {}
+      }
+    }
+    const t = event.target;
+    if (t) {
+      if (t.matches && typeof t.matches === "function") {
+        try { if (t.matches('button.overlay-handle__drag[draggable="true"]')) return t; } catch (_) {}
+      }
+      if (t.getAttribute && typeof t.getAttribute === "function" && t.getAttribute("draggable") === "true" && t.classList && t.classList.contains("overlay-handle__drag")) return t;
+    }
+  } catch (_) {}
+  return null;
+}
+
 function isScopedEditorUIEvent(event, shadow) {
   if (!event || !shadow) return isEditorUIEvent(event);
   try {
@@ -352,13 +374,7 @@ export class CanvasController {
 
   getContainerLayout(parentNode) {
     if (!parentNode) return "vertical";
-    if (parentNode.block === "core/stack") {
-      const dir = parentNode.settings?.direction;
-      if (dir === "horizontal") return "horizontal";
-      return "vertical";
-    }
-    if (parentNode.block === "core/grid") return "grid";
-    if (parentNode.block === "core/button-group") return "horizontal";
+    // Prefer rendered truth (theme-controlled presentation) over block-type hardcodes.
     try {
       const keys = this.nodeToKeys.get(parentNode.id) || [];
       for (const k of keys) {
@@ -374,13 +390,79 @@ export class CanvasController {
         } catch (_) {}
       }
     } catch (_) {}
+    // Fallback to vertical; block-type is not required to determine drag orientation.
     return "vertical";
+  }
+
+  // Operation-neutral geometry: returns rects without insertion/move legality filtering.
+  // Callers filter via hasLegalInsertion (insert) or canMove (move).
+  probeGapTargetGeometry(clientX, clientY) {
+    if (!this.doc || clientX == null || clientY == null) return null;
+    const offsets = [4, 8, 16, 24, 36];
+    let above = null, below = null;
+    let aboveInfo = null, belowInfo = null;
+    for (const off of offsets) {
+      if (!above) {
+        const h = this.hitFromPoint(clientX, clientY - off);
+        if (h && h.editable && h.nodeId && findDocumentNode(h.nodeId)) {
+          const info = this.findSDTParent(h.nodeId);
+          if (info && info.node) { above = h; aboveInfo = info; }
+        }
+      }
+      if (!below) {
+        const h = this.hitFromPoint(clientX, clientY + off);
+        if (h && h.editable && h.nodeId && findDocumentNode(h.nodeId)) {
+          const info = this.findSDTParent(h.nodeId);
+          if (info && info.node) { below = h; belowInfo = info; }
+        }
+      }
+      if (above && below) break;
+    }
+    if (above && below) {
+      const parentIdAbove = aboveInfo.parent ? aboveInfo.parent.id : null;
+      const parentIdBelow = belowInfo.parent ? belowInfo.parent.id : null;
+      if (parentIdAbove === parentIdBelow && belowInfo.index === aboveInfo.index + 1) {
+        const rectAbove = this.visualRect(above);
+        const rectBelow = this.visualRect(below);
+        let rect = null;
+        if (rectAbove && rectBelow) {
+          const pNode = belowInfo.parent || null;
+          const layout = this.getContainerLayout(pNode);
+          const isHoriz = layout === "horizontal" || layout === "grid";
+          if (isHoriz) {
+            // For horizontal row, gap is vertical line between siblings at boundary
+            const gapX = rectBelow.left;
+            const top = Math.min(rectAbove.top, rectBelow.top);
+            const bottom = Math.max(rectAbove.top + rectAbove.height, rectBelow.top + rectBelow.height);
+            rect = { left: gapX, top, width: 2, height: bottom - top };
+          } else {
+            const left = Math.min(rectAbove.left, rectBelow.left);
+            const right = Math.max(rectAbove.left + rectAbove.width, rectBelow.left + rectBelow.width);
+            rect = { left, top: rectBelow.top, width: right - left, height: 2 };
+          }
+        } else if (rectBelow) {
+          const pNode = belowInfo.parent || null;
+          const layout = this.getContainerLayout(pNode);
+          const isHoriz = layout === "horizontal" || layout === "grid";
+          if (isHoriz) rect = { left: rectBelow.left, top: rectBelow.top, width: 2, height: rectBelow.height };
+          else rect = { left: rectBelow.left, top: rectBelow.top, width: rectBelow.width, height: 2 };
+        } else if (rectAbove) {
+          const pNode = aboveInfo.parent || null;
+          const layout = this.getContainerLayout(pNode);
+          const isHoriz = layout === "horizontal" || layout === "grid";
+          if (isHoriz) rect = { left: rectAbove.left + rectAbove.width, top: rectAbove.top, width: 2, height: rectAbove.height };
+          else rect = { left: rectAbove.left, top: rectAbove.top + rectAbove.height, width: rectAbove.width, height: 2 };
+        }
+        if (rect) return { parentId: parentIdBelow, index: belowInfo.index, rect, contextInstanceKey: below.instanceKey || above.instanceKey };
+      }
+    }
+    return null;
   }
 
   rawBoundaries(hit, e) {
     if (!hit) {
       if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
-        const probed = this.probeGapTarget(e.clientX, e.clientY);
+        const probed = this.probeGapTargetGeometry(e.clientX, e.clientY);
         if (probed) return [probed];
       }
       const scopeRect = this.editableScopeRect();
@@ -396,7 +478,13 @@ export class CanvasController {
           const inst = this.index.get(firstKeys[0]);
           if (inst && inst.editable) {
             const r = this.visualRect(inst);
-            if (r) return [{ parentId: null, index: 0, rect: { left: r.left, top: r.top, width: r.width, height: 2 }, contextInstanceKey: inst.instanceKey }];
+            if (r) {
+              const pNode = null;
+              const layout = this.getContainerLayout(pNode);
+              const isHoriz = layout === "horizontal" || layout === "grid";
+              if (isHoriz) return [{ parentId: null, index: 0, rect: { left: r.left, top: r.top, width: 2, height: r.height }, contextInstanceKey: inst.instanceKey }];
+              return [{ parentId: null, index: 0, rect: { left: r.left, top: r.top, width: r.width, height: 2 }, contextInstanceKey: inst.instanceKey }];
+            }
           }
         }
         return [{ parentId: null, index: 0, rect: { left: scopeRect.left, top: scopeRect.top, width: scopeRect.width, height: 2 } }];
@@ -409,7 +497,13 @@ export class CanvasController {
           const inst = this.index.get(lastKeys[0]);
           if (inst) r = this.visualRect(inst);
         }
-        if (r) return [{ parentId: null, index: nodes.length, rect: { left: r.left, top: r.top + r.height, width: r.width, height: 2 } }];
+        if (r) {
+          const pNode = null;
+          const layout = this.getContainerLayout(pNode);
+          const isHoriz = layout === "horizontal" || layout === "grid";
+          if (isHoriz) return [{ parentId: null, index: nodes.length, rect: { left: r.left + r.width, top: r.top, width: 2, height: r.height } }];
+          return [{ parentId: null, index: nodes.length, rect: { left: r.left, top: r.top + r.height, width: r.width, height: 2 } }];
+        }
         return [{ parentId: null, index: nodes.length, rect: { left: scopeRect.left, top: scopeRect.top + scopeRect.height, width: scopeRect.width, height: 2 } }];
       }
       return null;
@@ -422,9 +516,17 @@ export class CanvasController {
     const idx = sdtInfo.index;
     const rect = this.visualRect(hit);
     if (!rect) return null;
+    const parentNode = sdtInfo.parent || null;
+    const layout = this.getContainerLayout(parentNode);
+    const isHoriz = layout === "horizontal" || layout === "grid";
     const candidates = [];
-    candidates.push({ parentId: parentIdForBoundaries, index: idx, rect: { left: rect.left, top: rect.top, width: rect.width, height: 2 }, contextInstanceKey: hit.instanceKey });
-    candidates.push({ parentId: parentIdForBoundaries, index: idx + 1, rect: { left: rect.left, top: rect.top + rect.height, width: rect.width, height: 2 }, contextInstanceKey: hit.instanceKey });
+    if (isHoriz) {
+      candidates.push({ parentId: parentIdForBoundaries, index: idx, rect: { left: rect.left, top: rect.top, width: 2, height: rect.height }, contextInstanceKey: hit.instanceKey });
+      candidates.push({ parentId: parentIdForBoundaries, index: idx + 1, rect: { left: rect.left + rect.width, top: rect.top, width: 2, height: rect.height }, contextInstanceKey: hit.instanceKey });
+    } else {
+      candidates.push({ parentId: parentIdForBoundaries, index: idx, rect: { left: rect.left, top: rect.top, width: rect.width, height: 2 }, contextInstanceKey: hit.instanceKey });
+      candidates.push({ parentId: parentIdForBoundaries, index: idx + 1, rect: { left: rect.left, top: rect.top + rect.height, width: rect.width, height: 2 }, contextInstanceKey: hit.instanceKey });
+    }
     return candidates;
   }
 
@@ -643,22 +745,13 @@ export class CanvasController {
   }
 
   // Helpers for gap probing (§10) — bounded offsets, no global scan
-  // === Drag handlers (native DnD) ===
+  // === Drag handlers (native DnD) — document owns lifecycle, grip is only source via composedPath ===
   onDragStart(e) {
     if (!this.doc || !this.overlay) return;
-    if (this.isEditorUIEvent(e)) return;
-    // Only grip starts drag — use composedPath for Shadow DOM retargeting
-    let grip = null;
-    try {
-      const path = e.composedPath ? e.composedPath() : [];
-      for (const n of path) {
-        if (n && n.getAttribute && n.getAttribute("draggable") === "true" && n.classList && n.classList.contains("overlay-handle__drag")) { grip = n; break; }
-        if (n && n.matches && n.matches('button.overlay-handle__drag[draggable="true"]')) { grip = n; break; }
-      }
-      if (!grip && e.target && e.target.closest) grip = e.target.closest('button.overlay-handle__drag[draggable="true"]');
-      if (!grip) grip = e.target;
-    } catch (_) { grip = e.target; }
-    if (!grip || grip.getAttribute?.("draggable") !== "true" || !grip.classList?.contains("overlay-handle__drag")) return;
+    // Prevent double startSession when both doc and grip listeners would fire (only one owner).
+    if (getSession() && getSession().kind === "node") return;
+    const grip = findCanvasDragGrip(e);
+    if (!grip) return;
     // Prevent text selection drag inside contenteditable
     try { if (isActiveFieldElement(e.target) || isActiveFieldElement(document.activeElement)) { } } catch (_) {}
     // Commit inline edit first (§20)
@@ -734,7 +827,7 @@ export class CanvasController {
     for (const c of legal) {
       const pNode = c.parentId == null ? null : findDocumentNode(c.parentId);
       const layout = this.getContainerLayout(pNode);
-      const isHoriz = layout === "horizontal";
+      const isHoriz = layout === "horizontal" || layout === "grid";
       let d;
       if (isHoriz && e.clientX != null) {
         d = Math.abs((c.rect.left + c.rect.width / 2) - e.clientX);
@@ -797,6 +890,8 @@ export class CanvasController {
   }
 
   onDragEnd(e) {
+    const sess = getSession();
+    if (!sess || sess.kind !== "node") return;
     try { e.preventDefault(); } catch (_) {}
     this.clearDragState();
     try { this.requestSync(); } catch (_) {}
@@ -817,47 +912,13 @@ export class CanvasController {
     return null;
   }
 
+  // Insertion-filtered wrapper: geometry is neutral, legality filtered here for insertion.
   probeGapTarget(clientX, clientY) {
-    if (!this.doc || clientX == null || clientY == null) return null;
-    const offsets = [4, 8, 16, 24, 36];
-    let above = null, below = null;
-    let aboveInfo = null, belowInfo = null;
-    for (const off of offsets) {
-      if (!above) {
-        const h = this.hitFromPoint(clientX, clientY - off);
-        if (h && h.editable && h.nodeId && findDocumentNode(h.nodeId)) {
-          const info = this.findSDTParent(h.nodeId);
-          if (info && info.node) { above = h; aboveInfo = info; }
-        }
-      }
-      if (!below) {
-        const h = this.hitFromPoint(clientX, clientY + off);
-        if (h && h.editable && h.nodeId && findDocumentNode(h.nodeId)) {
-          const info = this.findSDTParent(h.nodeId);
-          if (info && info.node) { below = h; belowInfo = info; }
-        }
-      }
-      if (above && below) break;
-    }
-    if (above && below) {
-      const parentIdAbove = aboveInfo.parent ? aboveInfo.parent.id : null;
-      const parentIdBelow = belowInfo.parent ? belowInfo.parent.id : null;
-      if (parentIdAbove === parentIdBelow && belowInfo.index === aboveInfo.index + 1) {
-        const parentNode = belowInfo.parent || null;
-        if (!hasLegalInsertion(parentNode, belowInfo.index)) return null;
-        const rectAbove = this.visualRect(above);
-        const rectBelow = this.visualRect(below);
-        let rect = null;
-        if (rectAbove && rectBelow) {
-          const left = Math.min(rectAbove.left, rectBelow.left);
-          const right = Math.max(rectAbove.left + rectAbove.width, rectBelow.left + rectBelow.width);
-          rect = { left, top: rectBelow.top, width: right - left, height: 2 };
-        } else if (rectBelow) rect = { left: rectBelow.left, top: rectBelow.top, width: rectBelow.width, height: 2 };
-        else if (rectAbove) rect = { left: rectAbove.left, top: rectAbove.top + rectAbove.height, width: rectAbove.width, height: 2 };
-        if (rect) return { parentId: parentIdBelow, index: belowInfo.index, rect, contextInstanceKey: below.instanceKey || above.instanceKey };
-      }
-    }
-    return null;
+    const geom = this.probeGapTargetGeometry(clientX, clientY);
+    if (!geom) return null;
+    const parentNode = geom.parentId == null ? null : findDocumentNode(geom.parentId);
+    if (!hasLegalInsertion(parentNode, geom.index)) return null;
+    return geom;
   }
 
   deriveInsertionCandidates(hit, e) {
@@ -1346,38 +1407,41 @@ export class CanvasController {
       if (editing) {
         label = label + " · Editing";
       }
-      // Decide if selected container can Add inside (§27) — small plus on handle
-      let handleOpts = { external: isExternal, editing: !!editing };
-      // Drag grip for movable editable block
-      try {
-        if (!editing && isExternal === false) {
-          const node = findDocumentNode(this.selected.nodeId);
-          if (node) {
-            handleOpts.showDragGrip = true;
-            handleOpts.onDragStart = (e) => this.onDragStart(e);
-            handleOpts.onDragEnd = (e) => this.onDragEnd(e);
-          }
-          if (node && isContainerNode(node) && (node.children || []).length >= 0) {
-            if (hasLegalInsertion(node, (node.children||[]).length)) {
-              handleOpts.showHandlePlus = true;
-              handleOpts.onHandlePlusClick = (e, anchorRect) => {
-                e.preventDefault(); e.stopPropagation();
-                const target = { parentId: node.id, index: (node.children||[]).length };
-                try { setInsertionTarget(target, { source: "contextual" }); } catch (_) {}
-                const anchor = anchorRect || (e && e.target ? e.target.getBoundingClientRect() : null) || rect;
-                this.openQuickInserter(target, anchor);
-                try { this.requestSync(); } catch (_) {}
-              };
+      // Preserve handle DOM during active drag so native drag source remains attached.
+      if (isDragging) {
+        try { this.overlay.setSelectedGeometry(rect); } catch (_) {}
+      } else {
+        // Decide if selected container can Add inside (§27) — small plus on handle
+        let handleOpts = { external: isExternal, editing: !!editing };
+        // Drag grip for movable editable block — only grip is draggable, not whole handle
+        try {
+          if (!editing && isExternal === false) {
+            const node = findDocumentNode(this.selected.nodeId);
+            if (node) {
+              handleOpts.showDragGrip = true;
+            }
+            if (node && isContainerNode(node) && (node.children || []).length >= 0) {
+              if (hasLegalInsertion(node, (node.children||[]).length)) {
+                handleOpts.showHandlePlus = true;
+                handleOpts.onHandlePlusClick = (e, anchorRect) => {
+                  e.preventDefault(); e.stopPropagation();
+                  const target = { parentId: node.id, index: (node.children||[]).length };
+                  try { setInsertionTarget(target, { source: "contextual" }); } catch (_) {}
+                  const anchor = anchorRect || (e && e.target ? e.target.getBoundingClientRect() : null) || rect;
+                  this.openQuickInserter(target, anchor);
+                  try { this.requestSync(); } catch (_) {}
+                };
+              }
             }
           }
-        }
-      } catch (_) {}
-      this.overlay.setSelected(rect, label, handleOpts);
+        } catch (_) {}
+        this.overlay.setSelected(rect, label, handleOpts);
+      }
     } else {
       this.overlay.clearSelection();
     }
-    // Empty states (overlay/editor instrumentation, never SDT) (§24-25) — suppressed while editing
-    if (!isInlineEditing()) this.updateEmptyStates(); else this.overlay.clearEmptyStates();
+    // Empty states (overlay/editor instrumentation, never SDT) — suppressed while editing or dragging (avoid hit-test interference)
+    if (!isInlineEditing() && !isDragging) this.updateEmptyStates(); else this.overlay.clearEmptyStates();
     // Re-establish insertion line after geometry sync if we still have a hint (recompute rect) — suppressed while editing or dragging
     if (!isInlineEditing() && !isDragging && this.insertionHint && !(this.quickInserter && this.quickInserter.isOpen())) {
       const hint = this.insertionHint;

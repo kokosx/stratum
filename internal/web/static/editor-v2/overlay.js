@@ -754,6 +754,40 @@ export class Overlay {
     this.emptyContainerEls.set(nodeId, wrap);
   }
 
+  // Geometry-only update during active native drag: keep grip DOM identity stable.
+  // Avoid forced layout (getBoundingClientRect) on hot dragover path — use known max-width.
+  setSelectedGeometry(rect) {
+    if (!this.selectedEl || !this.handleEl || !rect) return;
+    const sel = this.selectedEl;
+    sel.style.display = "block";
+    sel.style.left = Math.round(rect.left) + "px";
+    sel.style.top = Math.round(rect.top) + "px";
+    sel.style.width = Math.round(rect.width) + "px";
+    sel.style.height = Math.round(rect.height) + "px";
+    const handle = this.handleEl;
+    handle.style.display = "inline-flex";
+    let handleLeft = Math.round(rect.left);
+    let handleTop = Math.round(rect.top - 24);
+    try {
+      const vw = this.doc.documentElement.clientWidth || (this.doc.defaultView && this.doc.defaultView.innerWidth) || 1024;
+      // Clamp without measuring: max-width 240px per CSS
+      const maxW = 240;
+      if (handleLeft + maxW > vw - 4) handleLeft = Math.max(4, vw - maxW - 4);
+      handle.style.left = handleLeft + "px";
+      handle.style.top = handleTop + "px";
+      if (handleTop < 0) {
+        handleTop = Math.round(rect.top);
+        handle.style.top = handleTop + "px";
+        handle.style.borderRadius = "0 0 4px 4px";
+      } else {
+        handle.style.borderRadius = "4px 4px 0 0";
+      }
+    } catch (_) {
+      handle.style.left = handleLeft + "px";
+      handle.style.top = handleTop + "px";
+    }
+  }
+
   setSelected(rect, label, opts) {
     if (!this.selectedEl || !this.handleEl || !rect) {
       this.clearSelection();
@@ -795,8 +829,9 @@ export class Overlay {
     if (isEditing) handle.classList.add("overlay-handle--editing");
     else handle.classList.remove("overlay-handle--editing");
     // Build handle content: drag grip + label + optional plus inside handle (Add inside)
+    // During active native drag this full rebuild must be avoided (handled via setSelectedGeometry).
     handle.replaceChildren();
-    // Drag grip for movable editable block (§21-22)
+    // Drag grip for movable editable block (§21-22) — document owns drag lifecycle, grip only exposes draggable attribute.
     const showGrip = !isExternal && !isEditing && opts && opts.showDragGrip;
     if (showGrip) {
       const grip = this.doc.createElement("button");
@@ -808,16 +843,10 @@ export class Overlay {
       grip.setAttribute("aria-label", gripLabel);
       grip.setAttribute("title", "Move block");
       grip.textContent = "⠿";
-      // Prevent handle click from selecting; grip handles drag
+      // Prevent handle click from selecting; grip handles drag via document-level composedPath
       grip.addEventListener("pointerdown", (e) => e.stopPropagation());
       grip.addEventListener("mousedown", (e) => e.stopPropagation());
       grip.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
-      if (opts && typeof opts.onDragStart === "function") {
-        grip.addEventListener("dragstart", (e) => opts.onDragStart(e));
-      }
-      if (opts && typeof opts.onDragEnd === "function") {
-        grip.addEventListener("dragend", (e) => opts.onDragEnd(e));
-      }
       handle.appendChild(grip);
     }
     const labelSpan = this.doc.createElement("span");
