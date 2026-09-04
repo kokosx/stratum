@@ -200,6 +200,8 @@ export function isEditing() {
 
 export function setDocument(nextDocument, options = {}) {
   if (!nextDocument || typeof nextDocument !== "object") return;
+  let previousDocumentJSON = "";
+  try { previousDocumentJSON = JSON.stringify(state.document); } catch (_) {}
   // immutable enough: clone to avoid external mutation aliasing
   let cloned;
   try {
@@ -215,7 +217,8 @@ export function setDocument(nextDocument, options = {}) {
     state.dirty = now !== persistedDocumentJSON;
   } catch (_) { state.dirty = true; }
   const hint = options && options.renderHint ? options.renderHint : "refresh";
-  notifyDocument(state.document, { renderHint: hint });
+  const history = options && options.history === "skip" ? "skip" : "record";
+  notifyDocument(state.document, { renderHint: hint, history, previousDocumentJSON });
 }
 
 export function syncDirtyBaseline() {

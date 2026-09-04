@@ -7,6 +7,7 @@ import { hasLegalInsertion, getInsertionTarget, setInsertionTarget, subscribeIns
 import { moveNode, insertBlock } from "./commands.js";
 import { startSession, clearSession, getSession } from "./drag-session.js";
 import { startInlineEdit, isInlineEditing, commitActiveEdit, cancelActiveEdit, isActiveEditorSessionEvent, isActiveFieldElement, commitBeforeEditorContextChange, findFieldElement } from "./inline-editor.js";
+import { deleteBlock, duplicateBlock, handleEditorShortcut } from "./actions.js";
 
 function labelForInstance(instance) {
   if (!instance) return "Block";
@@ -210,6 +211,7 @@ export class CanvasController {
     // invalidate stale hint immediately after SDT mutation (max reached etc.)
     try {
       subscribeDocument(() => {
+        try { this.overlay?.closeActionsMenu(); } catch (_) {}
         if (this.insertionHint && this.overlay) {
           const parentNode = this.insertionHint.parentId == null ? null : findDocumentNode(this.insertionHint.parentId);
           if (!hasLegalInsertion(parentNode, this.insertionHint.index)) {
@@ -1398,6 +1400,7 @@ export class CanvasController {
     if (this.quickInserter && this.quickInserter.isOpen()) {
       this.quickInserter.close();
     }
+    try { this.overlay?.closeActionsMenu(); } catch (_) {}
     this.requestSync();
   }
 
@@ -1632,6 +1635,9 @@ export class CanvasController {
               handleOpts.gripNodeId = this.selected.nodeId;
               handleOpts.gripInstanceKey = this.selected.instanceKey || "";
               handleOpts.gripBlock = this.selected.block || node.block || "";
+              handleOpts.actionNodeId = node.id;
+              handleOpts.onDuplicate = () => duplicateBlock(node.id);
+              handleOpts.onDelete = () => deleteBlock(node.id);
             }
             if (node && isContainerNode(node) && (node.children || []).length >= 0) {
               if (hasLegalInsertion(node, (node.children||[]).length)) {
@@ -1941,6 +1947,16 @@ export class CanvasController {
 
   onKey(e) {
     if (!e) return;
+    if (e.key === "Escape" && this.overlay?.isActionsMenuOpen()) {
+      e.preventDefault(); e.stopPropagation();
+      this.overlay.closeActionsMenu(true);
+      return;
+    }
+    if (handleEditorShortcut(e)) {
+      e.preventDefault(); e.stopPropagation();
+      e.stopImmediatePropagation && e.stopImmediatePropagation();
+      return;
+    }
     if (this.isEditorUIEvent(e)) return;
     if (getSession() && e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();

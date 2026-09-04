@@ -1,6 +1,6 @@
 // commands.js — SDT mutations + node factory (single command for M4/M6)
 import { state, setDocument, findDocumentNode, findDocumentParent, definitionForBlock } from "./state.js";
-import { canInsert, canMove, findSource } from "./insertion.js";
+import { canInsert, canMove, canRemove, findSource } from "./insertion.js";
 
 function randomID() {
   const bytes = new Uint8Array(16);
@@ -106,6 +106,36 @@ function cloneDocument(doc) {
     if (typeof structuredClone === "function") return structuredClone(doc);
   } catch (_) {}
   return JSON.parse(JSON.stringify(doc));
+}
+
+function cloneSubtreeWithFreshIDs(node) {
+  if (!node || typeof node !== "object") return null;
+  return {
+    id: randomID(),
+    block: node.block,
+    version: node.version,
+    props: sanitizeObject(cloneDocument(node.props || {})),
+    settings: sanitizeObject(cloneDocument(node.settings || {})),
+    children: (node.children || []).map(cloneSubtreeWithFreshIDs).filter(Boolean),
+  };
+}
+
+function queueLogicalSelection(node, options = {}) {
+  if (!node || !node.id) {
+    state.selection = null;
+    return;
+  }
+  state.__pendingSelectionIds ||= [];
+  state.__pendingSelectionIds.push(node.id);
+  if (options.suppressInline) state.__pendingSelectionSuppressInlineId = node.id;
+  state.selection = {
+    nodeId: node.id,
+    instanceKey: null,
+    editable: true,
+    block: node.block,
+    version: node.version,
+    logical: true,
+  };
 }
 
 function findCloneParent(cloneDoc, parentId) {
@@ -279,6 +309,73 @@ export function moveNode({ nodeId, parentId, index }) {
   } catch (_) {}
 
   return { ok: true, nodeId, parentId: rawParentId, index: clamped, previousParentId, previousIndex };
+}
+
+export function duplicateNode({ nodeId } = {}) {
+  if (!nodeId || typeof nodeId !== "string") return { ok: false, reason: "Block not found." };
+  const source = findDocumentParent(nodeId);
+  if (!source) return { ok: false, reason: "Block not found." };
+
+  const definition = definitionForBlock(source.node.block, source.node.version);
+  if (!definition) return { ok: false, reason: "Unknown block." };
+  const destinationIndex = source.index + 1;
+  const legal = canInsert(source.parent, definition, destinationIndex);
+  if (!legal.ok) return { ok: false, reason: legal.reason };
+
+  const copiedNode = cloneSubtreeWithFreshIDs(source.node);
+  if (!copiedNode) return { ok: false, reason: "Could not duplicate block." };
+
+  const next = cloneDocument(state.document);
+  next.nodes ||= [];
+  const clonedSource = findCloneInfo(next, nodeId);
+  if (!clonedSource) return { ok: false, reason: "Block not found in clone." };
+  clonedSource.siblings.splice(destinationIndex, 0, copiedNode);
+
+  setDocument(next, { renderHint: "structural" });
+  queueLogicalSelection(copiedNode, { suppressInline: true });
+  return {
+    ok: true,
+    node: copiedNode,
+    nodeId: copiedNode.id,
+    parentId: source.parent ? source.parent.id : null,
+    index: destinationIndex,
+  };
+}
+
+export function deleteNode({ nodeId } = {}) {
+  if (!nodeId || typeof nodeId !== "string") return { ok: false, reason: "Block not found." };
+  const source = findDocumentParent(nodeId);
+  if (!source) return { ok: false, reason: "Block not found." };
+
+  const legal = canRemove(nodeId);
+  if (!legal.ok) return { ok: false, reason: legal.reason };
+
+  const fallback = source.siblings[source.index + 1]
+    || source.siblings[source.index - 1]
+    || source.parent
+    || null;
+  const next = cloneDocument(state.document);
+  next.nodes ||= [];
+  const clonedSource = findCloneInfo(next, nodeId);
+  if (!clonedSource) return { ok: false, reason: "Block not found in clone." };
+  clonedSource.siblings.splice(clonedSource.index, 1);
+
+  setDocument(next, { renderHint: "structural" });
+  if (fallback) {
+    const restoredFallback = findDocumentNode(fallback.id);
+    queueLogicalSelection(restoredFallback, { suppressInline: true });
+  } else {
+    delete state.__pendingSelectionIds;
+    delete state.__pendingSelectionSuppressInlineId;
+    state.selection = null;
+  }
+  return {
+    ok: true,
+    nodeId,
+    parentId: source.parent ? source.parent.id : null,
+    index: source.index,
+    fallbackId: fallback ? fallback.id : null,
+  };
 }
 
 function getRawValue(node, path) {
@@ -566,4 +663,4 @@ export function updateNodeField({ nodeId, path, value, renderHint }) {
 }
 
 // Expose for tests/internal use
-export { createNode, defaultValue, randomID };
+export { cloneSubtreeWithFreshIDs, createNode, defaultValue, randomID };

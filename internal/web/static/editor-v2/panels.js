@@ -320,6 +320,10 @@ export class PanelController {
 
   handleEscape(event) {
     if (!event || event.key !== "Escape") return false;
+    if (this.navigator.closeActionsMenu(true)) {
+      event.preventDefault();
+      return true;
+    }
     // quick inserter has priority (§49) — canvas handles it via its own onKey, but also close if panels focused
     try {
       if (this.canvas && this.canvas.quickInserter && this.canvas.quickInserter.isOpen()) {

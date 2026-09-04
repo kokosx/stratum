@@ -75,6 +75,7 @@ body.editor-v2-layout {
   align-items: center;
   justify-content: center;
   justify-self: center;
+  gap: 8px;
 }
 
 .editor-v2-topbar__right {
@@ -144,6 +145,16 @@ body.editor-v2-layout {
 .editor-v2-icon-btn:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
+}
+
+.editor-v2-icon-btn:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.editor-v2-history-group {
+  display: inline-flex;
+  gap: 4px;
 }
 
 .editor-v2-topbar__back {
@@ -558,6 +569,7 @@ body.editor-v2-layout {
   min-height: 34px;
   padding-left: calc(var(--navigator-depth, 0) * 16px);
   border-radius: 6px;
+  position: relative;
 }
 
 .editor-v2-navigator__item.is-active > .editor-v2-navigator__row {
@@ -660,6 +672,60 @@ body.editor-v2-layout {
 }
 .editor-v2-navigator__drag-handle:active { cursor: grabbing; }
 .editor-v2-navigator__drag-handle:hover { background: rgba(148,163,184,0.15); color: #475569; }
+
+.editor-v2-navigator__row-actions {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #64748b;
+  font: 700 12px/1 system-ui, sans-serif;
+  letter-spacing: 1px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+}
+.editor-v2-navigator__row:hover .editor-v2-navigator__row-actions,
+.editor-v2-navigator__item.is-active > .editor-v2-navigator__row .editor-v2-navigator__row-actions,
+.editor-v2-navigator__row-actions:focus,
+.editor-v2-navigator__row-actions[aria-expanded="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.editor-v2-navigator__row-actions:hover,
+.editor-v2-navigator__row-actions[aria-expanded="true"] { background: rgba(148,163,184,.16); }
+.editor-v2-navigator__actions-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 2px;
+  z-index: var(--editor-z-menu);
+  display: grid;
+  min-width: 140px;
+  padding: 4px;
+  border: 1px solid #dbe3ec;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15,23,42,.16);
+}
+.editor-v2-navigator__actions-item {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #1e293b;
+  font: 500 12px/1 system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.editor-v2-navigator__actions-item:hover,
+.editor-v2-navigator__actions-item:focus-visible { background: #f1f5f9; outline: none; }
+.editor-v2-navigator__actions-item.is-destructive { color: #b91c1c; }
+.editor-v2-navigator__actions-item.is-destructive:hover,
+.editor-v2-navigator__actions-item.is-destructive:focus-visible { background: #fef2f2; }
 
 .editor-v2-navigator__item.is-drop-before { box-shadow: inset 0 2px 0 0 #2563eb; }
 .editor-v2-navigator__item.is-drop-after { box-shadow: inset 0 -2px 0 0 #2563eb; }

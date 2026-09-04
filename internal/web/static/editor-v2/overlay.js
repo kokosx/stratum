@@ -173,7 +173,7 @@ const OVERLAY_CSS = `
   color: #fff;
   border-radius: 4px 4px 0 0;
   white-space: nowrap;
-  max-width: 240px;
+  max-width: 280px;
   overflow: hidden;
   box-sizing: border-box;
   gap: 0;
@@ -227,6 +227,55 @@ const OVERLAY_CSS = `
   border-radius: 0 4px 0 0;
 }
 .overlay-handle__plus:hover { background: rgba(255,255,255,.25); }
+.overlay-handle__actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0 0 4px;
+  border: 0;
+  border-left: 1px solid rgba(255,255,255,.3);
+  border-radius: 0 4px 0 0;
+  background: rgba(255,255,255,.15);
+  color: #fff;
+  font: 700 13px/1 system-ui, sans-serif;
+  letter-spacing: 1px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.overlay-handle__actions:hover,
+.overlay-handle__actions[aria-expanded="true"] { background: rgba(255,255,255,.28); }
+.overlay-actions-menu {
+  position: fixed;
+  display: grid;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid #dbe3ec;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15,23,42,.18);
+  pointer-events: auto;
+  z-index: 2147483647;
+}
+.overlay-actions-menu[hidden] { display: none; }
+.overlay-actions-menu__item {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #1e293b;
+  font: 500 12px/1 system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.overlay-actions-menu__item:hover,
+.overlay-actions-menu__item:focus-visible { background: #f1f5f9; outline: none; }
+.overlay-actions-menu__item--destructive { color: #b91c1c; }
+.overlay-actions-menu__item--destructive:hover,
+.overlay-actions-menu__item--destructive:focus-visible { background: #fef2f2; }
 .overlay-handle__drag {
   flex: 0 0 auto;
   display: inline-flex;
@@ -413,6 +462,12 @@ const OVERLAY_CSS = `
   height: 22px;
   font-size: 12px;
 }
+.overlay-handle--compact .overlay-handle__actions {
+  width: 24px;
+  height: 22px;
+  padding-bottom: 3px;
+  font-size: 11px;
+}
 .overlay-handle--compact .overlay-handle__label {
   padding-right: 6px;
   font-size: 10px;
@@ -447,6 +502,8 @@ export class Overlay {
     this.hoverEl = null;
     this.selectedEl = null;
     this.handleEl = null;
+    this.actionsMenuEl = null;
+    this.actionsTriggerEl = null;
     this.insertionLineEl = null;
     this.insertionPlusEl = null;
     this.blocksTargetLineEl = null;
@@ -457,6 +514,14 @@ export class Overlay {
     this.emptyRootEl = null;
     this.emptyContainerEls = new Map(); // nodeId -> element
     this._beforeHeight = 0;
+    this._actionNodeId = null;
+    this._actionCallbacks = null;
+    this._onOutsidePointerDown = (event) => {
+      if (!this.isActionsMenuOpen()) return;
+      const path = event?.composedPath ? event.composedPath() : [];
+      if (path.includes(this.actionsMenuEl) || path.includes(this.actionsTriggerEl)) return;
+      this.closeActionsMenu();
+    };
   }
 
   attach() {
@@ -546,6 +611,36 @@ export class Overlay {
     this.handleEl.style.display = "none";
     shadow.appendChild(this.handleEl);
 
+    this.actionsMenuEl = this.doc.createElement("div");
+    this.actionsMenuEl.className = "overlay-actions-menu";
+    this.actionsMenuEl.setAttribute("data-role", "block-actions-menu");
+    this.actionsMenuEl.setAttribute("data-stratum-editor-ui", "true");
+    this.actionsMenuEl.setAttribute("role", "menu");
+    this.actionsMenuEl.hidden = true;
+    for (const action of [
+      { name: "duplicate", label: "Duplicate", destructive: false },
+      { name: "delete", label: "Delete", destructive: true },
+    ]) {
+      const button = this.doc.createElement("button");
+      button.type = "button";
+      button.className = "overlay-actions-menu__item" + (action.destructive ? " overlay-actions-menu__item--destructive" : "");
+      button.setAttribute("data-stratum-editor-ui", "true");
+      button.setAttribute("data-action", action.name);
+      button.setAttribute("role", "menuitem");
+      button.textContent = action.label;
+      button.addEventListener("pointerdown", (event) => event.stopPropagation());
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const callback = action.name === "duplicate" ? this._actionCallbacks?.duplicate : this._actionCallbacks?.delete;
+        this.closeActionsMenu();
+        if (typeof callback === "function") callback();
+      });
+      this.actionsMenuEl.appendChild(button);
+    }
+    shadow.appendChild(this.actionsMenuEl);
+    try { this.doc.addEventListener("pointerdown", this._onOutsidePointerDown, true); } catch (_) {}
+
     // Insertion line + plus (single affordance)
     this.insertionLineEl = this.doc.createElement("div");
     this.insertionLineEl.className = "overlay-insertion-line";
@@ -611,6 +706,7 @@ export class Overlay {
   }
 
   destroy() {
+    try { this.doc?.removeEventListener("pointerdown", this._onOutsidePointerDown, true); } catch (_) {}
     try {
       if (this.host && this.host.parentNode) this.host.parentNode.removeChild(this.host);
     } catch (_) {}
@@ -619,6 +715,8 @@ export class Overlay {
     this.hoverEl = null;
     this.selectedEl = null;
     this.handleEl = null;
+    this.actionsMenuEl = null;
+    this.actionsTriggerEl = null;
     this.insertionLineEl = null;
     this.insertionPlusEl = null;
     this.blocksTargetLineEl = null;
@@ -632,6 +730,8 @@ export class Overlay {
     this.scopeTopLabelEl = null;
     this.scopeBottomEl = null;
     this.scopeBottomLabelEl = null;
+    this._actionNodeId = null;
+    this._actionCallbacks = null;
     this.doc = null;
   }
 
@@ -640,6 +740,9 @@ export class Overlay {
   }
 
   clearSelection() {
+    this.closeActionsMenu();
+    this._actionNodeId = null;
+    this._actionCallbacks = null;
     if (this.selectedEl) this.selectedEl.style.display = "none";
     if (this.handleEl) this.handleEl.style.display = "none";
     // Also clear external style
@@ -652,6 +755,59 @@ export class Overlay {
       this.handleEl.classList.remove("overlay-handle--editing");
       this.handleEl.classList.remove("overlay-handle--compact");
     }
+  }
+
+  isActionsMenuOpen() {
+    return !!(this.actionsMenuEl && !this.actionsMenuEl.hidden);
+  }
+
+  closeActionsMenu(focusTrigger = false) {
+    if (!this.actionsMenuEl) return false;
+    const wasOpen = !this.actionsMenuEl.hidden;
+    this.actionsMenuEl.hidden = true;
+    if (this.actionsTriggerEl) this.actionsTriggerEl.setAttribute("aria-expanded", "false");
+    if (focusTrigger && this.actionsTriggerEl?.isConnected) {
+      try { this.actionsTriggerEl.focus({ preventScroll: true }); } catch (_) {}
+    }
+    return wasOpen;
+  }
+
+  positionActionsMenu(trigger) {
+    if (!this.actionsMenuEl || !trigger || this.actionsMenuEl.hidden) return;
+    try {
+      const triggerRect = trigger.getBoundingClientRect();
+      const menuRect = this.actionsMenuEl.getBoundingClientRect();
+      const width = menuRect.width || 148;
+      const height = menuRect.height || 72;
+      const viewportWidth = this.doc.documentElement.clientWidth || this.doc.defaultView?.innerWidth || 1024;
+      const viewportHeight = this.doc.documentElement.clientHeight || this.doc.defaultView?.innerHeight || 700;
+      let left = triggerRect.right - width;
+      let top = triggerRect.bottom + 4;
+      const selectedRect = this._selectedRect;
+      const below = { left, top, width, height };
+      if (selectedRect && rectsOverlap(below, selectedRect) && triggerRect.top - height - 4 >= 4) {
+        top = triggerRect.top - height - 4;
+      }
+      left = Math.max(4, Math.min(left, viewportWidth - width - 4));
+      top = Math.max(4, Math.min(top, viewportHeight - height - 4));
+      this.actionsMenuEl.style.left = Math.round(left) + "px";
+      this.actionsMenuEl.style.top = Math.round(top) + "px";
+    } catch (_) {}
+  }
+
+  toggleActionsMenu(trigger) {
+    if (!this.actionsMenuEl || !trigger) return false;
+    if (this.isActionsMenuOpen()) {
+      this.closeActionsMenu(true);
+      return false;
+    }
+    this.actionsTriggerEl = trigger;
+    this.actionsMenuEl.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    this.positionActionsMenu(trigger);
+    const first = this.actionsMenuEl.querySelector?.("button");
+    try { first?.focus({ preventScroll: true }); } catch (_) {}
+    return true;
   }
 
   clearInsertion() {
@@ -974,6 +1130,15 @@ export class Overlay {
     const isExternal = !!(opts && opts.external);
     const isEditing = !!(opts && opts.editing);
     const externalLabel = opts && opts.externalLabel;
+    const actionNodeId = !isExternal && !isEditing && opts?.actionNodeId ? String(opts.actionNodeId) : null;
+    const keepActionsOpen = this.isActionsMenuOpen() && this._actionNodeId === actionNodeId;
+    if (this._actionNodeId !== actionNodeId) this.closeActionsMenu();
+    this._actionNodeId = actionNodeId;
+    this._actionCallbacks = actionNodeId ? {
+      duplicate: opts?.onDuplicate,
+      delete: opts?.onDelete,
+    } : null;
+    this._selectedRect = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
 
     // Selected outline
     const sel = this.selectedEl;
@@ -1075,6 +1240,30 @@ export class Overlay {
       plusInside.addEventListener("mousedown", (e) => e.stopPropagation());
       handle.appendChild(plusInside);
     }
+    if (actionNodeId) {
+      if (plusInside) plusInside.style.borderRadius = "0";
+      const actions = this.doc.createElement("button");
+      actions.type = "button";
+      actions.className = "overlay-handle__actions";
+      actions.setAttribute("data-stratum-editor-ui", "true");
+      actions.setAttribute("aria-label", `Actions for ${text}`);
+      actions.setAttribute("aria-haspopup", "menu");
+      actions.setAttribute("aria-expanded", keepActionsOpen ? "true" : "false");
+      actions.setAttribute("title", "Block actions");
+      actions.textContent = "•••";
+      actions.addEventListener("pointerdown", (event) => event.stopPropagation());
+      actions.addEventListener("mousedown", (event) => event.stopPropagation());
+      actions.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleActionsMenu(actions);
+      });
+      handle.appendChild(actions);
+      this.actionsTriggerEl = actions;
+    } else {
+      this.actionsTriggerEl = null;
+      this.closeActionsMenu();
+    }
     // Mark handle as editor UI container for composedPath checks
     try { handle.setAttribute("data-stratum-editor-ui", "true"); } catch (_) {}
     handle.style.display = "inline-flex";
@@ -1115,6 +1304,7 @@ export class Overlay {
       else if (placement && placement.placement === "below") handle.style.borderRadius = "0 0 4px 4px";
       else if (handleTop < 0) handle.style.borderRadius = "0 0 4px 4px";
       else handle.style.borderRadius = "4px 4px 0 0";
+      if (keepActionsOpen && this.actionsTriggerEl) this.positionActionsMenu(this.actionsTriggerEl);
     } catch (_) {
       try {
         handle.style.left = Math.round(rect.left) + "px";

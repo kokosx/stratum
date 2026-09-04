@@ -5,6 +5,8 @@ import { CanvasController } from "./canvas.js";
 import { PanelController } from "./panels.js";
 import { commitBeforeEditorContextChange, startInlineEdit } from "./inline-editor.js";
 import { parsePreviewDocument, patchPreviewDocument, isPreviewInitialized, markPreviewInitialized } from "./preview-morph.js";
+import { handleEditorShortcut, redoDocument, undoDocument } from "./actions.js";
+import { initializeHistory, subscribeHistory } from "./history.js";
 
 const VIEWPORTS = {
   desktop: null, // 100% available
@@ -23,6 +25,8 @@ class EditorApp {
     this.viewportButtons = Array.from(root.querySelectorAll("[data-viewport]"));
     this.overflowBtn = root.querySelector("#editor-v2-overflow-btn");
     this.overflowMenu = root.querySelector("#editor-v2-overflow-menu");
+    this.undoBtn = root.querySelector("#editor-v2-undo-btn");
+    this.redoBtn = root.querySelector("#editor-v2-redo-btn");
     this.canvas = null;
     this.panels = null;
     this.closeOverflowMenu = null;
@@ -32,10 +36,16 @@ class EditorApp {
     this._previewRevision = 0;
     this._lastGoodHtml = null;
     this._onEscape = (event) => this.panels?.handleEscape(event);
+    this._onShortcut = (event) => {
+      if (!handleEditorShortcut(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
     this._commitBeforeOuterInteraction = (event) => {
       // Canvas interactions are owned by CanvasController, including events
       // retargeted to the iframe element by browser tooling.
       if (event?.target === this.iframe || this.iframe?.contains?.(event?.target)) return;
+      this.canvas?.overlay?.closeActionsMenu();
       commitBeforeEditorContextChange();
     };
     this._onDocumentChange = (doc, meta) => {
@@ -50,6 +60,7 @@ class EditorApp {
   }
 
   mount() {
+    initializeHistory();
     // The outer admin shell is a separate document from the canvas. Any
     // pointer interaction here explicitly ends the active inline session
     // before its controller changes editor context.
@@ -57,6 +68,7 @@ class EditorApp {
     this.root.addEventListener("click", this._commitBeforeOuterInteraction, true);
     this.bindViewport();
     this.bindOverflow();
+    this.bindHistory();
     this.applyViewport(state.viewport);
     // init canvas controller (lifecycle owned here)
     if (this.iframe) {
@@ -75,9 +87,23 @@ class EditorApp {
     this.panels.mount();
     if (this.canvas) this.canvas.onEscape = this._onEscape;
     document.addEventListener("keydown", this._onEscape);
+    document.addEventListener("keydown", this._onShortcut);
     // subscribe to document changes for preview refresh (§42-43) — one-way, commands.js never imports EditorApp
     subscribeDocument(this._onDocumentChange);
     this.loadPreview();
+  }
+
+  bindHistory() {
+    if (this.undoBtn) {
+      this.undoBtn.addEventListener("click", () => undoDocument());
+    }
+    if (this.redoBtn) {
+      this.redoBtn.addEventListener("click", () => redoDocument());
+    }
+    subscribeHistory(({ canUndo, canRedo }) => {
+      if (this.undoBtn) this.undoBtn.disabled = !canUndo;
+      if (this.redoBtn) this.redoBtn.disabled = !canRedo;
+    });
   }
 
   schedulePreview() {
@@ -87,6 +113,9 @@ class EditorApp {
       // capture pending selection queue before preview (last-write-wins but queue prevents overwrite)
       const queue = state.__pendingSelectionIds || (state.__pendingSelectionId ? [state.__pendingSelectionId] : []);
       const pendingId = queue.length ? queue[queue.length - 1] : null;
+      if (state.__pendingSelectionSuppressInlineId && state.__pendingSelectionSuppressInlineId !== pendingId) {
+        delete state.__pendingSelectionSuppressInlineId;
+      }
       try { delete state.__pendingSelectionId; delete state.__pendingSelectionIds; } catch (_) {}
       // Capture render hint locally (structural wins). Hint is transport-local, not stored on domain state.
       const hint = this._nextRenderHint || "refresh";
@@ -97,6 +126,8 @@ class EditorApp {
 
   _handlePendingSelection(pendingId) {
     if (!pendingId || !this.canvas) return;
+    const suppressInline = state.__pendingSelectionSuppressInlineId === pendingId;
+    if (suppressInline) delete state.__pendingSelectionSuppressInlineId;
     try {
       const keys = this.canvas?.nodeToKeys?.get(pendingId) || [];
       const editableKeys = keys.filter((k) => {
@@ -141,7 +172,7 @@ class EditorApp {
               if (typeof raw === "string") isEmpty = raw.trim() === "";
               else if (raw && typeof raw === "object" && Array.isArray(raw.content)) isEmpty = plainTextFromRichText(raw).trim() === "";
               else if (raw == null) isEmpty = true;
-              if (isEmpty && inst && inst.editable) {
+              if (!suppressInline && isEmpty && inst && inst.editable) {
                 requestAnimationFrame(() => {
                   try { startInlineEdit(pendingId, inst.instanceKey, this.canvas, primary); } catch (_) {}
                 });

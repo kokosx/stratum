@@ -2,6 +2,7 @@ import { displayNameForBlock, nodeSummaryFor, state, subscribeDocument, subscrib
 import { canMove } from "./insertion.js";
 import { moveNode } from "./commands.js";
 import { startSession, clearSession, getSession } from "./drag-session.js";
+import { deleteBlock, duplicateBlock } from "./actions.js";
 
 function createElement(tag, className, text) {
   const element = document.createElement(tag);
@@ -25,6 +26,14 @@ export class NavigatorView {
     this._dropTarget = null;
     this._autoScrollRAF = 0;
     this._autoScrollDir = 0;
+    this.actionsMenu = null;
+    this.actionsTrigger = null;
+    this.actionsBound = false;
+    this._onOutsideActions = (event) => {
+      if (!this.actionsMenu) return;
+      if (this.actionsMenu.contains(event.target) || this.actionsTrigger?.contains(event.target)) return;
+      this.closeActionsMenu();
+    };
   }
 
   mount(root, canvas) {
@@ -33,6 +42,10 @@ export class NavigatorView {
     if (!this.initialized) {
       this.expandShallow(state.document?.nodes || [], 0);
       this.initialized = true;
+    }
+    if (!this.actionsBound) {
+      document.addEventListener("pointerdown", this._onOutsideActions, true);
+      this.actionsBound = true;
     }
     this.render();
   }
@@ -46,6 +59,7 @@ export class NavigatorView {
 
   render() {
     if (!this.root) return;
+    this.closeActionsMenu();
     this.root.replaceChildren();
 
     const scope = createElement("div", "editor-v2-navigator__scope", "Page content");
@@ -124,6 +138,21 @@ export class NavigatorView {
       if (this.canvas && typeof this.canvas.selectNode === "function") this.canvas.selectNode(node, { reveal: true });
     });
     row.append(select);
+    const actions = createElement("button", "editor-v2-navigator__row-actions", "•••");
+    actions.type = "button";
+    actions.setAttribute("data-stratum-editor-ui", "true");
+    actions.setAttribute("aria-label", `Actions for ${displayNameForBlock(node.block)}`);
+    actions.setAttribute("aria-haspopup", "menu");
+    actions.setAttribute("aria-expanded", "false");
+    actions.setAttribute("title", "Block actions");
+    actions.addEventListener("pointerdown", (event) => event.stopPropagation());
+    actions.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.actionsTrigger === actions) this.closeActionsMenu(true);
+      else this.openActionsMenu(node, row, actions);
+    });
+    row.append(actions);
     // Row drop handling (§47)
     item.addEventListener("dragover", (e) => this.onDragOver(e, node, item, row));
     item.addEventListener("dragleave", (e) => this.onDragLeave(e, item));
@@ -136,6 +165,49 @@ export class NavigatorView {
       item.append(group);
     }
     return item;
+  }
+
+  openActionsMenu(node, row, trigger) {
+    this.closeActionsMenu();
+    if (!node?.id || !findDocumentNode(node.id)) return false;
+    const menu = createElement("div", "editor-v2-navigator__actions-menu");
+    menu.setAttribute("data-stratum-editor-ui", "true");
+    menu.setAttribute("role", "menu");
+    for (const action of [
+      { name: "Duplicate", destructive: false, run: () => duplicateBlock(node.id) },
+      { name: "Delete", destructive: true, run: () => deleteBlock(node.id) },
+    ]) {
+      const button = createElement("button", "editor-v2-navigator__actions-item" + (action.destructive ? " is-destructive" : ""), action.name);
+      button.type = "button";
+      button.setAttribute("data-stratum-editor-ui", "true");
+      button.setAttribute("role", "menuitem");
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeActionsMenu();
+        action.run();
+      });
+      menu.append(button);
+    }
+    row.append(menu);
+    this.actionsMenu = menu;
+    this.actionsTrigger = trigger;
+    trigger.setAttribute("aria-expanded", "true");
+    try { menu.querySelector("button")?.focus({ preventScroll: true }); } catch (_) {}
+    return true;
+  }
+
+  closeActionsMenu(focusTrigger = false) {
+    if (!this.actionsMenu) return false;
+    const trigger = this.actionsTrigger;
+    try { this.actionsMenu.remove(); } catch (_) {}
+    this.actionsMenu = null;
+    this.actionsTrigger = null;
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+    if (focusTrigger && trigger?.isConnected) {
+      try { trigger.focus({ preventScroll: true }); } catch (_) {}
+    }
+    return true;
   }
 
   onDragStart(e, node) {
@@ -335,6 +407,7 @@ export class NavigatorView {
   }
 
   selectionChanged() {
+    this.closeActionsMenu();
     const nodeId = state.selection?.nodeId;
     if (!nodeId) {
       this.syncSelection(false);
