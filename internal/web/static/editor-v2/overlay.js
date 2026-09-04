@@ -2,6 +2,92 @@
 // Parent V2 JS controls everything, but overlay lives inside iframe document.
 
 const HANDLE_HEIGHT = 28;
+const COMPACT_HANDLE_HEIGHT = 22;
+const HEADER_MAX = 40;
+const HEADER_RATIO = 0.45;
+const COMPACT_THRESHOLD_W = 240;
+const COMPACT_THRESHOLD_H = 90;
+
+function rectsOverlap(a, b) {
+  if (!a || !b) return false;
+  return !(a.left + a.width <= b.left || b.left + b.width <= a.left || a.top + a.height <= b.top || b.top + b.height <= a.top);
+}
+
+function pointInRect(pt, rect) {
+  return pt.x >= rect.left && pt.x <= rect.left + rect.width && pt.y >= rect.top && pt.y <= rect.top + rect.height;
+}
+
+// Generic handle placement helper — NO block-type checks.
+// Default ABOVE, but falls back to BELOW or compact inside if ABOVE would obscure ancestor chrome.
+// Bounded: checks only parentRects chain (≤4) with 3 sample points per candidate.
+export function resolveHandlePlacement(opts) {
+  if (!opts || !opts.selectedRect) return null;
+  const sel = opts.selectedRect;
+  // Spec allows singular parentRect; we normalize to array (supports up to 4 ancestors)
+  const parentRects = opts.parentRects || (opts.parentRect ? [opts.parentRect] : []) || [];
+  const handleWidth = (opts.handleSize && opts.handleSize.width) || opts.handleWidth || COMPACT_THRESHOLD_W;
+  const handleHeight = (opts.handleSize && opts.handleSize.height) || opts.handleHeight || HANDLE_HEIGHT;
+  const viewportWidth = opts.viewportWidth || (opts.document && opts.document.documentElement ? opts.document.documentElement.clientWidth : 0) || (typeof window !== "undefined" && window.innerWidth) || 1024;
+  const viewportHeight = opts.viewportHeight || (opts.document && opts.document.documentElement ? opts.document.documentElement.clientHeight : 0) || 1024;
+
+  const candidates = [
+    { placement: "above", left: Math.round(sel.left), top: Math.round(sel.top - handleHeight), width: handleWidth, height: handleHeight, compact: false },
+    { placement: "below", left: Math.round(sel.left), top: Math.round(sel.top + sel.height + 4), width: handleWidth, height: handleHeight, compact: false },
+    { placement: "inside-top", left: Math.round(sel.left + 4), top: Math.round(sel.top + 4), width: Math.min(handleWidth, Math.max(80, Math.round(sel.width - 8))), height: Math.min(handleHeight, COMPACT_HANDLE_HEIGHT), compact: true },
+    { placement: "inside-bottom", left: Math.round(sel.left + 4), top: Math.round(sel.top + sel.height - COMPACT_HANDLE_HEIGHT - 4), width: Math.min(handleWidth, Math.max(80, Math.round(sel.width - 8))), height: COMPACT_HANDLE_HEIGHT, compact: true },
+  ];
+
+  const clampLeft = (c) => {
+    let l = c.left;
+    if (l + c.width > viewportWidth - 4) l = Math.max(4, viewportWidth - c.width - 4);
+    if (l < 4) l = 4;
+    return { ...c, left: l };
+  };
+
+  const obscuresParent = (candidate) => {
+    if (!parentRects || !parentRects.length) return false;
+    // Header zone heuristic §4: top HEADER_MAX px or HEADER_RATIO of parent height — dimension-based, not block-type.
+    // Bounded hit test: 3 sample points (center + edges) per candidate against each parent header.
+    for (const pr of parentRects) {
+      if (!pr) continue;
+      const headerH = Math.min(HEADER_MAX, pr.height * HEADER_RATIO);
+      if (headerH <= 0) continue;
+      const headerRect = { left: pr.left, top: pr.top, width: pr.width, height: headerH };
+      if (rectsOverlap(candidate, headerRect)) return true;
+      const samples = [
+        { x: candidate.left + candidate.width / 2, y: candidate.top + candidate.height / 2 },
+        { x: candidate.left + 8, y: candidate.top + candidate.height / 2 },
+        { x: candidate.left + candidate.width - 8, y: candidate.top + candidate.height / 2 },
+      ];
+      for (const s of samples) if (pointInRect(s, headerRect)) return true;
+      // Optional DOM hit test if document provided — bounded (≤4 parents ×3 points) and no global scan.
+      // We keep geometric fallback as source of truth; DOM path only confirms obscuring when ancestor element is hit.
+      if (opts.document && typeof opts.document.elementFromPoint === "function") {
+        try {
+          for (const s of samples) {
+            const el = opts.document.elementFromPoint(s.x, s.y);
+            if (el && typeof el.closest === "function" && el.closest("details, [data-stratum-block]")) {
+              // If hit element is inside headerRect, treat as obscuring — still bounded and generic.
+              if (pointInRect(s, headerRect)) return true;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    return false;
+  };
+
+  for (const cand of candidates) {
+    const clamped = clampLeft(cand);
+    if (cand.placement === "above" && clamped.top < 0) continue;
+    // below far outside viewport → skip to inside
+    if (cand.placement === "below" && clamped.top + clamped.height > viewportHeight + 20) continue;
+    if (obscuresParent(clamped)) continue;
+    return clamped;
+  }
+  // Final fallback — inside-top clamped (never obscures header by definition of header check, but we force)
+  return clampLeft(candidates[2]);
+}
 
 const OVERLAY_CSS = `
 :host {
@@ -301,6 +387,51 @@ const OVERLAY_CSS = `
   box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 .overlay-empty__button:hover { border-color:#94a3b8; background:#fff; }
+.overlay-handle--compact {
+  height: 22px;
+  font-size: 10px;
+  border-radius: 4px;
+  max-width: 200px;
+}
+.overlay-handle--compact .overlay-handle__parent {
+  padding: 2px 5px;
+  height: 16px;
+  font-size: 10px;
+  margin-right: 3px;
+}
+.overlay-handle--compact .overlay-handle__sep {
+  margin-right: 4px;
+}
+.overlay-handle--compact .overlay-handle__drag {
+  width: 24px;
+  height: 22px;
+  margin-right: 4px;
+  font-size: 13px;
+}
+.overlay-handle--compact .overlay-handle__plus {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+.overlay-handle--compact .overlay-handle__label {
+  padding-right: 6px;
+  font-size: 10px;
+}
+.overlay-empty--compact {
+  min-height: 0;
+  border: none;
+  background: transparent;
+  justify-content: center;
+  pointer-events: none;
+  border-radius: 999px;
+}
+.overlay-empty--compact .overlay-empty__button {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+  background: #fff;
+}
 .quick-inserter { pointer-events:auto; }
 `;
 
@@ -519,6 +650,7 @@ export class Overlay {
     if (this.handleEl) {
       this.handleEl.classList.remove("overlay-handle--external");
       this.handleEl.classList.remove("overlay-handle--editing");
+      this.handleEl.classList.remove("overlay-handle--compact");
     }
   }
 
@@ -747,27 +879,46 @@ export class Overlay {
     // remove existing for same node
     const existing = this.emptyContainerEls.get(nodeId);
     if (existing) try { existing.remove(); } catch (_) {}
+    // Generic compact empty-state — dimension based (§7, COMPACT_THRESHOLD_W/H min tappable + padding), not block-type specific
+    const isCompact = rect.width < COMPACT_THRESHOLD_W || rect.height < COMPACT_THRESHOLD_H;
     const wrap = this.doc.createElement("div");
-    wrap.className = "overlay-empty overlay-empty--subtle";
-    wrap.setAttribute("data-role", "empty-container");
-    wrap.dataset.nodeId = nodeId;
-    // overlay existing rendered bounds without altering layout: use transparent dashed with centered button
-    // Do not cover whole theme with opaque white — subtle centered control only
-    const inset = 6;
-    // Keep wrap pointer-events none so underlying theme visible, button is interactive
-    wrap.style.left = Math.round(rect.left + inset) + "px";
-    wrap.style.top = Math.round(rect.top + inset) + "px";
-    wrap.style.width = Math.round(Math.max(100, rect.width - inset * 2)) + "px";
-    // Limit height to avoid huge white boxes: center vertically if container very tall, otherwise fit
-    const h = Math.max(48, Math.min(80, Math.round(rect.height - inset * 2)));
-    wrap.style.height = h + "px";
-    // center vertically within original rect if container taller
-    if (rect.height > 120) {
-      const extra = (rect.height - h) / 2;
-      wrap.style.top = Math.round(rect.top + extra) + "px";
+    if (isCompact) {
+      wrap.className = "overlay-empty overlay-empty--compact";
+      wrap.setAttribute("data-role", "empty-container");
+      wrap.dataset.nodeId = nodeId;
+      wrap.dataset.compact = "true";
+      // Small pill centered inside container, does not cover component
+      wrap.style.left = Math.round(rect.left + rect.width / 2) + "px";
+      wrap.style.top = Math.round(rect.top + rect.height / 2) + "px";
+      wrap.style.width = "auto";
+      wrap.style.height = "auto";
+      wrap.style.transform = "translate(-50%, -50%)";
+      wrap.style.minHeight = "0";
+      wrap.style.pointerEvents = "none";
+      wrap.style.border = "none";
+      wrap.style.background = "transparent";
+    } else {
+      wrap.className = "overlay-empty overlay-empty--subtle";
+      wrap.setAttribute("data-role", "empty-container");
+      wrap.dataset.nodeId = nodeId;
+      // overlay existing rendered bounds without altering layout: use transparent dashed with centered button
+      // Do not cover whole theme with opaque white — subtle centered control only
+      const inset = 6;
+      // Keep wrap pointer-events none so underlying theme visible, button is interactive
+      wrap.style.left = Math.round(rect.left + inset) + "px";
+      wrap.style.top = Math.round(rect.top + inset) + "px";
+      wrap.style.width = Math.round(Math.max(100, rect.width - inset * 2)) + "px";
+      // Limit height to avoid huge white boxes: center vertically if container very tall, otherwise fit
+      const h = Math.max(48, Math.min(80, Math.round(rect.height - inset * 2)));
+      wrap.style.height = h + "px";
+      // center vertically within original rect if container taller
+      if (rect.height > 120) {
+        const extra = (rect.height - h) / 2;
+        wrap.style.top = Math.round(rect.top + extra) + "px";
+      }
+      wrap.style.minHeight = "48px";
+      wrap.style.pointerEvents = "none";
     }
-    wrap.style.minHeight = "48px";
-    wrap.style.pointerEvents = "none";
     const btn = this.doc.createElement("button");
     btn.type = "button";
     btn.className = "overlay-empty__button";
@@ -928,30 +1079,49 @@ export class Overlay {
     try { handle.setAttribute("data-stratum-editor-ui", "true"); } catch (_) {}
     handle.style.display = "inline-flex";
 
-    // Position handle so its bottom edge touches top edge of rect
-    let handleLeft = Math.round(rect.left);
-    let handleTop = Math.round(rect.top - HANDLE_HEIGHT);
+    // Position handle with generic placement helper (M6 corrective §4) — no block-type checks
+    let isCompactPlacement = false;
     try {
+      const parentRects = (opts && opts.parentRects) || [];
       const vw = this.doc.documentElement.clientWidth || (this.doc.defaultView && this.doc.defaultView.innerWidth) || 1024;
+      const vh = this.doc.documentElement.clientHeight || (this.doc.defaultView && this.doc.defaultView.innerHeight) || 700;
+      const estimatedW = 240;
+      const placement = resolveHandlePlacement({
+        selectedRect: rect,
+        parentRects,
+        handleSize: { width: estimatedW, height: HANDLE_HEIGHT },
+        document: this.doc,
+        viewportWidth: vw,
+        viewportHeight: vh,
+      });
+      let handleLeft = placement ? placement.left : Math.round(rect.left);
+      let handleTop = placement ? placement.top : Math.round(rect.top - HANDLE_HEIGHT);
+      isCompactPlacement = !!(placement && placement.compact);
+      if (isCompactPlacement) handle.classList.add("overlay-handle--compact");
+      else handle.classList.remove("overlay-handle--compact");
       handle.style.left = handleLeft + "px";
       handle.style.top = handleTop + "px";
-      const hr = handle.getBoundingClientRect();
-      if (hr.width) {
-        if (handleLeft + hr.width > vw - 4) {
-          handleLeft = Math.max(4, vw - hr.width - 4);
-          handle.style.left = handleLeft + "px";
+      // Measure actual width after content and clamp
+      try {
+        const hr = handle.getBoundingClientRect();
+        if (hr && hr.width) {
+          if (handleLeft + hr.width > vw - 4) {
+            handleLeft = Math.max(4, vw - hr.width - 4);
+            handle.style.left = handleLeft + "px";
+          }
         }
-      }
-      if (handleTop < 0) {
-        handleTop = Math.round(rect.top);
-        handle.style.top = handleTop + "px";
-        handle.style.borderRadius = "0 0 4px 4px";
-      } else {
-        handle.style.borderRadius = "4px 4px 0 0";
-      }
+      } catch (_) {}
+      if (isCompactPlacement) handle.style.borderRadius = "4px";
+      else if (placement && placement.placement === "below") handle.style.borderRadius = "0 0 4px 4px";
+      else if (handleTop < 0) handle.style.borderRadius = "0 0 4px 4px";
+      else handle.style.borderRadius = "4px 4px 0 0";
     } catch (_) {
-      handle.style.left = handleLeft + "px";
-      handle.style.top = handleTop + "px";
+      try {
+        handle.style.left = Math.round(rect.left) + "px";
+        handle.style.top = Math.round(rect.top - HANDLE_HEIGHT) + "px";
+        handle.classList.remove("overlay-handle--compact");
+        handle.style.borderRadius = "4px 4px 0 0";
+      } catch (_) {}
     }
   }
 

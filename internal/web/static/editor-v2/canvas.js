@@ -389,6 +389,72 @@ export class CanvasController {
     return null;
   }
 
+  // Generic deepest-child resolver (M6 corrective §2).
+  // If direct hit is an editable container and pointer lies inside one of its
+  // SDT descendants' visual rects, prefer the deepest matching descendant.
+  // Preservation: native chrome like <summary> must not descend.
+  resolveSelectionHit(target, clientX, clientY) {
+    const baseHit = this.hitForTarget(target);
+    if (!baseHit || !baseHit.editable) return baseHit;
+    if (typeof clientX !== "number" || typeof clientY !== "number") return baseHit;
+    // Native interactive chrome must remain usable (§3)
+    if (allowsPreviewDefault(target)) return baseHit;
+    const baseNode = findDocumentNode(baseHit.nodeId);
+    if (!baseNode || !baseNode.children || baseNode.children.length === 0) return baseHit;
+    let deepest = null;
+    let deepestDepth = -1;
+    const HIT_SLOP = 1;
+    const MAX_DEPTH = 6;
+    const MAX_TESTED = 32;
+    const pointInRect = (rect, x, y) => x >= rect.left - HIT_SLOP && x <= rect.left + rect.width + HIT_SLOP && y >= rect.top - HIT_SLOP && y <= rect.top + rect.height + HIT_SLOP;
+    // Bounded: depth ≤MAX_DEPTH, total tested ≤MAX_TESTED, rect cache per call to avoid repeated getBoundingClientRect
+    const rectCache = new Map();
+    const cachedVisualRect = (inst) => {
+      if (rectCache.has(inst.instanceKey)) return rectCache.get(inst.instanceKey);
+      const r = this.visualRect(inst);
+      rectCache.set(inst.instanceKey, r);
+      return r;
+    };
+    let tested = 0;
+    const walk = (nodes, depth) => {
+      if (depth > MAX_DEPTH || tested > MAX_TESTED) return;
+      for (const node of nodes || []) {
+        if (!node || !node.id) continue;
+        if (tested > MAX_TESTED) break;
+        const keys = this.nodeToKeys.get(node.id) || [];
+        let matchedInst = null;
+        for (const k of keys) {
+          const inst = this.index.get(k);
+          if (!inst || !inst.editable) continue;
+          tested++;
+          if (tested > MAX_TESTED) break;
+          const r = cachedVisualRect(inst);
+          if (!r || (r.width === 0 && r.height === 0)) continue;
+          if (pointInRect(r, clientX, clientY)) { matchedInst = inst; break; }
+        }
+        if (matchedInst) {
+          if (depth > deepestDepth) {
+            deepest = matchedInst;
+            deepestDepth = depth;
+          }
+          if (node.children && node.children.length) walk(node.children, depth + 1);
+        }
+        // Only descend if intermediate matched — preserves SDT containment invariant and bounds work.
+      }
+    };
+    try { walk(baseNode.children, 1); } catch (err) { console.warn("[canvas] resolveSelectionHit walk failed", err); }
+    if (deepest) return deepest;
+    return baseHit;
+  }
+
+  // Extract client point to avoid duplication (§standards)
+  _clientPoint(event) {
+    if (!event) return { x: null, y: null };
+    const x = typeof event.clientX === "number" ? event.clientX : null;
+    const y = typeof event.clientY === "number" ? event.clientY : null;
+    return { x, y };
+  }
+
   // SDT parent lookup for editable node id (null for root)
   findSDTParent(nodeId) {
     const info = findDocumentParent(nodeId);
@@ -1090,7 +1156,8 @@ export class CanvasController {
       return;
     }
     // Not editing: if pointerdown inside already-selected editable field, start native pointer editing
-    const hit = this.hitForTarget(event.target);
+    const { x: cx, y: cy } = this._clientPoint(event);
+    const hit = this.resolveSelectionHit(event.target, cx, cy);
     if (!hit || !hit.editable) return;
     if (!this.selected || this.selected.instanceKey !== hit.instanceKey) return;
     const node = findDocumentNode(hit.nodeId);
@@ -1158,7 +1225,8 @@ export class CanvasController {
       try { e.preventDefault(); } catch (_) {}
     }
     try { e.stopPropagation(); } catch (_) {}
-    const hit = this.hitForTarget(target);
+    const { x: cx, y: cy } = this._clientPoint(e);
+    const hit = this.resolveSelectionHit(target, cx, cy);
     // Second click activation removed — native pointerdown handles editing entry
     if (hit) {
       this.selectInstance(hit);
@@ -1580,6 +1648,27 @@ export class CanvasController {
             }
           }
         } catch (_) {}
+        // Generic handle placement: provide parent chain rects so overlay can avoid covering ancestor chrome (§4) — no block-type checks
+        try {
+          if (!editing && !isExternal && this.selected && this.selected.nodeId) {
+            const chain = [];
+            let cur = findDocumentParent(this.selected.nodeId);
+            let depth = 0;
+            while (cur && cur.parent && depth < 4) {
+              const pKeys = this.nodeToKeys.get(cur.parent.id) || [];
+              for (const pk of pKeys) {
+                const pInst = this.index.get(pk);
+                if (pInst && pInst.editable) {
+                  const pr = this.visualRect(pInst);
+                  if (pr && pr.width > 0 && pr.height > 0) { chain.push(pr); break; }
+                }
+              }
+              cur = findDocumentParent(cur.parent.id);
+              depth++;
+            }
+            if (chain.length) handleOpts.parentRects = chain;
+          }
+        } catch (_) {}
         this.overlay.setSelected(rect, label, handleOpts);
       }
     } else {
@@ -1834,7 +1923,8 @@ export class CanvasController {
     try {
       if (e.target && e.target.nodeType === 3 && e.target.parentElement && isActiveFieldElement(e.target.parentElement)) return;
     } catch (_) {}
-    const hit = this.hitForTarget(e.target);
+    const { x: cx, y: cy } = this._clientPoint(e);
+    const hit = this.resolveSelectionHit(e.target, cx, cy);
     if (!hit || !hit.editable) return;
     const node = findDocumentNode(hit.nodeId);
     if (!node) return;

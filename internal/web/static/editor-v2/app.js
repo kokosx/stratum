@@ -28,7 +28,6 @@ class EditorApp {
     this.closeOverflowMenu = null;
     this._previewTimer = null;
     this._pendingSelectionId = null;
-    this._pendingRenderHint = null;
     this._nextRenderHint = null;
     this._previewRevision = 0;
     this._lastGoodHtml = null;
@@ -405,11 +404,11 @@ class EditorApp {
 
   async refreshPreview(pendingIdArg, hintArg) {
     if (!this.iframe) return;
-    // pendingId/hint may be passed via schedulePreview closure (preferred), or fallback to globals for direct calls.
+    // pendingId/hint passed via schedulePreview closure; single state machine is _nextRenderHint (§11)
     const pendingId = pendingIdArg !== undefined ? pendingIdArg : this._pendingSelectionId;
-    const pendingHint = hintArg !== undefined ? hintArg : (this._pendingRenderHint || "refresh");
+    const pendingHint = hintArg !== undefined ? hintArg : (this._nextRenderHint || "refresh");
     if (pendingIdArg === undefined) this._pendingSelectionId = null;
-    if (hintArg === undefined) this._pendingRenderHint = null;
+    if (hintArg === undefined) this._nextRenderHint = null;
     const revision = ++this._previewRevision;
     this.showLoading(true);
     this.showError("");
